@@ -1,0 +1,356 @@
+{
+  "schemaVersion": "1.0.0",
+  "sliceId": "0A2",
+  "status": "passed",
+  "repository": {
+    "path": "C:\\EDF\\Git\\sfmc-amscript-language\\sf-plugin-cms",
+    "intendedRemote": "https://github.com/JoernBerkefeld/sf-plugin-cms.git",
+    "remoteConfigured": false
+  },
+  "runtimePolicy": {
+    "localScaffoldInstallLockfileNode": "24.20.0",
+    "enginesNode": ">=20 <25",
+    "minimumEffectiveNode": "20.11.0",
+    "minimumEffectiveNodeReason": "The selected eslint-plugin-jsdoc 54.7.0 requires Node >=20.11.0; this remains inside the declared major-range policy and CI 20.x resolves to a compatible current Node 20 patch.",
+    "ciNodeMatrix": [
+      "20.x",
+      "22.x",
+      "24.x"
+    ],
+    "exactPatchRequiredForContributors": false,
+    "exactPatchRequiredForGeneration": false,
+    "reproducibility": "Exact dependency pins, the committed registry-only lockfile, and byte-deterministic generation provide reproducibility without an exact Node patch gate.",
+    "policy": "Use installed Node 24.20.0 for local scaffold, install, and lockfile work. Build, lint, unit tests, and deterministic generation checks run on current Node 20.x, 22.x, and 24.x patches."
+  },
+  "packageApiDecision": {
+    "moduleSystem": "ESM",
+    "packageType": "module",
+    "language": "TypeScript",
+    "compiler": {
+      "package": "typescript",
+      "version": "5.9.3",
+      "license": "Apache-2.0",
+      "moduleResolution": "NodeNext",
+      "module": "NodeNext",
+      "strict": true,
+      "skipLibCheck": true,
+      "outputDirectory": "lib",
+      "localImports": "explicit .js extensions"
+    },
+    "typescriptConfigBase": {
+      "package": "@salesforce/dev-config",
+      "version": "4.3.3",
+      "license": "Apache-2.0",
+      "config": "tsconfig-strict-esm"
+    },
+    "runtimeDependencies": [
+      {
+        "package": "@salesforce/core",
+        "version": "8.32.6",
+        "license": "BSD-3-Clause",
+        "node": ">=18.0.0",
+        "requiredApis": [
+          "Connection",
+          "Org",
+          "Messages",
+          "StateAggregator",
+          "testSetup"
+        ]
+      },
+      {
+        "package": "@salesforce/sf-plugins-core",
+        "version": "12.2.28",
+        "license": "Apache-2.0",
+        "node": ">=18.0.0",
+        "requiredApis": [
+          "SfCommand",
+          "Flags",
+          "stubSfCommandUx"
+        ],
+        "compatibility": "Depends on @salesforce/core ^8.31.4 and @oclif/core ^4.11.4, so the selected direct pins deduplicate within those compatible major lines."
+      },
+      {
+        "package": "@oclif/core",
+        "version": "4.13.2",
+        "license": "MIT",
+        "node": ">=18.0.0",
+        "requiredApis": [
+          "Command",
+          "Config"
+        ]
+      }
+    ],
+    "commandPolicy": {
+      "baseClass": "SfCommand",
+      "topicSeparator": " ",
+      "commandRoot": "./lib/commands",
+      "sourcePattern": "src/commands/cms/<action>/<singular-resource>.ts",
+      "adapters": "thin CLI adapters over internal services"
+    }
+  },
+  "generationToolchain": {
+    "yaml": {
+      "package": "yaml",
+      "version": "2.9.0",
+      "license": "ISC",
+      "node": ">=14.6",
+      "api": "parseDocument",
+      "options": {
+        "version": "1.2",
+        "uniqueKeys": true,
+        "customTags": []
+      },
+      "acceptanceBehavior": "Treat every document.errors entry as fatal before toJS is consumed. A synthetic duplicate-key probe produced code DUPLICATE_KEY with line, column, and byte-position diagnostics.",
+      "customTagOrCodeExecution": "disabled; no custom tags and no schema-specific executable types"
+    },
+    "refResolver": {
+      "selection": "repository-owned traversal",
+      "thirdPartyPackage": null,
+      "allowedRefs": "internal document fragments beginning with #/ only",
+      "rejectedRefs": [
+        "http://",
+        "https://",
+        "file:",
+        "absolute filesystem paths",
+        "relative filesystem paths",
+        "unresolved JSON pointers"
+      ],
+      "algorithm": "Decode RFC 6901 ~1 and ~0 pointer tokens, traverse own-properties only from the parsed document root, and maintain a visited-ref stack for deterministic cycle diagnostics. Report the source operation, original ref, and failing pointer segment. Never read another file and never call a network API.",
+      "localValidation": "0A3/0P1b must add fixtures proving internal resolution plus rejection of remote, file, escape, malformed, and unresolved refs before the canonical document is parsed."
+    },
+    "openApiValidator": {
+      "selection": "repository-owned structural and reference validation",
+      "thirdPartyPackage": null,
+      "scope": "OpenAPI 3.0 document identity, required selected-operation fields, unique normalized method/path identities, and all refs reachable from selected operations",
+      "nonGoal": "No generic OpenAPI client generation and no broad speculative schema coercion"
+    },
+    "typeGeneration": {
+      "selection": "repository-owned TypeScript/ESM scripts",
+      "outputs": [
+        "reviewed low-risk DTO and type aliases",
+        "operation metadata"
+      ],
+      "dynamicOrPolymorphicBodies": "explicit reviewed types or unknown plus runtime validators"
+    },
+    "serialization": {
+      "json": "repository-owned stable serializer with recursively lexical keys and LF two-space indentation",
+      "typescript": "repository-owned emitter with lexical declaration and member ordering",
+      "encoding": "UTF-8 without BOM",
+      "lineEndings": "LF",
+      "forbiddenInputs": [
+        "timestamps",
+        "current dates",
+        "absolute environment paths",
+        "locale-sensitive ordering",
+        "platform separators"
+      ]
+    },
+    "formatter": {
+      "package": "prettier",
+      "version": "3.9.6",
+      "license": "MIT",
+      "node": ">=14",
+      "role": "May format emitted TypeScript only; it is not the JSON serializer and its output must pass byte-stability tests."
+    }
+  },
+  "testToolchain": {
+    "runner": {
+      "package": "mocha",
+      "version": "11.8.0",
+      "license": "MIT",
+      "node": "^18.18.0 || ^20.9.0 || >=21.1.0"
+    },
+    "assertions": {
+      "package": "chai",
+      "version": "4.5.0",
+      "license": "MIT",
+      "reason": "Retains the established Salesforce CLI test style and CommonJS-compatible Chai 4 API rather than introducing Chai 6 migration work."
+    },
+    "stubs": {
+      "package": "sinon",
+      "version": "18.0.1",
+      "license": "BSD-3-Clause"
+    },
+    "typescriptLoader": {
+      "package": "ts-node",
+      "version": "10.9.2",
+      "license": "MIT",
+      "mode": "ESM loader"
+    },
+    "coverage": {
+      "package": "nyc",
+      "version": "17.1.0",
+      "license": "ISC",
+      "node": ">=18"
+    },
+    "nutFramework": {
+      "package": "@salesforce/cli-plugins-testkit",
+      "version": "5.3.64",
+      "license": "Apache-2.0",
+      "node": ">=16.0.0"
+    },
+    "commandSnapshots": {
+      "package": "@oclif/plugin-command-snapshot",
+      "version": "5.3.33",
+      "license": "MIT",
+      "node": ">=18.0.0"
+    }
+  },
+  "lintFormatHygiene": {
+    "packages": [
+      {
+        "package": "eslint",
+        "version": "9.39.4",
+        "license": "MIT",
+        "node": "^18.18.0 || ^20.9.0 || >=21.1.0"
+      },
+      {
+        "package": "@eslint/js",
+        "version": "9.39.4",
+        "license": "MIT",
+        "node": "^18.18.0 || ^20.9.0 || >=21.1.0"
+      },
+      {
+        "package": "typescript-eslint",
+        "version": "8.67.0",
+        "license": "MIT",
+        "node": "^18.18.0 || ^20.9.0 || >=21.1.0",
+        "peerCompatibility": "eslint ^8.57.0 || ^9 || ^10 and TypeScript >=4.8.4 <6.1.0"
+      },
+      {
+        "package": "eslint-plugin-unicorn",
+        "version": "64.0.0",
+        "license": "MIT",
+        "node": "^20.10.0 || >=21.0.0",
+        "peerCompatibility": "eslint >=9.38.0"
+      },
+      {
+        "package": "eslint-plugin-jsdoc",
+        "version": "54.7.0",
+        "license": "BSD-3-Clause",
+        "node": ">=20.11.0",
+        "peerCompatibility": "eslint ^7 || ^8 || ^9"
+      },
+      {
+        "package": "eslint-plugin-prettier",
+        "version": "5.5.6",
+        "license": "MIT",
+        "peerCompatibility": "eslint >=8, prettier >=3, eslint-config-prettier >=10.1.0 accepted"
+      },
+      {
+        "package": "eslint-config-prettier",
+        "version": "10.1.8",
+        "license": "MIT",
+        "peerCompatibility": "eslint >=7"
+      },
+      {
+        "package": "globals",
+        "version": "17.9.0",
+        "license": "MIT",
+        "node": ">=18"
+      },
+      {
+        "package": "husky",
+        "version": "9.1.7",
+        "license": "MIT",
+        "node": ">=18"
+      }
+    ],
+    "policy": "Package-local ESLint 9 flat config, TypeScript recommended configs, workspace-mandated Prettier/JSDoc/Unicorn stack, zero warnings, LF, and UTF-8 without BOM. Do not add eslint-plugin-mocha 12 because it requires Node >=22 and ESLint >=10; use core flat-config test globals/rules unless a Node-20-compatible exact alternative is separately justified before 0A3 locks the scaffold."
+  },
+  "dependencyPolicy": {
+    "manifestPins": "Every dependency and devDependency named by this decision is exact, without ranges or tags.",
+    "lockfile": "package-lock.json lockfileVersion 3, tracked and registry-only",
+    "ciInstall": "npm ci --no-workspaces",
+    "localInstall": "npm install --no-workspaces",
+    "overrides": "exact versions only when independently justified",
+    "lockfileIntegrityReference": "deferred to 0A3 because no package-lock.json exists in 0A2"
+  },
+  "evidence": [
+    {
+      "kind": "local documentation",
+      "source": "bundled Salesforce CLI plugin guide maintain-migrate-esm.md",
+      "supports": "ESM package type, strict ESM TypeScript config, explicit .js local imports, and ESM test loader"
+    },
+    {
+      "kind": "local documentation",
+      "source": "bundled Salesforce CLI plugin guide use-libraries.md and test-plugin.md",
+      "supports": "@salesforce/core and sf-plugins-core architecture, SfCommand UX stubbing, and Mocha-based unit/NUT separation"
+    },
+    {
+      "kind": "local package metadata",
+      "source": "existing npm cache and read-only package-lock metadata",
+      "supports": "locally evidenced exact Salesforce, oclif, TypeScript, test, YAML, ESLint, and formatting package lines"
+    },
+       {
+      "kind": "local runtime evidence",
+      "source": "recorded active runtime",
+      "supports": "Node 24.20.0 is the current local runtime selected for future 0A3 scaffold, install, and lockfile work; 0A2 itself did not create the scaffold or lockfile."
+    },
+    {
+      "kind": "official npm registry metadata",
+      "source": "https://registry.npmjs.org/ via npm view",
+      "supports": "Exact versions, licenses, engines, peer compatibility, module type, and Salesforce dependency compatibility"
+    },
+    {
+      "kind": "synthetic parser probe",
+      "source": "yaml 2.9.0 parseDocument on an in-memory duplicate-key fixture; canonical CMS YAML was not read or parsed",
+      "supports": "uniqueKeys true emits fatal DUPLICATE_KEY with source location"
+    }
+  ],
+  "rejectedAlternatives": [
+    {
+      "alternative": "@salesforce/core 9.x with @salesforce/sf-plugins-core 13.x",
+      "reason": "Both require Node >=22 and contradict the approved Node >=20 <25 support policy. Revisit only through a plan amendment that drops Node 20."
+    },
+    {
+      "alternative": "@salesforce/core 9.0.0 mixed with @salesforce/sf-plugins-core 12.2.28",
+      "reason": "Creates separate core major instances because sf-plugins-core 12 depends on core 8, while core 9 requires Node >=22."
+    },
+    {
+      "alternative": "TypeScript 7.x",
+      "reason": "Outside typescript-eslint 8.67.0's TypeScript peer range (<6.1) and unnecessary for the selected Salesforce CLI package line."
+    },
+    {
+      "alternative": "Mocha 12, Chai 6, Sinon 22, ESLint 10, or eslint-plugin-mocha 12",
+      "reason": "Current lines introduce Node >=22 and/or ESLint 10 requirements that conflict with Node 20 support or add avoidable migration scope."
+    },
+    {
+      "alternative": "Generic OpenAPI resolver, validator, or client generator",
+      "reason": "Adds file/network resolution and speculative-generation risk where bounded repository-owned internal-ref traversal and selected-operation validation suffice."
+    },
+    {
+      "alternative": "Permissive YAML parse or last-key-wins consumption",
+      "reason": "Violates duplicate-key rejection; parseDocument errors must stop intake before values are consumed."
+    },
+    {
+      "alternative": "Prettier as canonical JSON serializer",
+      "reason": "Canonical ordering and normalization must remain explicit repository-owned behavior; Prettier is limited to deterministic TypeScript formatting."
+    },
+    {
+      "alternative": "Exact Node patch requirements for contributors or generation",
+      "reason": "The package supports Node 20, 22, and 24; the current local 0A3 runtime is Node 24.20.0, while exact dependency pins and the committed registry-only lockfile provide reproducibility without a contributor patch gate."
+    }
+  ],
+  "acceptance": {
+    "esmAndTypeScriptCompatibilityRecorded": true,
+    "supportedNodeRangeReconciledWithSalesforcePackages": true,
+    "localNode24RuntimeRecordedFor0A3": true,
+    "exactNodePatchRequirementRemoved": true,
+    "exactPackagePinsRecorded": true,
+    "licensesRecorded": true,
+    "duplicateKeySafetySpecifiedAndProbedWithoutCanonicalYaml": true,
+    "offlineInternalRefPolicySpecified": true,
+    "remoteAndFileRefResolutionRejected": true,
+    "repositoryOwnedGenerationSelected": true,
+    "generatedAllOperationSupportMatrixSuperseded": true,
+    "exactly48UniqueOperationsRetainedAsIntegrityEvidence": true,
+    "shippedOperationOnlyGenerationRequired": true,
+    "adoptedAndRejectedAlternativesRecorded": true,
+    "canonicalYamlParsed": false,
+    "dependenciesInstalled": false,
+    "lockfileGenerated": false,
+    "scaffoldCreated": false,
+    "nextSliceStarted": false
+  }
+}

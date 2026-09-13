@@ -1,0 +1,98 @@
+{
+  "name": "sf-plugin-cms",
+  "version": "0.1.0",
+  "description": "Salesforce CLI plugin scaffold for Marketing Cloud CMS",
+  "author": {
+    "name": "Jörn Berkefeld",
+    "email": "joern.berkefeld@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoernBerkefeld/sf-plugin-cms.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JoernBerkefeld/sf-plugin-cms/issues"
+  },
+  "homepage": "https://github.com/JoernBerkefeld/sf-plugin-cms#readme",
+  "type": "module",
+  "exports": "./lib/index.js",
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "files": [
+    "lib",
+    "messages",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "salesforce",
+    "salesforcedx",
+    "sf",
+    "sf-plugin",
+    "marketing-cloud",
+    "cms"
+  ],
+  "oclif": {
+    "bin": "sf",
+    "commands": "./lib/commands",
+    "topicSeparator": " ",
+    "flexibleTaxonomy": true,
+    "topics": {
+      "cms": {
+        "description": "Marketing Cloud CMS commands."
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run compile",
+    "clean": "node -e \"import('node:fs').then(({rmSync}) => rmSync('lib', {recursive:true, force:true}))\"",
+    "compile": "tsc -p tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "generate": "npm run compile && node scripts/generate-openapi.mjs",
+    "generate:check": "npm run compile && node scripts/generate-openapi.mjs --check",
+    "intake:canonical": "npm run compile && node scripts/intake-openapi.mjs resources/openapi/connect-rest-api-cms-v67.yaml --canonical",
+    "lint": "eslint src test eslint.config.js",
+    "lint:fix": "eslint src test eslint.config.js --fix",
+    "intake:check": "npm run compile && node scripts/intake-openapi.mjs resources/openapi/connect-rest-api-cms-v67.yaml --canonical",
+    "prepare": "husky || true",
+    "test": "npm run compile && nyc mocha",
+    "validate:package": "node scripts/validate-package.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@oclif/core": "4.13.2",
+    "@salesforce/core": "8.32.6",
+    "@salesforce/sf-plugins-core": "12.2.28"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@oclif/plugin-command-snapshot": "5.3.33",
+    "@salesforce/cli-plugins-testkit": "5.3.64",
+    "@salesforce/dev-config": "4.3.3",
+    "@types/chai": "4.3.20",
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.10.1",
+    "@types/sinon": "17.0.4",
+    "chai": "4.5.0",
+    "eslint": "9.39.4",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-jsdoc": "54.7.0",
+    "eslint-plugin-prettier": "5.5.6",
+    "eslint-plugin-unicorn": "64.0.0",
+    "globals": "17.9.0",
+    "husky": "9.1.7",
+    "mocha": "11.8.0",
+    "nyc": "17.1.0",
+    "prettier": "3.9.6",
+    "sinon": "18.0.1",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "yaml": "2.9.0"
+  }
+}

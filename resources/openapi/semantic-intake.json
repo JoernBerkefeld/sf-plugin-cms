@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "1.0.0",
+  "sliceId": "0P1b",
+  "status": "passed",
+  "source": {
+    "vendoredFilename": "connect-rest-api-cms-v67.yaml",
+    "byteSize": 243152,
+    "sha256": "c3f8b5c29821a884a1c06485925485a218c7be68808bf98491074d6625773434"
+  },
+  "documentIdentity": {
+    "openapi": "3.0.3",
+    "title": "CMS Connect REST API",
+    "version": "v67.0",
+    "uniqueOperationCount": 48
+  },
+  "selectedOperations": [
+    {
+      "operationId": "getManagedContentSpaceCollection",
+      "method": "GET",
+      "path": "/connect/cms/spaces",
+      "capability": "list workspace",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentSpace",
+      "method": "GET",
+      "path": "/connect/cms/spaces/{contentSpaceId}",
+      "capability": "get workspace",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentSpaceChannels",
+      "method": "GET",
+      "path": "/connect/cms/spaces/{contentSpaceId}/channels",
+      "capability": "list workspace channels",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentChannel",
+      "method": "GET",
+      "path": "/connect/cms/channels/{channelId}",
+      "capability": "get channel",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentDocument",
+      "method": "GET",
+      "path": "/connect/cms/contents/{contentKeyOrId}",
+      "capability": "get content",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentVariant",
+      "method": "GET",
+      "path": "/connect/cms/contents/variants/{variantId}",
+      "capability": "get variant",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentDelivery",
+      "method": "GET",
+      "path": "/connect/cms/delivery/channels/{channelId}/contents/{contentKeyOrId}",
+      "capability": "internal delivery resolution when export needs it",
+      "stage": 1
+    },
+    {
+      "operationId": "getManagedContentDeliveryMedia",
+      "method": "GET",
+      "path": "/connect/cms/delivery/channels/{channelId}/media/{mediaGuid}/content",
+      "capability": "internal media download",
+      "stage": 1
+    },
+    {
+      "operationId": "postManagedContentDocumentCreate",
+      "method": "POST",
+      "path": "/connect/cms/contents",
+      "capability": "create imported content",
+      "stage": 2
+    },
+    {
+      "operationId": "postManagedContentVariantCreate",
+      "method": "POST",
+      "path": "/connect/cms/contents/variants",
+      "capability": "create imported variant",
+      "stage": 2
+    },
+    {
+      "operationId": "putManagedContentVariant",
+      "method": "PUT",
+      "path": "/connect/cms/contents/variants/{variantId}",
+      "capability": "update imported variant",
+      "stage": 2
+    }
+  ],
+  "deferredCapabilities": [
+    {
+      "capability": "list content",
+      "reason": "The only enhanced-workspace collection candidate requires both contentSpaceOrFolderIds and queryTerm, so the schema does not evidence deterministic unfiltered enumeration."
+    },
+    {
+      "capability": "list variant",
+      "reason": "The schema has direct variant get/create/update operations but no independent variant collection endpoint or stable variant collection on the content document."
+    },
+    {
+      "capability": "export workspace",
+      "reason": "Export depends on bounded content enumeration and remains deferred with list content."
+    }
+  ],
+  "defectEvidence": [
+    {
+      "subject": "search items",
+      "finding": "ManagedContentSearchResultItemsCollection.items uses oneOf directly where the prose describes a list; selected generation must normalize it to an array only after a focused transform fixture reproduces the defect."
+    },
+    {
+      "subject": "dynamic content bodies",
+      "finding": "Content body schemas use object/additionalProperties shapes and examples contain nested heterogeneous values; selected generation must retain unknown plus runtime validation rather than fabricate DTO fields."
+    },
+    {
+      "subject": "variant update multipart",
+      "finding": "putManagedContentVariant accepts multipart/form-data and describes contentBody as a string while examples show an object; selected generation must preserve this ambiguity for explicit validation."
+    },
+    {
+      "subject": "comma-separated query serialization",
+      "finding": "Several query parameters are arrays whose descriptions require comma-separated wire values; transport serialization needs selected-operation metadata rather than generic repeated-key behavior."
+    },
+    {
+      "subject": "collection and map candidates",
+      "finding": "channels, delivery contents, references, referencesList, and contentNodes require selected-operation reachability checks in 0G1; no transform is applied during semantic intake."
+    }
+  ],
+  "boundaries": {
+    "offline": true,
+    "refs": "canonical internal JSON Pointer fragments beginning #/ only",
+    "supportMatrixGenerated": false,
+    "generatedDtosOrDescriptors": false,
+    "npmPackageIncludesResources": false
+  }
+}

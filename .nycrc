@@ -1,0 +1,8 @@
+{
+  "all": true,
+  "extension": [".ts"],
+  "include": ["src/**/*.ts"],
+  "exclude": ["test/**"],
+  "reporter": ["text", "text-summary"],
+  "temp-dir": ".nyc_output"
+}
