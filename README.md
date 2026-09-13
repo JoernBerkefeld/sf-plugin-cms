@@ -32,16 +32,16 @@ For a sandbox or org that uses a custom login host, add `--instance-url <login-u
 
 ### Install the plugin
 
-The normal installation command for a published Salesforce CLI plugin will be:
+Install the plugin with Salesforce CLI:
 
 ```sh
 sf plugins install sf-plugin-cms
 ```
 
-This package is not currently documented as published to npm, so do not expect that command to work yet. For the current source-checkout workflow, run these commands from the repository's `sf-plugin-cms` directory:
+For contributor work or local development from a source checkout, run these commands from the repository's `sf-plugin-cms` directory:
 
 ```sh
-npm install --no-workspaces
+npm install
 npm run compile
 sf plugins link .
 ```
@@ -257,7 +257,7 @@ sf cms get content --help
 ## Development
 
 ```sh
-npm install --no-workspaces
+npm install
 npm run lint
 npm run build
 npm run intake:check
