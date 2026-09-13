@@ -4,26 +4,27 @@ import {
   loadWorkspaceExport,
   type WorkspaceImportResult,
 } from '../../../services/import-workspace.js';
-import { getWorkspace } from '../../../services/read.js';
+import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../command-base.js';
 
 export default class ImportWorkspace extends CmsCommand<WorkspaceImportResult> {
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates an exported workspace package locally, checks every content key for destination conflicts, and defaults to a non-mutating dry run. Pass --apply with a new --report-dir to create content.';
+    'Validates the source workspace export locally before any org request, selects one destination workspace by exact ID or exact case-sensitive name, checks every content key for conflicts, and defaults to a non-mutating dry run. Pass --apply with a new --report-dir to create content.';
   public static readonly examples = [
-    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms-export',
-    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms-export --apply --report-dir ./cms-import-report',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
     'api-version': apiVersionFlag,
-    'workspace-id': Flags.string({ required: true, summary: 'Destination CMS workspace ID.' }),
+    'workspace-id': Flags.string({ summary: 'Exact destination CMS workspace ID.' }),
+    'workspace-name': Flags.string({ summary: 'Exact case-sensitive destination workspace name.' }),
     'source-dir': Flags.directory({
       exists: true,
       required: true,
-      summary: 'Workspace export directory containing manifest.json and items/.',
+      summary: 'Source workspace export containing manifest.json and items/.',
     }),
     apply: Flags.boolean({
       default: false,
@@ -48,21 +49,26 @@ export default class ImportWorkspace extends CmsCommand<WorkspaceImportResult> {
 
     // Reject malformed, unsafe, or disallowed partial packages before contacting the org.
     await loadWorkspaceExport(flags['source-dir'], { allowPartial: flags['allow-partial'] });
+    const selector = {
+      workspaceId: flags['workspace-id'],
+      workspaceName: flags['workspace-name'],
+    };
+    assertWorkspaceSelector(selector);
 
     const { connection, orgId } = await this.getOrgContext(
       flags['target-org'],
       flags['api-version'],
     );
-    const workspace = await getWorkspace(connection, flags['workspace-id']);
+    const selected = await resolveWorkspace(connection, selector);
     const result = await executeWorkspaceImport({
       allowPartial: flags['allow-partial'],
       connection,
       destinationOrgId: orgId,
-      destinationWorkspace: workspace,
+      destinationWorkspace: selected.workspace,
       dryRun: !flags.apply,
       reportDirectory: flags['report-dir'],
       sourceDirectory: flags['source-dir'],
-      workspaceId: flags['workspace-id'],
+      workspaceId: selected.id,
     });
 
     if (!this.jsonEnabled()) this.showPlan(result);

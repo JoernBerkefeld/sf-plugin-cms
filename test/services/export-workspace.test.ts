@@ -4,7 +4,11 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { exportWorkspace } from '../../src/services/export-workspace.js';
+import {
+  defaultWorkspaceDestination,
+  exportWorkspace,
+  safeWorkspaceDirectoryName,
+} from '../../src/services/export-workspace.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
@@ -30,6 +34,14 @@ function pageNumber(url: string): number {
 
 describe('workspace export service', () => {
   let root: string;
+
+  it('sanitizes default workspace directory names portably', () => {
+    expect(safeWorkspaceDirectoryName('Café / Launch:*? ')).to.equal('Café _ Launch___');
+    expect(defaultWorkspaceDestination('Main')).to.equal(path.join('.', 'cms', 'Main'));
+    for (const name of ['', '.', '..', 'CON', 'lpt1.txt', '...   ']) {
+      expect(() => safeWorkspaceDirectoryName(name)).to.throw('--output-dir');
+    }
+  });
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-export-'));
@@ -203,6 +215,17 @@ describe('workspace export service', () => {
     }
     expect(request.callCount).to.equal(0);
     expect(await readFile(destination, 'utf8')).to.equal('keep');
+  });
+
+  it('creates missing destination parents and keeps sibling defaults distinct', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const first = path.join(root, 'cms', safeWorkspaceDirectoryName('One'));
+    const second = path.join(root, 'cms', safeWorkspaceDirectoryName('Two'));
+
+    await exportWorkspace({ request }, 'one', first);
+    await exportWorkspace({ request }, 'two', second);
+
+    expect(await readdir(path.join(root, 'cms'))).to.deep.equal(['One', 'Two']);
   });
 
   it('writes stable two-space JSON bytes with a final LF', async () => {

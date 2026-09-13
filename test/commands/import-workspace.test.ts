@@ -78,13 +78,15 @@ describe('CMS import workspace command', () => {
       'target-org',
       'api-version',
       'workspace-id',
+      'workspace-name',
       'source-dir',
       'apply',
       'allow-partial',
       'report-dir',
     ]);
     expect(ImportWorkspace.flags['target-org'].required).to.equal(true);
-    expect(ImportWorkspace.flags['workspace-id'].required).to.equal(true);
+    expect(ImportWorkspace.flags['workspace-id'].required).not.to.equal(true);
+    expect(ImportWorkspace.flags['workspace-name'].required).not.to.equal(true);
     expect(ImportWorkspace.flags['source-dir'].required).to.equal(true);
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
@@ -145,6 +147,82 @@ describe('CMS import workspace command', () => {
       expect(error).to.be.instanceOf(Error);
     }
     expect(getOrgContext.notCalled).to.equal(true);
+  });
+
+  it('validates a sound source before rejecting missing or combined destination selectors', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
+    temporaryDirectories.push(root);
+    const source = await writeSource(root);
+    for (const selector of [{}, { 'workspace-id': 'id', 'workspace-name': 'name' }]) {
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      const getOrgContext = $$.SANDBOX.stub();
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'allow-partial': false,
+            apply: false,
+            'api-version': '67.0',
+            'source-dir': source,
+            'target-org': 'mcnext-sdo',
+            ...selector,
+          },
+        }),
+        getOrgContext,
+      });
+      try {
+        await command.run();
+        expect.fail('expected selector failure');
+      } catch (error) {
+        expect((error as Error).message).to.include('exactly one');
+      }
+      expect(getOrgContext.notCalled).to.equal(true);
+    }
+  });
+
+  it('imports by workspace name using the canonical resolved workspace and ID', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
+    temporaryDirectories.push(root);
+    const source = await writeSource(root);
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/spaces?')) {
+        return fakeRequest({
+          currentPage: 0,
+          pageSize: 100,
+          spaces: [{ id: 'canonical-space', name: 'Destination' }],
+          total: 1,
+        });
+      }
+      if (url === '/connect/cms/spaces/canonical-space') {
+        return fakeRequest({
+          defaultLanguage: 'en',
+          id: 'canonical-space',
+          name: 'Destination',
+          rootFolderId: 'canonical-root',
+        });
+      }
+      return missingRequest();
+    });
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': false,
+          apply: false,
+          'api-version': '67.0',
+          'source-dir': source,
+          'target-org': 'mcnext-sdo',
+          'workspace-name': 'Destination',
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result.plan.destinationWorkspaceId).to.equal('canonical-space');
+    expect(result.plan.rootFolderId).to.equal('canonical-root');
+    expect(request.secondCall.args[0].url).to.equal('/connect/cms/spaces/canonical-space');
   });
 
   for (const jsonEnabled of [false, true]) {

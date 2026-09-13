@@ -56,6 +56,18 @@ sf cms info
 
 ## Command reference
 
+| Command | Details |
+|---|---|
+| `sf cms info` | [Plugin information](#sf-cms-info) |
+| `sf cms list workspace` | [List workspaces](#sf-cms-list-workspace) |
+| `sf cms get workspace` | [Get a workspace](#sf-cms-get-workspace) |
+| `sf cms list channel` | [List workspace channels](#sf-cms-list-channel) |
+| `sf cms get channel` | [Get a channel](#sf-cms-get-channel) |
+| `sf cms get content` | [Get content](#sf-cms-get-content) |
+| `sf cms get variant` | [Get a variant](#sf-cms-get-variant) |
+| `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace) |
+| `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace) |
+
 All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They use API version `67.0` by default; pass `--api-version <version>` only when you need to override it. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
 
 ### `sf cms info`
@@ -159,24 +171,27 @@ Required selector: `--variant-id <id>`.
 Runs an experimental, read-only, best-effort export of the variants currently observed for one CMS workspace. The destination must not already exist. This output is not a complete or guaranteed backup.
 
 ```sh
-sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export
-sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json
+sf cms export workspace --target-org my-org --workspace-name "Main Site"
+sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --json
 ```
 
-Required flags:
+Workspace selector (exactly one required):
 
-- `--workspace-id <id>`: CMS workspace content-space ID. The command validates that the returned workspace ID exactly matches this value before export begins.
-- `--output-dir <path>`: new destination directory for `manifest.json` and the exported `items/*.json` files. There is no overwrite option.
+- `--workspace-id <id>`: CMS workspace content-space ID. The command validates that the returned workspace ID exactly matches this value.
+- `--workspace-name <name>`: exact, case-sensitive workspace name. The command scans bounded zero-based pages, rejects distinct-ID ambiguity, then validates the selected workspace by ID.
+
+`--output-dir <path>` is optional. When omitted, export writes to `./cms/<safe-workspace-name>`. The safe segment preserves Unicode and case, replaces path/control/Windows-invalid characters, and trims unsafe trailing dots or spaces. Empty, dot-only, and Windows reserved device names require an explicit `--output-dir`. An explicit path is used exactly as supplied. The destination must not already exist; missing parents are created.
 
 Every service warning is emitted to stderr. Human output reports the destination and exported-versus-expected counts; `--json` suppresses that human summary and returns one clean structured result.
 
 Export layout:
 
 ```text
-cms-export/
-├── manifest.json
-└── items/
-    └── <variant-id>.json
+cms/
+└── Main Site/
+    ├── manifest.json
+    └── items/
+        └── <variant-id>.json
 ```
 
 `manifest.json` records the source workspace, search provenance, counts, warnings, rejected IDs, failed IDs, and the exact item-file mapping. Each item file contains one observed variant representation. Treat the package as best-effort evidence from that run, not as a guaranteed backup.
@@ -188,21 +203,21 @@ Plans or applies a create-only import from an export package. Dry-run is the def
 Safe dry run:
 
 ```sh
-sf cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms-export
-sf cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms-export --json
+sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source"
+sf cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir "./cms/Source" --json
 ```
 
 Explicit apply:
 
 ```sh
-sf cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms-export --apply --report-dir ./cms-import-report
+sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source" --apply --report-dir ./cms-import-report
 ```
 
 Required flags:
 
 - `--target-org <username-or-alias>`: explicit destination org; no implicit target is accepted.
-- `--workspace-id <id>`: exact destination CMS workspace content-space ID.
-- `--source-dir <path>`: existing export package containing `manifest.json` and exactly the mapped `items/*.json` files.
+- Exactly one destination selector: `--workspace-id <id>` or exact case-sensitive `--workspace-name <name>`. This identity is the destination and is independent of the source workspace recorded in the export manifest.
+- `--source-dir <path>`: existing source export package containing `manifest.json` and exactly the mapped `items/*.json` files. Its manifest identifies the source workspace only; it does not select the destination.
 
 Safety flags:
 
@@ -227,7 +242,7 @@ Import limitations and conflicts:
 - Every content group must contain exactly one variant matching the destination workspace's `defaultLanguage`. There is no primary-language fallback.
 - Child variants are created sequentially after their primary parent. There is no concurrency.
 - Media-specific migration is not supported.
-- The command does not publish or unpublish content; newly created records are expected to remain draft/unpublished.
+- The command does not change publication state; newly created records are expected to remain drafts.
 - `--allow-partial` accepts known source omissions but does not make the missing records recoverable.
 
 Recovery guidance:

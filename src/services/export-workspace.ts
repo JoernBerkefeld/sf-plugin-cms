@@ -95,6 +95,35 @@ function jsonBytes(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
+
+export function safeWorkspaceDirectoryName(workspaceName: string): string {
+  const replaced = [...workspaceName]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 31 || codePoint === 127 || /[\\/<>:"|?*]/u.test(character)
+        ? '_'
+        : character;
+    })
+    .join('');
+  const safeName = replaced.replaceAll(/[. ]+$/gu, '');
+  if (
+    safeName.length === 0 ||
+    safeName === '.' ||
+    safeName === '..' ||
+    WINDOWS_RESERVED_NAME.test(safeName)
+  ) {
+    throw new Error(
+      `Workspace name ${workspaceName} cannot be used as a portable directory name. Pass --output-dir explicitly.`,
+    );
+  }
+  return safeName;
+}
+
+export function defaultWorkspaceDestination(workspaceName: string): string {
+  return path.join('.', 'cms', safeWorkspaceDirectoryName(workspaceName));
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -264,6 +293,7 @@ export async function exportWorkspace(
   };
 
   const parent = path.dirname(destination);
+  await mkdir(parent, { recursive: true });
   const temporary = path.join(
     parent,
     `.${path.basename(destination)}.tmp-${process.pid}-${Date.now()}`,
