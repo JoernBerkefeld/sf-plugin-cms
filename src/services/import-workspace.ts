@@ -4,7 +4,15 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from 'nod
 import path from 'node:path';
 import type { JsonRequestOptions } from '../transport/json-request.js';
 import { CmsRequestError } from '../transport/json-request.js';
-import type { WorkspaceExportManifest, WorkspaceExportWarning } from './export-workspace.js';
+import {
+  assertWorkspaceExportManifest,
+  type WorkspaceExportManifest,
+} from '../contracts/workspace-export.js';
+import type {
+  WorkspaceImportMapping,
+  WorkspaceImportReference,
+  WorkspaceImportResult as WorkspaceImportContractResult,
+} from '../contracts/workspace-import.js';
 import { getContent } from './read.js';
 import {
   createContent,
@@ -32,6 +40,7 @@ export type WorkspaceImportItem = JsonObject & {
 };
 
 export type LoadedWorkspaceExport = {
+  readonly integrity: WorkspaceImportContractResult['integrity'];
   readonly isPartial: boolean;
   readonly items: readonly WorkspaceImportItem[];
   readonly manifest: WorkspaceExportManifest;
@@ -119,6 +128,7 @@ export type ExecuteWorkspaceImportOptions = {
   readonly destinationOrgId: string;
   readonly destinationWorkspace: unknown;
   readonly dryRun?: boolean;
+  readonly loadedSource?: LoadedWorkspaceExport;
   readonly reportDirectory?: string;
   readonly reportPersistence?: WorkspaceImportReportPersistence;
   readonly requestOptions?: JsonRequestOptions;
@@ -126,7 +136,8 @@ export type ExecuteWorkspaceImportOptions = {
   readonly workspaceId: string;
 };
 
-export type WorkspaceImportResult = {
+export type WorkspaceImportExecutionResult = {
+  readonly contractResult: WorkspaceImportContractResult;
   readonly dryRun: boolean;
   readonly plan: WorkspaceImportPlan;
   readonly report?: WorkspaceImportRunReport;
@@ -139,10 +150,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonemptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
-}
-
-function integerAtLeastZero(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
 function assertJsonSafe(value: unknown, label: string): asserts value is JsonValue {
@@ -177,72 +184,12 @@ function assertOptionalString(record: Record<string, unknown>, key: string, labe
   }
 }
 
-function parseJson(bytes: string, label: string): unknown {
+function parseJson(bytes: Buffer | string, label: string): unknown {
   try {
-    return JSON.parse(bytes) as unknown;
+    return JSON.parse(bytes.toString()) as unknown;
   } catch {
     throw new TypeError(`${label} must contain valid JSON`);
   }
-}
-
-function validateWarning(value: unknown, index: number): WorkspaceExportWarning {
-  if (!isRecord(value) || !nonemptyString(value.code) || !nonemptyString(value.message)) {
-    throw new TypeError(`manifest.warnings[${index}] is malformed`);
-  }
-  const codes = new Set([
-    'COUNT_MISMATCH',
-    'DETAIL_FAILED',
-    'DUPLICATE_VARIANTS',
-    'OWNERSHIP_MISMATCH',
-    'PREMATURE_EMPTY_PAGE',
-    'UNSUPPORTED_WILDCARD',
-  ]);
-  if (!codes.has(value.code))
-    throw new TypeError(`manifest.warnings[${index}].code is unsupported`);
-  if (
-    value.variantIds !== undefined &&
-    (!Array.isArray(value.variantIds) || !value.variantIds.every(nonemptyString))
-  ) {
-    throw new TypeError(`manifest.warnings[${index}].variantIds is malformed`);
-  }
-  return value as WorkspaceExportWarning;
-}
-
-function validateManifest(value: unknown): WorkspaceExportManifest {
-  if (!isRecord(value)) throw new TypeError('manifest.json must contain an object');
-  if (value.schemaVersion !== 1)
-    throw new TypeError('Only workspace export schemaVersion 1 is supported');
-  if (value.mode !== 'experimental-best-effort') {
-    throw new TypeError('Only experimental-best-effort workspace exports are supported');
-  }
-  assertIdentifier(value.workspaceId, 'manifest.workspaceId');
-  for (const key of ['expectedCount', 'foundCount', 'exportedCount', 'pagesRequested']) {
-    if (!integerAtLeastZero(value[key])) throw new TypeError(`manifest.${key} is malformed`);
-  }
-  if (!isRecord(value.search)) throw new TypeError('manifest.search is malformed');
-  const search = value.search;
-  if (
-    !Array.isArray(search.contentSpaceOrFolderIds) ||
-    search.contentSpaceOrFolderIds.length !== 1 ||
-    search.contentSpaceOrFolderIds[0] !== value.workspaceId ||
-    !Array.isArray(search.languages) ||
-    search.languages.length !== 1 ||
-    search.languages[0] !== 'All' ||
-    search.pageSize !== 250 ||
-    search.queryTerm !== '*'
-  ) {
-    throw new TypeError('manifest.search does not match the schemaVersion 1 export contract');
-  }
-  if (!Array.isArray(value.entries)) throw new TypeError('manifest.entries must be an array');
-  if (!Array.isArray(value.rejectedVariantIds) || !value.rejectedVariantIds.every(nonemptyString)) {
-    throw new TypeError('manifest.rejectedVariantIds is malformed');
-  }
-  if (!Array.isArray(value.failedVariantIds) || !value.failedVariantIds.every(nonemptyString)) {
-    throw new TypeError('manifest.failedVariantIds is malformed');
-  }
-  if (!Array.isArray(value.warnings)) throw new TypeError('manifest.warnings must be an array');
-  for (const [index, warning] of value.warnings.entries()) validateWarning(warning, index);
-  return value as unknown as WorkspaceExportManifest;
 }
 
 function safeEntryPath(sourceDirectory: string, file: unknown, variantId: string): string {
@@ -275,15 +222,34 @@ async function assertRegularFile(file: string, label: string): Promise<void> {
   }
 }
 
-async function readStableRegularFile(file: string, label: string): Promise<string> {
+async function readStableRegularFile(file: string, label: string): Promise<Buffer> {
   await assertRegularFile(file, label);
   const before = await lstat(file);
-  const bytes = await readFile(file, 'utf8');
+  const bytes = await readFile(file);
   const after = await lstat(file);
   if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino) {
     throw new TypeError(`${label} changed while it was being loaded`);
   }
   return bytes;
+}
+
+async function enumeratePackageFiles(directory: string, packageRoot: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    const metadata = await lstat(absolute);
+    if (metadata.isSymbolicLink()) {
+      throw new TypeError('Workspace package must not contain symlinks or reparse points');
+    }
+    if (metadata.isDirectory()) {
+      files.push(...(await enumeratePackageFiles(absolute, packageRoot)));
+    } else if (metadata.isFile()) {
+      files.push(path.relative(packageRoot, absolute).split(path.sep).join('/'));
+    } else {
+      throw new TypeError('Workspace package must contain only regular files and directories');
+    }
+  }
+  return files.toSorted();
 }
 
 function validateItem(value: unknown, variantId: string, workspaceId: string): WorkspaceImportItem {
@@ -316,19 +282,7 @@ function validateItem(value: unknown, variantId: string, workspaceId: string): W
 }
 
 function partialFromManifest(manifest: WorkspaceExportManifest): boolean {
-  const partialWarningCodes = new Set([
-    'COUNT_MISMATCH',
-    'DETAIL_FAILED',
-    'DUPLICATE_VARIANTS',
-    'OWNERSHIP_MISMATCH',
-    'PREMATURE_EMPTY_PAGE',
-  ]);
-  return (
-    manifest.failedVariantIds.length > 0 ||
-    manifest.rejectedVariantIds.length > 0 ||
-    manifest.exportedCount !== manifest.expectedCount ||
-    manifest.warnings.some(({ code }) => partialWarningCodes.has(code))
-  );
+  return manifest.completeness === 'partial';
 }
 
 function validateRelationships(items: readonly WorkspaceImportItem[]): void {
@@ -370,7 +324,20 @@ export async function loadWorkspaceExport(
   const canonicalSource = await realpath(sourceDirectory);
   const manifestFile = path.join(canonicalSource, 'manifest.json');
   const manifestBytes = await readStableRegularFile(manifestFile, 'manifest.json');
-  const manifest = validateManifest(parseJson(manifestBytes, 'manifest.json'));
+  const manifestValue = parseJson(manifestBytes, 'manifest.json');
+  assertWorkspaceExportManifest(manifestValue);
+  const manifest = manifestValue;
+  const packageFiles = await enumeratePackageFiles(canonicalSource, canonicalSource);
+  const expectedFiles = [
+    'manifest.json',
+    ...manifest.items.map(({ path: itemPath }) => itemPath),
+  ].toSorted();
+  if (JSON.stringify(packageFiles) !== JSON.stringify(expectedFiles)) {
+    throw new TypeError(
+      'Workspace package contains missing, substituted, or unlisted regular files',
+    );
+  }
+  const manifestItems = new Map(manifest.items.map((item_) => [item_.path, item_]));
   const seenFiles = new Set<string>();
   const seenIds = new Set<string>();
   const items: WorkspaceImportItem[] = [];
@@ -387,7 +354,15 @@ export async function loadWorkspaceExport(
     }
     seenIds.add(entry.variantId);
     seenFiles.add(normalized);
+    const declaredItem = manifestItems.get(entry.file);
+    if (declaredItem === undefined || declaredItem.kind !== 'cms.content') {
+      throw new TypeError(`Manifest entry ${entry.variantId} has no matching CMS content item`);
+    }
     const itemBytes = await readStableRegularFile(itemFile, `Item file for ${entry.variantId}`);
+    const actualSha256 = createHash('sha256').update(itemBytes).digest('hex');
+    if (actualSha256 !== declaredItem.sha256) {
+      throw new TypeError(`Item file for ${entry.variantId} failed SHA-256 verification`);
+    }
     items.push(
       validateItem(
         parseJson(itemBytes, `Item file for ${entry.variantId}`),
@@ -399,17 +374,6 @@ export async function loadWorkspaceExport(
   if (manifest.exportedCount !== manifest.entries.length) {
     throw new TypeError('manifest.exportedCount does not match manifest.entries.length');
   }
-  const itemDirectory = path.join(canonicalSource, 'items');
-  const itemDirectoryMetadata = await lstat(itemDirectory);
-  if (itemDirectoryMetadata.isSymbolicLink() || !itemDirectoryMetadata.isDirectory()) {
-    throw new TypeError('items must be a directory and not a symlink or reparse point');
-  }
-  const directoryEntries = await readdir(itemDirectory);
-  const actualFiles = directoryEntries.toSorted();
-  const expectedFiles = manifest.entries.map(({ variantId }) => `${variantId}.json`).toSorted();
-  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
-    throw new TypeError('items directory contains missing or substituted files');
-  }
   validateRelationships(items);
   const isPartial = partialFromManifest(manifest);
   if (isPartial && options.allowPartial !== true) {
@@ -418,6 +382,12 @@ export async function loadWorkspaceExport(
     );
   }
   return {
+    integrity: {
+      listedItemCount: manifest.items.length,
+      verifiedItemCount: manifest.items.length,
+      unlistedFileCount: 0,
+      verified: true,
+    },
     isPartial,
     items,
     manifest,
@@ -497,6 +467,63 @@ function createPayload(group: WorkspaceImportGroupPlan, rootFolderId: string): C
   return payload;
 }
 
+function rewriteCmsContentBodyReferences(
+  value: JsonValue,
+  replacements: ReadonlyMap<string, string>,
+): JsonValue {
+  if (Array.isArray(value)) {
+    return value.map((item_) => rewriteCmsContentBodyReferences(item_, replacements));
+  }
+  if (!isRecord(value)) return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item_]) => {
+      if (key === 'ref' && isRecord(item_) && nonemptyString(item_.contentKey)) {
+        const replacement = replacements.get(item_.contentKey);
+        return [key, replacement === undefined ? item_ : { ...item_, contentKey: replacement }];
+      }
+      return [key, rewriteCmsContentBodyReferences(item_ as JsonValue, replacements)];
+    }),
+  );
+}
+
+function rewriteItem(
+  item: WorkspaceImportItem,
+  replacements: ReadonlyMap<string, string>,
+): WorkspaceImportItem {
+  return {
+    ...item,
+    contentBody: rewriteCmsContentBodyReferences(item.contentBody, replacements) as JsonObject,
+  };
+}
+
+function cmsContentBodyReferenceKeys(
+  value: JsonValue,
+  sourceValues: ReadonlySet<string>,
+): Set<string> {
+  const references = new Set<string>();
+  if (Array.isArray(value)) {
+    for (const item_ of value) {
+      for (const key of cmsContentBodyReferenceKeys(item_, sourceValues)) references.add(key);
+    }
+    return references;
+  }
+  if (!isRecord(value)) return references;
+  if (
+    isRecord(value.ref) &&
+    nonemptyString(value.ref.contentKey) &&
+    sourceValues.has(value.ref.contentKey)
+  ) {
+    references.add(value.ref.contentKey);
+  }
+  for (const item_ of Object.values(value)) {
+    for (const key of cmsContentBodyReferenceKeys(item_ as JsonValue, sourceValues)) {
+      references.add(key);
+    }
+  }
+  return references;
+}
+
 function variantPayload(item: WorkspaceImportItem, contentKey: string): CreateVariantInput {
   const payload: CreateVariantInput = {
     contentBody: item.contentBody,
@@ -528,6 +555,37 @@ async function preflightConflicts(
       throw error;
     }
   }
+}
+
+function compareMappingIdentity(
+  left: WorkspaceImportMapping | WorkspaceImportReference,
+  right: WorkspaceImportMapping | WorkspaceImportReference,
+): number {
+  return `${left.kind}\u0000${left.referenceId}`.localeCompare(
+    `${right.kind}\u0000${right.referenceId}`,
+  );
+}
+
+function importContractResult(
+  source: LoadedWorkspaceExport,
+  destinationOrgId: string,
+  plan: WorkspaceImportPlan,
+  mappings: WorkspaceImportMapping[],
+  references: WorkspaceImportReference[],
+): WorkspaceImportContractResult {
+  return {
+    sourcePackage: {
+      manifestSha256: source.manifestSha256,
+      workspaceId: source.manifest.workspaceId,
+    },
+    target: {
+      orgId: destinationOrgId,
+      workspaceId: plan.destinationWorkspaceId,
+    },
+    integrity: source.integrity,
+    mappings: mappings.toSorted(compareMappingIdentity),
+    references: references.toSorted(compareMappingIdentity),
+  };
 }
 
 function jsonBytes(value: unknown): string {
@@ -648,17 +706,33 @@ async function persistOperationResult(
 
 export async function executeWorkspaceImport(
   options: ExecuteWorkspaceImportOptions,
-): Promise<WorkspaceImportResult> {
+): Promise<WorkspaceImportExecutionResult> {
   if (!nonemptyString(options.destinationOrgId)) {
     throw new TypeError('destinationOrgId must be the nonempty destination org ID');
   }
-  const source = await loadWorkspaceExport(options.sourceDirectory, {
-    allowPartial: options.allowPartial,
-  });
+  const source =
+    options.loadedSource ??
+    (await loadWorkspaceExport(options.sourceDirectory, {
+      allowPartial: options.allowPartial,
+    }));
   const plan = planWorkspaceImport(source, options.destinationWorkspace, options.workspaceId);
   const requestOptions = options.requestOptions ?? {};
   await preflightConflicts(options.connection, plan, requestOptions);
-  if (options.dryRun === true) return { dryRun: true, plan };
+  const references = source.manifest.externalReferences
+    .filter(({ resolution }) => resolution !== 'included')
+    .map<WorkspaceImportReference>(({ kind, referenceId, resolution }) => ({
+      referenceId,
+      kind,
+      status: resolution === 'unsupported' ? 'unsupported' : 'unresolved',
+    }))
+    .toSorted(compareMappingIdentity);
+  if (options.dryRun === true) {
+    return {
+      contractResult: importContractResult(source, options.destinationOrgId, plan, [], references),
+      dryRun: true,
+      plan,
+    };
+  }
   if (!nonemptyString(options.reportDirectory)) {
     throw new TypeError('reportDirectory is required for an applied import');
   }
@@ -676,10 +750,59 @@ export async function executeWorkspaceImport(
     state: 'applying',
   };
   const rewrite = options.reportPersistence?.rewrite ?? rewriteAtomic;
+  const mappings: WorkspaceImportMapping[] = [];
+  const includedReferences = new Map(
+    source.manifest.externalReferences
+      .filter(({ kind, resolution }) => kind === 'cms.content' && resolution === 'included')
+      .map((reference) => [reference.referenceId, reference]),
+  );
+  const referenceByVariantId = new Map(
+    source.manifest.items
+      .filter(({ referenceId }) => referenceId !== undefined)
+      .map((item_) => [
+        path.posix.basename(item_.path, '.json'),
+        includedReferences.get(item_.referenceId!),
+      ]),
+  );
+  const replacements = new Map<string, string>();
+  const sourceReferencesByValue = new Map(
+    [...includedReferences.values()].flatMap((reference) => [
+      [reference.source.sourceId, reference] as const,
+      [reference.portableKey.value, reference] as const,
+    ]),
+  );
+  const sourceReferenceValues = new Set(sourceReferencesByValue.keys());
+  const unresolvedMappingIds = new Set<string>();
   await writeExclusive(reportFile, report);
   try {
     for (const group of plan.groups) {
-      const parentPayload = createPayload(group, plan.rootFolderId);
+      const groupReferenceKeys = new Set<string>();
+      for (const item_ of [group.primary, ...group.variants]) {
+        for (const key of cmsContentBodyReferenceKeys(item_.contentBody, sourceReferenceValues)) {
+          groupReferenceKeys.add(key);
+        }
+      }
+      const hasUnknownRequiredMapping = [...groupReferenceKeys].some(
+        (key) => !replacements.has(key),
+      );
+      if (hasUnknownRequiredMapping) {
+        for (const key of groupReferenceKeys) {
+          if (!replacements.has(key)) {
+            const unresolvedReference = sourceReferencesByValue.get(key);
+            if (unresolvedReference !== undefined) {
+              unresolvedMappingIds.add(unresolvedReference.referenceId);
+            }
+          }
+        }
+      }
+      const rewrittenGroup = hasUnknownRequiredMapping
+        ? group
+        : {
+            ...group,
+            primary: rewriteItem(group.primary, replacements),
+            variants: group.variants.map((variant) => rewriteItem(variant, replacements)),
+          };
+      const parentPayload = createPayload(rewrittenGroup, plan.rootFolderId);
       const parentOperation = pendingOperation(
         report,
         'create-parent',
@@ -710,7 +833,43 @@ export async function executeWorkspaceImport(
         primaryVariantId: created.primaryVariantId,
       };
       await persistOperationResult(reportFile, report, parentOperation, rewrite);
-      for (const variant of group.variants) {
+      const reference = referenceByVariantId.get(group.primary.id);
+      if (reference !== undefined) {
+        replacements.set(reference.source.sourceId, created.contentId);
+        replacements.set(reference.portableKey.value, created.contentKey);
+        if (hasUnknownRequiredMapping) unresolvedMappingIds.add(reference.referenceId);
+        if (!hasUnknownRequiredMapping && !unresolvedMappingIds.has(reference.referenceId)) {
+          const outgoingPayloads: JsonValue[] = [
+            parentPayload as unknown as JsonValue,
+            ...rewrittenGroup.variants.map(
+              (variant) => variantPayload(variant, group.contentKey) as unknown as JsonValue,
+            ),
+          ];
+          const sourceIdentifiersRemain = outgoingPayloads.some(
+            (payload) => cmsContentBodyReferenceKeys(payload, sourceReferenceValues).size > 0,
+          );
+          if (sourceIdentifiersRemain) {
+            unresolvedMappingIds.add(reference.referenceId);
+          } else {
+            mappings.push({
+              referenceId: reference.referenceId,
+              kind: reference.kind,
+              source: {
+                sourceId: reference.source.sourceId,
+                portableKey: reference.portableKey,
+              },
+              target: {
+                targetId: created.contentId,
+                targetReference: created.contentKey,
+              },
+              operation: 'created',
+              status: 'resolved',
+              cmsReferencesRewritten: true,
+            });
+          }
+        }
+      }
+      for (const variant of rewrittenGroup.variants) {
         const childPayload = variantPayload(variant, group.contentKey);
         const childOperation = pendingOperation(
           report,
@@ -752,5 +911,27 @@ export async function executeWorkspaceImport(
     }
     throw error;
   }
-  return { dryRun: false, plan, report, reportFile };
+  for (const referenceId of unresolvedMappingIds) {
+    const reference = includedReferences.get(referenceId);
+    if (reference !== undefined) {
+      references.push({
+        referenceId,
+        kind: reference.kind,
+        status: 'unresolved',
+      });
+    }
+  }
+  return {
+    contractResult: importContractResult(
+      source,
+      options.destinationOrgId,
+      plan,
+      mappings,
+      references,
+    ),
+    dryRun: false,
+    plan,
+    report,
+    reportFile,
+  };
 }

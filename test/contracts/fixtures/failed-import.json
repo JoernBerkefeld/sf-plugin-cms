@@ -1,0 +1,31 @@
+{
+  "contract": "sf-cms-workspace-import",
+  "contractVersion": "1.0.0",
+  "status": "failed",
+  "metadata": {
+    "operation": "workspace.import",
+    "plugin": {
+      "name": "sf-plugin-cms",
+      "version": "0.3.0"
+    },
+    "apiVersion": "67.0"
+  },
+  "diagnostics": {
+    "warnings": [],
+    "errors": [
+      {
+        "code": "IMPORT_FAILED",
+        "message": "The workspace import did not produce a usable result.",
+        "retryable": false
+      }
+    ]
+  },
+  "provenance": {
+    "producer": "sf-plugin-cms",
+    "sourceOrgId": "00DTarget",
+    "pluginVersion": "0.3.0",
+    "command": "sf cms import workspace",
+    "generatedAt": "2026-09-13T18:00:00.000Z"
+  },
+  "result": null
+}

@@ -1,6 +1,7 @@
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ImportWorkspace from '../../src/commands/cms/import/workspace.js';
@@ -31,10 +32,17 @@ async function writeSource(root: string): Promise<string> {
     title: 'Command title',
     urlName: 'command-title',
   };
-  await writeFile(
-    path.join(source, 'items', 'source-variant.json'),
-    `${JSON.stringify(exported)}\n`,
-  );
+  const itemBytes = `${JSON.stringify(exported)}\n`;
+  await writeFile(path.join(source, 'items', 'source-variant.json'), itemBytes);
+  const referenceId = `ref:${createHash('sha256')
+    .update(
+      JSON.stringify({
+        kind: 'cms.content',
+        sourceId: 'command-key',
+        workspaceId: 'source-space',
+      }),
+    )
+    .digest('hex')}`;
   await writeFile(
     path.join(source, 'manifest.json'),
     `${JSON.stringify({
@@ -55,6 +63,36 @@ async function writeSource(root: string): Promise<string> {
       },
       warnings: [{ code: 'UNSUPPORTED_WILDCARD', message: 'provenance only' }],
       workspaceId: 'source-space',
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '1.0.0',
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: '00D-source',
+        sourceWorkspaceId: 'source-space',
+        pluginVersion: '0.3.0',
+        generatedAt: '2026-09-13T18:00:00.000Z',
+      },
+      completeness: 'complete',
+      dependencies: [],
+      externalReferences: [
+        {
+          referenceId,
+          owner: 'cms',
+          kind: 'cms.content',
+          source: { workspaceId: 'source-space', sourceId: 'command-key' },
+          portableKey: { scheme: 'cms-opaque-v1', value: 'command-key' },
+          required: true,
+          resolution: 'included',
+        },
+      ],
+      items: [
+        {
+          path: 'items/source-variant.json',
+          sha256: createHash('sha256').update(itemBytes).digest('hex'),
+          kind: 'cms.content',
+          referenceId,
+        },
+      ],
     })}\n`,
   );
   return source;
@@ -77,6 +115,7 @@ describe('CMS import workspace command', () => {
     expect(Object.keys(ImportWorkspace.flags)).to.have.members([
       'target-org',
       'api-version',
+      'contract-version',
       'workspace-id',
       'workspace-name',
       'source-dir',
@@ -110,12 +149,35 @@ describe('CMS import workspace command', () => {
       getOrgContext,
     });
 
-    try {
-      await command.run();
-      expect.fail('expected report directory validation failure');
-    } catch (error) {
-      expect((error as Error).message).to.include('--report-dir');
-    }
+    const result = await command.run();
+    expect(result).to.include({ status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'REPORT_DIRECTORY_REQUIRED' });
+    expect(getOrgContext.notCalled).to.equal(true);
+  });
+
+  it('blocks unsupported contract major before source or org access', async () => {
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    const getOrgContext = $$.SANDBOX.stub();
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': false,
+          apply: false,
+          'api-version': '67.0',
+          'contract-version': 2,
+          'source-dir': 'missing-source',
+          'target-org': 'mcnext-sdo',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.include({ status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'UNSUPPORTED_CONTRACT_VERSION' });
     expect(getOrgContext.notCalled).to.equal(true);
   });
 
@@ -149,6 +211,40 @@ describe('CMS import workspace command', () => {
     expect(getOrgContext.notCalled).to.equal(true);
   });
 
+  it('blocks contradictory complete packages before org access even with allow-partial', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
+    temporaryDirectories.push(root);
+    const source = await writeSource(root);
+    const manifestFile = path.join(source, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+    manifest.failedVariantIds = ['source-variant'];
+    await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    const getOrgContext = $$.SANDBOX.stub();
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': true,
+          apply: false,
+          'api-version': '67.0',
+          'source-dir': source,
+          'target-org': 'mcnext-sdo',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+    });
+
+    const result = await command.run();
+
+    expect(result).to.include({ status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+    expect(result.diagnostics.errors[0].message).to.include(
+      'contradicts authoritative incompleteness evidence',
+    );
+    expect(getOrgContext.notCalled).to.equal(true);
+  });
+
   it('validates a sound source before rejecting missing or combined destination selectors', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
     temporaryDirectories.push(root);
@@ -169,12 +265,10 @@ describe('CMS import workspace command', () => {
         }),
         getOrgContext,
       });
-      try {
-        await command.run();
-        expect.fail('expected selector failure');
-      } catch (error) {
-        expect((error as Error).message).to.include('exactly one');
-      }
+      const result = await command.run();
+      expect(result).to.include({ status: 'blocked', result: null });
+      expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+      expect(result.diagnostics.errors[0].message).to.include('exactly one');
       expect(getOrgContext.notCalled).to.equal(true);
     }
   });
@@ -185,10 +279,11 @@ describe('CMS import workspace command', () => {
     const source = await writeSource(root);
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/spaces?')) {
+        const page = Number(new URL(url, 'https://example.test').searchParams.get('page'));
         return fakeRequest({
-          currentPage: 0,
-          pageSize: 100,
-          spaces: [{ id: 'canonical-space', name: 'Destination' }],
+          currentPage: page,
+          pageSize: 250,
+          spaces: page === 0 ? [{ id: 'canonical-space', name: 'Destination' }] : [],
           total: 1,
         });
       }
@@ -220,9 +315,9 @@ describe('CMS import workspace command', () => {
 
     const result = await command.run();
 
-    expect(result.plan.destinationWorkspaceId).to.equal('canonical-space');
-    expect(result.plan.rootFolderId).to.equal('canonical-root');
-    expect(request.secondCall.args[0].url).to.equal('/connect/cms/spaces/canonical-space');
+    expect(result.result?.target.workspaceId).to.equal('canonical-space');
+    expect(result.status).to.equal('success');
+    expect(request.thirdCall.args[0].url).to.equal('/connect/cms/spaces/canonical-space');
   });
 
   for (const jsonEnabled of [false, true]) {
@@ -256,7 +351,8 @@ describe('CMS import workspace command', () => {
 
       const result = await command.run();
 
-      expect(result.dryRun).to.equal(true);
+      expect(result).to.include({ status: 'success' });
+      expect(result.result?.mappings).to.deep.equal([]);
       expect(request.callCount).to.equal(2);
       expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
       expect(jsonEnabled ? log.notCalled : log.callCount > 0).to.equal(true);
@@ -302,8 +398,17 @@ describe('CMS import workspace command', () => {
 
     const result = await command.run();
 
-    expect(result.dryRun).to.equal(false);
-    expect(result.report).to.include({ destinationOrgId: '00D-org', state: 'completed' });
+    expect(result).to.include({ status: 'success' });
+    expect(result.result?.mappings).to.have.length(1);
+    expect(result.result?.mappings[0]).to.include({
+      operation: 'created',
+      status: 'resolved',
+      cmsReferencesRewritten: true,
+    });
+    expect(result.result?.mappings[0].target).to.deep.equal({
+      targetId: 'content-id',
+      targetReference: 'command-key',
+    });
     expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
   });
 });

@@ -1,6 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import { getWorkspace, type CmsRecord } from '../../../services/read.js';
-import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../command-base.js';
+import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 export default class GetWorkspace extends CmsCommand<CmsRecord> {
   public static readonly summary = 'Get a Marketing Cloud CMS workspace.';

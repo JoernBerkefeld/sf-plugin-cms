@@ -1,24 +1,42 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import {
+  assertWorkspaceImportResult,
+  WORKSPACE_IMPORT_CONTRACT,
+  type WorkspaceImportResult,
+} from '../../../contracts/workspace-import.js';
+import {
+  assertCmsEnvelope,
+  sanitizeDiagnostics,
+  type CmsDiagnostic,
+  type CmsEnvelope,
+  type CmsStatus,
+} from '../../../contracts/shared.js';
+import {
   executeWorkspaceImport,
   loadWorkspaceExport,
-  type WorkspaceImportResult,
+  type LoadedWorkspaceExport,
+  type WorkspaceImportExecutionResult,
 } from '../../../services/import-workspace.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
-import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../command-base.js';
+import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
-export default class ImportWorkspace extends CmsCommand<WorkspaceImportResult> {
+export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImportResult>> {
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
     'Validates the source workspace export locally before any org request, selects one destination workspace by exact ID or exact case-sensitive name, checks every content key for conflicts, and defaults to a non-mutating dry run. Pass --apply with a new --report-dir to create content.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
-    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
     'api-version': apiVersionFlag,
+    'contract-version': Flags.integer({
+      default: 1,
+      min: 1,
+      summary: 'Machine contract major version (supported: 1).',
+    }),
     'workspace-id': Flags.string({ summary: 'Exact destination CMS workspace ID.' }),
     'workspace-name': Flags.string({ summary: 'Exact case-sensitive destination workspace name.' }),
     'source-dir': Flags.directory({
@@ -41,60 +59,155 @@ export default class ImportWorkspace extends CmsCommand<WorkspaceImportResult> {
     }),
   };
 
-  public async run(): Promise<WorkspaceImportResult> {
+  public async run(): Promise<CmsEnvelope<WorkspaceImportResult>> {
     const { flags } = await this.parse(ImportWorkspace);
+    const requestedVersion = flags['contract-version'] ?? 1;
+    if (requestedVersion !== 1) {
+      return this.finish(
+        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+          {
+            code: 'UNSUPPORTED_CONTRACT_VERSION',
+            message: `Contract major ${requestedVersion} is unsupported; supported major is 1.`,
+            retryable: false,
+          },
+        ]),
+      );
+    }
     if (flags.apply && flags['report-dir'] === undefined) {
-      throw new Error('--report-dir is required when --apply is set.');
+      return this.finish(
+        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+          {
+            code: 'REPORT_DIRECTORY_REQUIRED',
+            message: '--report-dir is required when --apply is set.',
+            retryable: false,
+          },
+        ]),
+      );
     }
 
-    // Reject malformed, unsafe, or disallowed partial packages before contacting the org.
-    await loadWorkspaceExport(flags['source-dir'], { allowPartial: flags['allow-partial'] });
-    const selector = {
-      workspaceId: flags['workspace-id'],
-      workspaceName: flags['workspace-name'],
-    };
-    assertWorkspaceSelector(selector);
+    let source: LoadedWorkspaceExport;
+    try {
+      source = await loadWorkspaceExport(flags['source-dir'], {
+        allowPartial: flags['allow-partial'],
+      });
+      assertWorkspaceSelector({
+        workspaceId: flags['workspace-id'],
+        workspaceName: flags['workspace-name'],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const packageVersionFailure =
+        /manifest contract\/version is unsupported|schemaVersion\/mode is unsupported/u.test(
+          message,
+        );
+      return this.finish(
+        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+          {
+            code: packageVersionFailure
+              ? 'UNSUPPORTED_PACKAGE_VERSION'
+              : 'PACKAGE_VALIDATION_FAILED',
+            message,
+            retryable: false,
+          },
+        ]),
+      );
+    }
 
     const { connection, orgId } = await this.getOrgContext(
       flags['target-org'],
       flags['api-version'],
     );
-    const selected = await resolveWorkspace(connection, selector);
-    const result = await executeWorkspaceImport({
-      allowPartial: flags['allow-partial'],
-      connection,
-      destinationOrgId: orgId,
-      destinationWorkspace: selected.workspace,
-      dryRun: !flags.apply,
-      reportDirectory: flags['report-dir'],
-      sourceDirectory: flags['source-dir'],
-      workspaceId: selected.id,
-    });
+    try {
+      const selected = await resolveWorkspace(connection, {
+        workspaceId: flags['workspace-id'],
+        workspaceName: flags['workspace-name'],
+      });
+      const execution = await executeWorkspaceImport({
+        allowPartial: flags['allow-partial'],
+        connection,
+        destinationOrgId: orgId,
+        destinationWorkspace: selected.workspace,
+        dryRun: !flags.apply,
+        loadedSource: source,
+        reportDirectory: flags['report-dir'],
+        sourceDirectory: flags['source-dir'],
+        workspaceId: selected.id,
+      });
+      const status: CmsStatus = source.isPartial ? 'partial' : 'success';
+      const result = envelope(status, flags['api-version'], orgId, execution.contractResult, []);
+      if (!this.jsonEnabled()) this.showPlan(execution, result);
+      return this.finish(result);
+    } catch (error) {
+      return this.finish(
+        envelope('failed', flags['api-version'], orgId, null, [
+          {
+            code: 'IMPORT_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            retryable: false,
+          },
+        ]),
+      );
+    }
+  }
 
-    if (!this.jsonEnabled()) this.showPlan(result);
+  private finish(result: CmsEnvelope<WorkspaceImportResult>): CmsEnvelope<WorkspaceImportResult> {
+    assertCmsEnvelope(result, assertWorkspaceImportResult);
+    if (result.status === 'success') process.exitCode = 0;
+    else if (result.status === 'partial') process.exitCode = 2;
+    else process.exitCode = 1;
     return result;
   }
 
-  private showPlan(result: WorkspaceImportResult): void {
-    const primaryCount = result.plan.groups.length;
-    const variantCount = result.plan.groups.reduce(
+  private showPlan(
+    execution: WorkspaceImportExecutionResult,
+    envelopeResult: CmsEnvelope<WorkspaceImportResult>,
+  ): void {
+    const primaryCount = execution.plan.groups.length;
+    const variantCount = execution.plan.groups.reduce(
       (count, group) => count + group.variants.length,
       0,
     );
-    this.log(`Mode: ${result.dryRun ? 'dry-run (no mutations)' : 'apply (create-only)'}`);
-    this.log(`Destination workspace: ${result.plan.destinationWorkspaceId}`);
-    this.log(`Destination root folder: ${result.plan.rootFolderId}`);
+    this.log(`Status: ${envelopeResult.status}`);
+    this.log(`Mode: ${execution.dryRun ? 'dry-run (no mutations)' : 'apply (create-only)'}`);
+    this.log(`Destination workspace: ${execution.plan.destinationWorkspaceId}`);
+    this.log(`Destination root folder: ${execution.plan.rootFolderId}`);
     this.log(`Planned new content: ${primaryCount} parent(s), ${variantCount} child variant(s)`);
-    for (const group of result.plan.groups) {
-      const childLanguages = group.variants.map(({ language }) => language).join(', ') || 'none';
-      this.log(
-        `- ${group.contentKey}: primary ${group.primary.language}; child languages ${childLanguages}`,
-      );
-    }
-    if (result.dryRun) {
+    this.log(`Resolved mappings: ${execution.contractResult.mappings.length}`);
+    this.log(
+      `Explicit unresolved/unsupported references: ${execution.contractResult.references.length}`,
+    );
+    if (execution.dryRun) {
       this.log('No content was created. Re-run with --apply and a new --report-dir to mutate.');
     } else {
-      this.log(`Run report: ${result.reportFile ?? ''}`);
+      this.log(`Run report: ${execution.reportFile ?? ''}`);
     }
   }
+}
+
+function envelope(
+  status: CmsStatus,
+  apiVersion: string,
+  orgId: string,
+  result: WorkspaceImportResult | null,
+  errors: CmsDiagnostic[],
+): CmsEnvelope<WorkspaceImportResult> {
+  return {
+    contract: WORKSPACE_IMPORT_CONTRACT,
+    contractVersion: '1.0.0',
+    status,
+    metadata: {
+      operation: 'workspace.import',
+      plugin: { name: 'sf-plugin-cms', version: '0.3.0' },
+      apiVersion,
+    },
+    diagnostics: { warnings: [], errors: sanitizeDiagnostics(errors, 'diagnostics.errors') },
+    provenance: {
+      producer: 'sf-plugin-cms',
+      sourceOrgId: orgId,
+      pluginVersion: '0.3.0',
+      command: 'sf cms import workspace',
+      generatedAt: new Date().toISOString(),
+    },
+    result,
+  };
 }

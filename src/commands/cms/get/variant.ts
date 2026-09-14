@@ -1,6 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import { getVariant, type CmsRecord } from '../../../services/read.js';
-import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../command-base.js';
+import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 export default class GetVariant extends CmsCommand<CmsRecord> {
   public static readonly summary = 'Get a CMS content variant.';

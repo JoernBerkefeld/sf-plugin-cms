@@ -24,8 +24,8 @@ function row(id: string, managedContentSpaceId = 'space') {
   return { id, managedContentSpaceId, type: 'ManagedContentVariantSearchResultRepresentation' };
 }
 
-function detail(id: string, workspaceId = 'space') {
-  return { contentSpace: { id: workspaceId }, id, value: `value-${id}` };
+function detail(id: string, workspaceId = 'space', overrides = {}) {
+  return { contentSpace: { id: workspaceId }, id, value: `value-${id}`, ...overrides };
 }
 
 function pageNumber(url: string): number {
@@ -72,7 +72,131 @@ describe('workspace export service', () => {
       { file: 'items/b.json', variantId: 'b' },
     ]);
     expect(result.manifest.warnings[0].code).to.equal('UNSUPPORTED_WILDCARD');
+    expect(result.manifest).to.include({
+      schemaVersion: 1,
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '1.0.0',
+      completeness: 'complete',
+    });
+    expect(result.manifest.items.map(({ path: itemPath }) => itemPath)).to.deep.equal([
+      'items/a.json',
+      'items/b.json',
+    ]);
+    expect(result.manifest.items.every(({ sha256 }) => /^[a-f\d]{64}$/u.test(sha256))).to.equal(
+      true,
+    );
+    expect(result.manifestSha256).to.match(/^[a-f\d]{64}$/u);
     expect(await readdir(path.join(destination, 'items'))).to.deep.equal(['a.json', 'b.json']);
+  });
+
+  it('inventories evidenced CMS content identity without inspecting unknown payload fields', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({ items: [row('variant-b'), row('variant-a')], total: 2 });
+      }
+      const id = decodeURIComponent(url.split('/').at(-1) ?? '');
+      return fakeRequest(
+        detail(id, 'space', {
+          contentId: 'content-1',
+          contentKey: 'Opaque/Key + Exact',
+          nestedUnknown: { linkedContentId: 'do-not-infer' },
+        }),
+      );
+    });
+
+    const { manifest } = await exportWorkspace({ request }, 'space', path.join(root, 'export'));
+
+    expect(manifest.completeness).to.equal('complete');
+    expect(manifest.externalReferences).to.have.length(1);
+    expect(manifest.externalReferences[0]).to.deep.include({
+      kind: 'cms.content',
+      source: { workspaceId: 'space', sourceId: 'content-1' },
+      portableKey: { scheme: 'cms-opaque-v1', value: 'Opaque/Key + Exact' },
+      resolution: 'included',
+    });
+    expect(manifest.dependencies).to.deep.equal([]);
+    expect(manifest.items.map(({ referenceId }) => referenceId)).to.deep.equal([
+      manifest.externalReferences[0].referenceId,
+      manifest.externalReferences[0].referenceId,
+    ]);
+    expect(JSON.stringify(manifest)).not.to.include('do-not-infer');
+  });
+
+  it('emits unsupported relationships only when relationship fields are encountered', async () => {
+    const referenceRoot = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-reference-'));
+    const request = sinon.stub().callsFake((request_: { url: string }) => {
+      if (request_.url.includes('/connect/cms/items/search')) {
+        return fakeRequest({ items: [row('with-reference')], total: 1 });
+      }
+      return fakeRequest(
+        detail('with-reference', 'space', {
+          contentId: 'content-1',
+          contentKey: 'key-1',
+          contentBody: {
+            bannerImage: { ref: { contentKey: 'key-2', type: 'imageReference' } },
+          },
+        }),
+      );
+    });
+
+    const { manifest } = await exportWorkspace(
+      { request },
+      'space',
+      path.join(referenceRoot, 'export'),
+    );
+
+    expect(manifest.completeness).to.equal('partial');
+    expect(manifest.dependencies).to.deep.equal([]);
+    expect(manifest.externalReferences).to.deep.include.members([
+      {
+        referenceId: manifest.externalReferences.find(({ kind }) => kind === 'cms.relationship')!
+          .referenceId,
+        owner: 'cms',
+        kind: 'cms.relationship',
+        resolution: 'unsupported',
+        source: { workspaceId: 'space', sourceId: 'with-reference' },
+        portableKey: { scheme: 'cms-opaque-v1', value: 'with-reference' },
+        required: true,
+      },
+    ]);
+    expect(manifest.warnings.map(({ code }) => code)).to.include('REFERENCE_UNSUPPORTED');
+    await rm(referenceRoot, { force: true, recursive: true });
+  });
+
+  it('marks ownership-ambiguous and identity-incomplete references explicitly', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({
+          items: [row('ambiguous-a'), row('ambiguous-b'), row('unresolved')],
+          total: 3,
+        });
+      }
+      const id = decodeURIComponent(url.split('/').at(-1) ?? '');
+      if (id === 'unresolved') return fakeRequest(detail(id, 'space', { contentKey: 'key-only' }));
+      return fakeRequest(
+        detail(id, 'space', {
+          contentId: id === 'ambiguous-a' ? 'content-a' : 'content-b',
+          contentKey: 'shared-key',
+        }),
+      );
+    });
+
+    const { manifest } = await exportWorkspace({ request }, 'space', path.join(root, 'export'));
+
+    expect(manifest.completeness).to.equal('partial');
+    expect(manifest.dependencies).to.deep.equal([]);
+    expect(manifest.externalReferences.every(({ kind }) => kind === 'cms.unknown')).to.equal(true);
+    expect(
+      manifest.externalReferences.filter(({ resolution }) => resolution === 'unsupported'),
+    ).to.have.length(2);
+    expect(
+      manifest.externalReferences.filter(({ resolution }) => resolution === 'unresolved'),
+    ).to.have.length(1);
+    expect(manifest.warnings.map(({ code }) => code)).to.include.members([
+      'REFERENCE_UNRESOLVED',
+      'REFERENCE_UNSUPPORTED',
+    ]);
+    expect(manifest.items.every(({ referenceId }) => referenceId === undefined)).to.equal(true);
   });
 
   it('reconstructs every multi-page search query and ignores nextPageUri', async () => {
@@ -198,6 +322,7 @@ describe('workspace export service', () => {
     const { manifest } = await exportWorkspace({ request }, 'space', path.join(root, 'export'));
 
     expect(manifest.failedVariantIds).to.deep.equal(['bad']);
+    expect(manifest.completeness).to.equal('partial');
     expect(manifest.entries).to.deep.equal([{ file: 'items/good.json', variantId: 'good' }]);
     expect(manifest.warnings.some(({ code }) => code === 'DETAIL_FAILED')).to.equal(true);
   });

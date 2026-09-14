@@ -1,6 +1,6 @@
 import { Org } from '@salesforce/core';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
-import type { CmsPage, CmsRecord } from '../../services/read.js';
+import type { CmsPage, CmsRecord } from './services/read.js';
 
 export const targetOrgFlag = Flags.string({
   char: 'o',
@@ -17,6 +17,9 @@ export const pageFlag = Flags.integer({ min: 0, summary: 'Zero-based page number
 export const pageSizeFlag = Flags.integer({ min: 1, summary: 'Maximum items requested per page.' });
 
 export abstract class CmsCommand<T> extends SfCommand<T> {
+  protected toSuccessJson(result: T): SfCommand.Json<T> {
+    return result as SfCommand.Json<T>;
+  }
   protected async getConnection(
     targetOrg: string,
     apiVersion: string,

@@ -1,0 +1,31 @@
+{
+  "contract": "sf-cms-workspace-export-set",
+  "contractVersion": "1.0.0",
+  "status": "blocked",
+  "metadata": {
+    "operation": "workspace.export.bulk",
+    "plugin": {
+      "name": "sf-plugin-cms",
+      "version": "0.3.0"
+    },
+    "apiVersion": "67.0"
+  },
+  "diagnostics": {
+    "warnings": [],
+    "errors": [
+      {
+        "code": "UNSUPPORTED_CONTRACT_VERSION",
+        "message": "Only contract major 1 is supported.",
+        "retryable": false
+      }
+    ]
+  },
+  "provenance": {
+    "producer": "sf-plugin-cms",
+    "sourceOrgId": "offline",
+    "pluginVersion": "0.3.0",
+    "command": "sf cms export workspace",
+    "generatedAt": "2026-09-13T18:00:00.000Z"
+  },
+  "result": null
+}

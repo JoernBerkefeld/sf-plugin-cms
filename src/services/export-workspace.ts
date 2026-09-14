@@ -1,11 +1,19 @@
 import type { Connection } from '@salesforce/core';
-import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  assertWorkspaceExportManifest,
+  WORKSPACE_EXPORT_MANIFEST_CONTRACT,
+  type WorkspaceExportManifest,
+} from '../contracts/workspace-export.js';
+export type { WorkspaceExportManifest } from '../contracts/workspace-export.js';
 import {
   getSelectedOperation,
   requestJson,
   type JsonRequestOptions,
 } from '../transport/json-request.js';
+import { inventoryExportReferences } from './export-references.js';
 import { getVariant, type CmsRecord } from './read.js';
 
 const PAGE_SIZE = 250;
@@ -18,6 +26,8 @@ export type WorkspaceExportWarning = {
     | 'DUPLICATE_VARIANTS'
     | 'OWNERSHIP_MISMATCH'
     | 'PREMATURE_EMPTY_PAGE'
+    | 'REFERENCE_UNRESOLVED'
+    | 'REFERENCE_UNSUPPORTED'
     | 'UNSUPPORTED_WILDCARD';
   message: string;
   variantIds?: string[];
@@ -28,29 +38,16 @@ export type WorkspaceExportEntry = {
   variantId: string;
 };
 
-export type WorkspaceExportManifest = {
-  schemaVersion: 1;
-  mode: 'experimental-best-effort';
-  workspaceId: string;
-  search: {
-    contentSpaceOrFolderIds: [string];
-    languages: ['All'];
-    pageSize: 250;
-    queryTerm: '*';
-  };
-  expectedCount: number;
-  foundCount: number;
-  exportedCount: number;
-  pagesRequested: number;
-  entries: WorkspaceExportEntry[];
-  rejectedVariantIds: string[];
-  failedVariantIds: string[];
-  warnings: WorkspaceExportWarning[];
-};
-
 export type ExportWorkspaceResult = {
   destination: string;
   manifest: WorkspaceExportManifest;
+  manifestSha256: string;
+};
+
+export type ExportWorkspaceOptions = JsonRequestOptions & {
+  sourceOrgId?: string;
+  pluginVersion?: string;
+  generatedAt?: string;
 };
 
 type RequestConnection = Pick<Connection, 'request'>;
@@ -93,6 +90,10 @@ function detailWorkspaceId(detail: CmsRecord): string | undefined {
 
 function jsonBytes(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sha256(bytes: string | Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
@@ -143,11 +144,41 @@ async function writeExclusive(path: string, value: unknown): Promise<void> {
   }
 }
 
+async function assertRegularPackageFiles(
+  root: string,
+  expectedPaths: ReadonlySet<string>,
+): Promise<void> {
+  const found = new Set<string>();
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute).split(path.sep).join('/');
+      const information = await lstat(absolute);
+      if (information.isSymbolicLink()) throw new Error(`Package entry is a symlink: ${relative}`);
+      if (information.isDirectory()) {
+        await visit(absolute);
+      } else if (information.isFile()) {
+        if (relative !== 'manifest.json') found.add(relative);
+      } else {
+        throw new Error(`Package entry is not a regular file or directory: ${relative}`);
+      }
+    }
+  };
+  await visit(root);
+  if (
+    found.size !== expectedPaths.size ||
+    [...found].some((itemPath) => !expectedPaths.has(itemPath))
+  ) {
+    throw new Error('Package regular files do not exactly match manifest items.');
+  }
+}
+
 export async function exportWorkspace(
   connection: RequestConnection,
   workspaceId: string,
   destination: string,
-  options: JsonRequestOptions = {},
+  options: ExportWorkspaceOptions = {},
 ): Promise<ExportWorkspaceResult> {
   if (!nonemptyString(workspaceId)) throw new TypeError('workspaceId must be a nonempty string');
   if (!nonemptyString(destination)) throw new TypeError('destination must be a nonempty string');
@@ -272,6 +303,23 @@ export async function exportWorkspace(
     file: `items/${variantId}.json`,
     variantId,
   }));
+  const referenceInventory = inventoryExportReferences(workspaceId, details);
+  warnings.push(...referenceInventory.warnings);
+  const completeness =
+    warnings.some(({ code }) => code !== 'UNSUPPORTED_WILDCARD') ||
+    rejected.size > 0 ||
+    failedIds.length > 0
+      ? 'partial'
+      : 'complete';
+  const manifestItems = entries.map((entry) => {
+    const referenceId = referenceInventory.itemReferenceIds.get(entry.variantId);
+    return {
+      path: entry.file,
+      sha256: sha256(jsonBytes(details.get(entry.variantId))),
+      kind: 'cms.content',
+      ...(referenceId === undefined ? {} : { referenceId }),
+    };
+  });
   const manifest: WorkspaceExportManifest = {
     schemaVersion: 1,
     mode: 'experimental-best-effort',
@@ -290,7 +338,21 @@ export async function exportWorkspace(
     rejectedVariantIds: [...rejected].toSorted(),
     failedVariantIds: failedIds.toSorted(),
     warnings,
+    contract: WORKSPACE_EXPORT_MANIFEST_CONTRACT,
+    contractVersion: '1.0.0',
+    provenance: {
+      producer: 'sf-plugin-cms',
+      sourceOrgId: options.sourceOrgId ?? 'unknown-org',
+      sourceWorkspaceId: workspaceId,
+      pluginVersion: options.pluginVersion ?? '0.3.0',
+      generatedAt: options.generatedAt ?? new Date().toISOString(),
+    },
+    completeness,
+    dependencies: referenceInventory.dependencies,
+    externalReferences: referenceInventory.externalReferences,
+    items: manifestItems,
   };
+  assertWorkspaceExportManifest(manifest);
 
   const parent = path.dirname(destination);
   await mkdir(parent, { recursive: true });
@@ -304,6 +366,7 @@ export async function exportWorkspace(
     for (const entry of entries) {
       await writeExclusive(path.join(temporary, entry.file), details.get(entry.variantId));
     }
+    await assertRegularPackageFiles(temporary, new Set(manifest.items.map(({ path }) => path)));
     await writeExclusive(path.join(temporary, 'manifest.json'), manifest);
     await rename(temporary, destination);
   } catch (error) {
@@ -311,5 +374,6 @@ export async function exportWorkspace(
     throw error;
   }
 
-  return { destination, manifest };
+  const manifestSha256 = sha256(await readFile(path.join(destination, 'manifest.json')));
+  return { destination, manifest, manifestSha256 };
 }

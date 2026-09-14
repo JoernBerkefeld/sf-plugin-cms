@@ -1,0 +1,83 @@
+{
+  "contract": "sf-cms-workspace-export-set",
+  "contractVersion": "1.0.0",
+  "status": "partial",
+  "metadata": {
+    "operation": "workspace.export.bulk",
+    "plugin": {
+      "name": "sf-plugin-cms",
+      "version": "0.3.0"
+    },
+    "apiVersion": "67.0"
+  },
+  "diagnostics": {
+    "warnings": [
+      {
+        "code": "UNRESOLVED_REFERENCE",
+        "message": "One CMS reference was not included.",
+        "scope": "0ZuSource",
+        "reference": "ref:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "retryable": false
+      }
+    ],
+    "errors": []
+  },
+  "provenance": {
+    "producer": "sf-plugin-cms",
+    "sourceOrgId": "00DSource",
+    "pluginVersion": "0.3.0",
+    "exportSetId": "export-set:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "command": "sf cms export workspace",
+    "generatedAt": "2026-09-13T18:00:00.000Z"
+  },
+  "result": {
+    "workspaceType": "Marketing",
+    "outputDirectory": "./cms",
+    "selection": {
+      "mode": "all",
+      "discoveredCount": 1,
+      "selectedCount": 1
+    },
+    "summary": {
+      "succeededCount": 0,
+      "partialCount": 1,
+      "failedCount": 0
+    },
+    "externalReferenceCorrelations": [
+      {
+        "sourceWorkspaceId": "0ZuSource",
+        "sourceReference": "  Opaque/Value%2FCase  ",
+        "referenceKind": "cms.content",
+        "referenceId": "ref:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageManifestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "workspaces": [
+      {
+        "source": {
+          "kind": "cms.workspace",
+          "sourceId": "0ZuSource",
+          "name": "Marketing Workspace",
+          "workspaceType": "Marketing"
+        },
+        "status": "partial",
+        "artifact": {
+          "path": "Marketing Workspace",
+          "manifestPath": "Marketing Workspace/manifest.json",
+          "manifestContract": "sf-cms-workspace-export",
+          "manifestContractVersion": "1.0.0",
+          "manifestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "diagnostics": {
+          "warnings": [
+            {
+              "code": "UNRESOLVED_REFERENCE",
+              "message": "One CMS reference was not included."
+            }
+          ],
+          "errors": []
+        }
+      }
+    ]
+  }
+}

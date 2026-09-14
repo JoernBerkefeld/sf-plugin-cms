@@ -1,0 +1,97 @@
+{
+  "contract": "sf-cms-info",
+  "contractVersion": "1.0.0",
+  "status": "success",
+  "metadata": {
+    "operation": "cms.info",
+    "plugin": {
+      "name": "sf-plugin-cms",
+      "version": "0.3.0"
+    },
+    "apiVersion": null
+  },
+  "diagnostics": {
+    "warnings": [],
+    "errors": []
+  },
+  "provenance": {
+    "producer": "sf-plugin-cms",
+    "sourceOrgId": "offline",
+    "pluginVersion": "0.3.0",
+    "command": "sf cms info",
+    "generatedAt": "2026-09-13T18:00:00.000Z"
+  },
+  "result": {
+    "plugin": {
+      "name": "sf-plugin-cms",
+      "version": "0.3.0"
+    },
+    "api": {
+      "defaultVersion": "67.0",
+      "testedVersions": [
+        "67.0"
+      ]
+    },
+    "contracts": {
+      "commandResults": {
+        "info": [
+          "1.0.0"
+        ],
+        "workspaceExportSet": [
+          "1.0.0"
+        ],
+        "workspaceImport": [
+          "1.0.0"
+        ]
+      },
+      "packageManifests": {
+        "workspaceExport": [
+          "1.0.0"
+        ]
+      },
+      "embeddedResults": {
+        "externalReferenceCorrelations": [
+          "sf-cms-external-reference-correlations@1"
+        ]
+      },
+      "compatibility": {
+        "workspaceExportSet@1": {
+          "workspaceExportManifestMajors": [
+            1
+          ]
+        },
+        "workspaceImport@1": {
+          "workspaceExportManifestMajors": [
+            1
+          ]
+        }
+      }
+    },
+    "capabilities": [
+      {
+        "id": "workspace.export.bulk",
+        "state": "implemented",
+        "transport": "cli-json",
+        "contract": "sf-cms-workspace-export-set@1"
+      },
+      {
+        "id": "workspace.export.dependency-closure",
+        "state": "unavailable",
+        "transport": "cli-json",
+        "contract": "unavailable"
+      },
+      {
+        "id": "workspace.export.external-reference-correlation",
+        "state": "experimental",
+        "transport": "cli-json",
+        "contract": "sf-cms-external-reference-correlations@1"
+      },
+      {
+        "id": "workspace.import.mapping",
+        "state": "experimental",
+        "transport": "cli-json",
+        "contract": "sf-cms-workspace-import@1"
+      }
+    ]
+  }
+}

@@ -6,7 +6,7 @@ import {
   pageFlag,
   pageSizeFlag,
   targetOrgFlag,
-} from '../command-base.js';
+} from '../../../command-base.js';
 
 export default class ListChannel extends CmsCommand<CmsPage> {
   public static readonly summary = 'List channels assigned to a CMS workspace.';

@@ -16,6 +16,6 @@ export {
   type WorkspaceImportGroupPlan,
   type WorkspaceImportItem,
   type WorkspaceImportPlan,
-  type WorkspaceImportResult,
+  type WorkspaceImportExecutionResult,
   type WorkspaceImportRunReport,
 } from './services/import-workspace.js';

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
 import ExportWorkspace from '../../src/commands/cms/export/workspace.js';
+import type { ExportWorkspaceResult } from '../../src/services/export-workspace.js';
 
 function fakeRequest<T>(value: T): Promise<T> & { stream(): { destroy(): void } } {
   return Object.assign(Promise.resolve(value), { stream: () => ({ destroy: () => {} }) });
@@ -14,6 +15,7 @@ describe('CMS export workspace command', () => {
   const temporaryDirectories: string[] = [];
 
   afterEach(async () => {
+    process.exitCode = undefined;
     $$.restore();
     await Promise.all(
       temporaryDirectories
@@ -26,14 +28,20 @@ describe('CMS export workspace command', () => {
     expect(Object.keys(ExportWorkspace.flags)).to.have.members([
       'target-org',
       'api-version',
+      'contract-version',
+      'all',
       'workspace-id',
       'workspace-name',
+      'workspace-type',
       'output-dir',
     ]);
     expect(ExportWorkspace.flags['target-org'].required).to.equal(true);
     expect(ExportWorkspace.flags['workspace-id'].required).not.to.equal(true);
     expect(ExportWorkspace.flags['workspace-name'].required).not.to.equal(true);
     expect(ExportWorkspace.flags['output-dir'].required).not.to.equal(true);
+    expect(ExportWorkspace.flags['contract-version'].default).to.equal(1);
+    expect(ExportWorkspace.flags.all.required).not.to.equal(true);
+    expect(ExportWorkspace.flags['workspace-type'].dependsOn).to.deep.equal(['all']);
     expect(ExportWorkspace.summary).to.match(/read-only.*best-effort/iu);
     expect(ExportWorkspace.description).to.match(
       /experimental.*not a complete or guaranteed backup/iu,
@@ -130,10 +138,11 @@ describe('CMS export workspace command', () => {
     temporaryDirectories.push(root);
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/spaces?')) {
+        const page = Number(new URL(url, 'https://example.test').searchParams.get('page'));
         return fakeRequest({
-          currentPage: 0,
-          pageSize: 100,
-          spaces: [{ id: 'space', name: 'Main/Site' }],
+          currentPage: page,
+          pageSize: 250,
+          spaces: page === 0 ? [{ id: 'space', name: 'Main/Site' }] : [],
           total: 1,
         });
       }
@@ -163,8 +172,9 @@ describe('CMS export workspace command', () => {
       process.chdir(previousCwd);
     }
 
-    expect(result.destination).to.equal(path.join('cms', 'Main_Site'));
-    await access(path.join(root, result.destination, 'manifest.json'));
+    const singleResult = result as ExportWorkspaceResult;
+    expect(singleResult.destination).to.equal(path.join('cms', 'Main_Site'));
+    await access(path.join(root, singleResult.destination, 'manifest.json'));
   });
 
   for (const jsonEnabled of [false, true]) {
@@ -208,8 +218,9 @@ describe('CMS export workspace command', () => {
 
       const result = await command.run();
 
-      expect(result.destination).to.equal(destination);
-      expect(result.manifest.exportedCount).to.equal(1);
+      const singleResult = result as ExportWorkspaceResult;
+      expect(singleResult.destination).to.equal(destination);
+      expect(singleResult.manifest.exportedCount).to.equal(1);
       expect(request.callCount).to.equal(3);
       expect(warn.calledOnce).to.equal(true);
       expect(warn.firstCall.args[0]).to.match(/^\[UNSUPPORTED_WILDCARD\]/u);
@@ -220,6 +231,89 @@ describe('CMS export workspace command', () => {
         expect(log.firstCall.args[0]).to.equal(`Destination: ${destination}`);
         expect(log.secondCall.args[0]).to.equal('Exported variants: 1/1 expected');
       }
+    });
+  }
+
+  for (const all of [false, true]) {
+    it(`blocks an unsupported ${all ? 'bulk' : 'single'} contract version before org access`, async () => {
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      const getOrgContext = $$.SANDBOX.stub();
+      const getConnection = $$.SANDBOX.stub();
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'target-org': 'mcnext-sdo',
+            'api-version': '67.0',
+            'contract-version': 2,
+            all,
+            'workspace-id': all ? undefined : '0ZuSource',
+          },
+        }),
+        getConnection,
+        getOrgContext,
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+
+      const result = await command.run();
+
+      expect('status' in result && result.status).to.equal('blocked');
+      expect('diagnostics' in result && result.diagnostics.errors[0].code).to.equal(
+        'UNSUPPORTED_CONTRACT_VERSION',
+      );
+      expect(getOrgContext.notCalled).to.equal(true);
+      expect(getConnection.notCalled).to.equal(true);
+      expect(process.exitCode).to.equal(1);
+    });
+  }
+
+  for (const jsonEnabled of [false, true]) {
+    it(`returns mixed bulk results in JSON=${jsonEnabled} mode and sets exitCode`, async () => {
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
+      temporaryDirectories.push(root);
+      const outputDirectory = path.join(root, 'cms');
+      const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/spaces?')) {
+          const page = Number(new URL(url, 'https://example.test').searchParams.get('page'));
+          return fakeRequest({
+            spaces:
+              page === 0
+                ? [
+                    { id: 'b', name: 'Second', spaceType: { apiName: 'marketing' } },
+                    { id: 'a', name: 'First', spaceType: { apiName: 'marketing' } },
+                  ]
+                : [],
+          });
+        }
+        if (url === '/connect/cms/spaces/a')
+          return fakeRequest({ id: 'a', name: 'First', spaceType: { apiName: 'marketing' } });
+        if (url === '/connect/cms/spaces/b')
+          return fakeRequest({ id: 'b', name: 'Second', spaceType: { apiName: 'marketing' } });
+        if (url.includes('contentSpaceOrFolderIds=a'))
+          return Promise.reject(new Error('first failed'));
+        return fakeRequest({ items: [], total: 0 });
+      });
+      const styledJSON = $$.SANDBOX.stub();
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'target-org': 'mcnext-sdo',
+            'api-version': '67.0',
+            all: true,
+            'output-dir': outputDirectory,
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DSource' }),
+        jsonEnabled: $$.SANDBOX.stub().returns(jsonEnabled),
+        styledJSON,
+      });
+
+      const result = await command.run();
+
+      expect('status' in result && result.status).to.equal('partial');
+      expect('result' in result && result.result?.summary.failedCount).to.equal(1);
+      expect(process.exitCode).to.equal(2);
+      expect(styledJSON.calledOnce).to.equal(!jsonEnabled);
     });
   }
 });

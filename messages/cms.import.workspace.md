@@ -12,13 +12,19 @@ Validates the source workspace export locally before any org request, selects on
 
   <%= config.bin %> <%= command.id %> --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source
 
-- Apply to an exact destination workspace ID and write a durable run report:
+- Apply to an exact destination workspace ID, select result major 1, and write a durable run report:
 
-  <%= config.bin %> <%= command.id %> --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report
+  <%= config.bin %> <%= command.id %> --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json
+
+JSON uses `sf-cms-workspace-import@1`. Package integrity and the independently declared manifest major are validated before org access. Exit 0 means success, 2 means partial with a usable result, and 1 means failed or blocked.
 
 # flags.target-org.summary
 
 Username or alias of the target Salesforce org.
+
+# flags.contract-version.summary
+
+Machine contract major version (supported: 1). Unsupported majors return a blocked contract envelope before package or org access.
 
 # flags.api-version.summary
 

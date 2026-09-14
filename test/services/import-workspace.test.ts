@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -42,7 +43,32 @@ function item(id: string, language = 'en', contentKey = 'key', overrides = {}) {
   };
 }
 
-function manifest(ids: readonly string[], overrides = {}) {
+function referenceId(sourceId: string): string {
+  return `ref:${createHash('sha256')
+    .update(JSON.stringify({ kind: 'cms.content', sourceId, workspaceId: 'source-space' }))
+    .digest('hex')}`;
+}
+
+function manifest(
+  exportedItems: readonly ReturnType<typeof item>[],
+  itemBytes: ReadonlyMap<string, string>,
+  overrides = {},
+) {
+  const ids = exportedItems.map(({ id }) => id);
+  const contentReferences = new Map<string, ReturnType<typeof item>>();
+  for (const exportedItem of exportedItems)
+    contentReferences.set(exportedItem.contentKey, exportedItem);
+  const externalReferences = [...contentReferences.values()]
+    .map((exportedItem) => ({
+      referenceId: referenceId(exportedItem.contentKey),
+      owner: 'cms',
+      kind: 'cms.content',
+      source: { workspaceId: 'source-space', sourceId: exportedItem.contentKey },
+      portableKey: { scheme: 'cms-opaque-v1', value: exportedItem.contentKey },
+      required: true,
+      resolution: 'included',
+    }))
+    .toSorted((left, right) => left.referenceId.localeCompare(right.referenceId));
   return {
     entries: ids.map((variantId) => ({ file: `items/${variantId}.json`, variantId })),
     expectedCount: ids.length,
@@ -61,6 +87,26 @@ function manifest(ids: readonly string[], overrides = {}) {
     },
     warnings: [{ code: 'UNSUPPORTED_WILDCARD', message: 'provenance only' }],
     workspaceId: 'source-space',
+    contract: 'sf-cms-workspace-export',
+    contractVersion: '1.0.0',
+    provenance: {
+      producer: 'sf-plugin-cms',
+      sourceOrgId: '00D-source',
+      sourceWorkspaceId: 'source-space',
+      pluginVersion: '0.3.0',
+      generatedAt: '2026-09-13T18:00:00.000Z',
+    },
+    completeness: 'complete',
+    dependencies: [],
+    externalReferences,
+    items: ids.map((id) => ({
+      path: `items/${id}.json`,
+      sha256: createHash('sha256')
+        .update(itemBytes.get(id) ?? '')
+        .digest('hex'),
+      kind: 'cms.content',
+      referenceId: referenceId(exportedItems.find((value) => value.id === id)!.contentKey),
+    })),
     ...overrides,
   };
 }
@@ -72,17 +118,15 @@ async function writeExport(
 ) {
   const source = path.join(root, 'source');
   await mkdir(path.join(source, 'items'), { recursive: true });
+  const itemBytes = new Map<string, string>();
   for (const value of items) {
-    await writeFile(path.join(source, 'items', `${value.id}.json`), `${JSON.stringify(value)}\n`);
+    const bytes = `${JSON.stringify(value)}\n`;
+    itemBytes.set(value.id, bytes);
+    await writeFile(path.join(source, 'items', `${value.id}.json`), bytes);
   }
   await writeFile(
     path.join(source, 'manifest.json'),
-    `${JSON.stringify(
-      manifest(
-        items.map(({ id }) => id),
-        manifestOverrides,
-      ),
-    )}\n`,
+    `${JSON.stringify(manifest(items, itemBytes, manifestOverrides))}\n`,
   );
   return source;
 }
@@ -144,15 +188,32 @@ describe('workspace import core', () => {
     expect(loaded.isPartial).to.equal(false);
     expect(loaded.items.map(({ id }) => id)).to.deep.equal(['primary', 'french']);
     expect(loaded.manifestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(loaded.integrity).to.deep.equal({
+      listedItemCount: 2,
+      verifiedItemCount: 2,
+      unlistedFileCount: 0,
+      verified: true,
+    });
   });
 
   for (const [name, overrides] of [
-    ['failed IDs', { failedVariantIds: ['failed'] }],
-    ['rejected IDs', { rejectedVariantIds: ['rejected'] }],
-    ['count mismatch', { expectedCount: 2 }],
-    ['count warning', { warnings: [{ code: 'COUNT_MISMATCH', message: 'partial' }] }],
-    ['ownership warning', { warnings: [{ code: 'OWNERSHIP_MISMATCH', message: 'partial' }] }],
-    ['detail warning', { warnings: [{ code: 'DETAIL_FAILED', message: 'partial' }] }],
+    ['failed IDs', { completeness: 'partial', failedVariantIds: ['failed'] }],
+    ['rejected IDs', { completeness: 'partial', rejectedVariantIds: ['rejected'] }],
+    ['count mismatch', { completeness: 'partial', expectedCount: 2 }],
+    [
+      'unresolved reference warning',
+      {
+        completeness: 'partial',
+        warnings: [{ code: 'REFERENCE_UNRESOLVED', message: 'partial' }],
+      },
+    ],
+    [
+      'unsupported reference warning',
+      {
+        completeness: 'partial',
+        warnings: [{ code: 'REFERENCE_UNSUPPORTED', message: 'partial' }],
+      },
+    ],
   ] as const) {
     it(`rejects ${name} by default and accepts it only with allowPartial`, async () => {
       const source = await writeExport(root, [item('primary')], overrides);
@@ -166,6 +227,42 @@ describe('workspace import core', () => {
       expect(loaded.isPartial).to.equal(true);
     });
   }
+
+  it('rejects contradictory complete manifests even with allowPartial', async () => {
+    for (const overrides of [
+      { failedVariantIds: ['failed'] },
+      { rejectedVariantIds: ['rejected'] },
+      { expectedCount: 2 },
+      { warnings: [{ code: 'COUNT_MISMATCH', message: 'incomplete' }] },
+      {
+        provenance: {
+          producer: 'sf-plugin-cms',
+          sourceOrgId: '00D-source',
+          sourceWorkspaceId: 'other-space',
+          pluginVersion: '0.3.0',
+          generatedAt: '2026-09-13T18:00:00.000Z',
+        },
+      },
+      {
+        externalReferences: [
+          {
+            referenceId: referenceId('key'),
+            owner: 'cms',
+            kind: 'cms.content',
+            source: { workspaceId: 'other-space', sourceId: 'key' },
+            portableKey: { scheme: 'cms-opaque-v1', value: 'key' },
+            required: true,
+            resolution: 'unresolved',
+          },
+        ],
+      },
+    ]) {
+      const caseRoot = await mkdtemp(path.join(root, 'contradictory-'));
+      const source = await writeExport(caseRoot, [item('primary')], overrides);
+      await expectRejected(loadWorkspaceExport(source));
+      await expectRejected(loadWorkspaceExport(source, { allowPartial: true }));
+    }
+  });
 
   it('rejects unsafe paths, separator IDs, duplicate mappings, and substituted files', async () => {
     const cases = [
@@ -203,8 +300,7 @@ describe('workspace import core', () => {
       expect.fail('expected missing-file rejection');
     } catch (error) {
       expect(error).to.be.instanceOf(TypeError);
-      expect((error as Error).message).to.include('is missing');
-      expect(((error as Error).cause as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      expect((error as Error).message).to.include('missing');
     }
 
     const extraRoot = await mkdtemp(path.join(root, 'extra-'));
@@ -268,6 +364,27 @@ describe('workspace import core', () => {
       }),
     );
     expect(request.callCount).to.equal(0);
+  });
+
+  it('rejects exact-byte item hash substitution before org access', async () => {
+    const source = await writeExport(root, [item('primary')]);
+    await writeFile(
+      path.join(source, 'items', 'primary.json'),
+      `${JSON.stringify(item('primary'))} \n`,
+    );
+    const request = sinon.stub();
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace(),
+        dryRun: true,
+        sourceDirectory: source,
+        workspaceId: 'destination-space',
+      }),
+    );
+    expect(request.notCalled).to.equal(true);
   });
 
   it('selects only the destination default language and rejects missing or ambiguous primaries', async () => {
@@ -336,6 +453,57 @@ describe('workspace import core', () => {
     expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
   });
 
+  it('emits no resolved mappings for dry-run and preserves explicit unsupported references', async () => {
+    const unsupportedReference = {
+      referenceId: `ref:${'a'.repeat(64)}`,
+      owner: 'cms',
+      kind: 'cms.unknown',
+      source: { workspaceId: 'source-space', sourceId: 'unknown-source' },
+      portableKey: { scheme: 'cms-opaque-v1', value: 'unknown-key' },
+      required: true,
+      resolution: 'unsupported',
+    };
+    const source = await writeExport(root, [item('primary')], {
+      completeness: 'partial',
+      externalReferences: [unsupportedReference],
+      dependencies: [],
+      items: [
+        {
+          path: 'items/primary.json',
+          sha256: createHash('sha256')
+            .update(`${JSON.stringify(item('primary'))}\n`)
+            .digest('hex'),
+          kind: 'cms.content',
+        },
+      ],
+      warnings: [
+        {
+          code: 'REFERENCE_UNSUPPORTED',
+          message: 'unsupported',
+          variantIds: ['primary'],
+        },
+      ],
+    });
+    const result = await executeWorkspaceImport({
+      allowPartial: true,
+      connection: { request: requestRouter() },
+      destinationOrgId: '00D-org-id',
+      destinationWorkspace: workspace(),
+      dryRun: true,
+      sourceDirectory: source,
+      workspaceId: 'destination-space',
+    });
+
+    expect(result.contractResult.mappings).to.deep.equal([]);
+    expect(result.contractResult.references).to.deep.equal([
+      {
+        referenceId: unsupportedReference.referenceId,
+        kind: 'cms.unknown',
+        status: 'unsupported',
+      },
+    ]);
+  });
+
   it('creates exact direct payloads and binds a durable report to org, workspace, and source', async () => {
     const source = await writeExport(root, [item('primary'), item('french', 'fr')]);
     const request = requestRouter();
@@ -369,6 +537,18 @@ describe('workspace import core', () => {
       title: 'fr title',
       urlName: 'fr-title',
     });
+    expect(result.contractResult.mappings).to.have.length(1);
+    expect(result.contractResult.mappings[0]).to.deep.include({
+      referenceId: referenceId('key'),
+      kind: 'cms.content',
+      operation: 'created',
+      status: 'resolved',
+      cmsReferencesRewritten: true,
+    });
+    expect(result.contractResult.mappings[0].target).to.deep.equal({
+      targetId: 'content-1',
+      targetReference: 'key',
+    });
     const report = JSON.parse(await readFile(result.reportFile!, 'utf8'));
     expect(report).to.include({
       destinationOrgId: '00D-org-id',
@@ -389,6 +569,82 @@ describe('workspace import core', () => {
     ]);
     const reportBytes = await readFile(result.reportFile!, 'utf8');
     expect(reportBytes.endsWith('\n')).to.equal(true);
+  });
+
+  it('touches only evidenced CMS contentBody ref.contentKey locations and requires payload proof', async () => {
+    const source = await writeExport(root, [
+      item('first', 'en', 'first-key', { apiName: 'first-api' }),
+      item('second', 'en', 'second-key', {
+        apiName: 'second-api',
+        contentBody: {
+          card: { ref: { contentKey: 'first-key', type: 'imageReference' } },
+          unrelated: 'first-key',
+        },
+        externalSource: { contentKey: 'first-key' },
+      }),
+    ]);
+    const request = requestRouter();
+
+    const result = await executeWorkspaceImport({
+      connection: { request },
+      destinationOrgId: '00D-org-id',
+      destinationWorkspace: workspace(),
+      reportDirectory: path.join(root, 'rewrite-report'),
+      sourceDirectory: source,
+      workspaceId: 'destination-space',
+    });
+
+    const mutations = request.getCalls().filter(({ args }) => args[0].method === 'POST');
+    expect(JSON.parse(mutations[1].args[0].body)).to.deep.include({
+      contentBody: {
+        card: { ref: { contentKey: 'first-key', type: 'imageReference' } },
+        unrelated: 'first-key',
+      },
+      externalSource: { contentKey: 'first-key' },
+    });
+    expect(result.contractResult.references).to.deep.equal([
+      {
+        referenceId: referenceId('second-key'),
+        kind: 'cms.content',
+        status: 'unresolved',
+      },
+    ]);
+    expect(result.contractResult.mappings).to.have.length(1);
+    expect(result.contractResult.mappings[0].referenceId).to.equal(referenceId('first-key'));
+  });
+
+  it('leaves forward references unresolved and preserves their exact outgoing payload', async () => {
+    const source = await writeExport(root, [
+      item('first', 'en', 'first-key', {
+        apiName: 'first-api',
+        contentBody: { card: { ref: { contentKey: 'second-key', type: 'imageReference' } } },
+      }),
+      item('second', 'en', 'second-key', { apiName: 'second-api' }),
+    ]);
+    const request = requestRouter();
+
+    const result = await executeWorkspaceImport({
+      connection: { request },
+      destinationOrgId: '00D-org-id',
+      destinationWorkspace: workspace(),
+      reportDirectory: path.join(root, 'forward-report'),
+      sourceDirectory: source,
+      workspaceId: 'destination-space',
+    });
+
+    const mutation = request.getCalls().find(({ args }) => args[0].method === 'POST');
+    expect(mutation).not.to.equal(undefined);
+    expect(JSON.parse(mutation!.args[0].body).contentBody).to.deep.equal({
+      card: { ref: { contentKey: 'second-key', type: 'imageReference' } },
+    });
+    expect(result.contractResult.references).to.deep.include({
+      referenceId: referenceId('second-key'),
+      kind: 'cms.content',
+      status: 'unresolved',
+    });
+    expect(
+      result.contractResult.mappings.some(({ referenceId: id }) => id === referenceId('first-key')),
+    ).to.equal(false);
   });
 
   it('accepts the live managed-content response identifier fields', async () => {

@@ -38,18 +38,18 @@ describe('workspace resolver', () => {
     expect(request.calledOnce).to.equal(true);
   });
 
-  it('scans every trustworthy page for an exact case-sensitive name before getting the selected ID', async () => {
+  it('scans until an empty page for an exact case-insensitive name before getting the selected ID', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/spaces?')) {
         const page = pageNumber(url);
         return fakeRequest({
           currentPage: page,
-          pageSize: 100,
+          pageSize: 250,
           spaces:
             page === 0
               ? [
-                  { id: 'wrong', name: 'main' },
-                  { id: 'chosen', name: 'Main' },
+                  { id: 'wrong', name: 'Elsewhere' },
+                  { id: 'chosen', name: 'MAIN' },
                 ]
               : [],
           total: 2,
@@ -61,14 +61,14 @@ describe('workspace resolver', () => {
     const result = await resolveWorkspace({ request }, { workspaceName: 'Main' });
 
     expect(result.id).to.equal('chosen');
-    expect(request.callCount).to.equal(2);
+    expect(request.callCount).to.equal(3);
     expect(request.firstCall.args[0].url).to.equal(
-      '/connect/cms/spaces?nameFragment=Main&page=0&pageSize=100',
+      '/connect/cms/spaces?nameFragment=Main&page=0&pageSize=250',
     );
   });
 
-  it('detects a duplicate exact name on a later page', async () => {
-    const pages = [[{ id: 'one', name: 'Main' }], [{ id: 'two', name: 'Main' }], []];
+  it('detects case-only duplicate names on a later page', async () => {
+    const pages = [[{ id: 'one', name: 'Main' }], [{ id: 'two', name: 'MAIN' }], []];
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
       const page = pageNumber(url);
       return fakeRequest({ currentPage: page, pageSize: 100, spaces: pages[page] });
@@ -113,6 +113,45 @@ describe('workspace resolver', () => {
       expect.fail('expected repeat rejection');
     } catch (error) {
       expect((error as Error).message).to.include('repeated');
+    }
+  });
+
+  it('rejects duplicate-only pages that make no progress', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+      fakeRequest({
+        spaces:
+          pageNumber(url) === 0
+            ? [{ id: 'one', name: 'Other' }]
+            : [
+                { id: 'one', name: 'Other' },
+                { id: 'one', name: 'Other' },
+              ],
+      }),
+    );
+    try {
+      await resolveWorkspace({ request }, { workspaceName: 'Main' });
+      expect.fail('expected no-progress rejection');
+    } catch (error) {
+      expect((error as Error).message).to.include('no progress');
+    }
+  });
+
+  it('rejects malformed and case-only ambiguous IDs', async () => {
+    for (const pages of [
+      [[{ name: 'Main' }]],
+      [[{ id: 'ABC', name: 'Other' }], [{ id: 'abc', name: 'Main' }]],
+    ]) {
+      const request = sinon
+        .stub()
+        .callsFake(({ url }: { url: string }) =>
+          fakeRequest({ spaces: pages[pageNumber(url)] ?? [] }),
+        );
+      try {
+        await resolveWorkspace({ request }, { workspaceName: 'Main' });
+        expect.fail('expected malformed/ambiguous ID rejection');
+      } catch (error) {
+        expect((error as Error).message).to.match(/malformed ID|differ only by case/iu);
+      }
     }
   });
 });
