@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,20 +15,10 @@ const harness = pathToFileURL(
     'contract-subprocess-harness.mjs',
   ),
 ).href;
-const sfExecutable =
-  process.platform === 'win32'
-    ? path.join(
-        process.env.APPDATA ?? '',
-        'npm',
-        'node_modules',
-        '@salesforce',
-        'cli',
-        'bin',
-        'run.js',
-      )
-    : 'sf';
-const sfPrefix = process.platform === 'win32' ? [sfExecutable] : [];
-const executable = process.platform === 'win32' ? process.execPath : sfExecutable;
+const sfExecutable = path.resolve('node_modules', '@salesforce', 'cli', 'bin', 'run.js');
+const sfPrefix = [sfExecutable];
+const executable = process.execPath;
+let isolatedDataDirectory: string;
 const envelopeKeys = [
   'contract',
   'contractVersion',
@@ -51,6 +43,7 @@ async function runSf(arguments_: string[], contractCase?: string): Promise<Proce
       env: {
         ...process.env,
         NO_COLOR: '1',
+        SF_DATA_DIR: isolatedDataDirectory,
         ...(contractCase === undefined
           ? {}
           : {
@@ -81,7 +74,22 @@ function parseEnvelope(result: ProcessResult): Record<string, unknown> {
 }
 
 describe('authoritative Salesforce CLI subprocess envelopes', function () {
-  this.timeout(60_000);
+  this.timeout(120_000);
+
+  before(async () => {
+    isolatedDataDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-cli-data-'));
+    await execFileAsync(executable, [...sfPrefix, 'plugins', 'link', '.', '--no-install'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, NO_COLOR: '1', SF_DATA_DIR: isolatedDataDirectory },
+      windowsHide: true,
+    });
+  });
+
+  after(async () => {
+    await rm(isolatedDataDirectory, { force: true, recursive: true });
+  });
+
   for (const [title, command, contractCase, expectedStatus, expectedExit] of [
     ['success', ['cms', 'info', '--json'], undefined, 'success', 0],
     [
