@@ -1,6 +1,16 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -9,6 +19,7 @@ import {
   executeWorkspaceImport,
   loadWorkspaceExport,
   planWorkspaceImport,
+  rewriteAtomic,
   WorkspaceImportOwnershipUncertainError,
   type LoadedWorkspaceExport,
 } from '../../src/services/import-workspace.js';
@@ -178,6 +189,156 @@ describe('workspace import core', () => {
 
   afterEach(async () => {
     await rm(root, { force: true, recursive: true });
+  });
+
+  it('retries transient Windows atomic replacement errors and cleans the sibling temp file', async () => {
+    const destination = path.join(root, 'workspace-import-run.json');
+    await writeFile(destination, 'old report\n');
+    const transient = Object.assign(new Error('scanner temporarily holds destination'), {
+      code: 'EPERM',
+    });
+    const renamePath = sinon.stub();
+    renamePath.onFirstCall().rejects(transient);
+    renamePath
+      .onSecondCall()
+      .rejects(Object.assign(new Error('destination still busy'), { code: 'EBUSY' }));
+    renamePath.onThirdCall().callsFake(async (source: string, target: string) => {
+      await rename(source, target);
+    });
+    const wait = sinon.stub().resolves();
+
+    await rewriteAtomic(
+      destination,
+      { state: 'completed' },
+      {
+        delay: wait,
+        platform: 'win32',
+        renamePath,
+      },
+    );
+
+    expect(wait.args).to.deep.equal([[10], [25]]);
+    expect(await readFile(destination, 'utf8')).to.equal('{\n  "state": "completed"\n}\n');
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.filter((name) => name.includes('.tmp-'))).to.deep.equal([]);
+  });
+
+  it('preserves permanent atomic replacement errors and cleans the sibling temp file', async () => {
+    const destination = path.join(root, 'workspace-import-run.json');
+    await writeFile(destination, 'old report\n');
+    const permanent = Object.assign(new Error('destination remains locked'), { code: 'EPERM' });
+    const renamePath = sinon.stub().rejects(permanent);
+    const wait = sinon.stub().resolves();
+
+    try {
+      await rewriteAtomic(
+        destination,
+        { state: 'completed' },
+        {
+          delay: wait,
+          platform: 'win32',
+          renamePath,
+        },
+      );
+      expect.fail('expected permanent rename failure');
+    } catch (error) {
+      expect(error).to.equal(permanent);
+    }
+
+    expect(renamePath.callCount).to.equal(4);
+    expect(wait.args).to.deep.equal([[10], [25], [50]]);
+    expect(await readFile(destination, 'utf8')).to.equal('old report\n');
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.filter((name) => name.includes('.tmp-'))).to.deep.equal([]);
+  });
+
+  it('preserves the original replacement error identity when temp cleanup fails', async () => {
+    const destination = path.join(root, 'workspace-import-run.json');
+    await writeFile(destination, 'old report\n');
+    const publicationError = Object.assign(new Error('replacement failed'), { code: 'EACCES' });
+    const cleanupError = Object.assign(new Error('cleanup failed'), { code: 'EPERM' });
+
+    try {
+      await rewriteAtomic(
+        destination,
+        { state: 'completed' },
+        {
+          platform: 'win32',
+          removePath: sinon.stub().rejects(cleanupError),
+          renamePath: sinon.stub().rejects(publicationError),
+        },
+      );
+      expect.fail('expected replacement failure');
+    } catch (error) {
+      expect(error).to.equal(publicationError);
+      expect((error as Error & { cleanupError?: unknown }).cleanupError).to.equal(cleanupError);
+    }
+
+    expect(await readFile(destination, 'utf8')).to.equal('old report\n');
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.some((name) => name.includes('.tmp-'))).to.equal(true);
+  });
+
+  it('preserves the primary error when cleanup diagnostics cannot be attached', async () => {
+    const destination = path.join(root, 'workspace-import-run.json');
+    await writeFile(destination, 'old report\n');
+    const publicationError = Object.assign(new Error('replacement failed'), { code: 'EACCES' });
+    Object.defineProperty(publicationError, 'cleanupError', {
+      configurable: false,
+      value: 'existing diagnostic',
+    });
+
+    try {
+      await rewriteAtomic(
+        destination,
+        { state: 'completed' },
+        {
+          removePath: sinon.stub().rejects(new Error('cleanup failed')),
+          renamePath: sinon.stub().rejects(publicationError),
+        },
+      );
+      expect.fail('expected replacement failure');
+    } catch (error) {
+      expect(error).to.equal(publicationError);
+      expect((error as Error & { cleanupError?: unknown }).cleanupError).to.equal(
+        'existing diagnostic',
+      );
+    }
+  });
+
+  it('does not retry non-Windows or unrelated atomic replacement errors', async () => {
+    const cases = [
+      { code: 'EPERM', platform: 'linux' as const },
+      { code: 'EACCES', platform: 'win32' as const },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const destination = path.join(root, `workspace-import-run-${index}.json`);
+      await writeFile(destination, 'old report\n');
+      const failure = Object.assign(new Error('rename failed'), { code: testCase.code });
+      const renamePath = sinon.stub().rejects(failure);
+      const wait = sinon.stub().resolves();
+
+      try {
+        await rewriteAtomic(
+          destination,
+          { state: 'completed' },
+          {
+            delay: wait,
+            platform: testCase.platform,
+            renamePath,
+          },
+        );
+        expect.fail('expected rename failure');
+      } catch (error) {
+        expect(error).to.equal(failure);
+      }
+
+      expect(renamePath.callCount).to.equal(1);
+      expect(wait.callCount).to.equal(0);
+      expect(await readFile(destination, 'utf8')).to.equal('old report\n');
+    }
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.filter((name) => name.includes('.tmp-'))).to.deep.equal([]);
   });
 
   it('loads a complete export and treats unsupported wildcard alone as non-partial', async () => {

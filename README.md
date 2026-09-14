@@ -6,7 +6,7 @@ Salesforce CLI commands for inspecting Marketing Cloud CMS resources, experiment
 
 ### Prerequisites
 
-- Node.js 20 through 24 (`>=20 <25`).
+- Node.js 22.19 or later, below Node.js 25 (`>=22.19 <25`).
 - The base Salesforce `sf` CLI.
 - A Salesforce org with access to the CMS resources you want to read.
 

@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20.x, 22.x, 24.x]
+        node: [22.19.0, 24.x]
     name: lint, build, and test with Node ${{ matrix.node }}
     steps:
       - uses: actions/checkout@v6
@@ -27,3 +27,29 @@ jobs:
       - run: npm run generate:check
       - run: npm run validate:package
       - run: npm pack --dry-run
+
+  atomic-publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: atomic no-clobber with Node 22.19 on ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.19.0
+      - run: npm ci --no-workspaces
+      - run: npm run compile
+      - run: npx mocha --loader=ts-node/esm --timeout 60000 --grep "rejects a real destination collision" test/services/export-workspace.test.ts
+
+  atomic-publish-musl:
+    runs-on: ubuntu-latest
+    container: node:22.19-alpine
+    name: atomic no-clobber with Node 22.19 on Linux musl
+    steps:
+      - uses: actions/checkout@v6
+      - run: npm ci --no-workspaces
+      - run: npm run compile
+      - run: npx mocha --loader=ts-node/esm --timeout 60000 --grep "rejects a real destination collision" test/services/export-workspace.test.ts

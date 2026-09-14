@@ -4,19 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   collectInstalledRuntimeNodes,
-  nodeRangeSupportsNode20,
+  nodeRangeSupportsRuntime,
   validateRuntimeDependencyTree,
   type DependencyNode,
 } from '../../scripts/runtime-dependency-validation.mjs';
 
 describe('packed runtime dependency validation', () => {
   it('evaluates Node engine ranges with semver', () => {
-    expect(nodeRangeSupportsNode20('>=18')).to.equal(true);
-    expect(nodeRangeSupportsNode20('>=20')).to.equal(true);
-    expect(nodeRangeSupportsNode20('^20.11.0 || >=22')).to.equal(false);
-    expect(nodeRangeSupportsNode20('>=22')).to.equal(false);
-    expect(nodeRangeSupportsNode20('<20')).to.equal(false);
-    expect(nodeRangeSupportsNode20('not a range')).to.equal(false);
+    expect(nodeRangeSupportsRuntime('>=18')).to.equal(true);
+    expect(nodeRangeSupportsRuntime('>=22')).to.equal(true);
+    expect(nodeRangeSupportsRuntime('>=22.19 <25')).to.equal(true);
+    expect(nodeRangeSupportsRuntime('>=24')).to.equal(false);
+    expect(nodeRangeSupportsRuntime('<22.19')).to.equal(false);
+    expect(nodeRangeSupportsRuntime('not a range')).to.equal(false);
   });
 
   it('traverses aliases, deduped paths, and cycles once', () => {
@@ -51,7 +51,7 @@ describe('packed runtime dependency validation', () => {
           optionalDependencies: { 'optional-native': '^1.0.0' },
         },
       );
-      const incompatiblePath = await writePackage(temporaryRoot, 'future-only', '1.2.3', '>=22');
+      const incompatiblePath = await writePackage(temporaryRoot, 'future-only', '1.2.3', '>=24');
       const baseTree = {
         problems: ['missing: optional-native@^1.0.0, required by @jsforce/jsforce-node@3.10.16'],
         dependencies: {
@@ -75,7 +75,7 @@ describe('packed runtime dependency validation', () => {
             'future-only': { path: incompatiblePath, version: '1.2.3' },
           },
         },
-        'future-only@1.2.3 has Node engine ">=22" excluding supported Node 20',
+        'future-only@1.2.3 has Node engine ">=24" excluding supported Node >=22.19 <25',
       );
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });

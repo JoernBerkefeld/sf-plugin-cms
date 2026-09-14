@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import semver from 'semver';
 
-const supportedNode20Range = '>=20 <21';
+const supportedNodeRange = '>=22.19 <25';
 
 export function collectInstalledRuntimeNodes(tree) {
   const nodes = [];
@@ -27,10 +27,10 @@ export function collectInstalledRuntimeNodes(tree) {
   return nodes;
 }
 
-export function nodeRangeSupportsNode20(range) {
+export function nodeRangeSupportsRuntime(range) {
   if (typeof range !== 'string' || range.trim() === '') return true;
   try {
-    return semver.subset(supportedNode20Range, range, { includePrerelease: true });
+    return semver.subset(supportedNodeRange, range, { includePrerelease: true });
   } catch {
     return false;
   }
@@ -48,9 +48,9 @@ export async function validateRuntimeDependencyTree(tree) {
     const engineRange = metadata.engines?.node;
     nodesByIdentity.set(identity, { metadata, node });
 
-    if (!nodeRangeSupportsNode20(engineRange)) {
+    if (!nodeRangeSupportsRuntime(engineRange)) {
       throw new Error(
-        `${identity} has Node engine ${JSON.stringify(engineRange)} excluding supported Node 20`,
+        `${identity} has Node engine ${JSON.stringify(engineRange)} excluding supported Node >=22.19 <25`,
       );
     }
   }
@@ -68,9 +68,9 @@ export async function validateRuntimeDependencyTree(tree) {
         `packed consumer resolved @jsforce/jsforce-node@${version}; expected exactly 3.10.16`,
       );
     }
-    if (!nodeRangeSupportsNode20(metadata.engines?.node)) {
+    if (!nodeRangeSupportsRuntime(metadata.engines?.node)) {
       throw new Error(
-        `@jsforce/jsforce-node@${version} has Node engine ${JSON.stringify(metadata.engines?.node)} excluding supported Node 20`,
+        `@jsforce/jsforce-node@${version} has Node engine ${JSON.stringify(metadata.engines?.node)} excluding supported Node >=22.19 <25`,
       );
     }
   }

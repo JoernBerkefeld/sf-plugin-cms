@@ -1,6 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertWorkspaceExportManifest,
@@ -14,6 +14,12 @@ import {
   type JsonRequestOptions,
 } from '../transport/json-request.js';
 import { getPluginVersion } from '../runtime-version.js';
+import {
+  cleanupOwnedPath,
+  publishDirectoryNoClobber,
+  type CleanupOptions,
+  type DirectoryPublishOptions,
+} from './atomic-publish.js';
 import { inventoryExportReferences } from './export-references.js';
 import { getVariant, type CmsRecord } from './read.js';
 
@@ -49,6 +55,10 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   sourceOrgId?: string;
   pluginVersion?: string;
   generatedAt?: string;
+  atomicPublish?: DirectoryPublishOptions &
+    CleanupOptions & {
+      readonly makeTemporaryDirectory?: typeof mkdtemp;
+    };
 };
 
 type RequestConnection = Pick<Connection, 'request'>;
@@ -357,22 +367,19 @@ export async function exportWorkspace(
 
   const parent = path.dirname(destination);
   await mkdir(parent, { recursive: true });
-  const temporary = path.join(
-    parent,
-    `.${path.basename(destination)}.tmp-${process.pid}-${Date.now()}`,
+  const temporary = await (options.atomicPublish?.makeTemporaryDirectory ?? mkdtemp)(
+    path.join(parent, `.${path.basename(destination)}.tmp-`),
   );
   try {
-    await mkdir(temporary);
     await mkdir(path.join(temporary, 'items'));
     for (const entry of entries) {
       await writeExclusive(path.join(temporary, entry.file), details.get(entry.variantId));
     }
     await assertRegularPackageFiles(temporary, new Set(manifest.items.map(({ path }) => path)));
     await writeExclusive(path.join(temporary, 'manifest.json'), manifest);
-    await rename(temporary, destination);
+    await publishDirectoryNoClobber(temporary, destination, options.atomicPublish);
   } catch (error) {
-    await rm(temporary, { force: true, recursive: true });
-    throw error;
+    await cleanupOwnedPath(temporary, error, options.atomicPublish);
   }
 
   const manifestSha256 = sha256(await readFile(path.join(destination, 'manifest.json')));

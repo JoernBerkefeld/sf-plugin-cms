@@ -17,13 +17,24 @@ const expectedRuntimeDependencies = {
   '@salesforce/core': '8.31.3',
   '@salesforce/sf-plugins-core': '12.2.0',
 };
+const expectedOptionalDependencies = {
+  '@skill-steward/rename-noreplace-darwin-arm64': '0.5.0-beta.1',
+  '@skill-steward/rename-noreplace-darwin-x64': '0.5.0-beta.1',
+  '@skill-steward/rename-noreplace-linux-arm64-gnu': '0.5.0-beta.1',
+  '@skill-steward/rename-noreplace-linux-arm64-musl': '0.5.0-beta.1',
+  '@skill-steward/rename-noreplace-linux-x64-gnu': '0.5.0-beta.1',
+  '@skill-steward/rename-noreplace-linux-x64-musl': '0.5.0-beta.1',
+};
 
 if (packageJson.type !== 'module') throw new Error('package must use ESM');
-if (packageJson.engines?.node !== '>=20 <25') throw new Error('unexpected Node engine');
+if (packageJson.engines?.node !== '>=22.19 <25') throw new Error('unexpected Node engine');
 for (const [name, version] of Object.entries(expectedRuntimeDependencies)) {
   if (packageJson.dependencies?.[name] !== version) {
     throw new Error(`unexpected ${name} runtime dependency`);
   }
+}
+if (JSON.stringify(packageJson.optionalDependencies) !== JSON.stringify(expectedOptionalDependencies)) {
+  throw new Error('unexpected optional native dependencies');
 }
 if (packageJson.overrides !== undefined) {
   throw new Error('published package must not depend on repository-root overrides');

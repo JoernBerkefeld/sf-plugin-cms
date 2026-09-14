@@ -1,8 +1,14 @@
 import type { Connection } from '@salesforce/core';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { JsonRequestOptions } from '../transport/json-request.js';
+import {
+  cleanupOwnedPath,
+  replaceFileByAtomicRename,
+  type AtomicPublishOptions,
+  type CleanupOptions,
+} from './atomic-publish.js';
 import { CmsRequestError } from '../transport/json-request.js';
 import {
   assertWorkspaceExportManifest,
@@ -601,14 +607,19 @@ async function writeExclusive(file: string, value: unknown): Promise<void> {
   }
 }
 
-async function rewriteAtomic(file: string, value: unknown): Promise<void> {
+type AtomicRewriteOptions = AtomicPublishOptions & CleanupOptions;
+
+export async function rewriteAtomic(
+  file: string,
+  value: unknown,
+  options: AtomicRewriteOptions = {},
+): Promise<void> {
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
   try {
     await writeExclusive(temporary, value);
-    await rename(temporary, file);
+    await replaceFileByAtomicRename(temporary, file, options);
   } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
+    await cleanupOwnedPath(temporary, error, options);
   }
 }
 

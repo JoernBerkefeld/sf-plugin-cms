@@ -12,7 +12,7 @@ export interface InstalledRuntimeNode extends DependencyNode {
 }
 
 export function collectInstalledRuntimeNodes(tree: DependencyNode): InstalledRuntimeNode[];
-export function nodeRangeSupportsNode20(range: unknown): boolean;
+export function nodeRangeSupportsRuntime(range: unknown): boolean;
 export function validateRuntimeDependencyTree(
   tree: DependencyNode,
 ): Promise<{ nodeCount: number; uniquePackageVersions: number }>;

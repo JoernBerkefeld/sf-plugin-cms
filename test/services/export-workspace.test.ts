@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/atomic-publish.js';
 import {
   defaultWorkspaceDestination,
   exportWorkspace,
@@ -372,6 +373,180 @@ describe('workspace export service', () => {
       `${JSON.stringify(manifest, null, 2)}\n`,
     );
     expect(JSON.stringify(manifest)).not.to.match(/token|timestamp/iu);
+  });
+
+  it('rejects a real destination collision without changing either directory', async () => {
+    const temporary = path.join(root, '.export.tmp-real');
+    const destination = path.join(root, 'export');
+    await mkdir(temporary);
+    await mkdir(destination);
+    await writeFile(path.join(temporary, 'temporary.txt'), 'temporary', 'utf8');
+    await writeFile(path.join(destination, 'destination.txt'), 'destination', 'utf8');
+
+    let publicationError: unknown;
+    try {
+      await publishDirectoryNoClobber(temporary, destination);
+      expect.fail('expected no-clobber collision');
+    } catch (error) {
+      publicationError = error;
+    }
+
+    expect(publicationError).to.be.instanceOf(Error);
+    expect(await readFile(path.join(destination, 'destination.txt'), 'utf8')).to.equal(
+      'destination',
+    );
+    expect(await readFile(path.join(temporary, 'temporary.txt'), 'utf8')).to.equal('temporary');
+
+    try {
+      await cleanupOwnedPath(temporary, publicationError);
+    } catch (error) {
+      expect(error).to.equal(publicationError);
+    }
+    expect(await readdir(root)).to.deep.equal(['export']);
+  });
+
+  it('leaves a destination that appears after preflight untouched', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const destination = path.join(root, 'export');
+    const collision = Object.assign(new Error('destination appeared'), { code: 'EEXIST' });
+    const publishPath = sinon.stub().callsFake(async () => {
+      await writeFile(destination, 'keep', 'utf8');
+      throw collision;
+    });
+
+    try {
+      await exportWorkspace({ request }, 'space', destination, {
+        atomicPublish: { publishPath },
+      });
+      expect.fail('expected no-clobber publication failure');
+    } catch (error) {
+      expect(error).to.equal(collision);
+    }
+
+    expect(await readFile(destination, 'utf8')).to.equal('keep');
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.filter((name) => name.includes('.tmp-'))).to.deep.equal([]);
+  });
+
+  it('does not clean a temp path when uniquely owned temp creation fails', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const destination = path.join(root, 'export');
+    const preexisting = path.join(root, '.export.tmp-preexisting');
+    await writeFile(preexisting, 'keep', 'utf8');
+    const setupError = Object.assign(new Error('temp allocation collision'), { code: 'EEXIST' });
+    const removePath = sinon.stub().resolves();
+
+    try {
+      await exportWorkspace({ request }, 'space', destination, {
+        atomicPublish: {
+          makeTemporaryDirectory: sinon.stub().rejects(setupError),
+          removePath,
+        },
+      });
+      expect.fail('expected temp allocation failure');
+    } catch (error) {
+      expect(error).to.equal(setupError);
+    }
+
+    expect(removePath.callCount).to.equal(0);
+    expect(await readFile(preexisting, 'utf8')).to.equal('keep');
+  });
+
+  it('retries transient Windows directory publication errors without deleting the destination', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const destination = path.join(root, 'export');
+    const transient = Object.assign(new Error('scanner temporarily holds directory'), {
+      code: 'EPERM',
+    });
+    const renamePath = sinon.stub();
+    renamePath.onFirstCall().rejects(transient);
+    renamePath
+      .onSecondCall()
+      .rejects(Object.assign(new Error('directory remains busy'), { code: 'EBUSY' }));
+    renamePath.onThirdCall().callsFake(async (source: string, target: string) => {
+      await rename(source, target);
+    });
+    const wait = sinon.stub().resolves();
+
+    const result = await exportWorkspace({ request }, 'space', destination, {
+      atomicPublish: { delay: wait, platform: 'win32', renamePath },
+    });
+
+    expect(result.manifestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(wait.args).to.deep.equal([[10], [25]]);
+    expect(renamePath.alwaysCalledWith(sinon.match.string, destination)).to.equal(true);
+    expect(await readdir(root)).to.deep.equal(['export']);
+  });
+
+  it('preserves permanent directory publication errors and cleans its sibling temp directory', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const destination = path.join(root, 'export');
+    const permanent = Object.assign(new Error('directory remains locked'), { code: 'EPERM' });
+    const renamePath = sinon.stub().rejects(permanent);
+    const wait = sinon.stub().resolves();
+
+    try {
+      await exportWorkspace({ request }, 'space', destination, {
+        atomicPublish: { delay: wait, platform: 'win32', renamePath },
+      });
+      expect.fail('expected permanent rename failure');
+    } catch (error) {
+      expect(error).to.equal(permanent);
+    }
+
+    expect(renamePath.callCount).to.equal(4);
+    expect(wait.args).to.deep.equal([[10], [25], [50]]);
+    expect(await readdir(root)).to.deep.equal([]);
+  });
+
+  it('preserves the original publication error identity when temp cleanup fails', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const destination = path.join(root, 'export');
+    const publicationError = Object.assign(new Error('publication failed'), { code: 'EACCES' });
+    const cleanupError = Object.assign(new Error('cleanup failed'), { code: 'EPERM' });
+
+    try {
+      await exportWorkspace({ request }, 'space', destination, {
+        atomicPublish: {
+          platform: 'win32',
+          publishPath: sinon.stub().rejects(publicationError),
+          removePath: sinon.stub().rejects(cleanupError),
+        },
+      });
+      expect.fail('expected publication failure');
+    } catch (error) {
+      expect(error).to.equal(publicationError);
+      expect((error as Error & { cleanupError?: unknown }).cleanupError).to.equal(cleanupError);
+    }
+
+    const remainingFiles = await readdir(root);
+    expect(remainingFiles.some((name) => name.includes('.tmp-'))).to.equal(true);
+  });
+
+  it('does not retry unrelated or non-Windows directory publication errors', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const cases = [
+      { code: 'EPERM', platform: 'linux' as const },
+      { code: 'EACCES', platform: 'win32' as const },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const destination = path.join(root, `export-${index}`);
+      const failure = Object.assign(new Error('rename failed'), { code: testCase.code });
+      const renamePath = sinon.stub().rejects(failure);
+      const wait = sinon.stub().resolves();
+      try {
+        await exportWorkspace({ request }, 'space', destination, {
+          atomicPublish: { delay: wait, platform: testCase.platform, renamePath },
+        });
+        expect.fail('expected rename failure');
+      } catch (error) {
+        expect(error).to.equal(failure);
+      }
+      expect(renamePath.callCount).to.equal(1);
+      expect(wait.callCount).to.equal(0);
+    }
+    expect(await readdir(root)).to.deep.equal([]);
   });
 
   it('cleans the temporary directory and never publishes after a write failure', async () => {
