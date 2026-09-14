@@ -1,6 +1,7 @@
 import { TestContext } from '@salesforce/core/testSetup';
 import { stubSfCommandUx } from '@salesforce/sf-plugins-core';
 import { expect } from 'chai';
+import packageJson from '../../../package.json' with { type: 'json' };
 import Info from '../../../src/commands/cms/info.js';
 
 describe('cms info', () => {
@@ -31,7 +32,10 @@ describe('cms info', () => {
       expect(result.status).to.equal('success');
       expect(result.metadata).to.deep.include({ operation: 'cms.info', apiVersion: null });
       expect(result.provenance.sourceOrgId).to.equal('offline');
-      expect(result.result?.plugin).to.deep.equal({ name: 'sf-plugin-cms', version: '0.3.0' });
+      expect(result.result?.plugin).to.deep.equal({
+        name: packageJson.name,
+        version: packageJson.version,
+      });
       expect(result.result?.api).to.deep.equal({
         defaultVersion: '67.0',
         testedVersions: ['67.0'],

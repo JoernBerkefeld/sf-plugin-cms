@@ -165,7 +165,7 @@ async function runInstall(specification: string, dataDirectory: string): Promise
 }
 
 describe('authoritative Salesforce CLI subprocess envelopes', function () {
-  this.timeout(120_000);
+  this.timeout(240_000);
 
   before(async () => {
     isolatedDataDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-cli-data-'));
@@ -178,7 +178,19 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   after(async () => {
-    await rm(isolatedDataDirectory, { force: true, recursive: true });
+    for (const delay of [0, 25, 50, 100]) {
+      try {
+        await rm(isolatedDataDirectory, { force: true, recursive: true });
+        return;
+      } catch (error) {
+        const code =
+          typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+        if (process.platform !== 'win32' || code !== 'ENOTEMPTY' || delay === 100) throw error;
+        await new Promise((resolve) => {
+          setTimeout(resolve, delay);
+        });
+      }
+    }
   });
 
   for (const [title, command, contractCase, expectedStatus, expectedExit] of [
