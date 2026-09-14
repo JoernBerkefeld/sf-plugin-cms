@@ -13,6 +13,7 @@ import {
   requestJson,
   type JsonRequestOptions,
 } from '../transport/json-request.js';
+import { getPluginVersion } from '../runtime-version.js';
 import { inventoryExportReferences } from './export-references.js';
 import { getVariant, type CmsRecord } from './read.js';
 
@@ -344,7 +345,7 @@ export async function exportWorkspace(
       producer: 'sf-plugin-cms',
       sourceOrgId: options.sourceOrgId ?? 'unknown-org',
       sourceWorkspaceId: workspaceId,
-      pluginVersion: options.pluginVersion ?? '0.3.0',
+      pluginVersion: options.pluginVersion ?? getPluginVersion(),
       generatedAt: options.generatedAt ?? new Date().toISOString(),
     },
     completeness,

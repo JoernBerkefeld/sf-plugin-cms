@@ -102,7 +102,12 @@ describe('CMS import workspace command', () => {
   const $$ = new TestContext();
   const temporaryDirectories: string[] = [];
 
+  beforeEach(() => {
+    process.exitCode = undefined;
+  });
+
   afterEach(async () => {
+    process.exitCode = undefined;
     $$.restore();
     await Promise.all(
       temporaryDirectories
@@ -396,9 +401,11 @@ describe('CMS import workspace command', () => {
       log: $$.SANDBOX.stub(),
     });
 
+    process.exitCode = 2;
     const result = await command.run();
 
     expect(result).to.include({ status: 'success' });
+    expect(process.exitCode).to.equal(0);
     expect(result.result?.mappings).to.have.length(1);
     expect(result.result?.mappings[0]).to.include({
       operation: 'created',

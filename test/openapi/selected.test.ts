@@ -24,7 +24,7 @@ describe('selected OpenAPI operations', () => {
         operationId: 'deleteManagedContentVariant',
       },
     ]);
-    expect(mutations.some(({ method }) => method === 'PUT')).to.equal(false);
+    expect(mutations.some(({ method }) => String(method) === 'PUT')).to.equal(false);
     expect(mutations.some(({ operationId }) => /publish|unpublish/iu.test(operationId))).to.equal(
       false,
     );

@@ -5,7 +5,6 @@ import {
   type WorkspaceImportResult,
 } from '../../../contracts/workspace-import.js';
 import {
-  assertCmsEnvelope,
   sanitizeDiagnostics,
   type CmsDiagnostic,
   type CmsEnvelope,
@@ -64,7 +63,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     const requestedVersion = flags['contract-version'] ?? 1;
     if (requestedVersion !== 1) {
       return this.finish(
-        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+        envelope('blocked', flags['api-version'], 'unresolved-org', this.pluginVersion, null, [
           {
             code: 'UNSUPPORTED_CONTRACT_VERSION',
             message: `Contract major ${requestedVersion} is unsupported; supported major is 1.`,
@@ -75,7 +74,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     }
     if (flags.apply && flags['report-dir'] === undefined) {
       return this.finish(
-        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+        envelope('blocked', flags['api-version'], 'unresolved-org', this.pluginVersion, null, [
           {
             code: 'REPORT_DIRECTORY_REQUIRED',
             message: '--report-dir is required when --apply is set.',
@@ -101,7 +100,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
           message,
         );
       return this.finish(
-        envelope('blocked', flags['api-version'], 'unresolved-org', null, [
+        envelope('blocked', flags['api-version'], 'unresolved-org', this.pluginVersion, null, [
           {
             code: packageVersionFailure
               ? 'UNSUPPORTED_PACKAGE_VERSION'
@@ -134,12 +133,19 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         workspaceId: selected.id,
       });
       const status: CmsStatus = source.isPartial ? 'partial' : 'success';
-      const result = envelope(status, flags['api-version'], orgId, execution.contractResult, []);
+      const result = envelope(
+        status,
+        flags['api-version'],
+        orgId,
+        this.pluginVersion,
+        execution.contractResult,
+        [],
+      );
       if (!this.jsonEnabled()) this.showPlan(execution, result);
       return this.finish(result);
     } catch (error) {
       return this.finish(
-        envelope('failed', flags['api-version'], orgId, null, [
+        envelope('failed', flags['api-version'], orgId, this.pluginVersion, null, [
           {
             code: 'IMPORT_FAILED',
             message: error instanceof Error ? error.message : String(error),
@@ -151,11 +157,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   }
 
   private finish(result: CmsEnvelope<WorkspaceImportResult>): CmsEnvelope<WorkspaceImportResult> {
-    assertCmsEnvelope(result, assertWorkspaceImportResult);
-    if (result.status === 'success') process.exitCode = 0;
-    else if (result.status === 'partial') process.exitCode = 2;
-    else process.exitCode = 1;
-    return result;
+    return this.finishEnvelope(result, assertWorkspaceImportResult);
   }
 
   private showPlan(
@@ -188,6 +190,7 @@ function envelope(
   status: CmsStatus,
   apiVersion: string,
   orgId: string,
+  pluginVersion: string,
   result: WorkspaceImportResult | null,
   errors: CmsDiagnostic[],
 ): CmsEnvelope<WorkspaceImportResult> {
@@ -197,14 +200,14 @@ function envelope(
     status,
     metadata: {
       operation: 'workspace.import',
-      plugin: { name: 'sf-plugin-cms', version: '0.3.0' },
+      plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       apiVersion,
     },
     diagnostics: { warnings: [], errors: sanitizeDiagnostics(errors, 'diagnostics.errors') },
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: orgId,
-      pluginVersion: '0.3.0',
+      pluginVersion,
       command: 'sf cms import workspace',
       generatedAt: new Date().toISOString(),
     },

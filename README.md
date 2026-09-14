@@ -285,13 +285,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.3.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.3.1 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. Dependency discovery and closure are unavailable in v0.3.0: exports preserve only evidenced opaque identity inventory and do not expose dependency edges. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.3.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. Dependency discovery and closure are unavailable in v0.3.1: exports preserve only evidenced opaque identity inventory and do not expose dependency edges. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.3.1; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -304,14 +304,14 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "status": "success",
   "metadata": {
     "operation": "<cms.info|workspace.export.bulk|workspace.import>",
-    "plugin": { "name": "sf-plugin-cms", "version": "0.3.0" },
+    "plugin": { "name": "sf-plugin-cms", "version": "0.3.1" },
     "apiVersion": "67.0"
   },
   "diagnostics": { "warnings": [], "errors": [] },
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "<org-id-or-offline>",
-    "pluginVersion": "0.3.0",
+    "pluginVersion": "0.3.1",
     "command": "sf cms <operation>",
     "generatedAt": "<ISO-8601>"
   },
@@ -328,7 +328,7 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.3.0 does not discover or traverse CMS relationships.
+- `workspace.export.dependency-closure` — `unavailable`; v0.3.1 does not discover or traverse CMS relationships.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.
 

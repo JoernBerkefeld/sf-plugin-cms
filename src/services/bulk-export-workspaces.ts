@@ -19,6 +19,7 @@ import {
   type WorkspaceExportSetResult,
 } from '../contracts/workspace-export.js';
 import type { JsonRequestOptions } from '../transport/json-request.js';
+import { getPluginVersion } from '../runtime-version.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { exportWorkspace, safeWorkspaceDirectoryName } from './export-workspace.js';
 import { getWorkspace, type CmsRecord } from './read.js';
@@ -185,7 +186,7 @@ export async function exportAllWorkspaces(
   options: BulkWorkspaceExportOptions = {},
 ): Promise<CmsEnvelope<WorkspaceExportSetResult>> {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
-  const pluginVersion = options.pluginVersion ?? '0.3.0';
+  const pluginVersion = options.pluginVersion ?? getPluginVersion();
   const sourceOrgId = options.sourceOrgId ?? 'unknown-org';
   const preflight = await preflightBulkWorkspaceExport(
     connection,

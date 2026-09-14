@@ -66,10 +66,9 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     const isBulk = flags.all === true;
     const contractVersion = flags['contract-version'] ?? 1;
     if (contractVersion !== 1) {
-      const blocked = blockedEnvelope(contractVersion, flags['api-version']);
+      const blocked = blockedEnvelope(contractVersion, flags['api-version'], this.pluginVersion);
       if (!this.jsonEnabled()) this.styledJSON(blocked);
-      process.exitCode = 1;
-      return blocked;
+      return this.finishEnvelope(blocked, assertWorkspaceExportSetResult);
     }
     if (isBulk) assertSupportedMajor(contractVersion);
     if (!isBulk) {
@@ -94,16 +93,12 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         workspaceType,
         {
           apiVersion: flags['api-version'],
-          pluginVersion: '0.3.0',
+          pluginVersion: this.pluginVersion,
           sourceOrgId: orgId,
         },
       );
-      assertWorkspaceExportSetResult(result.result, result.provenance);
       if (!this.jsonEnabled()) this.styledJSON(result);
-      if (result.status === 'success') process.exitCode = 0;
-      else if (result.status === 'partial') process.exitCode = 2;
-      else process.exitCode = 1;
-      return result;
+      return this.finishEnvelope(result, assertWorkspaceExportSetResult);
     }
 
     const connection = await this.getConnection(flags['target-org'], flags['api-version']);
@@ -119,7 +114,9 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       }
       destination = defaultWorkspaceDestination(workspaceName);
     }
-    const result = await exportWorkspace(connection, selected.id, destination);
+    const result = await exportWorkspace(connection, selected.id, destination, {
+      pluginVersion: this.pluginVersion,
+    });
     for (const warning of result.manifest.warnings) this.warn(formatWarning(warning));
 
     if (!this.jsonEnabled()) {
@@ -136,6 +133,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
 function blockedEnvelope(
   requestedVersion: number,
   apiVersion: string,
+  pluginVersion: string,
 ): CmsEnvelope<WorkspaceExportSetResult> {
   return {
     contract: 'sf-cms-workspace-export-set',
@@ -143,7 +141,7 @@ function blockedEnvelope(
     status: 'blocked',
     metadata: {
       operation: 'workspace.export.bulk',
-      plugin: { name: 'sf-plugin-cms', version: '0.3.0' },
+      plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       apiVersion,
     },
     diagnostics: {
@@ -159,7 +157,7 @@ function blockedEnvelope(
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: 'unresolved-org',
-      pluginVersion: '0.3.0',
+      pluginVersion,
       command: 'sf cms export workspace',
       generatedAt: new Date().toISOString(),
     },

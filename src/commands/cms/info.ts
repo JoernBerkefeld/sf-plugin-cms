@@ -4,10 +4,8 @@ import {
   CMS_INFO_CONTRACT,
   type CmsInfoResult,
 } from '../../contracts/info.js';
-import { assertCmsEnvelope, type CmsEnvelope } from '../../contracts/shared.js';
+import type { CmsEnvelope } from '../../contracts/shared.js';
 import { CmsCommand } from '../../command-base.js';
-
-const PLUGIN_VERSION = '0.3.0';
 
 /** Reports the offline CMS CLI contract and capability envelope. */
 export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult>> {
@@ -30,35 +28,36 @@ export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult>> {
   public async run(): Promise<CmsEnvelope<CmsInfoResult>> {
     const { flags } = await this.parse(Info);
     const requestedVersion = flags['contract-version'] ?? 1;
-    const result = requestedVersion === 1 ? successEnvelope() : blockedEnvelope(requestedVersion);
+    const result =
+      requestedVersion === 1
+        ? successEnvelope(this.pluginVersion)
+        : blockedEnvelope(requestedVersion, this.pluginVersion);
 
-    assertCmsEnvelope(result, assertCmsInfoResult);
     if (!this.jsonEnabled()) this.styledJSON(result);
-    process.exitCode = result.status === 'success' ? 0 : 1;
-    return result;
+    return this.finishEnvelope(result, assertCmsInfoResult);
   }
 }
 
-function successEnvelope(): CmsEnvelope<CmsInfoResult> {
+function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
   return {
     contract: CMS_INFO_CONTRACT,
     contractVersion: '1.0.0',
     status: 'success',
     metadata: {
       operation: 'cms.info',
-      plugin: { name: 'sf-plugin-cms', version: PLUGIN_VERSION },
+      plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       apiVersion: null,
     },
     diagnostics: { warnings: [], errors: [] },
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: 'offline',
-      pluginVersion: PLUGIN_VERSION,
+      pluginVersion,
       command: 'sf cms info',
       generatedAt: new Date().toISOString(),
     },
     result: {
-      plugin: { name: 'sf-plugin-cms', version: PLUGIN_VERSION },
+      plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       api: { defaultVersion: '67.0', testedVersions: ['67.0'] },
       contracts: {
         commandResults: {
@@ -105,14 +104,17 @@ function successEnvelope(): CmsEnvelope<CmsInfoResult> {
   };
 }
 
-function blockedEnvelope(requestedVersion: number): CmsEnvelope<CmsInfoResult> {
+function blockedEnvelope(
+  requestedVersion: number,
+  pluginVersion: string,
+): CmsEnvelope<CmsInfoResult> {
   return {
     contract: CMS_INFO_CONTRACT,
     contractVersion: '1.0.0',
     status: 'blocked',
     metadata: {
       operation: 'cms.info',
-      plugin: { name: 'sf-plugin-cms', version: PLUGIN_VERSION },
+      plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       apiVersion: null,
     },
     diagnostics: {
@@ -128,7 +130,7 @@ function blockedEnvelope(requestedVersion: number): CmsEnvelope<CmsInfoResult> {
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: 'offline',
-      pluginVersion: PLUGIN_VERSION,
+      pluginVersion,
       command: 'sf cms info',
       generatedAt: new Date().toISOString(),
     },
