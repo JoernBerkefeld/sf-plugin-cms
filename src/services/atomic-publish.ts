@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { rename, rm } from 'node:fs/promises';
+import { open, rename, rm } from 'node:fs/promises';
+import path from 'node:path';
 
 export type AtomicPublishOptions = {
   readonly delay?: (milliseconds: number) => Promise<void>;
@@ -90,13 +91,30 @@ function nativeDirectoryPublisher(): (temporary: string, destination: string) =>
     );
   }
   const binding = require(packageName) as
-    | ((temporary: string, destination: string) => void)
-    | { readonly renameNoReplace?: (temporary: string, destination: string) => void };
+    | ((parentFileDescriptor: number, temporaryName: string, destinationName: string) => void)
+    | {
+        readonly renameNoReplace?: (
+          parentFileDescriptor: number,
+          temporaryName: string,
+          destinationName: string,
+        ) => void;
+      };
   const renameNoReplace = typeof binding === 'function' ? binding : binding.renameNoReplace;
   if (renameNoReplace === undefined) {
     throw new TypeError(`${packageName} does not export renameNoReplace`);
   }
-  return async (temporary, destination) => renameNoReplace(temporary, destination);
+  return async (temporary, destination) => {
+    const parent = path.dirname(temporary);
+    if (path.dirname(destination) !== parent) {
+      throw new Error('Atomic no-clobber publication requires sibling paths');
+    }
+    const directory = await open(parent, 'r');
+    try {
+      renameNoReplace(directory.fd, path.basename(temporary), path.basename(destination));
+    } finally {
+      await directory.close();
+    }
+  };
 }
 
 export async function publishDirectoryNoClobber(
