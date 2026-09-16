@@ -1,4 +1,5 @@
 import { Flags } from '@salesforce/sf-plugins-core';
+import { readFile } from 'node:fs/promises';
 import {
   assertWorkspaceImportResult,
   WORKSPACE_IMPORT_CONTRACT,
@@ -13,6 +14,7 @@ import {
 import {
   executeWorkspaceImport,
   loadWorkspaceExport,
+  planNativeWorkspaceImport,
   type LoadedWorkspaceExport,
   type WorkspaceImportExecutionResult,
 } from '../../../services/import-workspace.js';
@@ -23,10 +25,12 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the source workspace export locally before any org request, selects one destination workspace by exact ID or exact case-sensitive name, checks every content key for conflicts, and defaults to a non-mutating dry run. Pass --apply with a new --report-dir to create content.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --native-copy-map ./native-copy-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --native-copy-map ./native-copy-map.json --editable-dir ./cms-editable --contract-version 1 --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -43,9 +47,21 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       required: true,
       summary: 'Source workspace export containing manifest.json and items/.',
     }),
+    'editable-dir': Flags.directory({
+      exists: true,
+      dependsOn: ['native-copy-map'],
+      summary:
+        'Verified companion directory with editable native email/template raw HTML; original source package remains required.',
+    }),
+    'native-copy-map': Flags.file({
+      exists: true,
+      summary:
+        'JSON array selecting native raw-HTML parents: sourceContentKey, language, fresh apiName and urlName. Server generates keys; no updates or publication.',
+    }),
     apply: Flags.boolean({
       default: false,
-      summary: 'Create the planned content after all validation and conflict checks pass.',
+      summary:
+        'Create after local validation and bounded profile preflight; dry-run does not establish full conflict or apply readiness.',
     }),
     'allow-partial': Flags.boolean({
       default: false,
@@ -85,10 +101,19 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     }
 
     let source: LoadedWorkspaceExport;
+    let nativeCopyMappings: unknown;
     try {
+      if (flags['editable-dir'] !== undefined && flags['native-copy-map'] === undefined)
+        throw new TypeError('--editable-dir requires --native-copy-map');
       source = await loadWorkspaceExport(flags['source-dir'], {
         allowPartial: flags['allow-partial'],
       });
+      if (flags['native-copy-map'] !== undefined) {
+        nativeCopyMappings = JSON.parse(
+          await readFile(flags['native-copy-map'], 'utf8'),
+        ) as unknown;
+        await planNativeWorkspaceImport(source, nativeCopyMappings, flags['editable-dir']);
+      }
       assertWorkspaceSelector({
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],
@@ -128,6 +153,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         destinationWorkspace: selected.workspace,
         dryRun: !flags.apply,
         loadedSource: source,
+        editableDirectory: flags['editable-dir'],
+        nativeCopyMappings,
         reportDirectory: flags['report-dir'],
         sourceDirectory: flags['source-dir'],
         workspaceId: selected.id,
@@ -140,6 +167,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         this.pluginVersion,
         execution.contractResult,
         [],
+        execution.diagnostics,
       );
       if (!this.jsonEnabled()) this.showPlan(execution, result);
       return this.finish(result);
@@ -179,9 +207,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       `Explicit unresolved/unsupported references: ${execution.contractResult.references.length}`,
     );
     if (execution.dryRun) {
-      this.log('No content was created. Re-run with --apply and a new --report-dir to mutate.');
+      this.log('No content was created. This proposal does not establish deploy readiness.');
+      for (const diagnostic of execution.diagnostics) this.log(diagnostic.message);
     } else {
       this.log(`Run report: ${execution.reportFile ?? ''}`);
+      for (const diagnostic of execution.diagnostics) this.log(diagnostic.message);
     }
   }
 }
@@ -193,6 +223,7 @@ function envelope(
   pluginVersion: string,
   result: WorkspaceImportResult | null,
   errors: CmsDiagnostic[],
+  warnings: CmsDiagnostic[] = [],
 ): CmsEnvelope<WorkspaceImportResult> {
   return {
     contract: WORKSPACE_IMPORT_CONTRACT,
@@ -203,7 +234,10 @@ function envelope(
       plugin: { name: 'sf-plugin-cms', version: pluginVersion },
       apiVersion,
     },
-    diagnostics: { warnings: [], errors: sanitizeDiagnostics(errors, 'diagnostics.errors') },
+    diagnostics: {
+      warnings: sanitizeDiagnostics(warnings, 'diagnostics.warnings'),
+      errors: sanitizeDiagnostics(errors, 'diagnostics.errors'),
+    },
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: orgId,

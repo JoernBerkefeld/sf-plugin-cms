@@ -20,8 +20,14 @@ function pageNumber(url: string): number {
   return Number(new URL(url, 'https://example.test').searchParams.get('page'));
 }
 
-function workspace(id: string, name: string, type: string) {
-  return { id, name, spaceType: { apiName: type } };
+function workspace(id: string, name: string, type?: unknown) {
+  return {
+    id,
+    name,
+    ...(type === undefined
+      ? {}
+      : { spaceType: typeof type === 'string' ? { apiName: type } : type }),
+  };
 }
 
 describe('bulk workspace export service', () => {
@@ -69,6 +75,187 @@ describe('bulk workspace export service', () => {
       { id: 'b', name: 'Canonical B', type: 'Marketing' },
     ]);
     expect(request.callCount).to.equal(4);
+  });
+
+  it('uses exact-ID-correlated list type when canonical detail omits spaceType', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/spaces?')) {
+        return fakeRequest({
+          spaces: pageNumber(url) === 0 ? [workspace('a', 'Listed', 'marketing')] : [],
+        });
+      }
+      return fakeRequest(workspace('a', 'Canonical'));
+    });
+
+    const result = await preflightBulkWorkspaceExport(
+      { request },
+      path.join(root, 'cms'),
+      'Marketing',
+    );
+
+    expect(result.selected.map(({ id, name, type }) => ({ id, name, type }))).to.deep.equal([
+      { id: 'a', name: 'Canonical', type: 'Marketing' },
+    ]);
+  });
+
+  for (const [title, detail] of [
+    ['object variant', workspace('a', 'Canonical', 'marketing')],
+    ['string variant', { id: 'a', name: 'Canonical', spaceType: 'MARKETING' }],
+  ] as const) {
+    it(`prefers the recognized detail ${title}`, async () => {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/spaces?')
+          ? fakeRequest({
+              spaces: pageNumber(url) === 0 ? [workspace('a', 'Listed', 'marketing')] : [],
+            })
+          : fakeRequest(detail),
+      );
+
+      const result = await preflightBulkWorkspaceExport(
+        { request },
+        path.join(root, 'cms'),
+        'Marketing',
+      );
+      expect(result.selected[0]).to.include({ id: 'a', name: 'Canonical', type: 'Marketing' });
+    });
+  }
+
+  it('rejects an explicit contradictory detail type despite Marketing list evidence', async () => {
+    const outputDirectory = path.join(root, 'cms');
+    const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+      url.startsWith('/connect/cms/spaces?')
+        ? fakeRequest({
+            spaces: pageNumber(url) === 0 ? [workspace('a', 'Listed', 'marketing')] : [],
+          })
+        : fakeRequest(workspace('a', 'Canonical', 'content')),
+    );
+
+    const result = await preflightBulkWorkspaceExport({ request }, outputDirectory, 'Marketing');
+    expect(result).to.deep.equal({ discoveredCount: 1, selected: [] });
+    try {
+      await access(outputDirectory);
+      expect.fail('expected zero destinations');
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+    }
+  });
+
+  for (const [title, detailType] of [
+    ['null value', null],
+    ['array value', ['marketing']],
+    ['number value', 1],
+    ['boolean value', true],
+    ['unsupported string', 'enablement'],
+    ['malformed object', { unexpected: 'marketing' }],
+    ['object with non-string apiName', { apiName: 1 }],
+  ] as const) {
+    it(`rejects canonical ${title} despite exact-ID list evidence`, async () => {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/spaces?')
+          ? fakeRequest({
+              spaces: pageNumber(url) === 0 ? [workspace('a', 'Listed', 'marketing')] : [],
+            })
+          : fakeRequest(workspace('a', 'Canonical', detailType)),
+      );
+
+      try {
+        await preflightBulkWorkspaceExport({ request }, path.join(root, 'cms'), 'Marketing');
+        expect.fail('expected malformed canonical type rejection');
+      } catch (error) {
+        expect((error as Error).message).to.equal('Workspace type must be Marketing or Content.');
+      }
+      expect(request.callCount).to.equal(3);
+    });
+  }
+
+  it('rejects malformed canonical identity before trusting list type evidence', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+      url.startsWith('/connect/cms/spaces?')
+        ? fakeRequest({
+            spaces: pageNumber(url) === 0 ? [workspace('a', 'Listed', 'marketing')] : [],
+          })
+        : fakeRequest({ id: 'different', name: 'Canonical' }),
+    );
+
+    try {
+      await preflightBulkWorkspaceExport({ request }, path.join(root, 'cms'), 'Marketing');
+      expect.fail('expected malformed identity rejection');
+    } catch (error) {
+      expect((error as Error).message).to.include('malformed or mismatched ID/name');
+    }
+    expect(request.callCount).to.equal(3);
+  });
+
+  for (const [title, second, diagnostic] of [
+    ['Marketing plus null', workspace('a', 'Listed', null), 'Marketing and invalid'],
+    [
+      'Marketing plus malformed or unsupported',
+      workspace('a', 'Listed', { apiName: 'enablement' }),
+      'Marketing and invalid',
+    ],
+    ['Marketing plus missing', workspace('a', 'Listed'), 'Marketing and missing'],
+    ['Marketing plus Content', workspace('a', 'Listed', 'content'), 'Marketing and Content'],
+  ] as const) {
+    it(`rejects duplicate exact-ID evidence: ${title}`, async () => {
+      const outputDirectory = path.join(root, 'cms');
+      const pages = [
+        [workspace('a', 'Listed', 'marketing')],
+        [second, workspace('b', 'Progress', 'marketing')],
+        [],
+      ];
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (!url.startsWith('/connect/cms/spaces?')) {
+          throw new Error(`unexpected canonical GET/export request: ${url}`);
+        }
+        return fakeRequest({ spaces: pages[pageNumber(url)] ?? [] });
+      });
+
+      try {
+        await exportAllWorkspaces({ request }, outputDirectory, 'Marketing');
+        expect.fail('expected inconsistent list type evidence rejection');
+      } catch (error) {
+        expect((error as Error).message).to.equal(
+          `Workspace listing returned inconsistent type evidence for ID a: ${diagnostic}.`,
+        );
+      }
+      expect(request.callCount).to.equal(2);
+      try {
+        await access(outputDirectory);
+        expect.fail('expected no export output');
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      }
+    });
+  }
+
+  it('correlates duplicate list type evidence by exact ID rather than name', async () => {
+    const pages = [
+      [
+        workspace('a', 'Same', 'marketing'),
+        workspace('b', 'Same', 'content'),
+        workspace('a', 'Swapped B', 'marketing'),
+        workspace('b', 'Swapped A', 'content'),
+      ],
+      [],
+    ];
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/spaces?')) {
+        return fakeRequest({ spaces: pages[pageNumber(url)] ?? [] });
+      }
+      return url.endsWith('/a')
+        ? fakeRequest(workspace('a', 'Canonical A'))
+        : fakeRequest(workspace('b', 'Canonical B'));
+    });
+
+    const result = await preflightBulkWorkspaceExport(
+      { request },
+      path.join(root, 'cms'),
+      'Marketing',
+    );
+
+    expect(result.selected.map(({ id, type }) => ({ id, type }))).to.deep.equal([
+      { id: 'a', type: 'Marketing' },
+    ]);
   });
 
   for (const [firstName, secondName, expected] of [
@@ -143,7 +330,7 @@ describe('bulk workspace export service', () => {
           spaces: pageNumber(url) === 0 ? [workspace('a', 'First', 'marketing')] : [],
         });
       }
-      if (url === '/connect/cms/spaces/a') return fakeRequest(workspace('a', 'First', 'marketing'));
+      if (url === '/connect/cms/spaces/a') return fakeRequest(workspace('a', 'First'));
       if (url.includes('contentSpaceOrFolderIds=a')) {
         return fakeRequest({
           items: [
@@ -250,7 +437,7 @@ describe('bulk workspace export service', () => {
               : [],
         });
       }
-      if (url === '/connect/cms/spaces/a') return fakeRequest(workspace('a', 'First', 'marketing'));
+      if (url === '/connect/cms/spaces/a') return fakeRequest(workspace('a', 'First'));
       if (url === '/connect/cms/spaces/b')
         return fakeRequest(workspace('b', 'Second', 'marketing'));
       if (url.includes('contentSpaceOrFolderIds=a'))
@@ -267,7 +454,23 @@ describe('bulk workspace export service', () => {
     });
     const result = envelope.result!;
 
-    expect(envelope.status).to.equal('partial');
+    expect(Object.keys(envelope).toSorted()).to.deep.equal(
+      [
+        'contract',
+        'contractVersion',
+        'status',
+        'metadata',
+        'diagnostics',
+        'provenance',
+        'result',
+      ].toSorted(),
+    );
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-workspace-export-set',
+      contractVersion: '1.0.0',
+      status: 'partial',
+    });
+    expect(result.workspaceType).to.equal('Marketing');
     expect(result.selection).to.deep.equal({
       mode: 'all',
       discoveredCount: 2,
@@ -279,10 +482,15 @@ describe('bulk workspace export service', () => {
       failedCount: 1,
     });
     expect(
-      result.workspaces.map(({ source, status }) => ({ id: source.sourceId, status })),
+      result.workspaces.map(({ source, status }) => ({
+        id: source.sourceId,
+        name: source.name,
+        type: source.workspaceType,
+        status,
+      })),
     ).to.deep.equal([
-      { id: 'a', status: 'failed' },
-      { id: 'b', status: 'success' },
+      { id: 'a', name: 'First', type: 'Marketing', status: 'failed' },
+      { id: 'b', name: 'Second', type: 'Marketing', status: 'success' },
     ]);
     expect(result.workspaces[0].diagnostics.errors[0].message).to.equal(
       'https://example.test?token=[REDACTED] boom',

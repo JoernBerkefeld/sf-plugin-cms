@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { OpaqueCmsReference } from '../contracts/shared.js';
 import type { CmsRecord } from './read.js';
+import { variantIdentity } from './variant-identity.js';
 
 export type ExportReferenceWarning = {
   code: 'REFERENCE_UNRESOLVED' | 'REFERENCE_UNSUPPORTED';
@@ -89,9 +90,10 @@ export function inventoryExportReferences(
         variantIds: [variantId],
       });
     }
+    const identity = variantIdentity(detail, variantId);
     if (!nonemptyString(detail.contentKey)) continue;
     candidates.push({
-      contentId: nonemptyString(detail.contentId) ? detail.contentId : undefined,
+      contentId: identity.contentId,
       contentKey: detail.contentKey,
       variantId,
     });

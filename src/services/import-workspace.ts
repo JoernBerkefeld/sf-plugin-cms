@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import type { CmsDiagnostic } from '../contracts/shared.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,7 +20,12 @@ import type {
   WorkspaceImportReference,
   WorkspaceImportResult as WorkspaceImportContractResult,
 } from '../contracts/workspace-import.js';
-import { getContent } from './read.js';
+import { getContent, type CmsRecord } from './read.js';
+import { variantIdentity } from './variant-identity.js';
+import { inventoryExportReferences } from './export-references.js';
+import { planImportIdentities, planNativeCopies } from './import-identities.js';
+import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
+import { isDeepStrictEqual } from 'node:util';
 import {
   createContent,
   createVariant,
@@ -93,6 +99,7 @@ export type WorkspaceImportOperation = {
   error?: string;
   result?: {
     readonly contentId?: string;
+    readonly contentKey?: string;
     readonly primaryVariantId?: string;
     readonly variantId?: string;
   };
@@ -100,6 +107,7 @@ export type WorkspaceImportOperation = {
 };
 
 export type WorkspaceImportRunReport = {
+  readonly editableSource?: EditableHtmlEvidence;
   readonly createdParents: CreatedParentRecord[];
   readonly destinationOrgId: string;
   readonly destinationWorkspaceId: string;
@@ -134,7 +142,10 @@ export type ExecuteWorkspaceImportOptions = {
   readonly destinationOrgId: string;
   readonly destinationWorkspace: unknown;
   readonly dryRun?: boolean;
+  readonly editableDirectory?: string;
   readonly loadedSource?: LoadedWorkspaceExport;
+  readonly identityMappings?: unknown;
+  readonly nativeCopyMappings?: unknown;
   readonly reportDirectory?: string;
   readonly reportPersistence?: WorkspaceImportReportPersistence;
   readonly requestOptions?: JsonRequestOptions;
@@ -143,6 +154,7 @@ export type ExecuteWorkspaceImportOptions = {
 };
 
 export type WorkspaceImportExecutionResult = {
+  readonly diagnostics: CmsDiagnostic[];
   readonly contractResult: WorkspaceImportContractResult;
   readonly dryRun: boolean;
   readonly plan: WorkspaceImportPlan;
@@ -228,7 +240,13 @@ async function assertRegularFile(file: string, label: string): Promise<void> {
   }
 }
 
-async function readStableRegularFile(file: string, label: string): Promise<Buffer> {
+/**
+ * Read a regular file while detecting observed replacement or modification.
+ * @param {string} file - Absolute file path.
+ * @param {string} label - Error context.
+ * @returns {Promise<Buffer>} Original file bytes.
+ */
+export async function readStableRegularFile(file: string, label: string): Promise<Buffer> {
   await assertRegularFile(file, label);
   const before = await lstat(file);
   const bytes = await readFile(file);
@@ -239,7 +257,16 @@ async function readStableRegularFile(file: string, label: string): Promise<Buffe
   return bytes;
 }
 
-async function enumeratePackageFiles(directory: string, packageRoot: string): Promise<string[]> {
+/**
+ * Enumerate regular package files without following symlinks.
+ * @param {string} directory - Directory to inspect.
+ * @param {string} packageRoot - Root for relative paths.
+ * @returns {Promise<string[]>} Sorted portable relative filenames.
+ */
+export async function enumeratePackageFiles(
+  directory: string,
+  packageRoot: string,
+): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const absolute = path.join(directory, entry.name);
@@ -258,11 +285,25 @@ async function enumeratePackageFiles(directory: string, packageRoot: string): Pr
   return files.toSorted();
 }
 
-function validateItem(value: unknown, variantId: string, workspaceId: string): WorkspaceImportItem {
-  if (!isRecord(value)) throw new TypeError(`Item ${variantId} must contain an object`);
-  assertIdentifier(value.id, `Item ${variantId}.id`);
-  if (value.id !== variantId)
-    throw new TypeError(`Item ${variantId} does not match its manifest variant ID`);
+function validateItem(raw: unknown, variantId: string, workspaceId: string): WorkspaceImportItem {
+  if (!isRecord(raw)) throw new TypeError(`Item ${variantId} must contain an object`);
+  const identity = variantIdentity(raw, variantId);
+  assertIdentifier(identity.variantId, `Item ${variantId}.id`);
+  // Normalize only the in-memory import view after raw-byte integrity verification.
+  const normalized: Record<string, unknown> = { ...raw, id: identity.variantId };
+  if (isRecord(normalized.contentType)) {
+    if (
+      Object.keys(normalized.contentType).some(
+        (key) => key !== 'fullyQualifiedName' && key !== 'name',
+      )
+    ) {
+      throw new TypeError(`Item ${variantId}.contentType contains unsupported summary fields`);
+    }
+    normalized.contentType = normalized.contentType.fullyQualifiedName;
+  }
+  if (normalized.externalId === null) delete normalized.externalId;
+  if (normalized.externalSource === null) delete normalized.externalSource;
+  const value = normalized;
   for (const key of ['contentKey', 'language', 'contentType', 'title']) {
     if (!nonemptyString(value[key])) throw new TypeError(`Item ${variantId}.${key} is required`);
   }
@@ -295,7 +336,22 @@ function validateRelationships(items: readonly WorkspaceImportItem[]): void {
   const pairIds = new Map<string, string>();
   const keyToApiName = new Map<string, string>();
   const apiNameToKey = new Map<string, string>();
+  const contentIdToKey = new Map<string, string>();
+  const keyToContentId = new Map<string, string>();
   for (const item of items) {
+    const { contentId } = variantIdentity(item, item.id);
+    if (contentId !== undefined) {
+      const priorKey = contentIdToKey.get(contentId);
+      const priorId = keyToContentId.get(item.contentKey);
+      if (
+        (priorKey !== undefined && priorKey !== item.contentKey) ||
+        (priorId !== undefined && priorId !== contentId)
+      ) {
+        throw new TypeError('Content keys have conflicting parent content identities');
+      }
+      contentIdToKey.set(contentId, item.contentKey);
+      keyToContentId.set(item.contentKey, contentId);
+    }
     const pair = `${item.contentKey}\u0000${item.language}`;
     if (pairIds.has(pair)) {
       throw new TypeError(
@@ -547,6 +603,98 @@ function isProvenNotFound(error: unknown): boolean {
   );
 }
 
+function assertTransportableBody(value: JsonValue): void {
+  if (Array.isArray(value)) {
+    for (const child of value) assertTransportableBody(child);
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (
+    'ref' in value ||
+    value.type === 'file' ||
+    (typeof value.type === 'string' && value.type.endsWith('Reference'))
+  ) {
+    throw new TypeError('Unresolved content reference or media transport; import is blocked');
+  }
+  for (const child of Object.values(value)) assertTransportableBody(child as JsonValue);
+}
+
+function selectedNativeReferences(
+  source: LoadedWorkspaceExport,
+  selectedItems: readonly WorkspaceImportItem[],
+): WorkspaceExportManifest['externalReferences'] {
+  const selectedIds = new Set(selectedItems.map(({ id }) => id));
+  const inventory = inventoryExportReferences(
+    source.manifest.workspaceId,
+    // The inventory only reads JSON; its transport type uses mutable array annotations.
+    new Map(source.items.map((item) => [item.id, item as CmsRecord])),
+  );
+  const evidenced = new Map(
+    inventory.externalReferences
+      .filter(({ kind }) => kind === 'cms.relationship')
+      .map((reference) => [reference.referenceId, reference]),
+  );
+  return source.manifest.externalReferences.filter((reference) => {
+    // Only the exporter-proven variant-owned relationship shape can be excluded.
+    // Unknown kinds, mismatched identities and contradictory associations fail closed.
+    const ownerId = reference.source.sourceId;
+    if (
+      selectedIds.has(ownerId) ||
+      !isDeepStrictEqual(reference, evidenced.get(reference.referenceId))
+    )
+      return true;
+    const ownerEntry = source.manifest.entries.find(({ variantId }) => variantId === ownerId);
+    return (
+      ownerEntry === undefined ||
+      source.manifest.items.some(
+        (item) => item.referenceId === reference.referenceId && item.path !== ownerEntry.file,
+      )
+    );
+  });
+}
+
+function preflightReferences(
+  plan: Pick<WorkspaceImportPlan, 'groups' | 'source'>,
+  references = plan.source.manifest.externalReferences,
+): void {
+  if (
+    references.some((reference) => reference.required && reference.resolution !== 'included') ||
+    plan.source.manifest.dependencies.length > 0
+  ) {
+    throw new TypeError('Unresolved required package reference; import is blocked');
+  }
+  const urls = new Set<string>();
+  for (const group of plan.groups) {
+    if (new Set([group.primary, ...group.variants].map((item) => item.contentType)).size !== 1) {
+      throw new TypeError('Parent variants have conflicting content types');
+    }
+    for (const item of [group.primary, ...group.variants]) {
+      if (
+        'references' in item ||
+        'referencesList' in item ||
+        item.contentType === 'sfdc_cms__image' ||
+        item.contentType === 'sfdc_cms__doc'
+      ) {
+        throw new TypeError('Unresolved content reference or media transport; import is blocked');
+      }
+      assertTransportableBody(item.contentBody);
+      if (item.externalSource !== undefined) assertTransportableBody(item.externalSource);
+      const bodyUrl = item.contentBody['sfdc_cms:urlName'];
+      if (
+        bodyUrl !== undefined &&
+        (typeof bodyUrl !== 'string' || (item.urlName !== undefined && item.urlName !== bodyUrl))
+      ) {
+        throw new TypeError('Conflicting body and variant URL names');
+      }
+      const url = item.urlName ?? bodyUrl;
+      if (typeof url === 'string') {
+        if (urls.has(url)) throw new TypeError('Target URL names must be unique across variants');
+        urls.add(url);
+      }
+    }
+  }
+}
+
 async function preflightConflicts(
   connection: RequestConnection,
   plan: WorkspaceImportPlan,
@@ -654,6 +802,50 @@ function validateParentResponse(
   };
 }
 
+function verifyNativeCopy(
+  response: Record<string, unknown>,
+  payload: CreateContentInput,
+  created: CreatedParentRecord,
+  language: string,
+): void {
+  const type = isRecord(response.contentType)
+    ? response.contentType.fullyQualifiedName
+    : response.contentType;
+  if (
+    response.contentKey !== created.contentKey ||
+    responseIdentifier(response, ['managedContentId', 'id'], 'content ID') !== created.contentId ||
+    response.apiName !== payload.apiName ||
+    response.urlName !== payload.urlName ||
+    response.language !== language ||
+    response.title !== payload.title ||
+    type !== payload.contentType ||
+    !isRecord(response.contentSpace) ||
+    response.contentSpace.id !== payload.contentSpaceOrFolderId ||
+    response.isPublished !== false ||
+    !isRecord(response.status) ||
+    response.status.status !== 'Draft' ||
+    !isRecord(response.contentBody)
+  )
+    throw new TypeError('Native copy readback identity or draft verification failed');
+  for (const [key, value] of Object.entries(payload.contentBody)) {
+    // Salesforce entity-encodes raw HTML on retrieval; compare one encoding layer only.
+    const encoded =
+      key === 'rawHtml' && typeof value === 'string'
+        ? value
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;')
+        : value;
+    if (
+      !isDeepStrictEqual(response.contentBody[key], value) &&
+      !isDeepStrictEqual(response.contentBody[key], encoded)
+    )
+      throw new TypeError(`Native copy readback body differs: ${key}`);
+  }
+}
+
 function validateChildResponse(response: Record<string, unknown>): string {
   return responseIdentifier(response, ['id', 'variantId', 'managedContentVariantId'], 'variant ID');
 }
@@ -715,6 +907,44 @@ async function persistOperationResult(
   }
 }
 
+/**
+ * Reconstruct editable HTML before native validation, retaining all original identity inventory.
+ * @param {LoadedWorkspaceExport} source - Complete verified original package.
+ * @param {unknown} mappings - Native copy selections and fresh identities.
+ * @param {string} editableDirectory - Optional verified HTML companion.
+ * @returns {Promise<object>} Native proposal and optional all-companion evidence.
+ */
+export async function planNativeWorkspaceImport(
+  source: LoadedWorkspaceExport,
+  mappings: unknown,
+  editableDirectory?: string,
+) {
+  if (editableDirectory === undefined) return { proposal: planNativeCopies(source, mappings) };
+  const editable = await loadEditableRawHtml(source, editableDirectory);
+  const editedById = new Map(editable.items.map((item) => [item.id, item]));
+  const proposal = planNativeCopies(
+    { ...source, items: source.items.map((item) => editedById.get(item.id) ?? item) },
+    mappings,
+    editable.literalHtmlVariantIds,
+  );
+  for (const item of proposal.items) {
+    if (!editedById.has(item.id))
+      throw new TypeError(`Selected variant ${item.id} is missing from the editable companion`);
+  }
+  preflightReferences(
+    {
+      source,
+      groups: proposal.items.map((primary) => ({
+        contentKey: primary.contentKey,
+        primary,
+        variants: [],
+      })),
+    },
+    selectedNativeReferences(source, proposal.items),
+  );
+  return { proposal, editableSource: editable.editableSource };
+}
+
 export async function executeWorkspaceImport(
   options: ExecuteWorkspaceImportOptions,
 ): Promise<WorkspaceImportExecutionResult> {
@@ -726,9 +956,73 @@ export async function executeWorkspaceImport(
     (await loadWorkspaceExport(options.sourceDirectory, {
       allowPartial: options.allowPartial,
     }));
-  const plan = planWorkspaceImport(source, options.destinationWorkspace, options.workspaceId);
+  if (!source.integrity.verified) throw new TypeError('Source integrity must be verified first');
+  if (source.isPartial && options.allowPartial !== true) {
+    throw new TypeError('Workspace export is partial; explicit allowPartial is required');
+  }
+  validateRelationships(source.items);
+  const native = options.nativeCopyMappings !== undefined;
+  if (native && options.identityMappings !== undefined)
+    throw new TypeError('Choose one identity profile');
+  if (options.editableDirectory !== undefined && !native)
+    throw new TypeError('editableDirectory requires nativeCopyMappings');
+  let proposal;
+  let editableSource: EditableHtmlEvidence | undefined;
+  if (native) {
+    ({ proposal, editableSource } = await planNativeWorkspaceImport(
+      source,
+      options.nativeCopyMappings,
+      options.editableDirectory,
+    ));
+  } else if (options.identityMappings !== undefined)
+    proposal = planImportIdentities(source, options.identityMappings);
+  const selectedIds = new Set(proposal?.items.map((item) => item.id));
+  const editableDiagnostics: CmsDiagnostic[] =
+    editableSource === undefined
+      ? []
+      : [
+          {
+            code: 'EDITABLE_HTML_INPUT',
+            message: `Editable HTML input: original package integrity and references describe only the unchanged baseline, not the edited payload. ${editableSource.entries.filter((entry) => entry.changed && selectedIds.has(entry.variantId)).length} selected HTML modification(s) ${options.dryRun === true ? 'planned' : 'applied'}; ${editableSource.entries.filter((entry) => entry.changed).length} changed entry/entries across all ${editableSource.entries.length} companion entries. No CMS reference rewriting is established by HTML edits.`,
+            retryable: false,
+          },
+        ];
+  const selectedSource = native ? { ...source, items: proposal!.items } : source;
+  const sourcePlan = planWorkspaceImport(
+    selectedSource,
+    options.destinationWorkspace,
+    options.workspaceId,
+  );
+  // Keep original variant IDs and source manifest associations; never substitute the raw package.
+  const proposedById = new Map(proposal?.items.map((item) => [item.id, item]));
+  const plan: WorkspaceImportPlan =
+    proposal === undefined
+      ? sourcePlan
+      : {
+          ...sourcePlan,
+          source,
+          groups: sourcePlan.groups.map((group) => ({
+            contentKey: proposedById.get(group.primary.id)!.contentKey,
+            primary: proposedById.get(group.primary.id)!,
+            variants: group.variants.map((variant) => proposedById.get(variant.id)!),
+          })),
+        };
+  preflightReferences(plan, native ? selectedNativeReferences(source, proposal!.items) : undefined);
   const requestOptions = options.requestOptions ?? {};
-  await preflightConflicts(options.connection, plan, requestOptions);
+  if (!native) await preflightConflicts(options.connection, plan, requestOptions);
+  const hasNamedIdentities = plan.groups.some((group) =>
+    [group.primary, ...group.variants].some(
+      (item) =>
+        item.apiName !== undefined ||
+        item.urlName !== undefined ||
+        item.contentBody['sfdc_cms:urlName'] !== undefined,
+    ),
+  );
+  if (!native && hasNamedIdentities && options.dryRun !== true) {
+    throw new TypeError(
+      'Destination API-name/URL-name uniqueness cannot be verified by the supported CMS APIs; import is blocked',
+    );
+  }
   const references = source.manifest.externalReferences
     .filter(({ resolution }) => resolution !== 'included')
     .map<WorkspaceImportReference>(({ kind, referenceId, resolution }) => ({
@@ -738,7 +1032,31 @@ export async function executeWorkspaceImport(
     }))
     .toSorted(compareMappingIdentity);
   if (options.dryRun === true) {
+    const diagnostics: CmsDiagnostic[] = [
+      ...editableDiagnostics,
+      {
+        code: 'SERVER_CONFLICT_CHECK_UNVERIFIED',
+        message: native
+          ? 'Native copy omits contentKey. API-name conflicts can reject; duplicate URLs can create distinct objects. Destination name availability is not prevalidated.'
+          : 'Content-key absence was checked, but complete server conflict validation is unverified; this is a read-only proposal.',
+        retryable: false,
+      },
+      {
+        code: 'APPLY_READINESS_UNVERIFIED',
+        message: 'Dry-run success is not deploy readiness and does not authorize apply.',
+        retryable: false,
+      },
+    ];
+    if (hasNamedIdentities && !native) {
+      diagnostics.unshift({
+        code: 'NAME_AVAILABILITY_UNVERIFIED',
+        message:
+          'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
+        retryable: false,
+      });
+    }
     return {
+      diagnostics,
       contractResult: importContractResult(source, options.destinationOrgId, plan, [], references),
       dryRun: true,
       plan,
@@ -751,6 +1069,7 @@ export async function executeWorkspaceImport(
   await mkdir(reportDirectory);
   const reportFile = path.join(reportDirectory, 'workspace-import-run.json');
   const report: WorkspaceImportRunReport = {
+    ...(editableSource === undefined ? {} : { editableSource }),
     createdParents: [],
     destinationOrgId: options.destinationOrgId,
     destinationWorkspaceId: plan.destinationWorkspaceId,
@@ -784,6 +1103,25 @@ export async function executeWorkspaceImport(
   );
   const sourceReferenceValues = new Set(sourceReferencesByValue.keys());
   const unresolvedMappingIds = new Set<string>();
+  // Editable native copies have no reference-bearing body or child variants. Bind every
+  // exact CREATE payload in the initial durable journal, before any mutation.
+  if (editableSource !== undefined) {
+    for (const group of plan.groups) {
+      const payload = createPayload(group, plan.destinationWorkspaceId);
+      delete payload.contentKey;
+      delete payload.externalId;
+      delete payload.externalSource;
+      report.operations.push(
+        pendingOperation(
+          report,
+          'create-parent',
+          group.contentKey,
+          group.primary.language,
+          payload,
+        ),
+      );
+    }
+  }
   await writeExclusive(reportFile, report);
   try {
     for (const group of plan.groups) {
@@ -813,21 +1151,44 @@ export async function executeWorkspaceImport(
             primary: rewriteItem(group.primary, replacements),
             variants: group.variants.map((variant) => rewriteItem(variant, replacements)),
           };
-      const parentPayload = createPayload(rewrittenGroup, plan.rootFolderId);
-      const parentOperation = pendingOperation(
-        report,
-        'create-parent',
-        group.contentKey,
-        group.primary.language,
-        parentPayload,
+      const parentPayload = createPayload(
+        rewrittenGroup,
+        native ? plan.destinationWorkspaceId : plan.rootFolderId,
       );
-      report.operations.push(parentOperation);
+      if (native) {
+        delete parentPayload.contentKey;
+        delete parentPayload.externalId;
+        delete parentPayload.externalSource;
+      }
+      const parentOperation =
+        editableSource === undefined
+          ? pendingOperation(
+              report,
+              'create-parent',
+              group.contentKey,
+              group.primary.language,
+              parentPayload,
+            )
+          : report.operations.find((operation) => operation.contentKey === group.contentKey)!;
+      if (editableSource === undefined) report.operations.push(parentOperation);
+      else if (
+        parentOperation.requestSha256 !==
+        operationIdentity(
+          report.runId,
+          'create-parent',
+          group.contentKey,
+          group.primary.language,
+          parentPayload,
+        ).requestSha256
+      )
+        throw new TypeError('Editable CREATE payload changed after initial journal');
       await rewrite(reportFile, report);
       let parentResponse: Record<string, unknown>;
       try {
         parentResponse = await createContent(options.connection, parentPayload, requestOptions);
       } catch (error) {
-        parentOperation.state = 'failed';
+        parentOperation.state = native ? 'pending' : 'failed';
+        if (native) report.state = 'ownership-uncertain';
         parentOperation.error = error instanceof Error ? error.message : String(error);
         try {
           await rewrite(reportFile, report);
@@ -836,14 +1197,52 @@ export async function executeWorkspaceImport(
         }
         throw error;
       }
-      const created = validateParentResponse(parentResponse, group.contentKey);
+      // Persist returned identity before any semantic verification or further requests.
+      if (native) {
+        parentOperation.result = {
+          contentKey:
+            typeof parentResponse.contentKey === 'string' ? parentResponse.contentKey : undefined,
+          contentId: [parentResponse.managedContentId, parentResponse.id].find(nonemptyString),
+          primaryVariantId: [
+            parentResponse.managedContentVariantId,
+            parentResponse.primaryVariantId,
+          ].find(nonemptyString),
+        };
+        report.state = 'ownership-uncertain';
+        await persistOperationResult(reportFile, report, parentOperation, rewrite);
+      }
+      const created = validateParentResponse(
+        parentResponse,
+        native
+          ? responseIdentifier(parentResponse, ['contentKey'], 'generated key')
+          : group.contentKey,
+      );
       report.createdParents.push(created);
       parentOperation.state = 'succeeded';
       parentOperation.result = {
         contentId: created.contentId,
+        contentKey: created.contentKey,
         primaryVariantId: created.primaryVariantId,
       };
       await persistOperationResult(reportFile, report, parentOperation, rewrite);
+      if (native) {
+        if (
+          source.items.some(
+            (item) =>
+              item.contentKey === created.contentKey ||
+              variantIdentity(item, item.id).contentId === created.contentId,
+          )
+        )
+          throw new TypeError('Native response reused a source identity');
+        const readback = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        verifyNativeCopy(readback, parentPayload, created, group.primary.language);
+        report.state = 'applying';
+      }
       const reference = referenceByVariantId.get(group.primary.id);
       if (reference !== undefined) {
         replacements.set(reference.source.sourceId, created.contentId);
@@ -914,7 +1313,11 @@ export async function executeWorkspaceImport(
     report.state = 'completed';
     await rewrite(reportFile, report);
   } catch (error) {
-    if (!(error instanceof WorkspaceImportOwnershipUncertainError)) report.state = 'failed';
+    if (
+      !(error instanceof WorkspaceImportOwnershipUncertainError) &&
+      report.state !== 'ownership-uncertain'
+    )
+      report.state = 'failed';
     try {
       await rewrite(reportFile, report);
     } catch {
@@ -933,6 +1336,7 @@ export async function executeWorkspaceImport(
     }
   }
   return {
+    diagnostics: editableDiagnostics,
     contractResult: importContractResult(
       source,
       options.destinationOrgId,

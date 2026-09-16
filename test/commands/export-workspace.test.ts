@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TestContext } from '@salesforce/core/testSetup';
@@ -34,6 +34,7 @@ describe('CMS export workspace command', () => {
       'workspace-name',
       'workspace-type',
       'output-dir',
+      'editable-dir',
     ]);
     expect(ExportWorkspace.flags['target-org'].required).to.equal(true);
     expect(ExportWorkspace.flags['workspace-id'].required).not.to.equal(true);
@@ -45,6 +46,84 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.summary).to.match(/read-only.*best-effort/iu);
     expect(ExportWorkspace.description).to.match(
       /experimental.*not a complete or guaranteed backup/iu,
+    );
+  });
+
+  it('rejects invalid editable flags and both overlap directions before org access or writes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-editable-command-'));
+    temporaryDirectories.push(root);
+    const output = path.join(root, 'source');
+    for (const flags of [
+      { 'editable-dir': path.join(root, 'editable') },
+      { all: true, 'output-dir': output, 'editable-dir': path.join(root, 'editable') },
+      { 'output-dir': output, 'editable-dir': output },
+      { 'output-dir': output, 'editable-dir': path.join(output, 'child') },
+      { 'output-dir': path.join(output, 'child'), 'editable-dir': output },
+    ]) {
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      const getOrgContext = $$.SANDBOX.stub();
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({ flags: { 'workspace-id': 'space', ...flags } }),
+        getOrgContext,
+      });
+      let failure: unknown;
+      try {
+        await command.run();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(Error);
+      expect((failure as Error).message).to.match(/explicit|incompatible|overlap/u);
+      expect(getOrgContext.notCalled).to.equal(true);
+      expect(await readdir(root)).to.deep.equal([]);
+    }
+    expect(ExportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['output-dir']);
+    expect(ExportWorkspace.flags['editable-dir'].exclusive).to.deep.equal(['all']);
+  });
+
+  it('publishes the editable subset while retaining partial exit and machine result shape', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-editable-command-'));
+    temporaryDirectories.push(root);
+    const editable = path.join(root, 'editable');
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search'))
+        return fakeRequest({
+          items: [
+            {
+              id: 'variant',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+          total: 2,
+        });
+      return fakeRequest({
+        id: 'variant',
+        contentSpace: { id: 'space' },
+        contentType: 'sfdc_cms__email',
+        contentBody: { rawHtml: '<p>literal</p>' },
+      });
+    });
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': path.join(root, 'source'),
+          'editable-dir': editable,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+    const result = (await command.run()) as ExportWorkspaceResult;
+    expect(Object.keys(result)).to.have.members(['destination', 'manifest', 'manifestSha256']);
+    expect(result.manifest.completeness).to.equal('partial');
+    expect(process.exitCode).to.equal(2);
+    expect(await readFile(path.join(editable, 'items/variant.html'), 'utf8')).to.equal(
+      '<p>literal</p>',
     );
   });
 
@@ -83,7 +162,7 @@ describe('CMS export workspace command', () => {
           'output-dir': 'export-dir',
         },
       }),
-      getConnection: $$.SANDBOX.stub().resolves({ request }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DSource' }),
     });
 
     try {
@@ -109,7 +188,7 @@ describe('CMS export workspace command', () => {
           'workspace-id': 'space',
         },
       }),
-      getConnection: $$.SANDBOX.stub().resolves({ request }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DSource' }),
     });
 
     const previousCwd = process.cwd();
@@ -158,7 +237,7 @@ describe('CMS export workspace command', () => {
           'workspace-name': 'Main/Site',
         },
       }),
-      getConnection: $$.SANDBOX.stub().resolves({ request }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DSource' }),
       jsonEnabled: $$.SANDBOX.stub().returns(true),
       warn: $$.SANDBOX.stub(),
     });
@@ -210,7 +289,7 @@ describe('CMS export workspace command', () => {
             'output-dir': destination,
           },
         }),
-        getConnection: $$.SANDBOX.stub().resolves({ request }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DSource' }),
         jsonEnabled: $$.SANDBOX.stub().returns(jsonEnabled),
         warn,
         log,
@@ -221,6 +300,9 @@ describe('CMS export workspace command', () => {
       const singleResult = result as ExportWorkspaceResult;
       expect(singleResult.destination).to.equal(destination);
       expect(singleResult.manifest.exportedCount).to.equal(1);
+      expect(singleResult.manifest.provenance.sourceOrgId).to.equal('00DSource');
+      expect(singleResult.manifest.completeness).to.equal('complete');
+      expect(process.exitCode).to.equal(undefined);
       expect(request.callCount).to.equal(3);
       expect(warn.calledOnce).to.equal(true);
       expect(warn.firstCall.args[0]).to.match(/^\[UNSUPPORTED_WILDCARD\]/u);
@@ -231,6 +313,48 @@ describe('CMS export workspace command', () => {
         expect(log.firstCall.args[0]).to.equal(`Destination: ${destination}`);
         expect(log.secondCall.args[0]).to.equal('Exported variants: 1/1 expected');
       }
+    });
+  }
+
+  for (const jsonEnabled of [false, true]) {
+    it(`retains partial diagnostics and provenance with exit 2 in JSON=${jsonEnabled} mode`, async () => {
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
+      temporaryDirectories.push(root);
+      const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+        if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+        return fakeRequest({ items: [], total: 1 });
+      });
+      const warn = $$.SANDBOX.stub();
+      const log = $$.SANDBOX.stub();
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'target-org': 'source-alias',
+            'api-version': '67.0',
+            'workspace-id': 'space',
+            'output-dir': path.join(root, 'export'),
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00DActual' }),
+        jsonEnabled: $$.SANDBOX.stub().returns(jsonEnabled),
+        warn,
+        log,
+      });
+
+      const result = (await command.run()) as ExportWorkspaceResult;
+
+      expect(Object.keys(result)).to.have.members(['destination', 'manifest', 'manifestSha256']);
+      expect(result.manifest.provenance.sourceOrgId).to.equal('00DActual');
+      expect(result.manifest.completeness).to.equal('partial');
+      expect(result.manifest.warnings.map(({ code }) => code)).to.include.members([
+        'PREMATURE_EMPTY_PAGE',
+        'COUNT_MISMATCH',
+      ]);
+      expect(warn.callCount).to.equal(result.manifest.warnings.length);
+      expect(log.callCount).to.equal(jsonEnabled ? 0 : 2);
+      expect(process.exitCode).to.equal(2);
+      await access(path.join(result.destination, 'manifest.json'));
     });
   }
 

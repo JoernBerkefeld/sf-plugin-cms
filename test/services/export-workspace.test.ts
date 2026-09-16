@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -50,6 +59,150 @@ describe('workspace export service', () => {
 
   afterEach(async () => {
     await rm(root, { force: true, recursive: true });
+  });
+
+  it('publishes literal HTML and complete raw metadata without changing default package bytes', async () => {
+    const raw = detail('a', 'space', {
+      contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+      externalId: null,
+      contentBody: { rawHtml: '&lt;p&gt;Café&lt;/p&gt;', subjectLine: 'keep' },
+    });
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search') ? { items: [row('a')], total: 1 } : raw,
+        ),
+      );
+    const options = { generatedAt: '2026-09-15T00:00:00.000Z', pluginVersion: '0.3.1' };
+    const baseline = await exportWorkspace(
+      { request },
+      'space',
+      path.join(root, 'baseline'),
+      options,
+    );
+    const editableDirectory = path.join(root, 'new-parent/editable');
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'source'), {
+      ...options,
+      editableDirectory,
+    });
+    expect(result.manifestSha256).to.equal(baseline.manifestSha256);
+    expect(await readdir(result.destination)).to.deep.equal(['items', 'manifest.json']);
+    expect(await readdir(path.join(editableDirectory, 'items'))).to.deep.equal([
+      'a.html',
+      'a.json',
+    ]);
+    expect(await readFile(path.join(editableDirectory, 'items/a.html'), 'utf8')).to.equal(
+      '<p>Café</p>',
+    );
+    expect(
+      JSON.parse(await readFile(path.join(editableDirectory, 'items/a.json'), 'utf8')),
+    ).to.deep.equal({ ...raw, contentBody: { subjectLine: 'keep' } });
+    expect(
+      JSON.parse(await readFile(path.join(editableDirectory, 'editable.json'), 'utf8'))
+        .sourceManifestSha256,
+    ).to.equal(result.manifestSha256);
+    expect(
+      JSON.parse(await readFile(path.join(result.destination, 'items/a.json'), 'utf8')),
+    ).to.deep.equal(raw);
+  });
+
+  it('rejects existing, unsafe and junction-routed destinations before transport', async () => {
+    const existing = path.join(root, 'existing');
+    await mkdir(existing);
+    await writeFile(path.join(root, 'file'), 'keep');
+    await symlink(
+      existing,
+      path.join(root, 'link'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const request = sinon.stub();
+    for (const editableDirectory of [
+      existing,
+      path.join(root, 'file/child'),
+      path.join(root, 'link/child'),
+      `${root}/escape/../editable`,
+      `${root}/stream:alias`,
+      String.raw`\\?\C:\editable`,
+      path.join(root, 'CON'),
+      path.join(root, 'alias.'),
+    ]) {
+      let failure: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, 'source'), {
+          editableDirectory,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(Error);
+    }
+    // The baseline path is subject to exactly the same parent checks.
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'link/source'), {
+        editableDirectory: path.join(root, 'editable'),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(Error);
+    expect(request.notCalled).to.equal(true);
+    expect(await readdir(root)).to.deep.equal(['existing', 'file', 'link']);
+  });
+
+  it('retains the valid baseline when no editable variants exist', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'source'), {
+        editableDirectory: path.join(root, 'editable'),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as Error).message)
+      .to.include('Baseline export retained')
+      .and.include('No editable native raw-HTML variants');
+    expect(await readdir(root)).to.deep.equal(['source']);
+    expect(
+      JSON.parse(await readFile(path.join(root, 'source/manifest.json'), 'utf8')).exportedCount,
+    ).to.equal(0);
+  });
+
+  it('cleans owned companion staging on a real publication collision without clobbering either output', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+      fakeRequest(
+        url.startsWith('/connect/cms/items/search')
+          ? { items: [row('a')], total: 1 }
+          : detail('a', 'space', {
+              contentType: 'sfdc_cms__email',
+              contentBody: { rawHtml: '<p>safe</p>' },
+            }),
+      ),
+    );
+    const editableDirectory = path.join(root, 'editable');
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'source'), {
+        editableDirectory,
+        editablePublish: {
+          publishPath: async (temporary, destination) => {
+            await mkdir(destination);
+            await writeFile(path.join(destination, 'keep'), 'keep');
+            await publishDirectoryNoClobber(temporary, destination);
+          },
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as Error).message).to.include('Baseline export retained');
+    expect(await readdir(root)).to.deep.equal(['editable', 'source']);
+    expect(await readFile(path.join(editableDirectory, 'keep'), 'utf8')).to.equal('keep');
+    expect(
+      JSON.parse(await readFile(path.join(root, 'source/manifest.json'), 'utf8')).exportedCount,
+    ).to.equal(1);
   });
 
   it('exports sorted details when the advertised count is satisfied', async () => {
@@ -122,6 +275,62 @@ describe('workspace export service', () => {
     ]);
     expect(JSON.stringify(manifest)).not.to.include('do-not-infer');
   });
+
+  it('inventories documented parent IDs while preserving the raw live variant shape', async () => {
+    const raw = {
+      managedContentVariantId: 'variant-fixture',
+      managedContentId: 'content-fixture',
+      contentKey: 'fixture-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+      contentSpace: { id: 'space' },
+      externalId: null,
+      contentBody: { subjectLine: 'Fixture' },
+    };
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? { items: [row('variant-fixture')], total: 1 }
+            : raw,
+        ),
+      );
+    const destination = path.join(root, 'export');
+    const { manifest } = await exportWorkspace({ request }, 'space', destination);
+    expect(manifest.completeness).to.equal('complete');
+    expect(manifest.externalReferences[0].source.sourceId).to.equal('content-fixture');
+    expect(manifest.items[0].referenceId).to.equal(manifest.externalReferences[0].referenceId);
+    expect(
+      JSON.parse(await readFile(path.join(destination, 'items/variant-fixture.json'), 'utf8')),
+    ).to.deep.equal(raw);
+  });
+
+  for (const overrides of [
+    { managedContentId: 'parent', contentId: 'other-parent' },
+    { managedContentVariantId: 'other-variant' },
+    { managedContentId: 'variant-fixture' },
+    { managedContentId: null },
+  ]) {
+    it(`rejects contradictory export identity before publication ${JSON.stringify(overrides)}`, async () => {
+      const request = sinon
+        .stub()
+        .callsFake(({ url }: { url: string }) =>
+          fakeRequest(
+            url.startsWith('/connect/cms/items/search')
+              ? { items: [row('variant-fixture')], total: 1 }
+              : detail('variant-fixture', 'space', { contentKey: 'key', ...overrides }),
+          ),
+        );
+      let error: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, 'export'));
+      } catch (error_) {
+        error = error_;
+      }
+      expect(error).to.be.instanceOf(TypeError);
+      expect(await readdir(root)).to.deep.equal([]);
+    });
+  }
 
   it('emits unsupported relationships only when relationship fields are encountered', async () => {
     const referenceRoot = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-reference-'));
@@ -292,6 +501,42 @@ describe('workspace export service', () => {
       pagesRequested: 1,
     });
     expect(request.callCount).to.equal(1);
+  });
+
+  it('rejects malformed search envelopes rather than publishing a complete empty package', async () => {
+    for (const [index, response] of [
+      null,
+      {},
+      { items: null, total: 0 },
+      { items: [], total: -1 },
+      { items: [], total: '0' },
+      { items: [] },
+    ].entries()) {
+      const request = sinon.stub().returns(fakeRequest(response));
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, `export-${index}`));
+        expect.fail('expected malformed search rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(TypeError);
+        expect((error as Error).message).to.include('Workspace variant search response');
+      }
+      expect(request.calledOnce).to.equal(true);
+    }
+    expect(await readdir(root)).to.deep.equal([]);
+  });
+
+  it('preserves explicit source provenance and accepts all supported count keys', async () => {
+    for (const countKey of ['total', 'totalCount', 'count']) {
+      const request = sinon.stub().returns(fakeRequest({ items: [], [countKey]: 0 }));
+      const result = await exportWorkspace({ request }, 'space', path.join(root, countKey), {
+        sourceOrgId: '00DActual',
+      });
+      expect(result.manifest.completeness).to.equal('complete');
+      expect(result.manifest.provenance.sourceOrgId).to.equal('00DActual');
+      expect(
+        JSON.parse(await readFile(path.join(result.destination, 'manifest.json'), 'utf8')),
+      ).to.deep.equal(result.manifest);
+    }
   });
 
   it('rejects search and detail ownership drift', async () => {

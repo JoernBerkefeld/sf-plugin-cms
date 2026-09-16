@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { writeEditableRawHtml } from '../../src/services/editable-raw-html-export.js';
+import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
 import ImportWorkspace from '../../src/commands/cms/import/workspace.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): { destroy(): void } };
@@ -18,19 +20,25 @@ function missingRequest(): FakeRequest<never> {
   });
 }
 
-async function writeSource(root: string): Promise<string> {
+async function writeSource(root: string, named = true, native = false): Promise<string> {
   const source = path.join(root, 'source');
   await mkdir(path.join(source, 'items'), { recursive: true });
   const exported = {
-    apiName: 'command_api',
-    contentBody: { body: 'command body' },
+    ...(named ? { apiName: 'command_api', urlName: 'command-url' } : {}),
+    contentBody: native
+      ? {
+          'sfdc_cms:title': 'Command title',
+          subjectLine: 'Subject',
+          messagePurpose: 'promotional',
+          rawHtml: '<p>Command body</p>',
+        }
+      : { body: 'command body' },
     contentKey: 'command-key',
     contentSpace: { id: 'source-space' },
-    contentType: 'sfdc_cms__news',
+    contentType: native ? 'sfdc_cms__email' : 'sfdc_cms__news',
     id: 'source-variant',
     language: 'en',
     title: 'Command title',
-    urlName: 'command-title',
   };
   const itemBytes = `${JSON.stringify(exported)}\n`;
   await writeFile(path.join(source, 'items', 'source-variant.json'), itemBytes);
@@ -124,6 +132,8 @@ describe('CMS import workspace command', () => {
       'workspace-id',
       'workspace-name',
       'source-dir',
+      'native-copy-map',
+      'editable-dir',
       'apply',
       'allow-partial',
       'report-dir',
@@ -134,8 +144,173 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags['source-dir'].required).to.equal(true);
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
+    expect(ImportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['native-copy-map']);
     expect(ImportWorkspace.summary).to.match(/create-only/iu);
   });
+
+  it('executes the explicit native-copy-map file through the public command', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-native-'));
+    temporaryDirectories.push(root);
+    const source = await writeSource(root, true, true);
+    const mapFile = path.join(root, 'copy.json');
+    await writeFile(
+      mapFile,
+      JSON.stringify([
+        {
+          sourceContentKey: 'command-key',
+          language: 'en',
+          apiName: 'fresh_api',
+          urlName: 'fresh-url',
+        },
+      ]),
+    );
+    let posted: Record<string, unknown> = {};
+    const request = $$.SANDBOX.stub().callsFake(
+      ({ method, url, body }: { method: string; url: string; body?: string }) => {
+        if (url === '/connect/cms/spaces/space')
+          return fakeRequest({ id: 'space', defaultLanguage: 'en', rootFolderId: 'root' });
+        if (method === 'POST') {
+          posted = JSON.parse(body!) as Record<string, unknown>;
+          return fakeRequest({
+            contentKey: 'generated',
+            managedContentId: 'new-id',
+            managedContentVariantId: 'new-variant',
+          });
+        }
+        return fakeRequest({
+          ...posted,
+          contentKey: 'generated',
+          managedContentId: 'new-id',
+          language: 'en',
+          contentSpace: { id: 'space' },
+          isPublished: false,
+          status: { status: 'Draft' },
+        });
+      },
+    );
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          apply: true,
+          'api-version': '66.0',
+          'source-dir': source,
+          'workspace-id': 'space',
+          'native-copy-map': mapFile,
+          'report-dir': path.join(root, 'report'),
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'org' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+    const result = await command.run();
+    expect(result.status).to.equal('success');
+    expect(posted).not.to.have.property('contentKey');
+    expect(result.result?.mappings[0].target.targetReference).to.equal('generated');
+  });
+
+  for (const failure of [
+    'none',
+    'missing map',
+    'metadata',
+    'baseline',
+    'missing HTML',
+    'default language',
+  ]) {
+    it(`preflights public editable input and preserves literal POST: ${failure}`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'cms-command-editable-'));
+      temporaryDirectories.push(root);
+      const source = await writeSource(root, true, true);
+      const loaded = await loadWorkspaceExport(source);
+      const originalFile = path.join(source, 'items/source-variant.json');
+      const raw = JSON.parse(await readFile(originalFile, 'utf8')) as Record<string, unknown>;
+      const editable = path.join(root, 'editable');
+      await writeEditableRawHtml(
+        [{ variantId: 'source-variant', raw }],
+        loaded.manifestSha256,
+        editable,
+      );
+      const html = '&lt;p&gt;literal edited text&lt;/p&gt;';
+      await writeFile(path.join(editable, 'items/source-variant.html'), html);
+      if (failure === 'metadata')
+        await writeFile(path.join(editable, 'items/source-variant.json'), '{}');
+      if (failure === 'baseline') await writeFile(originalFile, '{}');
+      if (failure === 'missing HTML') await rm(path.join(editable, 'items/source-variant.html'));
+      const mapFile = path.join(root, 'copy.json');
+      await writeFile(
+        mapFile,
+        JSON.stringify([
+          {
+            sourceContentKey: 'command-key',
+            language: 'en',
+            apiName: 'fresh_api',
+            urlName: 'fresh-url',
+          },
+        ]),
+      );
+      let posted: Record<string, unknown> = {};
+      const request = $$.SANDBOX.stub().callsFake(
+        ({ method, url, body }: { method: string; url: string; body?: string }) => {
+          if (url === '/connect/cms/spaces/space')
+            return fakeRequest({
+              id: 'space',
+              defaultLanguage: failure === 'default language' ? 'fr' : 'en',
+              rootFolderId: 'root',
+            });
+          if (method === 'POST') {
+            posted = JSON.parse(body!) as Record<string, unknown>;
+            return fakeRequest({
+              contentKey: 'generated',
+              managedContentId: 'new-id',
+              managedContentVariantId: 'new-variant',
+            });
+          }
+          return fakeRequest({
+            ...posted,
+            contentKey: 'generated',
+            managedContentId: 'new-id',
+            language: 'en',
+            contentSpace: { id: 'space' },
+            isPublished: false,
+            status: { status: 'Draft' },
+          });
+        },
+      );
+      const getOrgContext = $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'org' });
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            apply: true,
+            'api-version': '66.0',
+            'source-dir': source,
+            'editable-dir': editable,
+            'workspace-id': 'space',
+            ...(failure === 'missing map' ? {} : { 'native-copy-map': mapFile }),
+            'report-dir': path.join(root, 'report'),
+          },
+        }),
+        getOrgContext,
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+      const result = await command.run();
+      if (failure === 'none') {
+        expect(result.status).to.equal('success');
+        expect((posted.contentBody as Record<string, unknown>).rawHtml).to.equal(html);
+        expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(
+          1,
+        );
+        expect(result.diagnostics.warnings[0].code).to.equal('EDITABLE_HTML_INPUT');
+        expect(result.result?.integrity.verifiedItemCount).to.equal(1);
+      } else {
+        expect(result.result).to.equal(null);
+        expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(
+          0,
+        );
+        if (failure !== 'default language') expect(getOrgContext.notCalled).to.equal(true);
+      }
+    });
+  }
 
   it('requires a report directory for apply before local or remote work', async () => {
     const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
@@ -361,14 +536,24 @@ describe('CMS import workspace command', () => {
       expect(request.callCount).to.equal(2);
       expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
       expect(jsonEnabled ? log.notCalled : log.callCount > 0).to.equal(true);
-      if (!jsonEnabled) expect(log.lastCall.args[0]).to.include('No content was created');
+      expect(result.diagnostics.warnings.map(({ code }) => code)).to.deep.equal([
+        'NAME_AVAILABILITY_UNVERIFIED',
+        'SERVER_CONFLICT_CHECK_UNVERIFIED',
+        'APPLY_READINESS_UNVERIFIED',
+      ]);
+      if (!jsonEnabled) {
+        expect(
+          log.getCalls().some(({ args }) => String(args[0]).includes('No content was created')),
+        ).to.equal(true);
+        expect(log.lastCall.args[0]).to.include('not deploy readiness');
+      }
     });
   }
 
   it('applies only when explicitly requested and returns the durable report', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
     temporaryDirectories.push(root);
-    const source = await writeSource(root);
+    const source = await writeSource(root, false);
     const reportDirectory = path.join(root, 'report');
     const request = $$.SANDBOX.stub().callsFake(
       ({ method, url }: { method: string; url: string }) => {

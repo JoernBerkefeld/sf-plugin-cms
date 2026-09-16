@@ -190,7 +190,7 @@ Choose either single or bulk mode:
 
 In single mode, `--output-dir <path>` remains the exact new destination. When omitted, export writes to `./cms/<safe-canonical-workspace-name>`. In bulk mode, `--output-dir` is the parent directory and defaults to `./cms`; each workspace is written beneath it using the canonical fetched name. Safe segments preserve Unicode and case, replace path/control/Windows-invalid characters, and trim unsafe trailing dots or spaces.
 
-Bulk mode performs a strict global preflight before the first workspace export: it enumerates until an empty page, canonicalizes every workspace by ID, validates IDs, names, and actual types, applies the optional type filter, sorts by canonical ID, checks the output parent and every destination, and rejects collisions after sanitization, Unicode normalization, and case folding. Any preflight failure creates no destinations and makes no export calls.
+Bulk mode performs a strict global preflight before the first workspace export: it enumerates until an empty page, canonicalizes every workspace by ID, validates IDs and names, resolves recognized canonical `spaceType` values, applies the optional type filter, sorts by canonical ID, checks the output parent and every destination, and rejects collisions after sanitization, Unicode normalization, and case folding. If a canonical detail response omits `spaceType`, preflight can use the list response's recognized type only for the same exact workspace ID. A present malformed, null, or unsupported canonical type is rejected, while an explicit contradictory canonical `Content` type is filtered out. Any preflight failure creates no destinations and makes no export calls.
 
 After preflight, each workspace export remains atomic. Execution continues after individual failures. Manifest warnings count as successful exports. JSON and human modes both return the complete deterministic aggregate with discovered, selected, succeeded, and failed counts plus per-workspace status, manifest, or redacted single-line error. A partial execution sets a nonzero process exit code only after the aggregate is emitted.
 
@@ -210,7 +210,7 @@ cms/
 
 ### `sf cms import workspace`
 
-Plans or applies a create-only import from an export package. Dry-run is the default: the command validates the complete local package before authenticating, resolves the destination org and workspace, requires an exact workspace ID plus nonempty `defaultLanguage` and `rootFolderId`, and checks every planned content key for conflicts without sending mutations.
+Plans or applies a create-only import from an export package. Dry-run is the default: the command validates the complete local package before authenticating, resolves the destination org and workspace, and requires an exact workspace ID plus nonempty `defaultLanguage` and `rootFolderId`. The default profile checks every planned source content key for conflicts without sending mutations. The opt-in native-copy profile below instead requests server-generated keys.
 
 Safe dry run:
 
@@ -237,6 +237,91 @@ Safety flags:
 - `--report-dir <path>`: required with `--apply`; the destination must not exist. There is no overwrite mode.
 - `--allow-partial`: accept a package whose manifest records omissions or incomplete coverage. Without this flag, partial exports are rejected.
 
+A successful default-profile dry-run is a read-only proposal, not a deploy-ready result. It preserves named content and checks destination content-key absence, but reports `SERVER_CONFLICT_CHECK_UNVERIFIED` and `APPLY_READINESS_UNVERIFIED` warnings. Named proposals additionally report `NAME_AVAILABILITY_UNVERIFIED`: destination API-name/URL-name availability is not established, and default-profile named apply remains blocked. Package-wide reference and media checks still apply to default-profile dry-runs; no target mappings are claimed as resolved.
+
+#### Native raw-HTML copies (`--native-copy-map`)
+
+`--native-copy-map <json-file>` opts into a bounded create-only profile for selected raw-HTML `sfdc_cms__email` and `sfdc_cms__emailTemplate` content. It is not general workspace restoration. Phase 1 users deliberately select content they believe is reference-free; a successful dry-run does not prove that embedded HTML has no dependencies. The file must contain a nonempty JSON array; each row has exactly these four string fields:
+
+```json
+[
+  {
+    "sourceContentKey": "SOURCE_CONTENT_KEY",
+    "language": "en-US",
+    "apiName": "CopiedEmail",
+    "urlName": "copied-email"
+  }
+]
+```
+
+Replace the example source key and language with an exact pair from the integrity-verified package. Each row selects exactly one existing variant, with only one language per distinct parent; selection may be a subset of the package, but the entire package must pass integrity validation. The selected language must equal the destination workspace's default language. `sourceContentKey`, `language`, and `apiName` use letters, digits, underscores, or hyphens without whitespace; `urlName` uses only lowercase letters, digits, or hyphens. API and URL names must be fresh relative to all source items and the other rows in this run.
+
+Native selection excludes a `cms.relationship` descriptor from reference preflight only when it exactly matches exporter evidence and is unambiguously owned by an unselected variant. References owned by selected variants, or with ambiguous or unproven ownership, remain subject to blocking preflight checks. Full-package integrity validation still includes unselected items, and the original manifest, source hash, integrity counts, and complete reference reporting are retained; excluding a descriptor from preflight does not resolve it. Default-profile imports retain package-wide reference preflight.
+
+Partial source packages still require explicit `--allow-partial`, including for native selection. The read-only selection diagnostic returned contract status `partial`, exit code `2`, an empty `errors` array, and a non-null import result while retaining the original unsupported references and readiness warnings. This demonstrates that the selected proposal passed planning/preflight, not apply authorization, apply readiness, or full-package restore proof.
+
+Save the array outside the source package, for example as `./native-copy-map.json`. Preview first, then explicitly apply with a new report directory:
+
+```sh
+sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --contract-version 1 --json
+sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-native-copy-report --contract-version 1 --json
+```
+
+The native profile omits `contentKey` from CREATE and uses the returned server-generated identity; source keys are not retained as target keys. It submits the selected fresh API/URL names and remaps the email body's `sfdc_cms:urlName`, without modifying source files or existing records. Destination API-name/URL-name availability is not prevalidated: an API-name collision can reject CREATE, while duplicate URLs can create distinct objects. A dry-run neither allocates target identities nor proves that a later apply will succeed.
+
+The supported body requires nonempty `sfdc_cms:title`, `subjectLine`, `messagePurpose`, and `rawHtml`. Optional supported strings are `sfdc_cms:description`, `preheader`, `textContent`, and `backgroundColor`, plus the email body's URL name. Only empty provider/expression/attachment/variant arrays and the exact observed default background/brand settings are accepted. Unknown fields, non-null external-provider metadata, unsafe non-HTML metadata strings, and structured/package media or reference forms remain rejected. Temporarily through Phase 7, the retained raw-HTML danger scanner is bypassed and nonempty `rawHtml` is accepted as opaque literal content: embedded dependencies, media, references, dynamic syntax, and URLs are not discovered, resolved, rewritten, sanitized, or rejected. This is not dependency or safety validation; enabling the retained type-aware scanner is deferred to Phase 8. Encoded native GET HTML is decoded once for CREATE, while literal edited sidecar HTML is not decoded again. Successful apply reads the created content back and verifies generated identities, destination, language, type, names, Draft/unpublished state, and submitted body fields.
+
+Historical native-copy evidence includes local compiled public-command execution with real flag parsing and org connections for owned email/template probes, including a separate cross-org native CREATE acceptance with independent readbacks. That evidence concerns the unedited native-copy path, not live installed editable HTML transfer. Separate packed CLI tests do not establish live installed-host acceptance against Salesforce. No general workspace migration, custom-key CREATE, general reference/media transport, non-default-language copying, or every allowed-field live profile is proven. The MCNext orchestrator is not wired to this native-copy flag; its integration remains a separate slice.
+
+#### Editable HTML companion (`--editable-dir`)
+
+For local HTML editing, keep two separate directories: the unchanged workspace export is the integrity/provenance baseline, and an opt-in companion contains literal HTML beside its variant metadata. Export with both explicit destinations:
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json
+```
+
+Replace the example org aliases and workspace IDs with your own. `--editable-dir` is single-workspace only, cannot be combined with `--all`, and requires explicit `--output-dir`. Both destinations must be new, disjoint directories: neither may contain the other. Unsafe paths and symlink/junction routes are rejected before org access. The baseline is published first; if companion creation fails (including when there are no eligible variants), the command fails with a **baseline retained / editable output unavailable** message. Keep that baseline: this is not a two-directory transaction, and a successful baseline is not deleted on companion failure.
+
+```text
+cms-baseline/
+├── manifest.json
+└── items/<variant-id>.json
+cms-editable/
+├── editable.json
+└── items/
+    ├── <variant-id>.json
+    └── <variant-id>.html
+```
+
+The companion includes only `sfdc_cms__email` / `sfdc_cms__emailTemplate` variants with string `contentBody.rawHtml` and no `sfdc_cms:block`. Other content remains solely in the baseline. Distinct variant IDs keep languages and parents separate. Export eligibility is a raw-shape test, not proof that the HTML is dependency-free or safe. Builder/block-based content, arbitrary metadata editing, and structured media/reference transport are not supported; embedded HTML dependencies and dynamic syntax remain opaque while the retained scanner is bypassed until Phase 8.
+
+1. Open `./cms-editable/items/<variant-id>.html` in your editor and change only the HTML. It is literal UTF-8, not a JSON-escaped document; save without a BOM. Do not edit the baseline, `editable.json`, or the adjacent metadata JSON, and do not add or rename files. The metadata retains the original variant fields except `contentBody.rawHtml`.
+2. Save `./native-copy-map.json` outside both directories using the four-field array shown above. Select the exact original content key and language, with fresh API/URL names. Only one destination-default-language variant per parent can be selected; every selected variant must have a companion HTML file.
+3. Preview the reconstructed HTML with the default dry-run:
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --contract-version 1 --json
+```
+
+4. Review the result, then explicitly request fresh CREATE with a new report directory outside both input directories:
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-editable-create-report --contract-version 1 --json
+```
+
+For a partial baseline, add `--allow-partial` to both import commands only after accepting its recorded omissions. A `partial` result can exit `2` with usable data; inspect the result and diagnostics rather than treating dry-run as apply readiness. No `--dry-run` flag is needed. Import `--editable-dir` requires `--native-copy-map`, and `--source-dir` always points to the original baseline, never the companion. CREATE generates new target keys; this is not UPDATE or publication, and destination name availability is not guaranteed by dry-run.
+
+Import verifies the entire baseline, including unselected items, before checking the companion against metadata and hashes derived from that baseline. Only declared HTML contents may differ; recalculating a descriptor hash cannot authorize a metadata edit. No manual checksum updates or repacking are needed. Selected literal HTML replaces only `rawHtml` and is not decoded as a GET response again. Structured/package reference checks and all non-HTML metadata guards still apply, but the opaque HTML itself is not scanned. Existing explicit native identity/URL mapping still applies; neither input directory is rewritten.
+
+`EDITABLE_HTML_INPUT` appears on successful dry-run/apply results even if no HTML changed. It separates selected modifications planned/applied from changes across **all** companion entries. Original source-manifest hashes, integrity counts, and reference inventory continue to describe only the unchanged baseline, not the edited payload; HTML edits do not establish CMS reference rewriting. Before the first editable CREATE, the initial durable `workspace-import-run.json` includes `editableSource` with the companion contract, original `sourceManifestSha256`, and every companion variant's `originalHtmlSha256`, `currentHtmlSha256`, and `changed` value. Its pending operations also bind the exact reconstructed CREATE payloads through `requestSha256`. All-companion evidence does not mean all entries were selected or created; use the operations and returned identities to determine what happened.
+
+The companion is **not** an `sf-cms-workspace-export` package and must not be supplied as MCNext migration artifact evidence. Default exports, workspace-package v1, and existing CLI JSON result shapes remain unchanged. MCNext does not consume this editable directory or gain editable-transfer support from its presence.
+
+Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fresh CREATE, readback, and journal evidence for email/template content. **Live installed editable transfer is still unproven:** the 2026-09-16 attempt stopped on Salesforce session-refresh maintenance before export or mutation. Historical native-copy acceptance is separate evidence, not proof of edited HTML transfer.
+
+#### Run reports and recovery
+
 A successful apply writes:
 
 ```text
@@ -244,15 +329,15 @@ cms-import-report/
 └── workspace-import-run.json
 ```
 
-The run report binds the run ID to the destination org ID, destination workspace ID, canonical source directory, and source-manifest SHA-256. Before each parent or child mutation it atomically records a `pending` operation containing the exact content key, language, operation kind, destination identity, deterministic request identity, and SHA-256. A response is then recorded as `succeeded` with returned IDs, or a thrown mutation is recorded as `failed` when report storage remains available. Immediate created-parent records remain available for recovery. The run itself is marked `applying`, `completed`, `failed`, or `ownership-uncertain`.
+The run report binds the run ID to the destination org ID, destination workspace ID, canonical source directory, and source-manifest SHA-256. Before each parent or child mutation it atomically records a `pending` operation containing the content key, language, operation kind, destination identity, deterministic request identity, and SHA-256. For native copies, that pre-request content key is the source key, not a predicted target key. Returned native identities are durably recorded as `contentKey`, `contentId`, and `primaryVariantId` before response semantic checks and readback verification. Native POST errors, including `DUPLICATE_VALUE`, leave the operation pending and the run ownership-uncertain; there is no automatic retry or update fallback. In the default profile, a response is recorded as `succeeded` with returned IDs, or a thrown mutation is recorded as `failed` when report storage remains available. Immediate created-parent records remain available for recovery. The run itself is marked `applying`, `completed`, `failed`, or `ownership-uncertain`.
 
 Filesystem report replacement is atomic, but the remote mutation and local report update are not a single atomic transaction. If a mutation returns successfully and its result cannot be durably written, the command raises a distinct ownership-uncertain error and keeps that operation `pending`; the report must not be interpreted as proving that no remote object was created. An existing report directory is never reused, so unresolved operations cannot be treated as resumable progress.
 
 Import limitations and conflicts:
 
-- Import is create-only. Any existing destination content key aborts the entire preflight before mutation; there is no overwrite, update, merge, checkpoint/resume, or cleanup command.
-- Every content group must contain exactly one variant matching the destination workspace's `defaultLanguage`. There is no primary-language fallback.
-- Child variants are created sequentially after their primary parent. There is no concurrency.
+- Import is create-only. In the default profile, any existing destination content key aborts the entire preflight before mutation. Native copies use server-generated keys instead. Neither profile supports overwrite, update, merge, checkpoint/resume, or a cleanup command.
+- Every content group must contain exactly one variant matching the destination workspace's `defaultLanguage`. There is no primary-language fallback; native copies select only that language and create no additional-language children.
+- Default-profile child variants are created sequentially after their primary parent. There is no concurrency, automatic rollback, or full-package transaction; a later failure can leave earlier created drafts.
 - Media-specific migration is not supported.
 - The command does not change publication state; newly created records are expected to remain drafts.
 - `--allow-partial` accepts known source omissions but does not make the missing records recoverable.
@@ -260,7 +345,7 @@ Import limitations and conflicts:
 Recovery guidance:
 
 1. Preserve `workspace-import-run.json` if an apply fails; it is the authoritative local journal for that run.
-2. Reconcile every unresolved `pending` operation first, using its exact destination org/workspace, content key, language, operation kind, and request hash. A pending entry means the mutation may have happened even when no returned ID is recorded.
+2. Reconcile every unresolved `pending` operation first, using its exact destination org/workspace, content key, language, operation kind, and request hash. For native copies, distinguish the recorded source key from any returned generated target identity. A pending entry means the mutation may have happened even when no returned ID is recorded; neither a POST error nor a failed readback proves that no draft exists. Do not retry blindly.
 3. Inspect and verify each `succeeded` operation and immediate created-parent record in the exact destination org and workspace before taking action.
 4. Remove only records proven to belong to that run, beginning with recorded variants. Do not infer IDs or delete by broad search, workspace, title, or content-key pattern.
 5. If ownership or deletion is uncertain, stop and record the leftovers for manual review. Never modify workspace/channel configuration or publish content as recovery.
@@ -285,13 +370,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.3.1 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.4.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. Dependency discovery and closure are unavailable in v0.3.1: exports preserve only evidenced opaque identity inventory and do not expose dependency edges. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.3.1; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. Dependency discovery and closure are unavailable in v0.4.0: exports preserve only evidenced opaque identity inventory and do not expose dependency edges. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.4.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -328,7 +413,7 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.3.1 does not discover or traverse CMS relationships.
+- `workspace.export.dependency-closure` — `unavailable`; v0.4.0 does not discover or traverse CMS relationships.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.
 
@@ -386,7 +471,7 @@ The experimental export uses the v67 `GET /connect/cms/items/search` operation. 
 
 String-array query values such as `contentSpaceOrFolderIds` and `languages` are serialized as repeated keys. Pagination reconstructs each request from the original filters instead of trusting `nextPageUri`, which was observed to remain present after an empty page. Delivery responses do not prove workspace ownership and exclude drafts. SOQL omitted a known record that remained readable through Connect REST, and CMS `9Pu` folders exposed no child-enumeration operation, so none of those alternatives establishes a complete inventory.
 
-Current shipped export guards include an explicit single-workspace mode and a strict bulk preflight. Workspace enumeration is zero-based with `pageSize=250`, deduplicates exact IDs, ignores advertised totals as a termination signal, and continues until an empty page. It fails closed on repeated pages, no progress, malformed IDs, case/Unicode-equivalent IDs, or the 1,000-page cap. Bulk preflight canonicalizes every workspace with a GET, validates canonical ID, name, and `spaceType`, filters by actual type, sorts by canonical ID, and rejects unsafe or colliding destinations before any export starts.
+Current shipped export guards include an explicit single-workspace mode and a strict bulk preflight. Workspace enumeration is zero-based with `pageSize=250`, deduplicates exact IDs, rejects conflicting recognized types for the same ID during bulk preflight, ignores advertised totals as a termination signal, and continues until an empty page. It fails closed on repeated pages, no progress, malformed IDs, case/Unicode-equivalent IDs, or the 1,000-page cap. Bulk preflight canonicalizes every workspace with a GET, validates canonical ID and name, prefers recognized canonical `spaceType`, and uses recognized list type evidence only when the canonical detail type is absent and the exact ID matches. It rejects present malformed, null, or unsupported canonical type evidence, filters an explicit contradictory `Content` type, sorts by canonical ID, and rejects unsafe or colliding destinations before any export starts.
 
 Per-workspace variant export remains atomic and best-effort: it verifies `managedContentSpaceId` in search rows and `contentSpace.id` in variant details, records ownership rejections and detail failures, refuses an existing destination, writes stable JSON to a temporary sibling directory, removes staging after failure, and renames staging only after all output is written. Bulk execution continues across workspace failures and emits a deterministic complete aggregate in both human and JSON modes.
 

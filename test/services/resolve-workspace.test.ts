@@ -116,6 +116,26 @@ describe('workspace resolver', () => {
     }
   });
 
+  it('ignores list type conflicts for single-workspace name resolution', async () => {
+    const pages = [
+      [{ id: 'chosen', name: 'Main', spaceType: { apiName: 'marketing' } }],
+      [
+        { id: 'chosen', name: 'Main', spaceType: { apiName: 'content' } },
+        { id: 'other', name: 'Other' },
+      ],
+      [],
+    ];
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (!url.includes('?')) return fakeRequest({ id: 'chosen', name: 'Main' });
+      return fakeRequest({ spaces: pages[pageNumber(url)] ?? [] });
+    });
+
+    const result = await resolveWorkspace({ request }, { workspaceName: 'Main' });
+
+    expect(result.id).to.equal('chosen');
+    expect(request.callCount).to.equal(4);
+  });
+
   it('rejects duplicate-only pages that make no progress', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) =>
       fakeRequest({

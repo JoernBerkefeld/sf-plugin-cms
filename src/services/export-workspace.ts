@@ -21,6 +21,11 @@ import {
   type DirectoryPublishOptions,
 } from './atomic-publish.js';
 import { inventoryExportReferences } from './export-references.js';
+import {
+  preflightEditableExport,
+  writeEditableRawHtml,
+  type EditablePublishOptions,
+} from './editable-raw-html-export.js';
 import { getVariant, type CmsRecord } from './read.js';
 
 const PAGE_SIZE = 250;
@@ -55,6 +60,8 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   sourceOrgId?: string;
   pluginVersion?: string;
   generatedAt?: string;
+  editableDirectory?: string;
+  editablePublish?: EditablePublishOptions;
   atomicPublish?: DirectoryPublishOptions &
     CleanupOptions & {
       readonly makeTemporaryDirectory?: typeof mkdtemp;
@@ -73,16 +80,22 @@ function nonemptyString(value: unknown): value is string {
 }
 
 function responseItems(value: unknown): unknown[] {
-  return isRecord(value) && Array.isArray(value.items) ? value.items : [];
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new TypeError('Workspace variant search response must contain an items array.');
+  }
+  return value.items;
 }
 
 function responseCount(value: unknown): number {
-  if (!isRecord(value)) return 0;
-  for (const key of ['total', 'totalCount', 'count']) {
-    const count = value[key];
-    if (typeof count === 'number' && Number.isInteger(count) && count >= 0) return count;
+  if (isRecord(value)) {
+    for (const key of ['total', 'totalCount', 'count']) {
+      const count = value[key];
+      if (typeof count === 'number' && Number.isInteger(count) && count >= 0) return count;
+    }
   }
-  return 0;
+  throw new TypeError(
+    'Workspace variant search response must contain a nonnegative integer count.',
+  );
 }
 
 function searchRow(value: unknown): SearchRow | undefined {
@@ -193,6 +206,9 @@ export async function exportWorkspace(
 ): Promise<ExportWorkspaceResult> {
   if (!nonemptyString(workspaceId)) throw new TypeError('workspaceId must be a nonempty string');
   if (!nonemptyString(destination)) throw new TypeError('destination must be a nonempty string');
+  if (options.editableDirectory !== undefined) {
+    await preflightEditableExport(destination, options.editableDirectory);
+  }
   if (await exists(destination))
     throw new Error(`Export destination already exists: ${destination}`);
 
@@ -365,6 +381,9 @@ export async function exportWorkspace(
   };
   assertWorkspaceExportManifest(manifest);
 
+  if (options.editableDirectory !== undefined) {
+    await preflightEditableExport(destination, options.editableDirectory);
+  }
   const parent = path.dirname(destination);
   await mkdir(parent, { recursive: true });
   const temporary = await (options.atomicPublish?.makeTemporaryDirectory ?? mkdtemp)(
@@ -383,5 +402,33 @@ export async function exportWorkspace(
   }
 
   const manifestSha256 = sha256(await readFile(path.join(destination, 'manifest.json')));
+  if (options.editableDirectory !== undefined) {
+    try {
+      await assertRegularPackageFiles(destination, new Set(manifest.items.map(({ path }) => path)));
+      if (manifestSha256 !== sha256(jsonBytes(manifest)))
+        throw new Error('Published manifest changed');
+      const rawItems = [];
+      for (const [index, entry] of entries.entries()) {
+        const bytes = await readFile(path.join(destination, entry.file));
+        if (sha256(bytes) !== manifest.items[index].sha256)
+          throw new Error('Published variant changed');
+        rawItems.push({
+          variantId: entry.variantId,
+          raw: JSON.parse(bytes.toString('utf8')) as CmsRecord,
+        });
+      }
+      await writeEditableRawHtml(
+        rawItems,
+        manifestSha256,
+        options.editableDirectory,
+        options.editablePublish,
+      );
+    } catch (error) {
+      throw new Error(
+        `Baseline export retained at ${destination}; editable output unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
   return { destination, manifest, manifestSha256 };
 }

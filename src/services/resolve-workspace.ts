@@ -22,12 +22,48 @@ export type WorkspaceSummary = {
   readonly name?: string;
 };
 
+type CanonicalWorkspaceType = 'Content' | 'Marketing';
+type ListedWorkspaceTypeEvidence = CanonicalWorkspaceType | 'invalid' | 'missing';
+
+type WorkspaceEnumerationOptions = {
+  readonly collectWorkspaceType?: boolean;
+  readonly workspaceTypes?: Map<string, CanonicalWorkspaceType>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function listedWorkspaceTypeEvidence(value: unknown): ListedWorkspaceTypeEvidence {
+  if (value === undefined) return 'missing';
+  let candidate: string | undefined;
+  if (typeof value === 'string') candidate = value;
+  else if (isRecord(value) && typeof value.apiName === 'string') candidate = value.apiName;
+  if (candidate === undefined) return 'invalid';
+  const normalized = candidate.toLocaleLowerCase('en-US');
+  if (normalized === 'marketing') return 'Marketing';
+  if (normalized === 'content') return 'Content';
+  return 'invalid';
+}
+
 function nonemptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
 function folded(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function publishWorkspaceTypes(
+  evidence: ReadonlyMap<string, ListedWorkspaceTypeEvidence>,
+  workspaceTypes: Map<string, CanonicalWorkspaceType> | undefined,
+): void {
+  for (const [id, workspaceType] of evidence) {
+    if (workspaceType === 'missing' || workspaceType === 'invalid') {
+      throw new Error(`Workspace listing returned ${workspaceType} type evidence for ID ${id}.`);
+    }
+    workspaceTypes?.set(id, workspaceType);
+  }
 }
 
 function workspaceSummary(value: CmsRecord, page: number): WorkspaceSummary {
@@ -46,10 +82,12 @@ export async function enumerateWorkspaces(
   connection: RequestConnection,
   options: JsonRequestOptions = {},
   query: Readonly<Record<string, string | number>> = {},
+  enumerationOptions: WorkspaceEnumerationOptions = {},
 ): Promise<WorkspaceSummary[]> {
   const workspaces = new Map<string, WorkspaceSummary>();
   const foldedIds = new Map<string, string>();
   const pageFingerprints = new Set<string>();
+  const typeEvidence = new Map<string, ListedWorkspaceTypeEvidence>();
 
   for (let page = 0; page < WORKSPACE_PAGE_CAP; page += 1) {
     const response = await listWorkspaces(
@@ -57,17 +95,30 @@ export async function enumerateWorkspaces(
       { ...query, page, pageSize: WORKSPACE_PAGE_SIZE },
       options,
     );
-    if (response.items.length === 0) return [...workspaces.values()];
+    if (response.items.length === 0) {
+      if (enumerationOptions.collectWorkspaceType === true) {
+        publishWorkspaceTypes(typeEvidence, enumerationOptions.workspaceTypes);
+      }
+      return [...workspaces.values()];
+    }
 
     const summaries = response.items.map((item) => workspaceSummary(item, page));
-    const fingerprint = JSON.stringify(summaries.map(({ id, name }) => [id, name ?? '']));
+    const fingerprint = JSON.stringify(
+      response.items.map((item, index) => [
+        summaries[index].id,
+        summaries[index].name ?? '',
+        enumerationOptions.collectWorkspaceType === true
+          ? listedWorkspaceTypeEvidence(item.spaceType)
+          : null,
+      ]),
+    );
     if (pageFingerprints.has(fingerprint)) {
       throw new Error(`Workspace listing repeated page content at page ${page}.`);
     }
     pageFingerprints.add(fingerprint);
 
     let additions = 0;
-    for (const summary of summaries) {
+    for (const [index, summary] of summaries.entries()) {
       const foldedId = folded(summary.id);
       const existingCasing = foldedIds.get(foldedId);
       if (existingCasing !== undefined && existingCasing !== summary.id) {
@@ -76,6 +127,16 @@ export async function enumerateWorkspaces(
         );
       }
       foldedIds.set(foldedId, summary.id);
+      if (enumerationOptions.collectWorkspaceType === true) {
+        const evidence = listedWorkspaceTypeEvidence(response.items[index].spaceType);
+        const existingEvidence = typeEvidence.get(summary.id);
+        if (existingEvidence !== undefined && existingEvidence !== evidence) {
+          throw new Error(
+            `Workspace listing returned inconsistent type evidence for ID ${summary.id}: ${existingEvidence} and ${evidence}.`,
+          );
+        }
+        typeEvidence.set(summary.id, evidence);
+      }
       if (!workspaces.has(summary.id)) {
         workspaces.set(summary.id, summary);
         additions += 1;

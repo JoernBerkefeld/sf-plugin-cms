@@ -55,13 +55,17 @@ function folded(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase('en-US');
 }
 
-function actualWorkspaceType(workspace: CmsRecord): CanonicalWorkspaceType {
+function actualWorkspaceType(
+  workspace: CmsRecord,
+  listedType?: CanonicalWorkspaceType,
+): CanonicalWorkspaceType {
   const spaceType = workspace.spaceType;
   if (typeof spaceType === 'string') return normalizeWorkspaceType(spaceType);
   if (isRecord(spaceType) && typeof spaceType.apiName === 'string') {
     return normalizeWorkspaceType(spaceType.apiName);
   }
-  return normalizeWorkspaceType();
+  if (spaceType === undefined && listedType !== undefined) return listedType;
+  return normalizeWorkspaceType(spaceType);
 }
 
 export function normalizeWorkspaceType(value?: unknown): CanonicalWorkspaceType {
@@ -130,7 +134,16 @@ export async function preflightBulkWorkspaceExport(
   workspaceType?: CanonicalWorkspaceType,
   options: JsonRequestOptions = {},
 ): Promise<{ discoveredCount: number; selected: PreparedWorkspace[] }> {
-  const listed = await enumerateWorkspaces(connection, options);
+  const listedTypes = new Map<string, CanonicalWorkspaceType>();
+  const listed = await enumerateWorkspaces(
+    connection,
+    options,
+    {},
+    {
+      collectWorkspaceType: true,
+      workspaceTypes: listedTypes,
+    },
+  );
   const canonical: PreparedWorkspace[] = [];
   const canonicalNames = new Map<string, string>();
 
@@ -149,7 +162,7 @@ export async function preflightBulkWorkspaceExport(
       );
     }
     canonicalNames.set(nameKey, summary.id);
-    const type = actualWorkspaceType(workspace);
+    const type = actualWorkspaceType(workspace, listedTypes.get(summary.id));
     if (workspaceType !== undefined && type !== workspaceType) continue;
     canonical.push({
       id: summary.id,
