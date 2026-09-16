@@ -170,7 +170,7 @@ describe('workspace export service', () => {
     ).to.equal(0);
   });
 
-  it('cleans owned companion staging on a real publication collision without clobbering either output', async () => {
+  it('cleans owned companion staging on a publication collision without clobbering either output', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) =>
       fakeRequest(
         url.startsWith('/connect/cms/items/search')
@@ -187,10 +187,10 @@ describe('workspace export service', () => {
       await exportWorkspace({ request }, 'space', path.join(root, 'source'), {
         editableDirectory,
         editablePublish: {
-          publishPath: async (temporary, destination) => {
+          publishPath: async (_temporary, destination) => {
             await mkdir(destination);
             await writeFile(path.join(destination, 'keep'), 'keep');
-            await publishDirectoryNoClobber(temporary, destination);
+            throw Object.assign(new Error('destination appeared'), { code: 'EEXIST' });
           },
         },
       });
