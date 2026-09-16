@@ -1,5 +1,4 @@
 import { execFile, spawn } from 'node:child_process';
-import { traceChild, tracePhase } from '../support/subprocess-lifecycle.js';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -62,7 +61,6 @@ async function runSf(arguments_: string[], contractCase?: string): Promise<Proce
       },
       windowsHide: true,
     });
-    traceChild(pending.child, `sf:${contractCase ?? arguments_.join(' ')}`);
     const { stderr, stdout } = await pending;
     return { exitCode: 0, stderr, stdout };
   } catch (error) {
@@ -139,7 +137,6 @@ async function installPackedPlugin(dataDirectory: string): Promise<string> {
       '--pack-destination',
       temporaryPackDirectory,
     ]);
-    traceChild(pending.child, 'pack');
     const { stdout } = await pending;
     const [{ filename }] = JSON.parse(stdout) as Array<{ filename: string }>;
     const packageName = JSON.parse(await readFile('package.json', 'utf8')).name as string;
@@ -147,10 +144,7 @@ async function installPackedPlugin(dataDirectory: string): Promise<string> {
     await runInstall(specification, dataDirectory);
     return path.join(dataDirectory, 'node_modules', packageName);
   } finally {
-    const trace = tracePhase('pack-cleanup');
-    trace(`start path=${temporaryPackDirectory}`);
     await rm(temporaryPackDirectory, { force: true, recursive: true });
-    trace('complete');
   }
 }
 
@@ -162,7 +156,6 @@ async function runInstall(specification: string, dataDirectory: string): Promise
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    traceChild(child, 'install');
     let stderr = '';
     let stdout = '';
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
@@ -190,18 +183,13 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   after(async () => {
-    const trace = tracePhase('data-cleanup');
-    trace(`start path=${isolatedDataDirectory}`);
     for (const delay of [0, 25, 50, 100]) {
       try {
-        trace(`attempt delay=${delay}`);
         await rm(isolatedDataDirectory, { force: true, recursive: true });
-        trace('complete');
         return;
       } catch (error) {
         const code =
           typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-        trace(`failure code=${String(code)}`);
         if (process.platform !== 'win32' || code !== 'ENOTEMPTY' || delay === 100) throw error;
         await new Promise((resolve) => {
           setTimeout(resolve, delay);
