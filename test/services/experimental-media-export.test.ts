@@ -41,6 +41,7 @@ describe('experimental workspace media export', () => {
   });
 
   afterEach(async () => {
+    sinon.restore();
     await rm(root, { force: true, recursive: true });
   });
 
@@ -67,6 +68,47 @@ describe('experimental workspace media export', () => {
         expect(fetcher.notCalled).to.equal(true);
       }
     }
+  });
+
+  it('fails closed without opt-in and never invokes the binary transport', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+      fakeRequest(
+        url.startsWith('/connect/cms/items/search')
+          ? {
+              items: [
+                {
+                  id: 'variant',
+                  managedContentSpaceId: 'space',
+                  type: 'ManagedContentVariantSearchResultRepresentation',
+                },
+              ],
+              total: 1,
+            }
+          : imageDetail(),
+      ),
+    );
+    const globalFetch = sinon.stub(globalThis, 'fetch');
+
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'disabled'));
+
+    expect(result.manifest).to.include({
+      completeness: 'partial',
+      contractVersion: '2.0.0',
+      schemaVersion: 2,
+    });
+    expect(result.manifest.media).to.deep.equal([]);
+    expect(result.manifest.warnings.at(-1)).to.deep.equal({
+      code: 'MEDIA_EXPORT_FAILED',
+      message:
+        'Image candidate JSON was exported without media binaries because --experimental-media was not enabled.',
+      variantIds: ['variant'],
+    });
+    expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
+    expect(globalFetch.notCalled).to.equal(true);
+    await expectRejectedAccess(path.join(result.destination, 'media'));
+    expect(
+      JSON.parse(await readFile(path.join(result.destination, 'items/variant.json'), 'utf8')),
+    ).to.have.property('contentKey', 'content-key');
   });
 
   it('clamps oversized per-file caps to the locked 10 MiB maximum', async () => {

@@ -493,7 +493,7 @@ export async function exportWorkspace(
     warnings.push({
       code: 'MEDIA_EXPORT_FAILED',
       message:
-        'Image bytes require the explicitly enabled experimental undocumented CMS media transport.',
+        'Image candidate JSON was exported without media binaries because --experimental-media was not enabled.',
       variantIds: mediaCandidates.map(({ variantId }) => variantId),
     });
     manifest.completeness = 'partial';

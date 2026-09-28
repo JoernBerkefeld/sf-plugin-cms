@@ -81,7 +81,7 @@ sf cms info --json
 sf cms info --contract-version 1 --json
 ```
 
-The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented; external-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds can be resolved. Installation alone does not prove org permissions or endpoint availability.
+The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds can be resolved. Installation alone does not prove org permissions or endpoint availability.
 
 `--contract-version <major>` defaults to `1`. Any unsupported major returns a `blocked` `sf-cms-info` envelope with diagnostic code `UNSUPPORTED_CONTRACT_VERSION` and exit `1`, without org access.
 
@@ -180,13 +180,14 @@ Runs an experimental, read-only, best-effort export of the variants currently ob
 ```sh
 sf cms export workspace --target-org my-org --workspace-name "Main Site"
 sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --json
+sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --experimental-media --json
 sf cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json
 ```
 
 Choose either single or bulk mode:
 
-- Single mode requires exactly one of `--workspace-id <id>` or `--workspace-name <name>`. Name matching is exact but case-insensitive. Case-only or Unicode-normalization-equivalent duplicates are ambiguous. The canonical fetched workspace name is always used for the default folder, preserving its casing.
-- Bulk mode uses `--all`, which is mutually exclusive with both single selectors. Optional `--workspace-type Marketing|Content` is valid only with `--all`; input casing is ignored and output is normalized to `Marketing` or `Content`.
+- Single mode requires exactly one of `--workspace-id <id>` or `--workspace-name <name>`. Name matching is exact but case-insensitive. Case-only or Unicode-normalization-equivalent duplicates are ambiguous. The canonical fetched workspace name is always used for the default folder, preserving its casing. Image candidates are JSON-only and force an honest partial result by default. `--experimental-media` explicitly opts into the undocumented binary download transport and strict v2 media manifest; only then may Salesforce authorization follow the transport's narrowly validated redirect policy.
+- Bulk mode uses `--all`, which is mutually exclusive with both single selectors. Optional `--workspace-type Marketing|Content` is valid only with `--all`; input casing is ignored and output is normalized to `Marketing` or `Content`. `--experimental-media` is incompatible with `--all`; bulk export never enables media binaries.
 
 In single mode, `--output-dir <path>` remains the exact new destination. When omitted, export writes to `./cms/<safe-canonical-workspace-name>`. In bulk mode, `--output-dir` is the parent directory and defaults to `./cms`; each workspace is written beneath it using the canonical fetched name. Safe segments preserve Unicode and case, replace path/control/Windows-invalid characters, and trim unsafe trailing dots or spaces.
 
@@ -445,6 +446,7 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
 - `workspace.export.dependency-closure` — `unavailable`; v0.4.0 does not discover or traverse CMS relationships.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
+- `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
 - `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.
 
 `sf-cms-workspace-export-set@1` contains `workspaceType`, a portable `outputDirectory`, selection and summary counts, `externalReferenceCorrelations`, and deterministic per-workspace entries. Workspace entries include canonical source identity, `success|partial|failed` status, relative artifact/manifest paths and hashes when finalized, and structured diagnostics. Any finalized omission or unresolved/unsupported reference makes that workspace and aggregate partial.
@@ -467,7 +469,7 @@ The correlation table exists only at `result.externalReferenceCorrelations`. Eac
 
 ### Package layout and integrity
 
-A v1 workspace export package contains `manifest.json` plus regular item files. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
+A workspace export package contains `manifest.json` plus regular item files. Packages without image candidates use manifest v1. Image candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful image downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
 
 Each item records exactly `{ path, sha256, kind, referenceId? }`, with lowercase SHA-256 calculated over the finalized exact file bytes. Import independently validates the manifest major, enumerates the package, rejects missing, substituted, duplicate-path, or unlisted files, and verifies every item hash. Only after the listed set and hashes are verified does it hash the exact `manifest.json` bytes and use that hash as package identity.
 

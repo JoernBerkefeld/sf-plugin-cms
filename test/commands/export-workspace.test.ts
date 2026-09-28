@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -33,6 +34,7 @@ describe('CMS export workspace command', () => {
       'workspace-id',
       'workspace-name',
       'workspace-type',
+      'experimental-media',
       'output-dir',
       'editable-dir',
     ]);
@@ -43,6 +45,8 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['contract-version'].default).to.equal(1);
     expect(ExportWorkspace.flags.all.required).not.to.equal(true);
     expect(ExportWorkspace.flags['workspace-type'].dependsOn).to.deep.equal(['all']);
+    expect(ExportWorkspace.flags['experimental-media'].exclusive).to.deep.equal(['all']);
+    expect(ExportWorkspace.flags['experimental-media'].summary).to.match(/single-workspace/iu);
     expect(ExportWorkspace.summary).to.match(/read-only.*best-effort/iu);
     expect(ExportWorkspace.description).to.match(
       /experimental.*not a complete or guaranteed backup/iu,
@@ -126,6 +130,88 @@ describe('CMS export workspace command', () => {
       '<p>literal</p>',
     );
   });
+
+  for (const enabled of [false, true]) {
+    it(`${enabled ? 'enables' : 'does not enable'} single-workspace media transport only with the explicit flag`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'cms-media-command-'));
+      temporaryDirectories.push(root);
+      const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+      const md5 = createHash('md5').update(png).digest('hex');
+      const request = $$.SANDBOX.stub().callsFake(
+        ({ method, url }: { method?: string; url: string }) => {
+          expect(method === undefined || method === 'GET').to.equal(true);
+          if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+          if (url.startsWith('/connect/cms/items/search'))
+            return fakeRequest({
+              items: [
+                {
+                  id: 'variant',
+                  managedContentSpaceId: 'space',
+                  type: 'ManagedContentVariantSearchResultRepresentation',
+                },
+              ],
+              total: 1,
+            });
+          return fakeRequest({
+            contentBody: {
+              'sfdc_cms:media': {
+                source: { mimeType: 'image/png', size: png.length, type: 'file' },
+                url: `/cms/media/key?fileHash=${md5}&fileName=image.png&version=1`,
+              },
+            },
+            contentId: 'content',
+            contentKey: 'key',
+            contentSpace: { id: 'space' },
+            contentType: 'sfdc_cms__image',
+            id: 'variant',
+            lastModifiedDate: '2026-01-01T00:00:00.000Z',
+            status: { status: 'Draft' },
+          });
+        },
+      );
+      let fetchCalls = 0;
+      const fetcher = $$.SANDBOX.stub(globalThis, 'fetch').callsFake(async () => {
+        fetchCalls += 1;
+        return fetchCalls === 1
+          ? new Response(null, {
+              headers: {
+                location: `https://tenant.file.force.com/cms/media/key?fileHash=${md5}&fileName=image.png&version=1`,
+              },
+              status: 301,
+            })
+          : new Response(png, {
+              headers: { 'content-length': String(png.length), 'content-type': 'image/png' },
+              status: 200,
+            });
+      });
+      const connection = {
+        accessToken: 'synthetic-token',
+        instanceUrl: 'https://tenant.my.salesforce.com',
+        request,
+      };
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'workspace-id': 'space',
+            'output-dir': path.join(root, enabled ? 'enabled' : 'disabled'),
+            'experimental-media': enabled,
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection, orgId: 'source' }),
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+        warn: $$.SANDBOX.stub(),
+      });
+
+      const result = (await command.run()) as ExportWorkspaceResult;
+
+      expect(fetcher.callCount).to.equal(enabled ? 2 : 0);
+      expect(result.manifest.schemaVersion).to.equal(2);
+      expect(result.manifest.media).to.have.length(enabled ? 1 : 0);
+      expect(result.manifest.completeness).to.equal(enabled ? 'complete' : 'partial');
+      expect(request.getCalls().every(({ args }) => args[0].method !== 'POST')).to.equal(true);
+    });
+  }
 
   it('rejects missing or combined workspace selectors before org access', async () => {
     for (const flags of [

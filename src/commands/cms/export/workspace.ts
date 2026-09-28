@@ -24,10 +24,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
   public static readonly summary =
     'Experimentally export one or all CMS workspaces using a read-only, best-effort process.';
   public static readonly description =
-    'Experimentally exports one Marketing Cloud CMS workspace or preflights and exports all workspaces. Single-workspace image bytes use an undocumented experimental read-only transport that forwards Salesforce authorization only to a narrowly validated Salesforce media host class. Image import remains unsupported. For a single workspace, --editable-dir creates an HTML-only companion beside an explicit unchanged baseline. The paths must be new and disjoint; the baseline is retained if companion creation fails. Eligible HTML is not proven dependency-free or safe and is not resolved, rewritten, sanitized, or scanned through Phase 7. This is not a complete or guaranteed backup and does not mutate org data.';
+    'Experimentally exports one Marketing Cloud CMS workspace or preflights and exports all workspaces. Image candidates remain partial JSON-only records by default. Single-workspace --experimental-media explicitly opts into an undocumented read-only binary transport that forwards Salesforce authorization only to a narrowly validated Salesforce media host class. Bulk media export is unsupported. For a single workspace, --editable-dir creates an HTML-only companion beside an explicit unchanged baseline. The paths must be new and disjoint; the baseline is retained if companion creation fails. Eligible HTML is not proven dependency-free or safe and is not resolved, rewritten, sanitized, or scanned through Phase 7. This is not a complete or guaranteed backup and does not mutate org data.';
   public static readonly examples = [
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
-    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --experimental-media --json',
     '<%= config.bin %> cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json',
     '<%= config.bin %> cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json',
   ];
@@ -55,6 +56,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       dependsOn: ['all'],
       parse: async (input) => normalizeWorkspaceType(input),
       summary: 'Bulk-only workspace type filter: Marketing or Content (case-insensitive).',
+    }),
+    'experimental-media': Flags.boolean({
+      exclusive: ['all'],
+      summary:
+        'Single-workspace only: opt into undocumented image binary transport and strict v2 media output.',
     }),
     'editable-dir': Flags.directory({
       exists: false,
@@ -132,20 +138,13 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       }
       destination = defaultWorkspaceDestination(workspaceName);
     }
-    const connectionOptions = connection.getConnectionOptions?.();
-    const accessToken = connection.accessToken ?? connectionOptions?.accessToken;
+    const experimentalMedia =
+      flags['experimental-media'] === true ? resolveExperimentalMedia(connection) : undefined;
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
       pluginVersion: this.pluginVersion,
       sourceOrgId: orgId,
-      ...(typeof accessToken === 'string' && accessToken.length > 0
-        ? {
-            experimentalMedia: {
-              accessToken,
-              instanceUrl: connection.instanceUrl,
-            },
-          }
-        : {}),
+      ...(experimentalMedia === undefined ? {} : { experimentalMedia }),
     });
     for (const warning of result.manifest.warnings) this.warn(formatWarning(warning));
 
@@ -159,6 +158,19 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     if (result.manifest.completeness === 'partial') process.exitCode = 2;
     return result;
   }
+}
+
+function resolveExperimentalMedia(connection: {
+  accessToken?: string | null;
+  instanceUrl: string;
+  getConnectionOptions?: () => { accessToken?: string | null };
+}): { accessToken: string; instanceUrl: string } {
+  const connectionOptions = connection.getConnectionOptions?.();
+  const accessToken = connection.accessToken ?? connectionOptions?.accessToken;
+  if (typeof accessToken !== 'string' || accessToken.length === 0) {
+    throw new Error('--experimental-media requires an authenticated org access token.');
+  }
+  return { accessToken, instanceUrl: connection.instanceUrl };
 }
 
 function blockedEnvelope(
