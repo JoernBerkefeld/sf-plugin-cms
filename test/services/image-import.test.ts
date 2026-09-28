@@ -13,6 +13,7 @@ import {
   preflightImageImports,
 } from '../../src/services/image-import.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
+import { CmsRequestError } from '../../src/transport/json-request.js';
 import { buildImageCreateMultipart } from '../../src/transport/multipart-image-create.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
@@ -295,7 +296,7 @@ describe('image import contracts and loader', () => {
     expect(request.callCount).to.equal(3);
   });
 
-  it('accepts only the live Salesforce missing-key 400 shape during preflight', async () => {
+  it('accepts the exact statusless live Salesforce missing-key shape during preflight', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const plans = planImageImports(source, [map()]);
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
@@ -332,21 +333,58 @@ describe('image import contracts and loader', () => {
   it('fails closed on near-matches to the live Salesforce missing-key 400 shape', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const plans = planImageImports(source, [map()]);
+    const exactMessage = 'Provide a valid content key, ID, or FQN.';
     const nearMatches = [
       {
-        errorCode: 'INVALID_ID_FIELD',
-        message: 'Provide a valid content key, ID, or FQN!',
+        data: { errorCode: 'INVALID_ID_FIELD', message: `${exactMessage}!` },
         statusCode: 400,
       },
       {
-        errorCode: 'INVALID_FIELD',
-        message: 'Provide a valid content key, ID, or FQN.',
+        data: { errorCode: 'INVALID_FIELD', message: exactMessage },
+        statusCode: 400,
+      },
+      ...[200, 401, 500].map((statusCode) => ({
+        data: { errorCode: 'INVALID_ID_FIELD', message: exactMessage },
+        statusCode,
+      })),
+      {
+        data: [
+          { errorCode: 'INVALID_ID_FIELD', message: exactMessage },
+          { errorCode: 'INVALID_ID_FIELD', message: exactMessage },
+        ],
         statusCode: 400,
       },
       {
-        errorCode: 'INVALID_ID_FIELD',
-        message: 'Provide a valid content key, ID, or FQN.',
-        statusCode: 401,
+        data: { errorCode: 'INVALID_ID_FIELD' },
+        statusCode: 400,
+      },
+      {
+        data: 'malformed',
+        statusCode: 400,
+      },
+      {
+        data: { errorCode: 'INVALID_FIELD', message: exactMessage },
+        statusCode: undefined,
+      },
+      {
+        data: { errorCode: 'INVALID_ID_FIELD', message: `${exactMessage}!` },
+        statusCode: undefined,
+      },
+      {
+        data: [
+          { errorCode: 'INVALID_ID_FIELD', message: exactMessage },
+          { errorCode: 'INVALID_ID_FIELD', message: exactMessage },
+        ],
+        statusCode: undefined,
+      },
+      {
+        data: 'malformed',
+        statusCode: undefined,
+      },
+      {
+        data: undefined,
+        errorMessage: exactMessage,
+        statusCode: undefined,
       },
     ];
 
@@ -357,12 +395,13 @@ describe('image import contracts and loader', () => {
           return fakeRequest({ items: [], total: 0 });
         if (url === '/connect/cms/contents/source-key') {
           return failedRequest(
-            Object.assign(new Error(shape.message), {
-              data: { errorCode: shape.errorCode, message: shape.message },
-              errorCode: shape.errorCode,
-              name: shape.errorCode,
-              statusCode: shape.statusCode,
-            }),
+            Object.assign(
+              new Error('errorMessage' in shape ? shape.errorMessage : 'Request failed'),
+              {
+                data: shape.data,
+                statusCode: shape.statusCode,
+              },
+            ),
           );
         }
         throw new Error(`Unexpected request: ${url}`);
@@ -378,8 +417,31 @@ describe('image import contracts and loader', () => {
             source,
           }),
         ),
-      ).to.equal(shape.message);
+      ).to.equal('errorMessage' in shape ? shape.errorMessage : 'Request failed');
     }
+
+    const wrongOperation = new CmsRequestError('workspace.get', 'Request failed', 400, {
+      errorCode: 'INVALID_ID_FIELD',
+      errorEntryCount: 1,
+      responseMessage: exactMessage,
+    });
+    const wrongOperationRequest = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
+      if (url === '/connect/cms/contents/source-key') return failedRequest(wrongOperation);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    expect(
+      await rejectionMessage(
+        preflightImageImports({
+          connection: { request: wrongOperationRequest },
+          destinationOrgId: '00D-target',
+          destinationWorkspaceId: 'target-space',
+          plans,
+          source,
+        }),
+      ),
+    ).to.equal('Request failed');
   });
 
   it('validates every row before reporting an existing destination identity and makes no mutation', async () => {
@@ -585,6 +647,51 @@ describe('image import contracts and loader', () => {
       },
     });
     expect(JSON.parse(await readFile(result.reportFile, 'utf8'))).to.deep.equal(result.report);
+  });
+
+  it('accepts the exact live missing-key 400 shape during the immediate TOCTOU recheck', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [map()]);
+    let contentKeyChecks = 0;
+    let posts = 0;
+    const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
+      if (url === '/connect/cms/contents/source-key') {
+        contentKeyChecks += 1;
+        return failedRequest(
+          Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
+            data: {
+              errorCode: 'INVALID_ID_FIELD',
+              message: 'Provide a valid content key, ID, or FQN.',
+            },
+            errorCode: 'INVALID_ID_FIELD',
+            name: 'INVALID_ID_FIELD',
+            statusCode: 400,
+          }),
+        );
+      }
+      if (url === '/connect/cms/contents' && method === 'POST') {
+        posts += 1;
+        return fakeRequest({ contentKey: 'incomplete' });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    expect(
+      await rejectionMessage(
+        applyImageImports({
+          connection: { request },
+          destinationOrgId: '00D-target',
+          destinationWorkspaceId: 'target-space',
+          plans,
+          reportDirectory: path.join(root, 'live-shape-report'),
+          source,
+        }),
+      ),
+    ).to.include('Malformed CMS image create response');
+    expect(contentKeyChecks).to.equal(2);
+    expect(posts).to.equal(1);
   });
 
   it('stops before POST when the immediate TOCTOU check observes a new conflict', async () => {

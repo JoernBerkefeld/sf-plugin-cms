@@ -151,7 +151,9 @@ describe('CMS JSON request transport', () => {
       expect(error).to.be.instanceOf(CmsRequestError);
       expect(error).to.include({
         errorCode: 'NOT_FOUND',
+        errorEntryCount: 1,
         operationKey: 'content.get',
+        responseMessage: 'Managed content not found.',
         status: 404,
       });
       expect((error as Error).message).to.equal('Managed content not found.');

@@ -39,19 +39,23 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class CmsRequestError extends Error {
   public readonly errorCode?: string;
+  public readonly errorEntryCount: number;
   public readonly operationKey: SelectedOperation['localKey'];
+  public readonly responseMessage?: string;
   public readonly status?: number;
 
   public constructor(
     operationKey: SelectedOperation['localKey'],
     message: string,
     status?: number,
-    errorCode?: string,
+    evidence: { errorCode?: string; errorEntryCount?: number; responseMessage?: string } = {},
   ) {
     super(message);
     this.name = 'CmsRequestError';
-    this.errorCode = errorCode;
+    this.errorCode = evidence.errorCode;
+    this.errorEntryCount = evidence.errorEntryCount ?? 0;
     this.operationKey = operationKey;
+    this.responseMessage = evidence.responseMessage;
     this.status = status;
   }
 }
@@ -71,13 +75,25 @@ function errorStatus(error: unknown): number | undefined {
   return undefined;
 }
 
-function errorCode(error: unknown): string | undefined {
-  if (!isRecord(error)) return undefined;
-  if (typeof error.errorCode === 'string') return error.errorCode;
-  if (isRecord(error.data) && typeof error.data.errorCode === 'string') {
-    return error.data.errorCode;
+type ErrorEvidence = {
+  errorCode?: string;
+  errorEntryCount: number;
+  responseMessage?: string;
+};
+
+function errorEvidence(error: unknown): ErrorEvidence {
+  if (!isRecord(error)) return { errorEntryCount: 0 };
+  const data = error.data;
+  const entries = Array.isArray(data) ? data : [data];
+  if (entries.length !== 1 || !isRecord(entries[0])) {
+    return { errorEntryCount: Array.isArray(data) ? data.length : 0 };
   }
-  return undefined;
+  const entry = entries[0];
+  return {
+    ...(typeof entry.errorCode === 'string' ? { errorCode: entry.errorCode } : {}),
+    errorEntryCount: 1,
+    ...(typeof entry.message === 'string' ? { responseMessage: redactSecrets(entry.message) } : {}),
+  };
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -207,8 +223,14 @@ export async function requestJson<T>(
     const data = await request;
     return { data, operationKey: operation.localKey, status: successStatus(operation) };
   } catch (error) {
+    if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
-    throw new CmsRequestError(operation.localKey, message, errorStatus(error), errorCode(error));
+    throw new CmsRequestError(
+      operation.localKey,
+      message,
+      errorStatus(error),
+      errorEvidence(error),
+    );
   } finally {
     options.signal?.removeEventListener('abort', cancel);
   }
