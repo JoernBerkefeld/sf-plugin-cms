@@ -296,7 +296,7 @@ describe('image import contracts and loader', () => {
     expect(request.callCount).to.equal(3);
   });
 
-  it('accepts the exact statusless live Salesforce missing-key shape during preflight', async () => {
+  it('accepts only the exact live Salesforce missing-key 400 shape during preflight', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const plans = planImageImports(source, [map()]);
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
@@ -311,6 +311,7 @@ describe('image import contracts and loader', () => {
             },
             errorCode: 'INVALID_ID_FIELD',
             name: 'INVALID_ID_FIELD',
+            statusCode: 400,
           }),
         );
       }
