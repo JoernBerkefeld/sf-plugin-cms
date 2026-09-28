@@ -591,7 +591,8 @@ describe('image import contracts and loader', () => {
           }
           if (url === '/connect/cms/contents/variants/variant-created') {
             return fakeRequest({
-              id: 'variant-created',
+              managedContentId: 'content-created',
+              managedContentVariantId: 'variant-created',
               apiName: 'fresh_api',
               contentKey: 'generated-key',
               title: 'Fresh title',
@@ -651,6 +652,55 @@ describe('image import contracts and loader', () => {
       },
     });
     expect(JSON.parse(await readFile(result.reportFile, 'utf8'))).to.deep.equal(result.report);
+  });
+
+  it('rejects a canonical managed content variant ID mismatch during image readback', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [
+      map({
+        contentKey: { strategy: 'generated' },
+        urlName: { strategy: 'fresh', value: 'fresh-url' },
+      }),
+    ]);
+    const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
+      if (url === '/connect/cms/contents' && method === 'POST') {
+        return fakeRequest({
+          contentKey: 'generated-key',
+          managedContentId: 'content-created',
+          managedContentVariantId: 'variant-created',
+        });
+      }
+      if (url === '/connect/cms/contents/variants/variant-created') {
+        return fakeRequest({
+          managedContentId: 'content-created',
+          managedContentVariantId: 'different-variant',
+          apiName: 'fresh_api',
+          contentKey: 'generated-key',
+          title: 'Fresh title',
+          urlName: 'fresh-url',
+          contentSpace: { id: 'target-space' },
+          contentType: 'sfdc_cms__image',
+          isPublished: false,
+          status: { status: 'Draft' },
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    expect(
+      await rejectionMessage(
+        applyImageImports({
+          connection: { request },
+          destinationOrgId: '00D-target',
+          destinationWorkspaceId: 'target-space',
+          plans,
+          reportDirectory: path.join(root, 'variant-mismatch-report'),
+          source,
+        }),
+      ),
+    ).to.equal('Image authoring metadata readback identity or Draft verification failed');
   });
 
   it('accepts the exact live missing-key 400 shape during the immediate TOCTOU recheck', async () => {

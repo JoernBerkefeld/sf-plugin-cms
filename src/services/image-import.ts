@@ -646,7 +646,7 @@ function verifyImageReadback(
     !record(contentSpace) ||
     contentSpace.id !== input.contentSpaceOrFolderId ||
     detailType(detail) !== IMAGE_TYPE ||
-    detail.id !== binding.managedContentVariantId ||
+    detail.managedContentVariantId !== binding.managedContentVariantId ||
     returned.apiName !== input.apiName ||
     returned.contentKey !== binding.contentKey ||
     returned.title !== input.title ||

@@ -493,7 +493,8 @@ describe('CMS import workspace command', () => {
         }
         if (url === '/connect/cms/contents/variants/image-variant') {
           return fakeRequest({
-            id: 'image-variant',
+            managedContentId: 'image-content',
+            managedContentVariantId: 'image-variant',
             apiName: 'fresh_image',
             contentKey: 'fresh-image-key',
             title: 'Fresh image',
