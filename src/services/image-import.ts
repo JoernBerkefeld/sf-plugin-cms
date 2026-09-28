@@ -122,6 +122,32 @@ type DestinationImageCandidate = {
 const IMAGE_TYPE = 'sfdc_cms__image';
 const SEARCH_PAGE_SIZE = 250;
 const SEARCH_PAGE_CAP = 1000;
+const IMAGE_MIME_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+  'image/gif': ['gif'],
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/png': ['png'],
+  'image/webp': ['webp'],
+};
+const IMAGE_MIME_DEFAULT_EXTENSION: Readonly<Record<string, string>> = {
+  'image/gif': 'gif',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+export function normalizeImageMultipartFilename(fileName: string, mimeType: string): string {
+  const allowed = IMAGE_MIME_EXTENSIONS[mimeType];
+  const defaultExtension = IMAGE_MIME_DEFAULT_EXTENSION[mimeType];
+  if (allowed === undefined || defaultExtension === undefined) {
+    throw new TypeError(`Image import MIME type is unsupported: ${mimeType}`);
+  }
+  const extension = path.extname(fileName).slice(1).toLowerCase();
+  if (extension.length === 0) return `${fileName}.${defaultExtension}`;
+  if (!allowed.includes(extension)) {
+    throw new TypeError('Image import filename extension does not match MIME type');
+  }
+  return fileName;
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -705,8 +731,9 @@ export async function applyImageImports(
         );
       }
       const input = createInput(plan, options.destinationWorkspaceId);
+      const filename = normalizeImageMultipartFilename(plan.media.fileName, plan.media.mimeType);
       const boundary = `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
-      const multipart = buildImageCreateMultipart(input, plan.media.fileName, bytes, {
+      const multipart = buildImageCreateMultipart(input, filename, bytes, {
         boundaryFactory: () => boundary,
       });
       const requestSha256 = createHash('sha256').update(multipart.body).digest('hex');
@@ -715,7 +742,7 @@ export async function applyImageImports(
       await rewrite(reportFile, report);
       let binding: ManagedContentDocumentBinding;
       try {
-        binding = await createImageContent(options.connection, input, plan.media.fileName, bytes, {
+        binding = await createImageContent(options.connection, input, filename, bytes, {
           ...options.createOptions,
           boundaryFactory: () => boundary,
         });

@@ -8,10 +8,12 @@ import sinon from 'sinon';
 import { InvalidImageImportMapError } from '../../src/contracts/workspace-import.js';
 import {
   applyImageImports,
+  normalizeImageMultipartFilename,
   planImageImports,
   preflightImageImports,
 } from '../../src/services/image-import.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
+import { buildImageCreateMultipart } from '../../src/transport/multipart-image-create.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
@@ -36,7 +38,11 @@ function map(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function writePackage(root: string, schemaVersion: 1 | 2 = 2) {
+async function writePackage(
+  root: string,
+  schemaVersion: 1 | 2 = 2,
+  mediaOverrides: { fileName?: string; mimeType?: string } = {},
+) {
   const source = path.join(root, `v${schemaVersion}`);
   await mkdir(path.join(source, 'items'), { recursive: true });
   if (schemaVersion === 2) await mkdir(path.join(source, 'media'), { recursive: true });
@@ -60,8 +66,8 @@ async function writePackage(root: string, schemaVersion: 1 | 2 = 2) {
     sha256: createHash('sha256').update(PNG).digest('hex'),
     md5: createHash('md5').update(PNG).digest('hex'),
     bytes: PNG.length,
-    mimeType: 'image/png',
-    fileName: 'variant.png',
+    mimeType: mediaOverrides.mimeType ?? 'image/png',
+    fileName: mediaOverrides.fileName ?? 'variant.png',
     sourceStatus: 'Draft',
     sourceModifiedAt: '2026-01-01T00:00:00.000Z',
     sourceVersion: '1',
@@ -150,6 +156,18 @@ describe('image import contracts and loader', () => {
     );
     const v2 = await loadWorkspaceExport(await writePackage(root), { profile: 'general' });
     expect(v2.manifest.schemaVersion).to.equal(2);
+  });
+
+  it('normalizes safe multipart filenames from validated image MIME types', () => {
+    expect(normalizeImageMultipartFilename('variant', 'image/png')).to.equal('variant.png');
+    expect(normalizeImageMultipartFilename('variant.PNG', 'image/png')).to.equal('variant.PNG');
+    expect(normalizeImageMultipartFilename('photo.jpeg', 'image/jpeg')).to.equal('photo.jpeg');
+    expect(() => normalizeImageMultipartFilename('variant.gif', 'image/png')).to.throw(
+      'filename extension does not match MIME type',
+    );
+    expect(() => normalizeImageMultipartFilename('variant', 'image/svg+xml')).to.throw(
+      'MIME type is unsupported',
+    );
   });
 
   it('rejects invalid maps, missing source values, duplicates, unknown and non-image selections', async () => {
@@ -355,11 +373,13 @@ describe('image import contracts and loader', () => {
     expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
   });
 
-  it('applies images sequentially with TOCTOU checks, durable intent, hashes, IDs, and readback evidence', async () => {
-    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+  it('applies extensionless PNG with exact corrected multipart bytes and hash evidence', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root, 2, { fileName: 'variant' }), {
+      profile: 'image',
+    });
     const plans = planImageImports(source, [
       map({
-        contentKey: { strategy: 'fresh', value: 'fresh-key' },
+        contentKey: { strategy: 'generated' },
         urlName: { strategy: 'fresh', value: 'fresh-url' },
       }),
     ]);
@@ -367,41 +387,71 @@ describe('image import contracts and loader', () => {
     const snapshots: Array<{ operations: Array<{ state: string; requestSha256: string }> }> = [];
     let searches = 0;
     let posts = 0;
+    let postedBodySha256 = '';
     const request = sinon
       .stub()
-      .callsFake(({ body, method, url }: { body?: Buffer; method: string; url: string }) => {
-        if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
-        if (url.startsWith('/connect/cms/items/search')) {
-          searches += 1;
-          return fakeRequest({ items: [], total: 0 });
-        }
-        if (url === '/connect/cms/contents/fresh-key') {
-          return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
-        }
-        if (url === '/connect/cms/contents' && method === 'POST') {
-          posts += 1;
-          expect(body).to.be.instanceOf(Buffer);
-          return fakeRequest({
-            contentKey: 'fresh-key',
-            managedContentId: 'content-created',
-            managedContentVariantId: 'variant-created',
-          });
-        }
-        if (url === '/connect/cms/contents/variants/variant-created') {
-          return fakeRequest({
-            id: 'variant-created',
-            apiName: 'fresh_api',
-            contentKey: 'fresh-key',
-            title: 'Fresh title',
-            urlName: 'fresh-url',
-            contentSpace: { id: 'target-space' },
-            contentType: 'sfdc_cms__image',
-            isPublished: false,
-            status: { status: 'Draft' },
-          });
-        }
-        throw new Error(`Unexpected request: ${method} ${url}`);
-      });
+      .callsFake(
+        ({
+          body,
+          headers,
+          method,
+          url,
+        }: {
+          body?: Buffer;
+          headers?: Record<string, string>;
+          method: string;
+          url: string;
+        }) => {
+          if (url === '/connect/cms/spaces/target-space')
+            return fakeRequest({ id: 'target-space' });
+          if (url.startsWith('/connect/cms/items/search')) {
+            searches += 1;
+            return fakeRequest({ items: [], total: 0 });
+          }
+          if (url === '/connect/cms/contents' && method === 'POST') {
+            posts += 1;
+            expect(body).to.be.instanceOf(Buffer);
+            expect(headers?.['content-type']).to.match(/^multipart\/form-data; boundary=/u);
+            const boundary = headers?.['content-type'].split('boundary=')[1];
+            expect(boundary).to.be.a('string').and.not.equal('');
+            const expected = buildImageCreateMultipart(
+              {
+                apiName: 'fresh_api',
+                contentSpaceOrFolderId: 'target-space',
+                title: 'Fresh title',
+                urlName: 'fresh-url',
+              },
+              'variant.png',
+              PNG,
+              { boundaryFactory: () => boundary! },
+            );
+            expect(body!.equals(expected.body)).to.equal(true);
+            expect(body!.toString('latin1')).to.include(
+              'filename="variant.png"\r\nContent-Type: application/octet-stream; charset=ISO-8859-1',
+            );
+            postedBodySha256 = createHash('sha256').update(body!).digest('hex');
+            return fakeRequest({
+              contentKey: 'generated-key',
+              managedContentId: 'content-created',
+              managedContentVariantId: 'variant-created',
+            });
+          }
+          if (url === '/connect/cms/contents/variants/variant-created') {
+            return fakeRequest({
+              id: 'variant-created',
+              apiName: 'fresh_api',
+              contentKey: 'generated-key',
+              title: 'Fresh title',
+              urlName: 'fresh-url',
+              contentSpace: { id: 'target-space' },
+              contentType: 'sfdc_cms__image',
+              isPublished: false,
+              status: { status: 'Draft' },
+            });
+          }
+          throw new Error(`Unexpected request: ${method} ${url}`);
+        },
+      );
 
     const result = await applyImageImports({
       connection: { request },
@@ -421,7 +471,7 @@ describe('image import contracts and loader', () => {
     expect(searches).to.equal(2);
     expect(posts).to.equal(1);
     const pending = snapshots.find(({ operations }) => operations.at(-1)?.state === 'pending');
-    expect(pending?.operations.at(-1)?.requestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(pending?.operations.at(-1)?.requestSha256).to.equal(postedBodySha256);
     expect(result.contractResult.status).to.equal('completed');
     expect(result.contractResult.assets[0]).to.deep.include({
       metadataReadback: 'passed',
@@ -433,13 +483,12 @@ describe('image import contracts and loader', () => {
       contentId: 'content-created',
       variantId: 'variant-created',
     });
-    expect(result.contractResult.assets[0].mutation?.requestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(result.contractResult.assets[0].mutation?.requestSha256).to.equal(postedBodySha256);
     expect(result.contractResult.assets[0].identities).to.deep.include({
       contentKey: {
-        strategy: 'fresh',
+        strategy: 'generated',
         source: 'source-key',
-        submitted: 'fresh-key',
-        returned: 'fresh-key',
+        returned: 'generated-key',
       },
       apiName: {
         strategy: 'fresh',
