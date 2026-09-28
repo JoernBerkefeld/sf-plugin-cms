@@ -296,38 +296,42 @@ describe('image import contracts and loader', () => {
     expect(request.callCount).to.equal(3);
   });
 
-  it('accepts only the exact live Salesforce missing-key 400 shape during preflight', async () => {
+  it('accepts the exact live Salesforce missing-key shape with status 400 or no status', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const plans = planImageImports(source, [map()]);
-    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
-      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
-      if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
-      if (url === '/connect/cms/contents/source-key') {
-        return failedRequest(
-          Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
-            data: {
+
+    for (const statusCode of [undefined, 400]) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+        if (url.startsWith('/connect/cms/items/search'))
+          return fakeRequest({ items: [], total: 0 });
+        if (url === '/connect/cms/contents/source-key') {
+          return failedRequest(
+            Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
+              data: {
+                errorCode: 'INVALID_ID_FIELD',
+                message: 'Provide a valid content key, ID, or FQN.',
+              },
               errorCode: 'INVALID_ID_FIELD',
-              message: 'Provide a valid content key, ID, or FQN.',
-            },
-            errorCode: 'INVALID_ID_FIELD',
-            name: 'INVALID_ID_FIELD',
-            statusCode: 400,
-          }),
-        );
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
+              name: 'INVALID_ID_FIELD',
+              statusCode,
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      });
 
-    const result = await preflightImageImports({
-      connection: { request },
-      destinationOrgId: '00D-target',
-      destinationWorkspaceId: 'target-space',
-      plans,
-      source,
-    });
+      const result = await preflightImageImports({
+        connection: { request },
+        destinationOrgId: '00D-target',
+        destinationWorkspaceId: 'target-space',
+        plans,
+        source,
+      });
 
-    expect(result.contractResult.status).to.equal('planned');
-    expect(request.callCount).to.equal(3);
+      expect(result.contractResult.status).to.equal('planned');
+      expect(request.callCount).to.equal(3);
+    }
   });
 
   it('fails closed on near-matches to the live Salesforce missing-key 400 shape', async () => {
