@@ -400,6 +400,41 @@ describe('CMS import workspace command', () => {
     expect(getOrgContext.notCalled).to.equal(true);
   });
 
+  it('loads a strict v2 package locally before org or workspace access', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-v2-'));
+    temporaryDirectories.push(root);
+    const source = await writeSource(root);
+    const manifestFile = path.join(source, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+    manifest.schemaVersion = 2;
+    manifest.contractVersion = '2.0.0';
+    manifest.media = [];
+    await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    const getOrgContext = $$.SANDBOX.stub();
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': false,
+          apply: false,
+          'api-version': '67.0',
+          'source-dir': source,
+          'target-org': 'mcnext-sdo',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+    });
+
+    try {
+      await command.run();
+      expect.fail('expected org context to remain unavailable in this isolated command test');
+    } catch (error) {
+      expect(error).to.be.instanceOf(Error);
+    }
+    expect(getOrgContext.calledOnce).to.equal(true);
+  });
+
   it('blocks contradictory complete packages before org access even with allow-partial', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
     temporaryDirectories.push(root);

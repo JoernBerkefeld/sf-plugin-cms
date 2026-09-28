@@ -63,15 +63,16 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
         commandResults: {
           info: ['1.0.0'],
           workspaceExportSet: ['1.0.0'],
-          workspaceImport: ['1.0.0'],
+          workspaceImport: ['1.0.0', '2.0.0'],
         },
-        packageManifests: { workspaceExport: ['1.0.0'] },
+        packageManifests: { workspaceExport: ['1.0.0', '2.0.0'] },
         embeddedResults: {
           externalReferenceCorrelations: ['sf-cms-external-reference-correlations@1'],
         },
         compatibility: {
           'workspaceExportSet@1': { workspaceExportManifestMajors: [1] },
           'workspaceImport@1': { workspaceExportManifestMajors: [1] },
+          'workspaceImport@2': { workspaceExportManifestMajors: [2] },
         },
       },
       capabilities: [
@@ -98,6 +99,12 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
           state: 'experimental',
           transport: 'cli-json',
           contract: 'sf-cms-workspace-import@1',
+        },
+        {
+          id: 'workspace.import.image-create',
+          state: 'unavailable',
+          transport: 'cli-json',
+          contract: 'sf-cms-workspace-import@2',
         },
         {
           id: 'workspace.import.mapping',

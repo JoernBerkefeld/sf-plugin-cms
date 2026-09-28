@@ -18,6 +18,7 @@ import {
   type LoadedWorkspaceExport,
   type WorkspaceImportExecutionResult,
 } from '../../../services/import-workspace.js';
+import { UnsupportedWorkspacePackageVersionError } from '../../../contracts/workspace-export.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { planEmailFragmentCopies } from '../../../services/email-fragment.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
@@ -136,10 +137,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const packageVersionFailure =
-        /manifest contract\/version is unsupported|schemaVersion\/mode is unsupported/u.test(
-          message,
-        );
+      const packageVersionFailure = error instanceof UnsupportedWorkspacePackageVersionError;
       return this.finish(
         envelope('blocked', flags['api-version'], 'unresolved-org', this.pluginVersion, null, [
           {

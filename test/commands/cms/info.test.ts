@@ -69,6 +69,12 @@ describe('cms info', () => {
           contract: 'sf-cms-workspace-import@1',
         },
         {
+          id: 'workspace.import.image-create',
+          state: 'unavailable',
+          transport: 'cli-json',
+          contract: 'sf-cms-workspace-import@2',
+        },
+        {
           id: 'workspace.import.mapping',
           state: 'experimental',
           transport: 'cli-json',

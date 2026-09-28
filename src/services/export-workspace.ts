@@ -1,6 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, open, readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertWorkspaceExportManifest,
@@ -27,9 +27,22 @@ import {
   type EditablePublishOptions,
 } from './editable-raw-html-export.js';
 import { getVariant, type CmsRecord } from './read.js';
+import {
+  downloadExperimentalCmsMedia,
+  EXPERIMENTAL_MEDIA_POLICY,
+  type ExperimentalMediaDownloadOptions,
+} from '../transport/experimental-media.js';
 
 const PAGE_SIZE = 250;
 const ABSOLUTE_PAGE_CAP = 1000;
+
+function mediaByteCap(value: number | undefined, maximum: number, label: string): number {
+  const configured = value ?? maximum;
+  if (!Number.isSafeInteger(configured) || configured <= 0) {
+    throw new TypeError(`${label} must be a positive safe integer`);
+  }
+  return Math.min(configured, maximum);
+}
 
 export type WorkspaceExportWarning = {
   code:
@@ -38,6 +51,7 @@ export type WorkspaceExportWarning = {
     | 'DUPLICATE_VARIANTS'
     | 'OWNERSHIP_MISMATCH'
     | 'PREMATURE_EMPTY_PAGE'
+    | 'MEDIA_EXPORT_FAILED'
     | 'REFERENCE_UNRESOLVED'
     | 'REFERENCE_UNSUPPORTED'
     | 'UNSUPPORTED_WILDCARD';
@@ -66,6 +80,13 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
     CleanupOptions & {
       readonly makeTemporaryDirectory?: typeof mkdtemp;
     };
+  experimentalMedia?: {
+    readonly accessToken: string;
+    readonly instanceUrl: string;
+    readonly fetch?: ExperimentalMediaDownloadOptions['fetch'];
+    readonly perImageBytes?: number;
+    readonly totalBytes?: number;
+  };
 };
 
 type RequestConnection = Pick<Connection, 'request'>;
@@ -159,6 +180,75 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+function mediaValue(record: CmsRecord): Record<string, unknown> | undefined {
+  const body = record.contentBody;
+  if (!isRecord(body)) return undefined;
+  const media = body['sfdc_cms:media'];
+  return isRecord(media) ? media : undefined;
+}
+
+function imageEvidence(record: CmsRecord):
+  | {
+      contentKey: string;
+      fileName: string;
+      md5: string;
+      mimeType: string;
+      modifiedAt: string;
+      size: number;
+      status: string;
+      url: string;
+      version: string;
+    }
+  | undefined {
+  const contentType = isRecord(record.contentType)
+    ? record.contentType.fullyQualifiedName
+    : record.contentType;
+  if (contentType !== 'sfdc_cms__image') return undefined;
+  const media = mediaValue(record);
+  const source = isRecord(media?.source) ? media.source : undefined;
+  const status = isRecord(record.status) ? record.status.status : undefined;
+  const url = media?.url;
+  if (
+    !nonemptyString(record.contentKey) ||
+    !nonemptyString(source?.mimeType) ||
+    typeof source.size !== 'number' ||
+    !Number.isSafeInteger(source.size) ||
+    source.size < 0 ||
+    !nonemptyString(status) ||
+    !nonemptyString(record.lastModifiedDate) ||
+    !nonemptyString(url)
+  ) {
+    throw new TypeError('Experimental image authoring metadata is incomplete');
+  }
+  const parsed = new URL(url, 'https://invalid.example');
+  const fileName = parsed.searchParams.get('fileName');
+  const md5 = parsed.searchParams.get('fileHash');
+  const version = parsed.searchParams.get('version');
+  if (
+    !/^\/cms\/media\/[^/]+$/u.test(parsed.pathname) ||
+    [...parsed.searchParams.keys()].toSorted().join(',') !== 'fileHash,fileName,version' ||
+    !nonemptyString(fileName) ||
+    fileName.includes('/') ||
+    fileName.includes('\\') ||
+    typeof md5 !== 'string' ||
+    !/^[a-f\d]{32}$/iu.test(md5) ||
+    !nonemptyString(version)
+  ) {
+    throw new TypeError('Experimental image authoring URL binding is unsupported');
+  }
+  return {
+    contentKey: record.contentKey,
+    fileName,
+    md5: md5.toLowerCase(),
+    mimeType: source.mimeType,
+    modifiedAt: record.lastModifiedDate,
+    size: source.size,
+    status,
+    url,
+    version,
+  };
+}
+
 async function writeExclusive(path: string, value: unknown): Promise<void> {
   const handle = await open(path, 'wx');
   try {
@@ -206,6 +296,21 @@ export async function exportWorkspace(
 ): Promise<ExportWorkspaceResult> {
   if (!nonemptyString(workspaceId)) throw new TypeError('workspaceId must be a nonempty string');
   if (!nonemptyString(destination)) throw new TypeError('destination must be a nonempty string');
+  const mediaCaps =
+    options.experimentalMedia === undefined
+      ? undefined
+      : {
+          perImageBytes: mediaByteCap(
+            options.experimentalMedia.perImageBytes,
+            EXPERIMENTAL_MEDIA_POLICY.perImageBytes,
+            'Experimental media per-image byte cap',
+          ),
+          totalBytes: mediaByteCap(
+            options.experimentalMedia.totalBytes,
+            EXPERIMENTAL_MEDIA_POLICY.totalBytes,
+            'Experimental media total byte cap',
+          ),
+        };
   if (options.editableDirectory !== undefined) {
     await preflightEditableExport(destination, options.editableDirectory);
   }
@@ -347,8 +452,12 @@ export async function exportWorkspace(
       ...(referenceId === undefined ? {} : { referenceId }),
     };
   });
+  const mediaCandidates = [...details.entries()].flatMap(([variantId, detail]) => {
+    const evidence = imageEvidence(detail);
+    return evidence === undefined ? [] : [{ variantId, evidence }];
+  });
   const manifest: WorkspaceExportManifest = {
-    schemaVersion: 1,
+    schemaVersion: mediaCandidates.length > 0 ? 2 : 1,
     mode: 'experimental-best-effort',
     workspaceId,
     search: {
@@ -366,7 +475,8 @@ export async function exportWorkspace(
     failedVariantIds: failedIds.toSorted(),
     warnings,
     contract: WORKSPACE_EXPORT_MANIFEST_CONTRACT,
-    contractVersion: '1.0.0',
+    contractVersion: mediaCandidates.length > 0 ? '2.0.0' : '1.0.0',
+    ...(mediaCandidates.length === 0 ? {} : { media: [] }),
     provenance: {
       producer: 'sf-plugin-cms',
       sourceOrgId: options.sourceOrgId ?? 'unknown-org',
@@ -379,7 +489,15 @@ export async function exportWorkspace(
     externalReferences: referenceInventory.externalReferences,
     items: manifestItems,
   };
-  assertWorkspaceExportManifest(manifest);
+  if (mediaCandidates.length > 0 && options.experimentalMedia === undefined) {
+    warnings.push({
+      code: 'MEDIA_EXPORT_FAILED',
+      message:
+        'Image bytes require the explicitly enabled experimental undocumented CMS media transport.',
+      variantIds: mediaCandidates.map(({ variantId }) => variantId),
+    });
+    manifest.completeness = 'partial';
+  }
 
   if (options.editableDirectory !== undefined) {
     await preflightEditableExport(destination, options.editableDirectory);
@@ -394,6 +512,70 @@ export async function exportWorkspace(
     for (const entry of entries) {
       await writeExclusive(path.join(temporary, entry.file), details.get(entry.variantId));
     }
+    if (mediaCandidates.length > 0 && options.experimentalMedia !== undefined) {
+      await mkdir(path.join(temporary, 'media'));
+      let totalBytes = 0;
+      for (const { variantId, evidence } of mediaCandidates) {
+        const mediaPath = `media/${variantId}-${evidence.fileName}`;
+        try {
+          const remainingTotal = mediaCaps!.totalBytes - totalBytes;
+          if (!Number.isSafeInteger(remainingTotal) || remainingTotal <= 0) {
+            throw new TypeError('Experimental media total byte cap is exhausted');
+          }
+          const downloaded = await downloadExperimentalCmsMedia(
+            new URL(evidence.url, options.experimentalMedia.instanceUrl),
+            {
+              accessToken: options.experimentalMedia.accessToken,
+              expectedMd5: evidence.md5,
+              expectedMimeType: evidence.mimeType,
+              expectedSize: evidence.size,
+              fetch: options.experimentalMedia.fetch,
+              instanceUrl: options.experimentalMedia.instanceUrl,
+              maxBytes: Math.min(mediaCaps!.perImageBytes, remainingTotal),
+              outputFile: path.join(temporary, mediaPath),
+            },
+          );
+          if (downloaded.bytes > mediaCaps!.totalBytes - totalBytes) {
+            throw new TypeError('Experimental media total byte accounting exceeded the cap');
+          }
+          totalBytes += downloaded.bytes;
+          const current = imageEvidence(await getVariant(connection, variantId, options));
+          if (current === undefined || JSON.stringify(current) !== JSON.stringify(evidence)) {
+            throw new TypeError('Experimental image authoring metadata changed during export');
+          }
+          manifest.media!.push({
+            variantId,
+            contentKey: evidence.contentKey,
+            path: mediaPath,
+            sha256: downloaded.sha256,
+            md5: downloaded.md5,
+            bytes: downloaded.bytes,
+            mimeType: downloaded.mimeType,
+            fileName: evidence.fileName,
+            sourceStatus: evidence.status,
+            sourceModifiedAt: evidence.modifiedAt,
+            sourceVersion: evidence.version,
+            sourceUrl: evidence.url,
+            transport: 'experimental-undocumented-authoring-media',
+          });
+          manifest.items.push({
+            path: mediaPath,
+            sha256: downloaded.sha256,
+            kind: 'cms.media',
+          });
+        } catch (error) {
+          await unlink(path.join(temporary, mediaPath)).catch(() => {});
+          warnings.push({
+            code: 'MEDIA_EXPORT_FAILED',
+            message: `Experimental image export failed for ${variantId}: ${error instanceof Error ? error.message : String(error)}`,
+            variantIds: [variantId],
+          });
+          manifest.completeness = 'partial';
+          break;
+        }
+      }
+    }
+    assertWorkspaceExportManifest(manifest);
     await assertRegularPackageFiles(temporary, new Set(manifest.items.map(({ path }) => path)));
     await writeExclusive(path.join(temporary, 'manifest.json'), manifest);
     await publishDirectoryNoClobber(temporary, destination, options.atomicPublish);

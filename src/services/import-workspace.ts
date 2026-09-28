@@ -13,6 +13,7 @@ import {
 import { CmsRequestError } from '../transport/json-request.js';
 import {
   assertWorkspaceExportManifest,
+  UnsupportedWorkspacePackageVersionError,
   type WorkspaceExportManifest,
 } from '../contracts/workspace-export.js';
 import type {
@@ -62,6 +63,8 @@ export type LoadedWorkspaceExport = {
   readonly manifestSha256: string;
   readonly sourceDirectory: string;
 };
+
+export type WorkspaceExportLoadProfile = 'general' | 'image';
 
 export type DestinationWorkspace = JsonObject & {
   readonly defaultLanguage: string;
@@ -379,7 +382,7 @@ function validateRelationships(items: readonly WorkspaceImportItem[]): void {
 
 export async function loadWorkspaceExport(
   sourceDirectory: string,
-  options: { readonly allowPartial?: boolean } = {},
+  options: { readonly allowPartial?: boolean; readonly profile?: WorkspaceExportLoadProfile } = {},
 ): Promise<LoadedWorkspaceExport> {
   if (!nonemptyString(sourceDirectory))
     throw new TypeError('sourceDirectory must be a nonempty string');
@@ -393,6 +396,11 @@ export async function loadWorkspaceExport(
   const manifestValue = parseJson(manifestBytes, 'manifest.json');
   assertWorkspaceExportManifest(manifestValue);
   const manifest = manifestValue;
+  if (options.profile === 'image' && manifest.schemaVersion !== 2) {
+    throw new UnsupportedWorkspacePackageVersionError(
+      'Image import profile requires workspace package manifest version 2',
+    );
+  }
   const packageFiles = await enumeratePackageFiles(canonicalSource, canonicalSource);
   const expectedFiles = [
     'manifest.json',
@@ -404,6 +412,19 @@ export async function loadWorkspaceExport(
     );
   }
   const manifestItems = new Map(manifest.items.map((item_) => [item_.path, item_]));
+  for (const [index, declared] of manifest.items.entries()) {
+    const segments = declared.path.split('/');
+    const file = path.join(canonicalSource, ...segments);
+    const normalized = path.normalize(file);
+    if (!normalized.startsWith(`${canonicalSource}${path.sep}`)) {
+      throw new TypeError(`manifest.items[${index}].path escapes the source directory`);
+    }
+    const bytes = await readStableRegularFile(file, `Manifest item ${declared.path}`);
+    const actualSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (actualSha256 !== declared.sha256) {
+      throw new TypeError(`Manifest item ${declared.path} failed SHA-256 verification`);
+    }
+  }
   const seenFiles = new Set<string>();
   const seenIds = new Set<string>();
   const items: WorkspaceImportItem[] = [];

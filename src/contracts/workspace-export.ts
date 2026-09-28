@@ -16,6 +16,15 @@ export const WORKSPACE_EXPORT_MANIFEST_CONTRACT = 'sf-cms-workspace-export' as c
 export const EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT =
   'sf-cms-external-reference-correlations@1' as const;
 
+export class UnsupportedWorkspacePackageVersionError extends TypeError {
+  public readonly code = 'UNSUPPORTED_PACKAGE_VERSION' as const;
+
+  public constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedWorkspacePackageVersionError';
+  }
+}
+
 export type WorkspaceExportManifestItem = {
   path: string;
   sha256: string;
@@ -23,8 +32,24 @@ export type WorkspaceExportManifestItem = {
   referenceId?: string;
 };
 
+export type WorkspaceExportMedia = {
+  variantId: string;
+  contentKey: string;
+  path: string;
+  sha256: string;
+  md5: string;
+  bytes: number;
+  mimeType: string;
+  fileName: string;
+  sourceStatus: string;
+  sourceModifiedAt: string;
+  sourceVersion: string;
+  sourceUrl: string;
+  transport: 'experimental-undocumented-authoring-media';
+};
+
 export type WorkspaceExportManifest = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   mode: 'experimental-best-effort';
   workspaceId: string;
   search: {
@@ -47,6 +72,7 @@ export type WorkspaceExportManifest = {
       | 'DUPLICATE_VARIANTS'
       | 'OWNERSHIP_MISMATCH'
       | 'PREMATURE_EMPTY_PAGE'
+      | 'MEDIA_EXPORT_FAILED'
       | 'REFERENCE_UNRESOLVED'
       | 'REFERENCE_UNSUPPORTED'
       | 'UNSUPPORTED_WILDCARD';
@@ -54,7 +80,8 @@ export type WorkspaceExportManifest = {
     variantIds?: string[];
   }>;
   contract: typeof WORKSPACE_EXPORT_MANIFEST_CONTRACT;
-  contractVersion: '1.0.0';
+  contractVersion: '1.0.0' | '2.0.0';
+  media?: WorkspaceExportMedia[];
   provenance: {
     producer: 'sf-plugin-cms';
     sourceOrgId: string;
@@ -131,6 +158,7 @@ export function assertWorkspaceExportManifest(
       'warnings',
       'contract',
       'contractVersion',
+      ...(typeof value === 'object' && value !== null && 'media' in value ? ['media'] : []),
       'provenance',
       'completeness',
       'dependencies',
@@ -139,8 +167,11 @@ export function assertWorkspaceExportManifest(
     ],
     'manifest',
   );
-  if (value.schemaVersion !== 1 || value.mode !== 'experimental-best-effort') {
-    throw new TypeError('manifest schemaVersion/mode is unsupported');
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) {
+    throw new UnsupportedWorkspacePackageVersionError('manifest schemaVersion is unsupported');
+  }
+  if (value.mode !== 'experimental-best-effort') {
+    throw new TypeError('manifest mode is unsupported');
   }
   assertIdentifier(value.workspaceId, 'manifest.workspaceId');
   assertExactKeys(
@@ -164,9 +195,16 @@ export function assertWorkspaceExportManifest(
     assertCount(value[key], `manifest.${key}`);
   }
   assertLegacyManifestArrays(value);
-  if (value.contract !== WORKSPACE_EXPORT_MANIFEST_CONTRACT || value.contractVersion !== '1.0.0') {
-    throw new TypeError('manifest contract/version is unsupported');
+  if (value.contract !== WORKSPACE_EXPORT_MANIFEST_CONTRACT) {
+    throw new TypeError('manifest contract is unsupported');
   }
+  if (
+    (value.schemaVersion === 1 && value.contractVersion !== '1.0.0') ||
+    (value.schemaVersion === 2 && value.contractVersion !== '2.0.0')
+  ) {
+    throw new UnsupportedWorkspacePackageVersionError('manifest contract version is unsupported');
+  }
+  assertManifestMedia(value);
   assertExactKeys(
     value.provenance,
     ['producer', 'sourceOrgId', 'sourceWorkspaceId', 'pluginVersion', 'generatedAt'],
@@ -240,8 +278,106 @@ export function assertWorkspaceExportManifest(
       throw new TypeError(`manifest item has no reference descriptor: ${item.referenceId}`);
     }
   }
+  if (value.schemaVersion === 2) assertManifestMediaIntegrity(value as WorkspaceExportManifest);
   if (value.completeness === 'complete' && hasAuthoritativeIncompleteness(value)) {
     throw new TypeError('manifest.completeness contradicts authoritative incompleteness evidence');
+  }
+}
+
+function normalizedManifestPath(value: string): string {
+  return value.startsWith('./') ? value.slice(2) : value;
+}
+
+function assertManifestMediaIntegrity(manifest: WorkspaceExportManifest): void {
+  const entries = new Map<string, number>();
+  for (const entry of manifest.entries) {
+    entries.set(entry.variantId, (entries.get(entry.variantId) ?? 0) + 1);
+  }
+  const descriptors = new Map<string, WorkspaceExportMedia>();
+  for (const descriptor of manifest.media ?? []) {
+    if (entries.get(descriptor.variantId) !== 1) {
+      throw new TypeError('manifest media variantId must occur exactly once in entries');
+    }
+    descriptors.set(normalizedManifestPath(descriptor.path), descriptor);
+  }
+  const mediaItems = new Map<string, WorkspaceExportManifestItem>();
+  const normalizedItemPaths = new Set<string>();
+  for (const item of manifest.items) {
+    const normalized = normalizedManifestPath(item.path);
+    if (normalizedItemPaths.has(normalized)) {
+      throw new TypeError(`duplicate normalized manifest item path: ${normalized}`);
+    }
+    normalizedItemPaths.add(normalized);
+    if (item.kind === 'cms.media') mediaItems.set(normalized, item);
+  }
+  if (descriptors.size !== (manifest.media ?? []).length || mediaItems.size !== descriptors.size) {
+    throw new TypeError('manifest media descriptors and cms.media items must be bijective');
+  }
+  for (const [mediaPath, descriptor] of descriptors) {
+    const item = mediaItems.get(mediaPath);
+    if (item === undefined || item.sha256 !== descriptor.sha256) {
+      throw new TypeError('manifest media descriptor and item integrity must match exactly');
+    }
+  }
+}
+
+function assertManifestMedia(value: Record<string, unknown>): void {
+  if (value.schemaVersion === 1) {
+    if ('media' in value) throw new TypeError('manifest v1 must not contain media descriptors');
+    return;
+  }
+  if (!Array.isArray(value.media))
+    throw new TypeError('manifest v2 media descriptors are required');
+  const paths = new Set<string>();
+  const variantIds = new Set<string>();
+  for (const [index, media] of value.media.entries()) {
+    const label = `manifest.media[${index}]`;
+    assertExactKeys(
+      media,
+      [
+        'variantId',
+        'contentKey',
+        'path',
+        'sha256',
+        'md5',
+        'bytes',
+        'mimeType',
+        'fileName',
+        'sourceStatus',
+        'sourceModifiedAt',
+        'sourceVersion',
+        'sourceUrl',
+        'transport',
+      ],
+      label,
+    );
+    assertIdentifier(media.variantId, `${label}.variantId`);
+    assertIdentifier(media.contentKey, `${label}.contentKey`);
+    assertRelativePosixPath(media.path, `${label}.path`);
+    if (!media.path.startsWith('media/')) throw new TypeError(`${label}.path must use media/`);
+    if (paths.has(media.path) || variantIds.has(media.variantId)) {
+      throw new TypeError('manifest media paths and variant IDs must be unique');
+    }
+    paths.add(media.path);
+    variantIds.add(media.variantId);
+    assertSha256(media.sha256, `${label}.sha256`);
+    if (typeof media.md5 !== 'string' || !/^[a-f\d]{32}$/u.test(media.md5)) {
+      throw new TypeError(`${label}.md5 must be a lowercase MD5`);
+    }
+    assertCount(media.bytes, `${label}.bytes`);
+    for (const key of [
+      'mimeType',
+      'fileName',
+      'sourceStatus',
+      'sourceModifiedAt',
+      'sourceVersion',
+      'sourceUrl',
+    ] as const) {
+      assertNonemptyString(media[key], `${label}.${key}`);
+    }
+    if (media.transport !== 'experimental-undocumented-authoring-media') {
+      throw new TypeError(`${label}.transport is unsupported`);
+    }
   }
 }
 
@@ -255,7 +391,9 @@ function hasAuthoritativeIncompleteness(manifest: Record<string, unknown>): bool
     manifest.expectedCount !== manifest.foundCount ||
     manifest.foundCount !== manifest.exportedCount ||
     manifest.exportedCount !== (manifest.entries as unknown[]).length ||
-    manifest.exportedCount !== (manifest.items as unknown[]).length ||
+    manifest.exportedCount !==
+      (manifest.items as WorkspaceExportManifestItem[]).filter(({ kind }) => kind === 'cms.content')
+        .length ||
     warnings.some(({ code }) => code !== 'UNSUPPORTED_WILDCARD') ||
     externalReferences.some(
       ({ resolution }) => resolution === 'unresolved' || resolution === 'unsupported',

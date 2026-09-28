@@ -11,6 +11,7 @@ export type CmsCapability = {
     | 'workspace.export.dependency-closure'
     | 'workspace.export.external-reference-correlation'
     | 'workspace.import.email-fragment-create'
+    | 'workspace.import.image-create'
     | 'workspace.import.mapping';
   state: (typeof CMS_CAPABILITY_STATES)[number];
   transport: typeof CMS_CAPABILITY_TRANSPORT;
@@ -18,7 +19,8 @@ export type CmsCapability = {
     | 'unavailable'
     | 'sf-cms-workspace-export-set@1'
     | typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT
-    | 'sf-cms-workspace-import@1';
+    | 'sf-cms-workspace-import@1'
+    | 'sf-cms-workspace-import@2';
 };
 
 export type CmsInfoResult = {
@@ -34,10 +36,10 @@ export type CmsInfoResult = {
     commandResults: {
       info: ['1.0.0'];
       workspaceExportSet: ['1.0.0'];
-      workspaceImport: ['1.0.0'];
+      workspaceImport: ['1.0.0', '2.0.0'];
     };
     packageManifests: {
-      workspaceExport: ['1.0.0'];
+      workspaceExport: ['1.0.0', '2.0.0'];
     };
     embeddedResults: {
       externalReferenceCorrelations: [typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT];
@@ -48,6 +50,9 @@ export type CmsInfoResult = {
       };
       'workspaceImport@1': {
         workspaceExportManifestMajors: [1];
+      };
+      'workspaceImport@2': {
+        workspaceExportManifestMajors: [2];
       };
     };
   };
@@ -73,17 +78,20 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
     ['info', 'workspaceExportSet', 'workspaceImport'],
     'result.contracts.commandResults',
   );
-  for (const key of ['info', 'workspaceExportSet', 'workspaceImport'] as const) {
+  for (const key of ['info', 'workspaceExportSet'] as const) {
     if (!isExactArray(value.contracts.commandResults[key], ['1.0.0'])) {
       throw new TypeError(`result.contracts.commandResults.${key} is invalid`);
     }
+  }
+  if (!isExactArray(value.contracts.commandResults.workspaceImport, ['1.0.0', '2.0.0'])) {
+    throw new TypeError('result.contracts.commandResults.workspaceImport is invalid');
   }
   assertExactKeys(
     value.contracts.packageManifests,
     ['workspaceExport'],
     'result.contracts.packageManifests',
   );
-  if (!isExactArray(value.contracts.packageManifests.workspaceExport, ['1.0.0'])) {
+  if (!isExactArray(value.contracts.packageManifests.workspaceExport, ['1.0.0', '2.0.0'])) {
     throw new TypeError('result.contracts.packageManifests.workspaceExport is invalid');
   }
   assertExactKeys(
@@ -102,18 +110,26 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
   }
   assertExactKeys(
     value.contracts.compatibility,
-    ['workspaceExportSet@1', 'workspaceImport@1'],
+    ['workspaceExportSet@1', 'workspaceImport@1', 'workspaceImport@2'],
     'result.contracts.compatibility',
   );
-  for (const key of ['workspaceExportSet@1', 'workspaceImport@1'] as const) {
+  const compatibility = value.contracts.compatibility as Record<
+    'workspaceExportSet@1' | 'workspaceImport@1' | 'workspaceImport@2',
+    { workspaceExportManifestMajors?: unknown }
+  >;
+  for (const key of ['workspaceExportSet@1', 'workspaceImport@1', 'workspaceImport@2'] as const) {
     assertExactKeys(
-      value.contracts.compatibility[key],
+      compatibility[key],
       ['workspaceExportManifestMajors'],
       `result.contracts.compatibility.${key}`,
     );
-    if (!isExactArray(value.contracts.compatibility[key].workspaceExportManifestMajors, [1])) {
-      throw new TypeError(`result.contracts.compatibility.${key} is invalid`);
-    }
+  }
+  if (
+    !isExactArray(compatibility['workspaceExportSet@1'].workspaceExportManifestMajors, [1]) ||
+    !isExactArray(compatibility['workspaceImport@1'].workspaceExportManifestMajors, [1]) ||
+    !isExactArray(compatibility['workspaceImport@2'].workspaceExportManifestMajors, [2])
+  ) {
+    throw new TypeError('result.contracts.compatibility is invalid');
   }
   if (!Array.isArray(value.capabilities))
     throw new TypeError('result.capabilities must be an array');
@@ -134,6 +150,7 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
       ['workspace.export.dependency-closure', 'unavailable'],
       ['workspace.export.external-reference-correlation', EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT],
       ['workspace.import.email-fragment-create', 'sf-cms-workspace-import@1'],
+      ['workspace.import.image-create', 'sf-cms-workspace-import@2'],
       ['workspace.import.mapping', 'sf-cms-workspace-import@1'],
     ]);
     if (capability.contract !== expectedContracts.get(capability.id)) {

@@ -24,7 +24,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
   public static readonly summary =
     'Experimentally export one or all CMS workspaces using a read-only, best-effort process.';
   public static readonly description =
-    'Experimentally exports one Marketing Cloud CMS workspace or preflights and exports all workspaces. For a single workspace, --editable-dir creates an HTML-only companion beside an explicit unchanged baseline. The paths must be new and disjoint; the baseline is retained if companion creation fails. Eligible HTML is not proven dependency-free or safe and is not resolved, rewritten, sanitized, or scanned through Phase 7. This is not a complete or guaranteed backup and does not mutate org data.';
+    'Experimentally exports one Marketing Cloud CMS workspace or preflights and exports all workspaces. Single-workspace image bytes use an undocumented experimental read-only transport that forwards Salesforce authorization only to a narrowly validated Salesforce media host class. Image import remains unsupported. For a single workspace, --editable-dir creates an HTML-only companion beside an explicit unchanged baseline. The paths must be new and disjoint; the baseline is retained if companion creation fails. Eligible HTML is not proven dependency-free or safe and is not resolved, rewritten, sanitized, or scanned through Phase 7. This is not a complete or guaranteed backup and does not mutate org data.';
   public static readonly examples = [
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export',
@@ -132,10 +132,20 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       }
       destination = defaultWorkspaceDestination(workspaceName);
     }
+    const connectionOptions = connection.getConnectionOptions?.();
+    const accessToken = connection.accessToken ?? connectionOptions?.accessToken;
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
       pluginVersion: this.pluginVersion,
       sourceOrgId: orgId,
+      ...(typeof accessToken === 'string' && accessToken.length > 0
+        ? {
+            experimentalMedia: {
+              accessToken,
+              instanceUrl: connection.instanceUrl,
+            },
+          }
+        : {}),
     });
     for (const warning of result.manifest.warnings) this.warn(formatWarning(warning));
 

@@ -16,7 +16,9 @@ import {
   type WorkspaceExportSetResult,
 } from '../../src/contracts/workspace-export.js';
 import {
+  assertWorkspaceImageImportResultV2,
   assertWorkspaceImportResult,
+  type WorkspaceImageImportResultV2,
   type WorkspaceImportResult,
 } from '../../src/contracts/workspace-import.js';
 
@@ -77,6 +79,82 @@ describe('CMS contract foundation', () => {
     result.workspaces[0].artifact!.path = 'Marketing Workspace';
     result.workspaces[0].artifact!.manifestSha256 = 'ABC';
     expect(() => assertWorkspaceExportSetResult(result, value.provenance)).to.throw('SHA-256');
+  });
+
+  it('enforces strict v2 media descriptor and item integrity', () => {
+    const sha256 = 'a'.repeat(64);
+    const base = {
+      schemaVersion: 2,
+      mode: 'experimental-best-effort',
+      workspaceId: 'space',
+      search: {
+        contentSpaceOrFolderIds: ['space'],
+        languages: ['All'],
+        pageSize: 250,
+        queryTerm: '*',
+      },
+      expectedCount: 1,
+      foundCount: 1,
+      exportedCount: 1,
+      pagesRequested: 1,
+      entries: [{ file: 'items/variant.json', variantId: 'variant' }],
+      rejectedVariantIds: [],
+      failedVariantIds: [],
+      warnings: [{ code: 'UNSUPPORTED_WILDCARD', message: 'experimental' }],
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '2.0.0',
+      media: [
+        {
+          variantId: 'variant',
+          contentKey: 'key',
+          path: 'media/variant.png',
+          sha256,
+          md5: 'b'.repeat(32),
+          bytes: 12,
+          mimeType: 'image/png',
+          fileName: 'variant.png',
+          sourceStatus: 'Draft',
+          sourceModifiedAt: '2026-01-01T00:00:00.000Z',
+          sourceVersion: '1',
+          sourceUrl: '/cms/media/key',
+          transport: 'experimental-undocumented-authoring-media',
+        },
+      ],
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: 'org',
+        sourceWorkspaceId: 'space',
+        pluginVersion: '0.4.0',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      completeness: 'complete',
+      dependencies: [],
+      externalReferences: [],
+      items: [
+        { path: 'items/variant.json', sha256: 'c'.repeat(64), kind: 'cms.content' },
+        { path: 'media/variant.png', sha256, kind: 'cms.media' },
+      ],
+    } as const;
+    expect(() => assertWorkspaceExportManifest(structuredClone(base))).not.to.throw();
+    type MutableV2Manifest = {
+      entries: Array<{ file: string; variantId: string }>;
+      items: Array<{ kind: string; path: string; sha256: string }>;
+      media: Array<{ path: string; sha256: string; variantId: string }>;
+    };
+    const mutations: Array<(value: MutableV2Manifest) => void> = [
+      (value) => void value.items.pop(),
+      (value) => void value.media.pop(),
+      (value) => (value.media[0].sha256 = 'd'.repeat(64)),
+      (value) => void value.items.push({ ...value.items[1] }),
+      (value) => void value.media.push({ ...value.media[0], path: './media/variant.png' }),
+      (value) => (value.media[0].variantId = 'orphan'),
+      (value) => void value.entries.push({ file: 'items/other.json', variantId: 'variant' }),
+    ];
+    for (const mutate of mutations) {
+      const malformed = structuredClone(base) as unknown as MutableV2Manifest;
+      mutate(malformed);
+      expect(() => assertWorkspaceExportManifest(malformed)).to.throw();
+    }
   });
 
   it('binds aggregate counts and status to authoritative workspace rows', async () => {
@@ -263,6 +341,60 @@ describe('CMS contract foundation', () => {
     expect(() => assertWorkspaceExportManifest(missingLegacyField)).to.throw('exactly');
   });
 
+  it('validates the import v2 image result contract', () => {
+    const result: WorkspaceImageImportResultV2 = {
+      sourcePackage: { manifestSha256: 'a'.repeat(64), workspaceId: 'space', manifestVersion: 2 },
+      target: { orgId: 'org', workspaceId: 'target-space' },
+      status: 'planned',
+      assets: [
+        {
+          source: { family: 'cms', type: 'image', apiName: 'source_api', serverId: 'variant' },
+          resolution: {
+            method: 'explicit-map',
+            target: { family: 'cms', type: 'image', apiName: 'target_api', title: 'Target' },
+          },
+          identities: {
+            contentKey: { strategy: 'preserve', source: 'key', submitted: 'key' },
+            apiName: { strategy: 'fresh', source: 'old', submitted: 'new' },
+            title: { strategy: 'fresh', source: 'Old', submitted: 'New' },
+            urlName: { strategy: 'generated' },
+          },
+          binary: {
+            path: 'media/variant.png',
+            sha256: 'b'.repeat(64),
+            md5: 'c'.repeat(32),
+            bytes: 8,
+            mimeType: 'image/png',
+          },
+          metadataReadback: 'not-attempted',
+          byteProof: 'unavailable',
+          operationStatus: 'planned',
+          reportStatus: 'not-created',
+        },
+      ],
+    };
+    expect(() => assertWorkspaceImageImportResultV2(result)).not.to.throw();
+    const fallback = structuredClone(result);
+    fallback.assets[0].resolution = {
+      method: 'title-fallback',
+      target: {
+        family: 'cms',
+        type: 'image',
+        apiName: 'resolved_api',
+        title: 'Exact title',
+        workspaceId: 'target-space',
+        language: 'en',
+      },
+    };
+    expect(() => assertWorkspaceImageImportResultV2(fallback)).not.to.throw();
+    expect(() =>
+      assertWorkspaceImageImportResultV2({
+        ...result,
+        assets: [...result.assets, result.assets[0]],
+      }),
+    ).to.throw('duplicate');
+  });
+
   it('rejects duplicate and conflicting import mappings', () => {
     const result: WorkspaceImportResult = {
       sourcePackage: { manifestSha256: 'c'.repeat(64), workspaceId: '0ZuSource' },
@@ -323,6 +455,12 @@ describe('CMS contract foundation', () => {
         state: 'experimental',
         transport: 'cli-json',
         contract: 'sf-cms-workspace-import@1',
+      },
+      {
+        id: 'workspace.import.image-create',
+        state: 'unavailable',
+        transport: 'cli-json',
+        contract: 'sf-cms-workspace-import@2',
       },
       {
         id: 'workspace.import.mapping',
