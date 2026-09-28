@@ -61,6 +61,61 @@ describe('workspace export service', () => {
     await rm(root, { force: true, recursive: true });
   });
 
+  it('preserves a synthetic email fragment body exactly and excludes it from editable HTML output', async () => {
+    const body = {
+      'sfdc_cms:title': 'Reusable footer',
+      backgroundColor: '#ffffff',
+      padding: { bottom: '12px', left: '16px', right: '16px', top: '12px' },
+      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+      'lightning:dataProviders': [],
+      'lightning:expressions': [],
+      'sfdc_cms:attachments': [],
+      'sfdc_cms:variants': [],
+      'sfdc_cms:block': {
+        type: 'root',
+        children: [
+          {
+            type: 'section',
+            children: [{ type: 'column', children: [] }],
+          },
+        ],
+      },
+    };
+    const raw = detail('fragment-a', 'space', {
+      apiName: 'reusable_footer',
+      contentKey: 'fragment-key',
+      contentType: 'sfdc_cms__emailFragment',
+      language: 'en_US',
+      title: 'Reusable footer',
+      contentBody: body,
+    });
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? { items: [row('fragment-a')], total: 1 }
+            : raw,
+        ),
+      );
+    const destination = path.join(root, 'fragment-export');
+    await exportWorkspace({ request }, 'space', destination);
+    expect(
+      JSON.parse(await readFile(path.join(destination, 'items/fragment-a.json'), 'utf8')),
+    ).to.deep.equal(raw);
+
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'fragment-baseline'), {
+        editableDirectory: path.join(root, 'fragment-editable'),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as Error).message).to.include('No editable native raw-HTML variants');
+    expect(await readdir(root)).to.deep.equal(['fragment-baseline', 'fragment-export']);
+  });
+
   it('publishes literal HTML and complete raw metadata without changing default package bytes', async () => {
     const raw = detail('a', 'space', {
       contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },

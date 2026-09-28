@@ -19,18 +19,20 @@ import {
   type WorkspaceImportExecutionResult,
 } from '../../../services/import-workspace.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
+import { planEmailFragmentCopies } from '../../../services/email-fragment.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImportResult>> {
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, rollback, or package transaction.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --native-copy-map ./native-copy-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --native-copy-map ./native-copy-map.json --editable-dir ./cms-editable --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --contract-version 1 --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -55,8 +57,15 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     }),
     'native-copy-map': Flags.file({
       exists: true,
+      exclusive: ['email-fragment-map'],
       summary:
         'JSON array selecting native raw-HTML parents: sourceContentKey, language, fresh apiName and urlName. Server generates keys; no updates or publication.',
+    }),
+    'email-fragment-map': Flags.file({
+      exists: true,
+      exclusive: ['native-copy-map', 'editable-dir'],
+      summary:
+        'JSON array selecting the exact dependency-free email-fragment shape with fresh contentKey/apiName; source title/urlName are preserved and must be fresh.',
     }),
     apply: Flags.boolean({
       default: false,
@@ -101,6 +110,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     }
 
     let source: LoadedWorkspaceExport;
+    let emailFragmentMappings: unknown;
     let nativeCopyMappings: unknown;
     try {
       if (flags['editable-dir'] !== undefined && flags['native-copy-map'] === undefined)
@@ -113,6 +123,12 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
           await readFile(flags['native-copy-map'], 'utf8'),
         ) as unknown;
         await planNativeWorkspaceImport(source, nativeCopyMappings, flags['editable-dir']);
+      }
+      if (flags['email-fragment-map'] !== undefined) {
+        emailFragmentMappings = JSON.parse(
+          await readFile(flags['email-fragment-map'], 'utf8'),
+        ) as unknown;
+        planEmailFragmentCopies(source, emailFragmentMappings);
       }
       assertWorkspaceSelector({
         workspaceId: flags['workspace-id'],
@@ -154,6 +170,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         dryRun: !flags.apply,
         loadedSource: source,
         editableDirectory: flags['editable-dir'],
+        emailFragmentMappings,
         nativeCopyMappings,
         reportDirectory: flags['report-dir'],
         sourceDirectory: flags['source-dir'],

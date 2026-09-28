@@ -113,6 +113,16 @@ describe('editable raw HTML pure projection', () => {
       item('other', { contentType: 'sfdc_cms__image' }),
       item('missing', { contentBody: { nested: { rawHtml: '<p>nested</p>' } } }),
       item('block', { contentBody: { rawHtml: '<p>not eligible</p>', 'sfdc_cms:block': null } }),
+      item('fragment', {
+        contentType: 'sfdc_cms__emailFragment',
+        contentBody: {
+          'sfdc_cms:title': 'Reusable footer',
+          'sfdc_cms:block': {
+            type: 'root',
+            children: [{ type: 'section', children: [{ type: 'column', children: [] }] }],
+          },
+        },
+      }),
       item('invalid', { contentBody: { rawHtml: 42 } }),
     ];
     expect(projectEditableRawHtml([...excluded, item()], manifestHash).items).to.have.length(1);

@@ -58,17 +58,17 @@ Machine consumers should run this command first and select a mutually supported 
 
 ## Command reference
 
-| Command | Details |
-|---|---|
-| `sf cms info` | [Plugin information](#sf-cms-info) |
-| `sf cms list workspace` | [List workspaces](#sf-cms-list-workspace) |
-| `sf cms get workspace` | [Get a workspace](#sf-cms-get-workspace) |
-| `sf cms list channel` | [List workspace channels](#sf-cms-list-channel) |
-| `sf cms get channel` | [Get a channel](#sf-cms-get-channel) |
-| `sf cms get content` | [Get content](#sf-cms-get-content) |
-| `sf cms get variant` | [Get a variant](#sf-cms-get-variant) |
-| `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace) |
-| `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace) |
+| Command                   | Details                                         |
+| ------------------------- | ----------------------------------------------- |
+| `sf cms info`             | [Plugin information](#sf-cms-info)              |
+| `sf cms list workspace`   | [List workspaces](#sf-cms-list-workspace)       |
+| `sf cms get workspace`    | [Get a workspace](#sf-cms-get-workspace)        |
+| `sf cms list channel`     | [List workspace channels](#sf-cms-list-channel) |
+| `sf cms get channel`      | [Get a channel](#sf-cms-get-channel)            |
+| `sf cms get content`      | [Get content](#sf-cms-get-content)              |
+| `sf cms get variant`      | [Get a variant](#sf-cms-get-variant)            |
+| `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace)  |
+| `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace)  |
 
 All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They use API version `67.0` by default; pass `--api-version <version>` only when you need to override it. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
 
@@ -272,6 +272,36 @@ The native profile omits `contentKey` from CREATE and uses the returned server-g
 The supported body requires nonempty `sfdc_cms:title`, `subjectLine`, `messagePurpose`, and `rawHtml`. Optional supported strings are `sfdc_cms:description`, `preheader`, `textContent`, and `backgroundColor`, plus the email body's URL name. Only empty provider/expression/attachment/variant arrays and the exact observed default background/brand settings are accepted. Unknown fields, non-null external-provider metadata, unsafe non-HTML metadata strings, and structured/package media or reference forms remain rejected. Temporarily through Phase 7, the retained raw-HTML danger scanner is bypassed and nonempty `rawHtml` is accepted as opaque literal content: embedded dependencies, media, references, dynamic syntax, and URLs are not discovered, resolved, rewritten, sanitized, or rejected. This is not dependency or safety validation; enabling the retained type-aware scanner is deferred to Phase 8. Encoded native GET HTML is decoded once for CREATE, while literal edited sidecar HTML is not decoded again. Successful apply reads the created content back and verifies generated identities, destination, language, type, names, Draft/unpublished state, and submitted body fields.
 
 Historical native-copy evidence includes local compiled public-command execution with real flag parsing and org connections for owned email/template probes, including a separate cross-org native CREATE acceptance with independent readbacks. That evidence concerns the unedited native-copy path, not live installed editable HTML transfer. Separate packed CLI tests do not establish live installed-host acceptance against Salesforce. No general workspace migration, custom-key CREATE, general reference/media transport, non-default-language copying, or every allowed-field live profile is proven. The MCNext orchestrator is not wired to this native-copy flag; its integration remains a separate slice.
+
+#### Bounded email-fragment copies (`--email-fragment-map`)
+
+`--email-fragment-map <json-file>` opts into the experimental first Phase 4 profile. It supports only dependency-free `sfdc_cms__emailFragment` content whose body exactly matches the evidenced root-content-block → one section → one empty column shape, including the exact accepted layout attributes and empty provider, expression, attachment, and variant arrays. It is not general reusable-block or workspace restoration support.
+
+The mapping file is a nonempty JSON array with exactly four string fields per row:
+
+```json
+[
+  {
+    "sourceContentKey": "SOURCE_CONTENT_KEY",
+    "language": "en_US",
+    "contentKey": "fresh-fragment-key",
+    "apiName": "fresh_fragment_api"
+  }
+]
+```
+
+Each row selects exactly one integrity-verified source variant. The selected language must be the destination workspace's default language. `contentKey` and `apiName` must be fresh; the source title and URL name are preserved and therefore must also be fresh at the destination. Content-key and exact API-name absence are checked during preflight, but dry-run still reports that broader server conflict behavior and apply readiness are unverified.
+
+Preview first, then apply once with a new report directory:
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --contract-version 1 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --apply --report-dir ./cms-email-fragment-create-report --contract-version 1 --json
+```
+
+Apply performs fresh create-only import under the destination root folder. It creates only the destination-default-language parent and leaves it Draft and unpublished. It preserves the source body, title, and URL name while replacing only the mapped `contentKey` and `apiName`; it does not modify the source package. No update, overwrite, publication, activation, send, child-language creation, or automatic retry is supported.
+
+Bodies with nonempty components, references, media, data providers, expressions, attachments, variants, extra fields, or near-match layout definitions/attributes are rejected before mutation. Other email-fragment shapes and the remaining reusable landing-page/block types are unsupported. The separate `workspace.import.email-fragment-create` capability remains `experimental` because live acceptance covers only this narrow profile, not general email-fragment or workspace restoration.
 
 #### Editable HTML companion (`--editable-dir`)
 

@@ -10,6 +10,7 @@ export type CmsCapability = {
     | 'workspace.export.bulk'
     | 'workspace.export.dependency-closure'
     | 'workspace.export.external-reference-correlation'
+    | 'workspace.import.email-fragment-create'
     | 'workspace.import.mapping';
   state: (typeof CMS_CAPABILITY_STATES)[number];
   transport: typeof CMS_CAPABILITY_TRANSPORT;
@@ -132,6 +133,7 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
       ['workspace.export.bulk', 'sf-cms-workspace-export-set@1'],
       ['workspace.export.dependency-closure', 'unavailable'],
       ['workspace.export.external-reference-correlation', EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT],
+      ['workspace.import.email-fragment-create', 'sf-cms-workspace-import@1'],
       ['workspace.import.mapping', 'sf-cms-workspace-import@1'],
     ]);
     if (capability.contract !== expectedContracts.get(capability.id)) {

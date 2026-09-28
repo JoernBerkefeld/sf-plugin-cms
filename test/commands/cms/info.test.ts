@@ -63,6 +63,12 @@ describe('cms info', () => {
           contract: 'sf-cms-external-reference-correlations@1',
         },
         {
+          id: 'workspace.import.email-fragment-create',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-workspace-import@1',
+        },
+        {
           id: 'workspace.import.mapping',
           state: 'experimental',
           transport: 'cli-json',

@@ -24,6 +24,7 @@ import { getContent, type CmsRecord } from './read.js';
 import { variantIdentity } from './variant-identity.js';
 import { inventoryExportReferences } from './export-references.js';
 import { planImportIdentities, planNativeCopies } from './import-identities.js';
+import { planEmailFragmentCopies } from './email-fragment.js';
 import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -33,7 +34,9 @@ import {
   type CreateVariantInput,
 } from './write.js';
 
-type RequestConnection = Pick<Connection, 'request'>;
+type RequestConnection = Pick<Connection, 'request'> & {
+  readonly query?: Connection['query'];
+};
 type JsonObject = { readonly [key: string]: JsonValue };
 type JsonValue = boolean | JsonObject | readonly JsonValue[] | null | number | string;
 
@@ -143,6 +146,7 @@ export type ExecuteWorkspaceImportOptions = {
   readonly destinationWorkspace: unknown;
   readonly dryRun?: boolean;
   readonly editableDirectory?: string;
+  readonly emailFragmentMappings?: unknown;
   readonly loadedSource?: LoadedWorkspaceExport;
   readonly identityMappings?: unknown;
   readonly nativeCopyMappings?: unknown;
@@ -711,6 +715,33 @@ async function preflightConflicts(
   }
 }
 
+function soqlString(value: string): string {
+  return `'${value.replaceAll('\\', '\\\\').replaceAll("'", String.raw`\'`)}'`;
+}
+
+async function preflightApiNames(
+  connection: RequestConnection,
+  plan: WorkspaceImportPlan,
+): Promise<void> {
+  if (connection.query === undefined) {
+    throw new TypeError(
+      'Destination API-name absence cannot be proven; email-fragment apply is blocked',
+    );
+  }
+  for (const apiName of new Set(
+    plan.groups.flatMap(({ primary, variants }) =>
+      [primary, ...variants].flatMap((item) => (item.apiName === undefined ? [] : [item.apiName])),
+    ),
+  )) {
+    const result = await connection.query<{ ApiName?: string }>(
+      `SELECT ApiName FROM ManagedContent WHERE ApiName = ${soqlString(apiName)} LIMIT 1`,
+    );
+    if (result.totalSize !== 0 || result.records.length > 0) {
+      throw new Error(`API name ${apiName} already exists`);
+    }
+  }
+}
+
 function compareMappingIdentity(
   left: WorkspaceImportMapping | WorkspaceImportReference,
   right: WorkspaceImportMapping | WorkspaceImportReference,
@@ -962,7 +993,8 @@ export async function executeWorkspaceImport(
   }
   validateRelationships(source.items);
   const native = options.nativeCopyMappings !== undefined;
-  if (native && options.identityMappings !== undefined)
+  const emailFragment = options.emailFragmentMappings !== undefined;
+  if (Number(native) + Number(emailFragment) + Number(options.identityMappings !== undefined) > 1)
     throw new TypeError('Choose one identity profile');
   if (options.editableDirectory !== undefined && !native)
     throw new TypeError('editableDirectory requires nativeCopyMappings');
@@ -974,6 +1006,8 @@ export async function executeWorkspaceImport(
       options.nativeCopyMappings,
       options.editableDirectory,
     ));
+  } else if (emailFragment) {
+    proposal = planEmailFragmentCopies(source, options.emailFragmentMappings);
   } else if (options.identityMappings !== undefined)
     proposal = planImportIdentities(source, options.identityMappings);
   const selectedIds = new Set(proposal?.items.map((item) => item.id));
@@ -987,7 +1021,7 @@ export async function executeWorkspaceImport(
             retryable: false,
           },
         ];
-  const selectedSource = native ? { ...source, items: proposal!.items } : source;
+  const selectedSource = native || emailFragment ? { ...source, items: proposal!.items } : source;
   const sourcePlan = planWorkspaceImport(
     selectedSource,
     options.destinationWorkspace,
@@ -1010,6 +1044,7 @@ export async function executeWorkspaceImport(
   preflightReferences(plan, native ? selectedNativeReferences(source, proposal!.items) : undefined);
   const requestOptions = options.requestOptions ?? {};
   if (!native) await preflightConflicts(options.connection, plan, requestOptions);
+  if (emailFragment) await preflightApiNames(options.connection, plan);
   const hasNamedIdentities = plan.groups.some((group) =>
     [group.primary, ...group.variants].some(
       (item) =>
@@ -1018,7 +1053,7 @@ export async function executeWorkspaceImport(
         item.contentBody['sfdc_cms:urlName'] !== undefined,
     ),
   );
-  if (!native && hasNamedIdentities && options.dryRun !== true) {
+  if (!native && !emailFragment && hasNamedIdentities && options.dryRun !== true) {
     throw new TypeError(
       'Destination API-name/URL-name uniqueness cannot be verified by the supported CMS APIs; import is blocked',
     );
@@ -1050,8 +1085,9 @@ export async function executeWorkspaceImport(
     if (hasNamedIdentities && !native) {
       diagnostics.unshift({
         code: 'NAME_AVAILABILITY_UNVERIFIED',
-        message:
-          'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
+        message: emailFragment
+          ? 'Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup; other server conflict behavior remains unverified.'
+          : 'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
         retryable: false,
       });
     }

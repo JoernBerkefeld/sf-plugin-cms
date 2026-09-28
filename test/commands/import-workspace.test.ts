@@ -133,6 +133,7 @@ describe('CMS import workspace command', () => {
       'workspace-name',
       'source-dir',
       'native-copy-map',
+      'email-fragment-map',
       'editable-dir',
       'apply',
       'allow-partial',
@@ -145,7 +146,15 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
     expect(ImportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['native-copy-map']);
+    expect(ImportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
+      'native-copy-map',
+      'editable-dir',
+    ]);
+    expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(
+      /exact dependency-free email-fragment shape/iu,
+    );
     expect(ImportWorkspace.summary).to.match(/create-only/iu);
+    expect(ImportWorkspace.description).to.match(/destination-default-language Drafts/iu);
   });
 
   it('executes the explicit native-copy-map file through the public command', async () => {
