@@ -81,7 +81,7 @@ sf cms info --json
 sf cms info --contract-version 1 --json
 ```
 
-The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds can be resolved. Installation alone does not prove org permissions or endpoint availability.
+The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. The strict v2 image-create profile and the bounded v1 component-create profiles remain experimental. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds and explicitly mapped prerequisites can be resolved. Installation alone does not prove org permissions or endpoint availability.
 
 `--contract-version <major>` defaults to `1`. Any unsupported major returns a `blocked` `sf-cms-info` envelope with diagnostic code `UNSUPPORTED_CONTRACT_VERSION` and exit `1`, without org access.
 
@@ -273,6 +273,38 @@ The native profile omits `contentKey` from CREATE and uses the returned server-g
 The supported body requires nonempty `sfdc_cms:title`, `subjectLine`, `messagePurpose`, and `rawHtml`. Optional supported strings are `sfdc_cms:description`, `preheader`, `textContent`, and `backgroundColor`, plus the email body's URL name. Only empty provider/expression/attachment/variant arrays and the exact observed default background/brand settings are accepted. Unknown fields, non-null external-provider metadata, unsafe non-HTML metadata strings, and structured/package media or reference forms remain rejected. Temporarily through Phase 7, the retained raw-HTML danger scanner is bypassed and nonempty `rawHtml` is accepted as opaque literal content: embedded dependencies, media, references, dynamic syntax, and URLs are not discovered, resolved, rewritten, sanitized, or rejected. This is not dependency or safety validation; enabling the retained type-aware scanner is deferred to Phase 8. Encoded native GET HTML is decoded once for CREATE, while literal edited sidecar HTML is not decoded again. Successful apply reads the created content back and verifies generated identities, destination, language, type, names, Draft/unpublished state, and submitted body fields.
 
 Historical native-copy evidence includes local compiled public-command execution with real flag parsing and org connections for owned email/template probes, including a separate cross-org native CREATE acceptance with independent readbacks. That evidence concerns the unedited native-copy path, not live installed editable HTML transfer. Separate packed CLI tests do not establish live installed-host acceptance against Salesforce. No general workspace migration, custom-key CREATE, general reference/media transport, non-default-language copying, or every allowed-field live profile is proven. The MCNext orchestrator is not wired to this native-copy flag; its integration remains a separate slice.
+
+#### CMS images (`--image-map`)
+
+Image transfer is an experimental single-workspace workflow built on strict workspace package v2. Export must use `--experimental-media`, which downloads the selected image binaries and records an exact bijection between each image variant, its media descriptor, and its packaged file. Import requires `--contract-version 2` and a nonempty `--image-map` JSON array. One row imports one image; multiple rows import many images sequentially in their deterministic typed-source order.
+
+```json
+[
+  {
+    "source": {
+      "family": "cms",
+      "type": "image",
+      "apiName": "SourceLogo"
+    },
+    "contentKey": { "strategy": "preserve" },
+    "apiName": { "strategy": "fresh", "value": "TargetLogo" },
+    "title": { "strategy": "fresh", "value": "Target Logo" },
+    "urlName": { "strategy": "generated" }
+  }
+]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-images --experimental-media --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --apply --report-dir ./cms-image-report --json
+```
+
+Every row selects exactly one integrity-verified `cms/image` item by exact API name, with optional source bindings such as workspace, language, server ID, title, or version. Each of the four identity fields has an explicit strategy: `preserve` submits the evidenced source value, `fresh` submits a different map-provided value, and `generated` omits the value for the server to assign. `title` supports only `preserve` or `fresh`. Content keys supplied through `preserve` or `fresh` must use the canonical `MC` plus 26 base32-character shape. Duplicate source selections and duplicate non-generated target identity tuples are rejected.
+
+Dry-run validates the complete v2 package, verifies media bytes and hashes, resolves the exact destination workspace, and checks every selected destination identity before reporting the plan. Apply repeats destination checks immediately before each sequential multipart CREATE, records a pending operation before transport, and verifies returned identity, workspace, type, Draft state, authoring metadata, and canonical variant readback. Binary byte proof is reported separately because the authoring readback may not expose original bytes. Multipart filenames are normalized to the declared GIF, JPEG, PNG, or WebP MIME type; missing extensions are added and mismatches are rejected.
+
+Image import is create-only. It has no update fallback, overwrite, publication, rollback, cleanup, or automatic retry. A transport or report-persistence ambiguity leaves ownership uncertain and must be reconciled from `workspace-import-run.json` before any new attempt.
 
 #### Bounded email-fragment copies (`--email-fragment-map`)
 
@@ -556,13 +588,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.4.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.5.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. Dependency discovery and closure are unavailable in v0.4.0: exports preserve only evidenced opaque identity inventory and do not expose dependency edges. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.4.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.5.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.5.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -575,14 +607,14 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "status": "success",
   "metadata": {
     "operation": "<cms.info|workspace.export.bulk|workspace.import>",
-    "plugin": { "name": "sf-plugin-cms", "version": "0.3.1" },
+    "plugin": { "name": "sf-plugin-cms", "version": "0.5.0" },
     "apiVersion": "67.0"
   },
   "diagnostics": { "warnings": [], "errors": [] },
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "<org-id-or-offline>",
-    "pluginVersion": "0.3.1",
+    "pluginVersion": "0.5.0",
     "command": "sf cms <operation>",
     "generatedAt": "<ISO-8601>"
   },
@@ -599,9 +631,11 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.4.0 does not discover or traverse CMS relationships.
+- `workspace.export.dependency-closure` — `unavailable`; v0.5.0 does not provide general relationship discovery or traversal.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
+- `workspace.import.email-fragment-create` — `experimental`, contract `sf-cms-workspace-import@1`.
+- `workspace.import.image-create` — `experimental`, contract `sf-cms-workspace-import@2`.
 - `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.
 
 `sf-cms-workspace-export-set@1` contains `workspaceType`, a portable `outputDirectory`, selection and summary counts, `externalReferenceCorrelations`, and deterministic per-workspace entries. Workspace entries include canonical source identity, `success|partial|failed` status, relative artifact/manifest paths and hashes when finalized, and structured diagnostics. Any finalized omission or unresolved/unsupported reference makes that workspace and aggregate partial.
