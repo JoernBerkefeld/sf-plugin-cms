@@ -353,6 +353,11 @@ describe('CMS contract foundation', () => {
             method: 'explicit-map',
             target: { family: 'cms', type: 'image', apiName: 'target_api', title: 'Target' },
           },
+          mutation: {
+            requestSha256: 'b'.repeat(64),
+            contentId: 'content-created',
+            variantId: 'variant-created',
+          },
           identities: {
             contentKey: { strategy: 'preserve', source: 'key', submitted: 'key' },
             apiName: { strategy: 'fresh', source: 'old', submitted: 'new' },

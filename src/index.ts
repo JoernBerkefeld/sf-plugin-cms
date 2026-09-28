@@ -21,12 +21,18 @@ export {
   type WorkspaceExportLoadProfile,
 } from './services/import-workspace.js';
 export {
+  applyImageImports,
   planImageImports,
   preflightImageImports,
+  type ImageImportApplyOptions,
+  type ImageImportApplyResult,
   type ImageImportMapField,
   type ImageImportMapRow,
+  type ImageImportOperation,
   type ImageImportPreflightOptions,
   type ImageImportPreflightResult,
+  type ImageImportReportPersistence,
+  type ImageImportRunReport,
   type PlannedImageImport,
 } from './services/image-import.js';
 export {

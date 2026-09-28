@@ -1,12 +1,16 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { InvalidImageImportMapError } from '../../src/contracts/workspace-import.js';
-import { planImageImports, preflightImageImports } from '../../src/services/image-import.js';
+import {
+  applyImageImports,
+  planImageImports,
+  preflightImageImports,
+} from '../../src/services/image-import.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
@@ -349,6 +353,195 @@ describe('image import contracts and loader', () => {
     ).to.include('already exists: fresh_api_two');
     expect(searched.toSorted()).to.deep.equal(['fresh_api', 'fresh_api_two']);
     expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
+  });
+
+  it('applies images sequentially with TOCTOU checks, durable intent, hashes, IDs, and readback evidence', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [
+      map({
+        contentKey: { strategy: 'fresh', value: 'fresh-key' },
+        urlName: { strategy: 'fresh', value: 'fresh-url' },
+      }),
+    ]);
+    const reportDirectory = path.join(root, 'report');
+    const snapshots: Array<{ operations: Array<{ state: string; requestSha256: string }> }> = [];
+    let searches = 0;
+    let posts = 0;
+    const request = sinon
+      .stub()
+      .callsFake(({ body, method, url }: { body?: Buffer; method: string; url: string }) => {
+        if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+        if (url.startsWith('/connect/cms/items/search')) {
+          searches += 1;
+          return fakeRequest({ items: [], total: 0 });
+        }
+        if (url === '/connect/cms/contents/fresh-key') {
+          return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
+        }
+        if (url === '/connect/cms/contents' && method === 'POST') {
+          posts += 1;
+          expect(body).to.be.instanceOf(Buffer);
+          return fakeRequest({
+            contentKey: 'fresh-key',
+            managedContentId: 'content-created',
+            managedContentVariantId: 'variant-created',
+          });
+        }
+        if (url === '/connect/cms/contents/variants/variant-created') {
+          return fakeRequest({
+            id: 'variant-created',
+            apiName: 'fresh_api',
+            contentKey: 'fresh-key',
+            title: 'Fresh title',
+            urlName: 'fresh-url',
+            contentSpace: { id: 'target-space' },
+            contentType: 'sfdc_cms__image',
+            isPublished: false,
+            status: { status: 'Draft' },
+          });
+        }
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      });
+
+    const result = await applyImageImports({
+      connection: { request },
+      destinationOrgId: '00D-target',
+      destinationWorkspaceId: 'target-space',
+      plans,
+      reportDirectory,
+      reportPersistence: {
+        rewrite: async (file, report) => {
+          snapshots.push(structuredClone(report));
+          await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
+        },
+      },
+      source,
+    });
+
+    expect(searches).to.equal(2);
+    expect(posts).to.equal(1);
+    const pending = snapshots.find(({ operations }) => operations.at(-1)?.state === 'pending');
+    expect(pending?.operations.at(-1)?.requestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(result.contractResult.status).to.equal('completed');
+    expect(result.contractResult.assets[0]).to.deep.include({
+      metadataReadback: 'passed',
+      byteProof: 'unavailable',
+      operationStatus: 'succeeded',
+      reportStatus: 'recorded',
+    });
+    expect(result.contractResult.assets[0].mutation).to.deep.include({
+      contentId: 'content-created',
+      variantId: 'variant-created',
+    });
+    expect(result.contractResult.assets[0].mutation?.requestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(result.contractResult.assets[0].identities).to.deep.include({
+      contentKey: {
+        strategy: 'fresh',
+        source: 'source-key',
+        submitted: 'fresh-key',
+        returned: 'fresh-key',
+      },
+      apiName: {
+        strategy: 'fresh',
+        source: 'source_api',
+        submitted: 'fresh_api',
+        returned: 'fresh_api',
+      },
+    });
+    expect(JSON.parse(await readFile(result.reportFile, 'utf8'))).to.deep.equal(result.report);
+  });
+
+  it('stops before POST when the immediate TOCTOU check observes a new conflict', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [map()]);
+    let searches = 0;
+    const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        searches += 1;
+        return fakeRequest(
+          searches === 1
+            ? { items: [], total: 0 }
+            : {
+                items: [
+                  {
+                    id: 'raced-variant',
+                    managedContentSpaceId: 'target-space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                total: 1,
+              },
+        );
+      }
+      if (url === '/connect/cms/contents/variants/raced-variant') {
+        return fakeRequest({
+          id: 'raced-variant',
+          apiName: 'fresh_api',
+          contentSpace: { id: 'target-space' },
+          contentType: 'sfdc_cms__image',
+        });
+      }
+      if (url === '/connect/cms/contents/source-key') {
+        return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    expect(
+      await rejectionMessage(
+        applyImageImports({
+          connection: { request },
+          destinationOrgId: '00D-target',
+          destinationWorkspaceId: 'target-space',
+          plans,
+          reportDirectory: path.join(root, 'conflict-report'),
+          source,
+        }),
+      ),
+    ).to.include('already exists: fresh_api');
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
+  });
+
+  it('stops after an uncertain create response and preserves pending ownership evidence', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [map()]);
+    const reportDirectory = path.join(root, 'uncertain-report');
+    let searches = 0;
+    const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        searches += 1;
+        return fakeRequest({ items: [], total: 0 });
+      }
+      if (url === '/connect/cms/contents/source-key') {
+        return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
+      }
+      if (url === '/connect/cms/contents' && method === 'POST') {
+        return fakeRequest({ contentKey: 'incomplete' });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    expect(
+      await rejectionMessage(
+        applyImageImports({
+          connection: { request },
+          destinationOrgId: '00D-target',
+          destinationWorkspaceId: 'target-space',
+          plans,
+          reportDirectory,
+          source,
+        }),
+      ),
+    ).to.include('Malformed CMS image create response');
+    const report = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as { state: string; operations: Array<{ state: string; error?: string }> };
+    expect(searches).to.equal(2);
+    expect(report.state).to.equal('ownership-uncertain');
+    expect(report.operations).to.have.length(1);
+    expect(report.operations[0]).to.include({ state: 'pending' });
   });
 
   it('fails closed on ambiguous exact API-name evidence and workspace/type drift', async () => {

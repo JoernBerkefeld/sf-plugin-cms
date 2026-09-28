@@ -40,6 +40,11 @@ export type ImageImportFieldPlan = {
 export type WorkspaceImageImportAssetResult = {
   source: ComponentStableIdentity;
   resolution?: ComponentResolutionEvidence;
+  mutation?: {
+    requestSha256: string;
+    contentId: string;
+    variantId: string;
+  };
   identities: Record<ImageImportIdentityField, ImageImportFieldPlan>;
   binary: {
     path: string;
@@ -183,6 +188,7 @@ export function assertWorkspaceImageImportResultV2(
       [
         'source',
         ...(asset.resolution === undefined ? [] : ['resolution']),
+        ...(asset.mutation === undefined ? [] : ['mutation']),
         'identities',
         'binary',
         'metadataReadback',
@@ -201,6 +207,16 @@ export function assertWorkspaceImageImportResultV2(
         throw new TypeError(`${label}.resolution.method is invalid`);
       }
       assertComponentIdentity(asset.resolution.target, `${label}.resolution.target`);
+    }
+    if (asset.mutation !== undefined) {
+      assertExactKeys(
+        asset.mutation,
+        ['requestSha256', 'contentId', 'variantId'],
+        `${label}.mutation`,
+      );
+      assertSha256(asset.mutation.requestSha256, `${label}.mutation.requestSha256`);
+      assertIdentifier(asset.mutation.contentId, `${label}.mutation.contentId`);
+      assertIdentifier(asset.mutation.variantId, `${label}.mutation.variantId`);
     }
     const sourceKey = `${asset.source.family}\0${asset.source.type}\0${asset.source.apiName}`;
     if (sourceKey.localeCompare(previous) < 0)

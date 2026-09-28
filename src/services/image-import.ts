@@ -1,4 +1,7 @@
 import type { Connection } from '@salesforce/core';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, open } from 'node:fs/promises';
+import path from 'node:path';
 import type { WorkspaceExportMedia } from '../contracts/workspace-export.js';
 import {
   IMAGE_IMPORT_IDENTITY_FIELDS,
@@ -16,8 +19,20 @@ import {
   requestJson,
   type JsonRequestOptions,
 } from '../transport/json-request.js';
-import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
+import {
+  readStableRegularFile,
+  rewriteAtomic,
+  type LoadedWorkspaceExport,
+  type WorkspaceImportItem,
+} from './import-workspace.js';
 import { getContent, getVariant, getWorkspace } from './read.js';
+import {
+  buildImageCreateMultipart,
+  createImageContent,
+  type ImageCreateInput,
+  type ManagedContentDocumentBinding,
+  type MultipartImageCreateOptions,
+} from '../transport/multipart-image-create.js';
 
 export type ImageImportMapField = {
   readonly strategy: ImageImportStrategy;
@@ -51,6 +66,51 @@ export type ImageImportPreflightResult = {
   readonly contractResult: WorkspaceImageImportResultV2;
   readonly dryRun: true;
   readonly plans: readonly PlannedImageImport[];
+};
+
+export type ImageImportOperation = {
+  readonly operationId: string;
+  readonly requestIdentity: string;
+  readonly requestSha256: string;
+  readonly sourceApiName: string;
+  readonly destinationApiName: string;
+  readonly destinationOrgId: string;
+  readonly destinationWorkspaceId: string;
+  readonly runId: string;
+  state: 'pending' | 'succeeded' | 'failed';
+  error?: string;
+  result?: {
+    readonly contentKey: string;
+    readonly contentId: string;
+    readonly variantId: string;
+  };
+};
+
+export type ImageImportRunReport = {
+  readonly runId: string;
+  readonly sourceDirectory: string;
+  readonly sourceManifestSha256: string;
+  readonly destinationOrgId: string;
+  readonly destinationWorkspaceId: string;
+  readonly operations: ImageImportOperation[];
+  state: 'applying' | 'completed' | 'failed' | 'ownership-uncertain';
+};
+
+export type ImageImportReportPersistence = {
+  readonly rewrite: (file: string, report: ImageImportRunReport) => Promise<void>;
+};
+
+export type ImageImportApplyOptions = ImageImportPreflightOptions & {
+  readonly reportDirectory: string;
+  readonly reportPersistence?: ImageImportReportPersistence;
+  readonly createOptions?: MultipartImageCreateOptions;
+};
+
+export type ImageImportApplyResult = {
+  readonly contractResult: WorkspaceImageImportResultV2;
+  readonly dryRun: false;
+  readonly report: ImageImportRunReport;
+  readonly reportFile: string;
 };
 
 type DestinationImageCandidate = {
@@ -450,5 +510,263 @@ export async function preflightImageImports(
     },
     dryRun: true,
     plans: options.plans,
+  };
+}
+
+async function assertImageIdentityAvailable(
+  connection: RequestConnection,
+  workspaceId: string,
+  plan: PlannedImageImport,
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const apiName = destinationApiName(plan);
+  const matches = await exactApiNameMatches(connection, workspaceId, apiName, requestOptions);
+  if (matches.length > 0) {
+    throw new TypeError(`Destination image API name already exists: ${apiName}`);
+  }
+  const contentKey = destinationContentKey(plan);
+  if (contentKey === undefined) return;
+  try {
+    await getContent(connection, contentKey, {}, requestOptions);
+    throw new TypeError(`Destination image content key already exists: ${contentKey}`);
+  } catch (error) {
+    if (
+      !(error instanceof CmsRequestError) ||
+      error.operationKey !== 'content.get' ||
+      error.status !== 404
+    ) {
+      throw error;
+    }
+  }
+}
+
+function createInput(plan: PlannedImageImport, workspaceId: string): ImageCreateInput {
+  const input: ImageCreateInput = {
+    apiName: destinationApiName(plan),
+    contentSpaceOrFolderId: workspaceId,
+    title: plan.identities.title.submitted!,
+  };
+  const contentKey = destinationContentKey(plan);
+  if (contentKey !== undefined) input.contentKey = contentKey;
+  if (plan.identities.urlName.submitted !== undefined) {
+    input.urlName = plan.identities.urlName.submitted;
+  }
+  return input;
+}
+
+function mutationOperation(
+  report: ImageImportRunReport,
+  plan: PlannedImageImport,
+  requestSha256: string,
+): ImageImportOperation {
+  const requestIdentity = `create-image\u0000${destinationApiName(plan)}\u0000${requestSha256}`;
+  return {
+    operationId: createHash('sha256')
+      .update(`${report.runId}\u0000${requestIdentity}`)
+      .digest('hex'),
+    requestIdentity,
+    requestSha256,
+    sourceApiName: plan.source.apiName!,
+    destinationApiName: destinationApiName(plan),
+    destinationOrgId: report.destinationOrgId,
+    destinationWorkspaceId: report.destinationWorkspaceId,
+    runId: report.runId,
+    state: 'pending',
+  };
+}
+
+async function writeExclusive(file: string, value: unknown): Promise<void> {
+  const handle = await open(file, 'wx');
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+function returnedField(
+  detail: Record<string, unknown>,
+  field: 'apiName' | 'contentKey' | 'title' | 'urlName',
+): string {
+  const value = detail[field];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`Image readback is missing ${field}`);
+  }
+  return value;
+}
+
+function verifyImageReadback(
+  detail: Record<string, unknown>,
+  input: ImageCreateInput,
+  binding: ManagedContentDocumentBinding,
+): Record<ImageImportIdentityField, string> {
+  const contentSpace = detail.contentSpace;
+  const status = detail.status;
+  const returned = {
+    apiName: returnedField(detail, 'apiName'),
+    contentKey: returnedField(detail, 'contentKey'),
+    title: returnedField(detail, 'title'),
+    urlName: returnedField(detail, 'urlName'),
+  };
+  if (
+    !record(contentSpace) ||
+    contentSpace.id !== input.contentSpaceOrFolderId ||
+    detailType(detail) !== IMAGE_TYPE ||
+    detail.id !== binding.managedContentVariantId ||
+    returned.apiName !== input.apiName ||
+    returned.contentKey !== binding.contentKey ||
+    returned.title !== input.title ||
+    (input.contentKey !== undefined && returned.contentKey !== input.contentKey) ||
+    (input.urlName !== undefined && returned.urlName !== input.urlName) ||
+    detail.isPublished !== false ||
+    !record(status) ||
+    status.status !== 'Draft'
+  ) {
+    throw new TypeError('Image authoring metadata readback identity or Draft verification failed');
+  }
+  return returned;
+}
+
+function completedAsset(
+  planned: WorkspaceImageImportAssetResult,
+  returned: Record<ImageImportIdentityField, string>,
+  binding: ManagedContentDocumentBinding,
+  requestSha256: string,
+): WorkspaceImageImportAssetResult {
+  return {
+    ...planned,
+    resolution: {
+      ...planned.resolution!,
+      target: {
+        ...planned.resolution!.target,
+        title: returned.title,
+        serverId: binding.managedContentVariantId,
+      },
+    },
+    mutation: {
+      requestSha256,
+      contentId: binding.managedContentId,
+      variantId: binding.managedContentVariantId,
+    },
+    identities: Object.fromEntries(
+      IMAGE_IMPORT_IDENTITY_FIELDS.map((field) => [
+        field,
+        { ...planned.identities[field], returned: returned[field] },
+      ]),
+    ) as Record<ImageImportIdentityField, ImageImportFieldPlan>,
+    metadataReadback: 'passed',
+    byteProof: 'unavailable',
+    operationStatus: 'succeeded',
+    reportStatus: 'recorded',
+  };
+}
+
+/**
+ * Apply verified image plans sequentially with durable mutation evidence.
+ * @param {ImageImportApplyOptions} options - Verified source, destination, plans, and report path.
+ * @returns {Promise<ImageImportApplyResult>} Completed v2 evidence and durable report.
+ */
+export async function applyImageImports(
+  options: ImageImportApplyOptions,
+): Promise<ImageImportApplyResult> {
+  const preflight = await preflightImageImports(options);
+  nonempty(options.reportDirectory, 'reportDirectory');
+  await mkdir(path.resolve(options.reportDirectory));
+  const reportFile = path.join(path.resolve(options.reportDirectory), 'workspace-import-run.json');
+  const report: ImageImportRunReport = {
+    runId: randomUUID(),
+    sourceDirectory: options.source.sourceDirectory,
+    sourceManifestSha256: options.source.manifestSha256,
+    destinationOrgId: options.destinationOrgId,
+    destinationWorkspaceId: options.destinationWorkspaceId,
+    operations: [],
+    state: 'applying',
+  };
+  await writeExclusive(reportFile, report);
+  const rewrite = options.reportPersistence?.rewrite ?? rewriteAtomic;
+  const completed: WorkspaceImageImportAssetResult[] = [];
+  try {
+    for (const plan of options.plans) {
+      await assertImageIdentityAvailable(
+        options.connection,
+        options.destinationWorkspaceId,
+        plan,
+        options.requestOptions ?? {},
+      );
+      const mediaFile = path.join(options.source.sourceDirectory, ...plan.media.path.split('/'));
+      const bytes = await readStableRegularFile(mediaFile, `Image media ${plan.media.path}`);
+      if (
+        bytes.byteLength !== plan.media.bytes ||
+        createHash('sha256').update(bytes).digest('hex') !== plan.media.sha256 ||
+        createHash('md5').update(bytes).digest('hex') !== plan.media.md5
+      ) {
+        throw new TypeError(
+          `Image media evidence changed after package verification: ${plan.media.path}`,
+        );
+      }
+      const input = createInput(plan, options.destinationWorkspaceId);
+      const boundary = `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
+      const multipart = buildImageCreateMultipart(input, plan.media.fileName, bytes, {
+        boundaryFactory: () => boundary,
+      });
+      const requestSha256 = createHash('sha256').update(multipart.body).digest('hex');
+      const operation = mutationOperation(report, plan, requestSha256);
+      report.operations.push(operation);
+      await rewrite(reportFile, report);
+      let binding: ManagedContentDocumentBinding;
+      try {
+        binding = await createImageContent(options.connection, input, plan.media.fileName, bytes, {
+          ...options.createOptions,
+          boundaryFactory: () => boundary,
+        });
+      } catch (error) {
+        operation.error = error instanceof Error ? error.message : String(error);
+        report.state = 'ownership-uncertain';
+        await rewrite(reportFile, report);
+        throw error;
+      }
+      operation.result = {
+        contentKey: binding.contentKey,
+        contentId: binding.managedContentId,
+        variantId: binding.managedContentVariantId,
+      };
+      report.state = 'ownership-uncertain';
+      await rewrite(reportFile, report);
+      const detail = await getVariant(
+        options.connection,
+        binding.managedContentVariantId,
+        options.requestOptions,
+      );
+      const returned = verifyImageReadback(detail, input, binding);
+      operation.state = 'succeeded';
+      report.state = 'applying';
+      await rewrite(reportFile, report);
+      const planned = preflight.contractResult.assets.find(
+        ({ source }) => source.apiName === plan.source.apiName,
+      )!;
+      completed.push(completedAsset(planned, returned, binding, requestSha256));
+    }
+    report.state = 'completed';
+    await rewrite(reportFile, report);
+  } catch (error) {
+    if (report.state !== 'ownership-uncertain') report.state = 'failed';
+    try {
+      await rewrite(reportFile, report);
+    } catch {
+      // Preserve the primary error; the last durable report is the reconciliation source of truth.
+    }
+    throw error;
+  }
+  return {
+    contractResult: {
+      ...preflight.contractResult,
+      status: 'completed',
+      assets: completed.toSorted((left, right) =>
+        left.source.apiName.localeCompare(right.source.apiName),
+      ),
+    },
+    dryRun: false,
+    report,
+    reportFile,
   };
 }
