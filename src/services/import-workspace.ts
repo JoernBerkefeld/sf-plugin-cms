@@ -24,7 +24,11 @@ import type {
 import { getContent, type CmsRecord } from './read.js';
 import { variantIdentity } from './variant-identity.js';
 import { inventoryExportReferences } from './export-references.js';
-import { planImportIdentities, planNativeCopies } from './import-identities.js';
+import {
+  planImportIdentities,
+  planNativeCopies,
+  type PlannedImportIdentities,
+} from './import-identities.js';
 import { planEmailFragmentCopies } from './email-fragment.js';
 import {
   planWebFragmentCopies,
@@ -1058,7 +1062,7 @@ export async function executeWorkspaceImport(
     throw new TypeError('Choose one identity profile');
   if (options.editableDirectory !== undefined && !native)
     throw new TypeError('editableDirectory requires nativeCopyMappings');
-  let proposal;
+  let proposal: PlannedImportIdentities | undefined;
   let editableSource: EditableHtmlEvidence | undefined;
   let landingPageTemplateProposal: ReturnType<typeof planLandingPageTemplateCopies> | undefined;
   let landingPageProposal: ReturnType<typeof planLandingPageCopies> | undefined;
@@ -1289,8 +1293,29 @@ export async function executeWorkspaceImport(
   await writeExclusive(reportFile, report);
   try {
     for (const group of plan.groups) {
+      if (landingPageTemplate) {
+        await validateLandingPageTemplatePrerequisites(
+          options.connection,
+          plan.destinationWorkspaceId,
+          landingPageTemplateProposal!,
+          requestOptions,
+        );
+      } else if (landingPage) {
+        await validateLandingPagePrerequisites(
+          options.connection,
+          plan.destinationWorkspaceId,
+          landingPageProposal!,
+          requestOptions,
+        );
+      }
+      const finalPrimary =
+        proposal?.items.find((item) => item.id === group.primary.id) ?? group.primary;
+      const finalVariants = group.variants.map(
+        (variant) => proposal?.items.find((item) => item.id === variant.id) ?? variant,
+      );
+      const finalGroup = { ...group, primary: finalPrimary, variants: finalVariants };
       const groupReferenceKeys = new Set<string>();
-      for (const item_ of [group.primary, ...group.variants]) {
+      for (const item_ of [finalGroup.primary, ...finalGroup.variants]) {
         for (const key of cmsContentBodyReferenceKeys(item_.contentBody, sourceReferenceValues)) {
           groupReferenceKeys.add(key);
         }
@@ -1309,11 +1334,11 @@ export async function executeWorkspaceImport(
         }
       }
       const rewrittenGroup = hasUnknownRequiredMapping
-        ? group
+        ? finalGroup
         : {
-            ...group,
-            primary: rewriteItem(group.primary, replacements),
-            variants: group.variants.map((variant) => rewriteItem(variant, replacements)),
+            ...finalGroup,
+            primary: rewriteItem(finalGroup.primary, replacements),
+            variants: finalGroup.variants.map((variant) => rewriteItem(variant, replacements)),
           };
       const parentPayload = createPayload(
         rewrittenGroup,
@@ -1323,6 +1348,17 @@ export async function executeWorkspaceImport(
         delete parentPayload.contentKey;
         delete parentPayload.externalId;
         delete parentPayload.externalSource;
+      }
+      if (emailFragment || webFragment || landingPageTemplate || landingPage) {
+        const currentPlan = {
+          ...plan,
+          groups: [rewrittenGroup],
+        };
+        await preflightConflicts(options.connection, currentPlan, requestOptions);
+        await preflightApiNames(options.connection, currentPlan);
+        if (webFragment) {
+          await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
+        }
       }
       const parentOperation =
         editableSource === undefined
@@ -1347,32 +1383,6 @@ export async function executeWorkspaceImport(
       )
         throw new TypeError('Editable CREATE payload changed after initial journal');
       await rewrite(reportFile, report);
-      if (webFragment || landingPageTemplate || landingPage) {
-        const currentPlan = {
-          ...plan,
-          groups: [rewrittenGroup],
-        };
-        await preflightConflicts(options.connection, currentPlan, requestOptions);
-        await preflightApiNames(options.connection, currentPlan);
-        if (webFragment) {
-          await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
-        } else if (landingPageTemplate) {
-          await validateLandingPageTemplatePrerequisites(
-            options.connection,
-            plan.destinationWorkspaceId,
-            landingPageTemplateProposal!,
-            requestOptions,
-          );
-        } else {
-          await validateLandingPagePrerequisites(
-            options.connection,
-            plan.destinationWorkspaceId,
-            landingPageProposal!,
-            requestOptions,
-          );
-        }
-        await rewrite(reportFile, report);
-      }
       let parentResponse: Record<string, unknown>;
       try {
         parentResponse = await createContent(options.connection, parentPayload, requestOptions);

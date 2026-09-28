@@ -360,6 +360,39 @@ describe('landing-page-template create-only profile', () => {
     const { tmpdir } = await import('node:os');
     const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-template-'));
     try {
+      const postBodies: Array<Record<string, unknown>> = [];
+      request.callsFake(({ body, method, url }: { body?: string; method: string; url: string }) => {
+        if (url.includes('/items/search')) {
+          searches += 1;
+          return Promise.resolve({
+            items: [
+              {
+                id: 'image-variant',
+                managedContentSpaceId: 'destination-space',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+            total: 1,
+          });
+        }
+        if (url.includes('/variants/image-variant')) {
+          return Promise.resolve({
+            apiName: 'target_image',
+            contentKey: 'target-image-key',
+            contentSpace: { id: 'destination-space' },
+            contentType: 'sfdc_cms__image',
+            id: 'image-variant',
+            title: 'Target image title',
+          });
+        }
+        if (method === 'GET') return fakeNotFound();
+        postBodies.push(JSON.parse(body ?? '{}') as Record<string, unknown>);
+        return Promise.resolve({
+          contentKey: 'fresh_template_key',
+          id: 'created-content',
+          primaryVariantId: 'created-variant',
+        });
+      });
       const applied = await executeWorkspaceImport({
         ...common,
         dryRun: false,
@@ -374,6 +407,10 @@ describe('landing-page-template create-only profile', () => {
       expect(graphQueries).to.equal(3);
       expect(searches).to.equal(3);
       expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+      expect(postBodies).to.have.length(1);
+      expect(JSON.stringify(postBodies[0])).not.to.include('source-image-key');
+      expect(JSON.stringify(postBodies[0])).not.to.include('/cms/media/source-image-key');
+      expect(JSON.stringify(postBodies[0])).to.include('target-image-key');
     } finally {
       await rm(root, { force: true, recursive: true });
     }

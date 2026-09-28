@@ -278,20 +278,25 @@ Historical native-copy evidence includes local compiled public-command execution
 
 `--email-fragment-map <json-file>` opts into the experimental first Phase 4 profile. It supports only dependency-free `sfdc_cms__emailFragment` content whose body exactly matches the evidenced root-content-block → one section → one empty column shape, including the exact accepted layout attributes and empty provider, expression, attachment, and variant arrays. It is not general reusable-block or workspace restoration support.
 
-The mapping file is a nonempty JSON array with exactly four string fields per row:
+The mapping file is a nonempty JSON array with exact typed source selectors and fresh target identities:
 
 ```json
 [
   {
-    "sourceContentKey": "SOURCE_CONTENT_KEY",
-    "language": "en_US",
-    "contentKey": "fresh-fragment-key",
-    "apiName": "fresh_fragment_api"
+    "source": {
+      "family": "cms",
+      "type": "emailFragment",
+      "apiName": "source_fragment_api"
+    },
+    "target": {
+      "contentKey": "fresh-fragment-key",
+      "apiName": "fresh_fragment_api"
+    }
   }
 ]
 ```
 
-Each row selects exactly one integrity-verified source variant. The selected language must be the destination workspace's default language. `contentKey` and `apiName` must be fresh; the source title and URL name are preserved and therefore must also be fresh at the destination. Content-key and exact API-name absence are checked during preflight, but dry-run still reports that broader server conflict behavior and apply readiness are unverified.
+Each row must select exactly one integrity-verified `sfdc_cms__emailFragment` by API name. Missing, ambiguous, wrong-type, and duplicate selections are rejected; source content keys remain package provenance and are not selectors. The selected item language must equal the destination workspace's default language. Target `contentKey` and `apiName` must be fresh; the source title and URL name are preserved and therefore must also be fresh at the destination. Content-key and exact API-name absence are checked during preflight and rechecked immediately before CREATE, but dry-run still reports that broader server conflict behavior and apply readiness are unverified.
 
 Preview first, then apply once with a new report directory:
 

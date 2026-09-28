@@ -99,7 +99,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'image-map',
       ],
       summary:
-        'JSON array selecting the exact dependency-free email-fragment shape with fresh contentKey/apiName; source title/urlName are preserved and must be fresh.',
+        'JSON array selecting exact typed cms/emailFragment API names with fresh target contentKey/apiName; source keys remain provenance.',
     }),
     'web-fragment-map': Flags.file({
       exists: true,

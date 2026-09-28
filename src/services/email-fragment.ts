@@ -195,28 +195,35 @@ export function planEmailFragmentCopies(
   const targetApiNames = new Set<string>();
   const items: WorkspaceImportItem[] = [];
 
-  for (const row of input) {
+  for (const [index, row] of input.entries()) {
     if (!record(row)) throw new TypeError('Email fragment mapping must be an object');
-    exactKeys(
-      row,
-      ['sourceContentKey', 'language', 'contentKey', 'apiName'],
-      'Email fragment mapping',
-    );
-    for (const key of ['sourceContentKey', 'language', 'contentKey', 'apiName'])
-      identity(row[key], key);
-    const sourceContentKey = row.sourceContentKey as string;
-    const language = row.language as string;
-    const contentKey = row.contentKey as string;
-    const apiName = row.apiName as string;
-    const selection = `${sourceContentKey}\0${language}`;
+    exactKeys(row, ['source', 'target'], `Email fragment mapping ${index}`);
+    if (!record(row.source))
+      throw new TypeError(`Email fragment mapping ${index}.source must be an object`);
+    exactKeys(row.source, ['family', 'type', 'apiName'], `Email fragment mapping ${index}.source`);
+    if (row.source.family !== 'cms' || row.source.type !== 'emailFragment') {
+      throw new TypeError(`Email fragment mapping ${index}.source must select cms/emailFragment`);
+    }
+    identity(row.source.apiName, `Email fragment mapping ${index}.source.apiName`);
+    const sourceApiName = row.source.apiName;
+    if (selected.has(sourceApiName)) {
+      throw new TypeError(`Duplicate email fragment selection: ${sourceApiName}`);
+    }
     const matches = source.items.filter(
-      (item) => item.contentKey === sourceContentKey && item.language === language,
+      (item) => item.contentType === EMAIL_FRAGMENT_TYPE && item.apiName === sourceApiName,
     );
-    if (matches.length !== 1 || selected.has(selection)) {
+    if (matches.length !== 1) {
       throw new TypeError(
-        'Select exactly one email fragment variant per source parent and language',
+        `Typed source API name must match exactly one email fragment: ${sourceApiName}`,
       );
     }
+    if (!record(row.target))
+      throw new TypeError(`Email fragment mapping ${index}.target must be an object`);
+    exactKeys(row.target, ['contentKey', 'apiName'], `Email fragment mapping ${index}.target`);
+    identity(row.target.contentKey, `Email fragment mapping ${index}.target.contentKey`);
+    identity(row.target.apiName, `Email fragment mapping ${index}.target.apiName`);
+    const contentKey = row.target.contentKey;
+    const apiName = row.target.apiName;
     if (sourceKeys.has(contentKey) || targetKeys.has(contentKey)) {
       throw new TypeError('Target email fragment content keys must be fresh and unique');
     }
@@ -224,7 +231,7 @@ export function planEmailFragmentCopies(
       throw new TypeError('Target email fragment API names must be fresh and unique');
     }
     assertEmailFragmentItem(matches[0]);
-    selected.add(selection);
+    selected.add(sourceApiName);
     targetKeys.add(contentKey);
     targetApiNames.add(apiName);
     items.push({ ...matches[0], contentKey, apiName });

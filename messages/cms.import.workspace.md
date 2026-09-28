@@ -28,6 +28,8 @@ Validates the complete source workspace export locally before any org request, s
 
 `--editable-dir` requires `--native-copy-map`. `--source-dir` must remain the unchanged integrity baseline; the companion may change only declared literal HTML files and is not itself an export package. The complete baseline, including unselected items, is integrity-validated. Structured/package reference and non-HTML metadata guards remain active, but native-copy and edited `rawHtml` are treated as opaque literal content through Phase 7. Embedded dependencies, media, references, dynamic syntax, and URLs are not discovered, resolved, rewritten, sanitized, or scanned. Dry-run success is not apply readiness or dependency/safety proof.
 
+`--email-fragment-map` rows contain exact `source` and `target` objects. `source` must be `{ "family": "cms", "type": "emailFragment", "apiName": "..." }` and resolve exactly once to `sfdc_cms__emailFragment`; missing, ambiguous, wrong-type, and duplicate selections are rejected. `target` contains fresh `contentKey` and `apiName`. Source content keys remain provenance rather than selectors.
+
 JSON uses `sf-cms-workspace-import@1`. Package integrity and the independently declared manifest major are validated before org access. Exit 0 means success, 2 means partial with a usable result, and 1 means failed or blocked.
 
 # flags.target-org.summary
@@ -57,6 +59,10 @@ Unchanged source workspace export containing manifest.json and items/. The edita
 # flags.native-copy-map.summary
 
 JSON array selecting eligible native raw-HTML email/template variants by sourceContentKey and language, with fresh apiName and urlName values. CREATE uses server-generated keys; destination name availability is not prevalidated.
+
+# flags.email-fragment-map.summary
+
+JSON array selecting exact typed cms/emailFragment API names with fresh target contentKey and apiName values. Source content keys remain provenance.
 
 # flags.editable-dir.summary
 

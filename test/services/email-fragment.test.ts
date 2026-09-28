@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import {
@@ -142,10 +143,8 @@ function source(item = fragment()): LoadedWorkspaceExport {
 
 const mapping = [
   {
-    sourceContentKey: 'source-fragment-key',
-    language: 'en_US',
-    contentKey: 'fresh-fragment-key',
-    apiName: 'fresh_fragment_api',
+    source: { family: 'cms', type: 'emailFragment', apiName: 'source_fragment_api' },
+    target: { contentKey: 'fresh-fragment-key', apiName: 'fresh_fragment_api' },
   },
 ];
 const invalidColumnAttributeCases = [
@@ -304,14 +303,37 @@ describe('bounded email fragment create profile', () => {
     });
   }
 
+  it('rejects missing, ambiguous, wrong-type, and duplicate typed selections', () => {
+    const duplicate = fragment({
+      id: 'duplicate-fragment-variant',
+      contentKey: 'other-source-key',
+    });
+    for (const [loaded, rows, message] of [
+      [
+        source(),
+        [{ ...mapping[0], source: { ...mapping[0].source, apiName: 'missing' } }],
+        'exactly one',
+      ],
+      [{ ...source(), items: [fragment(), duplicate] }, mapping, 'exactly one'],
+      [
+        source(),
+        [{ ...mapping[0], source: { ...mapping[0].source, type: 'webFragment' } }],
+        'cms/emailFragment',
+      ],
+      [source(), [mapping[0], mapping[0]], 'Duplicate email fragment selection'],
+    ] as const) {
+      expect(() => planEmailFragmentCopies(loaded, rows)).to.throw(message);
+    }
+  });
+
   it('rejects source and run identity conflicts without changing source data', () => {
     const loaded = source();
     const before = structuredClone(loaded);
-    for (const changed of [
-      { contentKey: 'source-fragment-key' },
-      { apiName: 'source_fragment_api' },
+    for (const target of [
+      { ...mapping[0].target, contentKey: 'source-fragment-key' },
+      { ...mapping[0].target, apiName: 'source_fragment_api' },
     ]) {
-      expect(() => planEmailFragmentCopies(loaded, [{ ...mapping[0], ...changed }])).to.throw(
+      expect(() => planEmailFragmentCopies(loaded, [{ ...mapping[0], target }])).to.throw(
         'fresh and unique',
       );
     }
@@ -449,6 +471,47 @@ describe('bounded email fragment create profile', () => {
       failure = error;
     }
     expect(failure).to.be.instanceOf(Error);
+  });
+
+  it('rechecks key and API-name collisions immediately before CREATE', async () => {
+    const request = sinon.stub().returns(fakeNotFound());
+    const query = sinon.stub();
+    query.onFirstCall().callsFake(absentApiName);
+    query.onSecondCall().resolves({
+      done: true,
+      records: [{ ApiName: 'fresh_fragment_api' }],
+      totalSize: 1,
+    });
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-fragment-collision-'));
+    try {
+      let failure: unknown;
+      try {
+        await executeWorkspaceImport({
+          connection: { query, request },
+          destinationOrgId: 'target-org',
+          destinationWorkspace: {
+            defaultLanguage: 'en_US',
+            id: 'destination-space',
+            rootFolderId: 'root-folder',
+          },
+          dryRun: false,
+          emailFragmentMappings: mapping,
+          loadedSource: source(),
+          reportDirectory: path.join(root, 'report'),
+          sourceDirectory: 'synthetic-source',
+          workspaceId: 'destination-space',
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(Error);
+      expect(query.callCount).to.equal(2);
+      expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
   });
 
   it('dry-runs the bounded shape with exact key and API-name conflict checks', async () => {

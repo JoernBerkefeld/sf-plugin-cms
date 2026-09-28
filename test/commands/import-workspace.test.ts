@@ -298,7 +298,7 @@ describe('CMS import workspace command', () => {
       'image-map',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(
-      /exact dependency-free email-fragment shape/iu,
+      /exact typed cms\/emailFragment API names/iu,
     );
     expect(ImportWorkspace.summary).to.match(/create-only/iu);
     expect(ImportWorkspace.description).to.match(/destination-default-language Drafts/iu);
