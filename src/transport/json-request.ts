@@ -38,6 +38,7 @@ type RuntimeParameter = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class CmsRequestError extends Error {
+  public readonly errorCode?: string;
   public readonly operationKey: SelectedOperation['localKey'];
   public readonly status?: number;
 
@@ -45,9 +46,11 @@ export class CmsRequestError extends Error {
     operationKey: SelectedOperation['localKey'],
     message: string,
     status?: number,
+    errorCode?: string,
   ) {
     super(message);
     this.name = 'CmsRequestError';
+    this.errorCode = errorCode;
     this.operationKey = operationKey;
     this.status = status;
   }
@@ -65,6 +68,15 @@ function errorStatus(error: unknown): number | undefined {
   }
   if (error.errorCode === 'NOT_FOUND' || error.name === 'NOT_FOUND') return 404;
   if (isRecord(error.data) && error.data.errorCode === 'NOT_FOUND') return 404;
+  return undefined;
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (!isRecord(error)) return undefined;
+  if (typeof error.errorCode === 'string') return error.errorCode;
+  if (isRecord(error.data) && typeof error.data.errorCode === 'string') {
+    return error.data.errorCode;
+  }
   return undefined;
 }
 
@@ -196,7 +208,7 @@ export async function requestJson<T>(
     return { data, operationKey: operation.localKey, status: successStatus(operation) };
   } catch (error) {
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
-    throw new CmsRequestError(operation.localKey, message, errorStatus(error));
+    throw new CmsRequestError(operation.localKey, message, errorStatus(error), errorCode(error));
   } finally {
     options.signal?.removeEventListener('abort', cancel);
   }

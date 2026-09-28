@@ -295,6 +295,93 @@ describe('image import contracts and loader', () => {
     expect(request.callCount).to.equal(3);
   });
 
+  it('accepts only the live Salesforce missing-key 400 shape during preflight', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [map()]);
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+      if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
+      if (url === '/connect/cms/contents/source-key') {
+        return failedRequest(
+          Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
+            data: {
+              errorCode: 'INVALID_ID_FIELD',
+              message: 'Provide a valid content key, ID, or FQN.',
+            },
+            errorCode: 'INVALID_ID_FIELD',
+            name: 'INVALID_ID_FIELD',
+            statusCode: 400,
+          }),
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const result = await preflightImageImports({
+      connection: { request },
+      destinationOrgId: '00D-target',
+      destinationWorkspaceId: 'target-space',
+      plans,
+      source,
+    });
+
+    expect(result.contractResult.status).to.equal('planned');
+    expect(request.callCount).to.equal(3);
+  });
+
+  it('fails closed on near-matches to the live Salesforce missing-key 400 shape', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const plans = planImageImports(source, [map()]);
+    const nearMatches = [
+      {
+        errorCode: 'INVALID_ID_FIELD',
+        message: 'Provide a valid content key, ID, or FQN!',
+        statusCode: 400,
+      },
+      {
+        errorCode: 'INVALID_FIELD',
+        message: 'Provide a valid content key, ID, or FQN.',
+        statusCode: 400,
+      },
+      {
+        errorCode: 'INVALID_ID_FIELD',
+        message: 'Provide a valid content key, ID, or FQN.',
+        statusCode: 401,
+      },
+    ];
+
+    for (const shape of nearMatches) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+        if (url.startsWith('/connect/cms/items/search'))
+          return fakeRequest({ items: [], total: 0 });
+        if (url === '/connect/cms/contents/source-key') {
+          return failedRequest(
+            Object.assign(new Error(shape.message), {
+              data: { errorCode: shape.errorCode, message: shape.message },
+              errorCode: shape.errorCode,
+              name: shape.errorCode,
+              statusCode: shape.statusCode,
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      });
+
+      expect(
+        await rejectionMessage(
+          preflightImageImports({
+            connection: { request },
+            destinationOrgId: '00D-target',
+            destinationWorkspaceId: 'target-space',
+            plans,
+            source,
+          }),
+        ),
+      ).to.equal(shape.message);
+    }
+  });
+
   it('validates every row before reporting an existing destination identity and makes no mutation', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const secondItem = {

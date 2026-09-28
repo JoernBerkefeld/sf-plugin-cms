@@ -313,6 +313,30 @@ function destinationContentKey(plan: PlannedImageImport): string | undefined {
   return field.strategy === 'generated' ? undefined : field.submitted;
 }
 
+function isSalesforceMissingContentKey(error: unknown): boolean {
+  return (
+    error instanceof CmsRequestError &&
+    error.operationKey === 'content.get' &&
+    (error.status === 404 ||
+      (error.status === 400 &&
+        error.errorCode === 'INVALID_ID_FIELD' &&
+        error.message === 'Provide a valid content key, ID, or FQN.'))
+  );
+}
+
+async function assertContentKeyAvailable(
+  connection: RequestConnection,
+  contentKey: string,
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  try {
+    await getContent(connection, contentKey, {}, requestOptions);
+    throw new TypeError(`Destination image content key already exists: ${contentKey}`);
+  } catch (error) {
+    if (!isSalesforceMissingContentKey(error)) throw error;
+  }
+}
+
 function searchItems(value: unknown): unknown[] {
   if (!record(value) || !Array.isArray(value.items)) {
     throw new TypeError('Destination image search must return an items array');
@@ -499,18 +523,11 @@ export async function preflightImageImports(
       }
       const contentKey = destinationContentKey(plan);
       if (contentKey !== undefined) {
-        try {
-          await getContent(options.connection, contentKey, {}, options.requestOptions);
-          throw new TypeError(`Destination image content key already exists: ${contentKey}`);
-        } catch (error) {
-          if (
-            !(error instanceof CmsRequestError) ||
-            error.operationKey !== 'content.get' ||
-            error.status !== 404
-          ) {
-            throw error;
-          }
-        }
+        await assertContentKeyAvailable(
+          options.connection,
+          contentKey,
+          options.requestOptions ?? {},
+        );
       }
       return plannedAsset(plan, options.destinationWorkspaceId);
     }),
@@ -551,18 +568,8 @@ async function assertImageIdentityAvailable(
     throw new TypeError(`Destination image API name already exists: ${apiName}`);
   }
   const contentKey = destinationContentKey(plan);
-  if (contentKey === undefined) return;
-  try {
-    await getContent(connection, contentKey, {}, requestOptions);
-    throw new TypeError(`Destination image content key already exists: ${contentKey}`);
-  } catch (error) {
-    if (
-      !(error instanceof CmsRequestError) ||
-      error.operationKey !== 'content.get' ||
-      error.status !== 404
-    ) {
-      throw error;
-    }
+  if (contentKey !== undefined) {
+    await assertContentKeyAvailable(connection, contentKey, requestOptions);
   }
 }
 
