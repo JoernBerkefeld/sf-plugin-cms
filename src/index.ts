@@ -18,4 +18,20 @@ export {
   type WorkspaceImportPlan,
   type WorkspaceImportExecutionResult,
   type WorkspaceImportRunReport,
+  type WorkspaceExportLoadProfile,
 } from './services/import-workspace.js';
+export {
+  planImageImports,
+  preflightImageImports,
+  type ImageImportMapField,
+  type ImageImportMapRow,
+  type ImageImportPreflightOptions,
+  type ImageImportPreflightResult,
+  type PlannedImageImport,
+} from './services/image-import.js';
+export {
+  assertWorkspaceImageImportResultV2,
+  InvalidImageImportMapError,
+  type WorkspaceImageImportAssetResult,
+  type WorkspaceImageImportResultV2,
+} from './contracts/workspace-import.js';
