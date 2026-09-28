@@ -160,6 +160,43 @@ describe('CMS JSON request transport', () => {
     }
   });
 
+  it('preserves legacy error-code construction and redacts structured evidence', () => {
+    const legacy = new CmsRequestError('content.get', 'request failed', 400, 'INVALID_ID_FIELD');
+    expect(legacy).to.include({ errorCode: 'INVALID_ID_FIELD', errorEntryCount: 0 });
+
+    const structured = new CmsRequestError(
+      'content.get',
+      'Authorization: Bearer secret.access.token',
+      400,
+      {
+        errorCode: 'INVALID_ID_FIELD',
+        errorEntryCount: 1,
+        responseMessage: '?access_token=another-secret',
+      },
+    );
+    expect(structured.message).to.equal('Authorization: [REDACTED]');
+    expect(structured.responseMessage).to.equal('?access_token=[REDACTED]');
+  });
+
+  it('preserves existing request errors without relabeling their operation', async () => {
+    const original = new CmsRequestError('workspace.get', 'Request failed', 400, {
+      errorCode: 'INVALID_ID_FIELD',
+      errorEntryCount: 1,
+      responseMessage: 'Provide a valid content key, ID, or FQN.',
+    });
+    const request = sinon.stub().returns(fakeRequest(Promise.reject(original)));
+
+    try {
+      await requestJson({ request }, getSelectedOperation('content.get'), {
+        path: { contentKeyOrId: 'missing-key' },
+      });
+      expect.fail('expected request to fail');
+    } catch (error) {
+      expect(error).to.equal(original);
+      expect(error).to.include({ operationKey: 'workspace.get' });
+    }
+  });
+
   it('normalizes request timeouts', async () => {
     const request = sinon
       .stub()

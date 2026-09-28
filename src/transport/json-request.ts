@@ -48,14 +48,18 @@ export class CmsRequestError extends Error {
     operationKey: SelectedOperation['localKey'],
     message: string,
     status?: number,
-    evidence: { errorCode?: string; errorEntryCount?: number; responseMessage?: string } = {},
+    evidence: ErrorEvidence | string = {},
   ) {
-    super(message);
+    const normalizedEvidence = typeof evidence === 'string' ? { errorCode: evidence } : evidence;
+    super(redactSecrets(message));
     this.name = 'CmsRequestError';
-    this.errorCode = evidence.errorCode;
-    this.errorEntryCount = evidence.errorEntryCount ?? 0;
+    this.errorCode = normalizedEvidence.errorCode;
+    this.errorEntryCount = normalizedEvidence.errorEntryCount ?? 0;
     this.operationKey = operationKey;
-    this.responseMessage = evidence.responseMessage;
+    this.responseMessage =
+      normalizedEvidence.responseMessage === undefined
+        ? undefined
+        : redactSecrets(normalizedEvidence.responseMessage);
     this.status = status;
   }
 }
@@ -77,7 +81,7 @@ function errorStatus(error: unknown): number | undefined {
 
 type ErrorEvidence = {
   errorCode?: string;
-  errorEntryCount: number;
+  errorEntryCount?: number;
   responseMessage?: string;
 };
 

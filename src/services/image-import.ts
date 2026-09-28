@@ -318,7 +318,7 @@ function isSalesforceMissingContentKey(error: unknown): boolean {
     error instanceof CmsRequestError &&
     error.operationKey === 'content.get' &&
     (error.status === 404 ||
-      ((error.status === 400 || error.status === undefined) &&
+      (error.status === 400 &&
         error.errorEntryCount === 1 &&
         error.errorCode === 'INVALID_ID_FIELD' &&
         error.responseMessage === 'Provide a valid content key, ID, or FQN.'))
