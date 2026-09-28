@@ -36,6 +36,7 @@ describe('CMS export workspace command', () => {
       'workspace-type',
       'web-fragment-map',
       'landing-page-template-map',
+      'landing-page-map',
       'experimental-media',
       'output-dir',
       'editable-dir',
@@ -50,13 +51,23 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
       'all',
       'landing-page-template-map',
+      'landing-page-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
       'all',
       'web-fragment-map',
+      'landing-page-map',
+    ]);
+    expect(ExportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
+      'all',
+      'web-fragment-map',
+      'landing-page-template-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-template-map'].summary).to.match(
       /exact sfdc_cms__landingPageTemplate API names/iu,
+    );
+    expect(ExportWorkspace.flags['landing-page-map'].summary).to.match(
+      /exact sfdc_cms__landingPage API names/iu,
     );
     expect(ExportWorkspace.flags['experimental-media'].exclusive).to.deep.equal(['all']);
     expect(ExportWorkspace.flags['experimental-media'].summary).to.match(/single-workspace/iu);

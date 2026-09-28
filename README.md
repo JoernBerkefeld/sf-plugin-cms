@@ -402,6 +402,58 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 
 Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. Live installed-host template CREATE/readback acceptance remains pending.
 
+#### Landing pages (`--landing-page-map`)
+
+Export one or many `sfdc_cms__landingPage` components by exact API name. The selection file is a nonempty JSON string array; each name must resolve exactly once within the selected workspace and exact content type.
+
+```json
+["MCJV5RXRKOMRF5HD3OD3OFQSO5C4"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-pages --landing-page-map ./landing-pages.json --json
+```
+
+The bounded import profile supports only the captured landing-page shape: the exact top-level body fields, the `sfdc_cms__dataGraphDataProvider` with `dataGraphApiName` and `dataspace`, and image blocks whose `source.type` is `imageReference`, whose `source.ref.contentKey` identifies the image, and whose URL begins with `/cms/media/{contentKey}`. The available fixture does not evidence landing-page-template or web-fragment references, so this profile does not resolve or rewrite them and fails closed if an unsupported reference shape appears.
+
+```json
+[
+  {
+    "source": {
+      "family": "cms",
+      "type": "landingPage",
+      "apiName": "MCJV5RXRKOMRF5HD3OD3OFQSO5C4"
+    },
+    "target": {
+      "contentKey": "fresh_landing_page_key",
+      "apiName": "FreshLandingPage"
+    },
+    "imageDependencies": [
+      {
+        "sourceContentKey": "MCX2CQNLBTIBHUTDNGOLKCRUZW2Q",
+        "targetApiName": "TargetLogoImage",
+        "targetTitle": "Logo Placeholder"
+      }
+    ],
+    "dataGraphs": [
+      {
+        "sourceDeveloperName": "Marketing",
+        "sourceDataSpace": "default",
+        "targetDeveloperName": "Marketing",
+        "targetDataSpace": "default"
+      }
+    ]
+  }
+]
+```
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --contract-version 1 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --apply --report-dir ./cms-landing-page-report --contract-version 1 --json
+```
+
+Image resolution is exact API name first within the destination workspace and `sfdc_cms__image` type. `targetTitle` is considered only after that lookup completes successfully with zero matches, and the exact title fallback must resolve once. Dry-run performs no writes. Apply creates Draft pages sequentially, immediately rechecks content-key/API-name availability plus all image and Data Graph prerequisites before each CREATE, rewrites the resolved image content keys and their matching `/cms/media/{contentKey}` URLs, and durably journals prerequisite results, request hashes, and returned IDs in `workspace-import-run.json`. There is no update, overwrite, upsert, publish, activate, send, or implicit dependency deployment. Installed-host live landing-page CREATE/readback acceptance remains pending and was not performed for this slice.
+
 #### Editable HTML companion (`--editable-dir`)
 
 For local HTML editing, keep two separate directories: the unchanged workspace export is the integrity/provenance baseline, and an opt-in companion contains literal HTML beside its variant metadata. Export with both explicit destinations:

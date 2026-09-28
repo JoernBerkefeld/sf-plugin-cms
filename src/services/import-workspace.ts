@@ -36,6 +36,7 @@ import {
   validateLandingPageTemplatePrerequisites,
   type LandingPageTemplateCmsPrerequisite,
 } from './landing-page-template.js';
+import { planLandingPageCopies, validateLandingPagePrerequisites } from './landing-page.js';
 import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -165,6 +166,7 @@ export type ExecuteWorkspaceImportOptions = {
   readonly loadedSource?: LoadedWorkspaceExport;
   readonly identityMappings?: unknown;
   readonly landingPageTemplateMappings?: unknown;
+  readonly landingPageMappings?: unknown;
   readonly nativeCopyMappings?: unknown;
   readonly webFragmentMappings?: unknown;
   readonly reportDirectory?: string;
@@ -1043,11 +1045,13 @@ export async function executeWorkspaceImport(
   const emailFragment = options.emailFragmentMappings !== undefined;
   const webFragment = options.webFragmentMappings !== undefined;
   const landingPageTemplate = options.landingPageTemplateMappings !== undefined;
+  const landingPage = options.landingPageMappings !== undefined;
   if (
     Number(native) +
       Number(emailFragment) +
       Number(webFragment) +
       Number(landingPageTemplate) +
+      Number(landingPage) +
       Number(options.identityMappings !== undefined) >
     1
   )
@@ -1057,6 +1061,7 @@ export async function executeWorkspaceImport(
   let proposal;
   let editableSource: EditableHtmlEvidence | undefined;
   let landingPageTemplateProposal: ReturnType<typeof planLandingPageTemplateCopies> | undefined;
+  let landingPageProposal: ReturnType<typeof planLandingPageCopies> | undefined;
   let webFragmentProposal: ReturnType<typeof planWebFragmentCopies> | undefined;
   if (native) {
     ({ proposal, editableSource } = await planNativeWorkspaceImport(
@@ -1075,6 +1080,9 @@ export async function executeWorkspaceImport(
       options.landingPageTemplateMappings,
     );
     proposal = landingPageTemplateProposal;
+  } else if (landingPage) {
+    landingPageProposal = planLandingPageCopies(source, options.landingPageMappings);
+    proposal = landingPageProposal;
   } else if (options.identityMappings !== undefined)
     proposal = planImportIdentities(source, options.identityMappings);
   const selectedIds = new Set(proposal?.items.map((item) => item.id));
@@ -1089,7 +1097,7 @@ export async function executeWorkspaceImport(
           },
         ];
   const selectedSource =
-    native || emailFragment || webFragment || landingPageTemplate
+    native || emailFragment || webFragment || landingPageTemplate || landingPage
       ? { ...source, items: proposal!.items }
       : source;
   const sourcePlan = planWorkspaceImport(
@@ -1113,13 +1121,13 @@ export async function executeWorkspaceImport(
         };
   let selectedReferences: WorkspaceExportManifest['externalReferences'] | undefined;
   if (native) selectedReferences = selectedNativeReferences(source, proposal!.items);
-  else if (landingPageTemplate) {
+  else if (landingPageTemplate || landingPage) {
     selectedReferences = selectedLandingPageTemplateReferences(source, proposal!.items);
   }
-  preflightReferences(plan, selectedReferences, landingPageTemplate);
+  preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
   const requestOptions = options.requestOptions ?? {};
   if (!native) await preflightConflicts(options.connection, plan, requestOptions);
-  if (emailFragment || webFragment || landingPageTemplate)
+  if (emailFragment || webFragment || landingPageTemplate || landingPage)
     await preflightApiNames(options.connection, plan);
   if (webFragment) {
     await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
@@ -1129,6 +1137,14 @@ export async function executeWorkspaceImport(
       options.connection,
       plan.destinationWorkspaceId,
       landingPageTemplateProposal!,
+      requestOptions,
+    );
+  }
+  if (landingPage) {
+    await validateLandingPagePrerequisites(
+      options.connection,
+      plan.destinationWorkspaceId,
+      landingPageProposal!,
       requestOptions,
     );
   }
@@ -1145,6 +1161,7 @@ export async function executeWorkspaceImport(
     !emailFragment &&
     !webFragment &&
     !landingPageTemplate &&
+    !landingPage &&
     hasNamedIdentities &&
     options.dryRun !== true
   ) {
@@ -1180,8 +1197,8 @@ export async function executeWorkspaceImport(
       diagnostics.unshift({
         code: 'NAME_AVAILABILITY_UNVERIFIED',
         message:
-          emailFragment || webFragment || landingPageTemplate
-            ? `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment || landingPageTemplate ? ' every named prerequisite was proven in exact type/workspace scope;' : ''} other server conflict behavior remains unverified.`
+          emailFragment || webFragment || landingPageTemplate || landingPage
+            ? `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment || landingPageTemplate || landingPage ? ' every named prerequisite was proven in exact type/workspace scope;' : ''} other server conflict behavior remains unverified.`
             : 'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
         retryable: false,
       });
@@ -1201,14 +1218,21 @@ export async function executeWorkspaceImport(
   const reportFile = path.join(reportDirectory, 'workspace-import-run.json');
   const report: WorkspaceImportRunReport = {
     ...(editableSource === undefined ? {} : { editableSource }),
-    ...(landingPageTemplateProposal === undefined
+    ...(landingPageTemplateProposal === undefined && landingPageProposal === undefined
       ? {}
-      : { cmsPrerequisites: landingPageTemplateProposal.cmsPrerequisites }),
-    ...(webFragmentProposal === undefined && landingPageTemplateProposal === undefined
+      : {
+          cmsPrerequisites:
+            landingPageTemplateProposal?.cmsPrerequisites ?? landingPageProposal!.cmsPrerequisites,
+        }),
+    ...(webFragmentProposal === undefined &&
+    landingPageTemplateProposal === undefined &&
+    landingPageProposal === undefined
       ? {}
       : {
           dataGraphPrerequisites:
-            webFragmentProposal?.dataGraphs ?? landingPageTemplateProposal!.dataGraphs,
+            webFragmentProposal?.dataGraphs ??
+            landingPageTemplateProposal?.dataGraphs ??
+            landingPageProposal!.dataGraphs,
         }),
     createdParents: [],
     destinationOrgId: options.destinationOrgId,
@@ -1323,19 +1347,30 @@ export async function executeWorkspaceImport(
       )
         throw new TypeError('Editable CREATE payload changed after initial journal');
       await rewrite(reportFile, report);
-      if (webFragment || landingPageTemplate) {
-        await preflightApiNames(options.connection, {
+      if (webFragment || landingPageTemplate || landingPage) {
+        const currentPlan = {
           ...plan,
           groups: [rewrittenGroup],
-        });
-        await (webFragment
-          ? validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs)
-          : validateLandingPageTemplatePrerequisites(
-              options.connection,
-              plan.destinationWorkspaceId,
-              landingPageTemplateProposal!,
-              requestOptions,
-            ));
+        };
+        await preflightConflicts(options.connection, currentPlan, requestOptions);
+        await preflightApiNames(options.connection, currentPlan);
+        if (webFragment) {
+          await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
+        } else if (landingPageTemplate) {
+          await validateLandingPageTemplatePrerequisites(
+            options.connection,
+            plan.destinationWorkspaceId,
+            landingPageTemplateProposal!,
+            requestOptions,
+          );
+        } else {
+          await validateLandingPagePrerequisites(
+            options.connection,
+            plan.destinationWorkspaceId,
+            landingPageProposal!,
+            requestOptions,
+          );
+        }
         await rewrite(reportFile, report);
       }
       let parentResponse: Record<string, unknown>;
