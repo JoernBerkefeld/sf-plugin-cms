@@ -308,6 +308,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         expect(normalizedHelp).to.match(/baseline is (?:published first and )?retained/iu);
       } else {
         expect(normalizedHelp).to.include('--native-copy-map');
+        expect(normalizedHelp).to.include('--image-map');
+        expect(normalizedHelp).to.include('--image-map ./image-map.json --contract-version 2');
         expect(normalizedHelp).to.include('complete server conflict validation');
         expect(normalizedHelp).to.include(
           '--native-copy-map ./native-copy-map.json --editable-dir ./cms-editable',

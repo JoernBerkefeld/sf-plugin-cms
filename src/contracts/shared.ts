@@ -2,6 +2,7 @@ import { redactSecrets } from '../transport/redact-secrets.js';
 
 export const CMS_CONTRACT_MAJOR = 1 as const;
 export const CMS_CONTRACT_VERSION = '1.0.0' as const;
+export const CMS_CONTRACT_VERSIONS = ['1.0.0', '2.0.0'] as const;
 export const CMS_PLUGIN_NAME = 'sf-plugin-cms' as const;
 export const CMS_STATUSES = ['success', 'partial', 'failed', 'blocked'] as const;
 export const CMS_OPERATIONS = ['cms.info', 'workspace.export.bulk', 'workspace.import'] as const;
@@ -70,7 +71,7 @@ export type CmsProvenance = {
 
 export type CmsEnvelope<T> = {
   contract: string;
-  contractVersion: typeof CMS_CONTRACT_VERSION;
+  contractVersion: (typeof CMS_CONTRACT_VERSIONS)[number];
   status: CmsStatus;
   metadata: CmsMetadata;
   diagnostics: CmsDiagnostics;
@@ -230,18 +231,28 @@ export function assertCmsEnvelope<T>(
     'envelope',
   );
   assertNonemptyString(value.contract, 'envelope.contract');
-  if (value.contractVersion !== CMS_CONTRACT_VERSION) {
-    throw new TypeError('envelope.contractVersion must be 1.0.0');
+  if (
+    !CMS_CONTRACT_VERSIONS.includes(value.contractVersion as (typeof CMS_CONTRACT_VERSIONS)[number])
+  ) {
+    throw new TypeError('envelope.contractVersion is unsupported');
   }
   if (!CMS_STATUSES.includes(value.status as CmsStatus))
     throw new TypeError('envelope.status is invalid');
   assertMetadata(value.metadata);
+  if (value.contractVersion === '2.0.0' && value.metadata.operation !== 'workspace.import') {
+    throw new TypeError('envelope.contractVersion 2.0.0 is supported only for workspace.import');
+  }
   const expectedContract = new Map<CmsOperation, string>([
     ['cms.info', 'sf-cms-info'],
     ['workspace.export.bulk', 'sf-cms-workspace-export-set'],
     ['workspace.import', 'sf-cms-workspace-import'],
   ]);
-  if (value.contract !== expectedContract.get(value.metadata.operation)) {
+  const operationContract = expectedContract.get(value.metadata.operation);
+  const expected =
+    value.metadata.operation === 'workspace.import' && value.contractVersion === '2.0.0'
+      ? 'sf-cms-workspace-import@2'
+      : operationContract;
+  if (value.contract !== expected) {
     throw new TypeError('envelope.contract does not match metadata.operation');
   }
   assertDiagnostics(value.diagnostics);

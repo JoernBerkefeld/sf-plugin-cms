@@ -102,7 +102,7 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
         },
         {
           id: 'workspace.import.image-create',
-          state: 'unavailable',
+          state: 'experimental',
           transport: 'cli-json',
           contract: 'sf-cms-workspace-import@2',
         },

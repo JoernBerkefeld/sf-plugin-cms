@@ -5,7 +5,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeEditableRawHtml } from '../../src/services/editable-raw-html-export.js';
+import type { WorkspaceImportResult } from '../../src/contracts/workspace-import.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
+
+function v1Result(result: Awaited<ReturnType<ImportWorkspace['run']>>): WorkspaceImportResult {
+  return result.result as WorkspaceImportResult;
+}
 import ImportWorkspace from '../../src/commands/cms/import/workspace.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): { destroy(): void } };
@@ -106,6 +111,98 @@ async function writeSource(root: string, named = true, native = false): Promise<
   return source;
 }
 
+async function writeImageSource(root: string): Promise<{ mapFile: string; source: string }> {
+  const source = path.join(root, 'image-source');
+  await mkdir(path.join(source, 'items'), { recursive: true });
+  await mkdir(path.join(source, 'media'), { recursive: true });
+  const image = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const item = {
+    apiName: 'source_image',
+    contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
+    contentKey: 'source-image-key',
+    contentSpace: { id: 'source-space' },
+    contentType: 'sfdc_cms__image',
+    id: 'source-image-variant',
+    language: 'en',
+    title: 'Source image',
+  };
+  const itemBytes = Buffer.from(`${JSON.stringify(item)}\n`);
+  await writeFile(path.join(source, 'items/source-image-variant.json'), itemBytes);
+  await writeFile(path.join(source, 'media/source-image-variant.png'), image);
+  const media = {
+    variantId: item.id,
+    contentKey: item.contentKey,
+    path: 'media/source-image-variant.png',
+    sha256: createHash('sha256').update(image).digest('hex'),
+    md5: createHash('md5').update(image).digest('hex'),
+    bytes: image.length,
+    mimeType: 'image/png',
+    fileName: 'source-image-variant.png',
+    sourceStatus: 'Draft',
+    sourceModifiedAt: '2026-01-01T00:00:00.000Z',
+    sourceVersion: '1',
+    sourceUrl: '/cms/media/source-image-key',
+    transport: 'experimental-undocumented-authoring-media',
+  };
+  await writeFile(
+    path.join(source, 'manifest.json'),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mode: 'experimental-best-effort',
+      workspaceId: 'source-space',
+      search: {
+        contentSpaceOrFolderIds: ['source-space'],
+        languages: ['All'],
+        pageSize: 250,
+        queryTerm: '*',
+      },
+      expectedCount: 1,
+      foundCount: 1,
+      exportedCount: 1,
+      pagesRequested: 1,
+      entries: [{ file: 'items/source-image-variant.json', variantId: item.id }],
+      rejectedVariantIds: [],
+      failedVariantIds: [],
+      warnings: [{ code: 'UNSUPPORTED_WILDCARD', message: 'provenance only' }],
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '2.0.0',
+      media: [media],
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: '00D-source',
+        sourceWorkspaceId: 'source-space',
+        pluginVersion: '0.4.0',
+        generatedAt: '2026-09-13T18:00:00.000Z',
+      },
+      completeness: 'complete',
+      dependencies: [],
+      externalReferences: [],
+      items: [
+        {
+          path: 'items/source-image-variant.json',
+          sha256: createHash('sha256').update(itemBytes).digest('hex'),
+          kind: 'cms.content',
+        },
+        { path: media.path, sha256: media.sha256, kind: 'cms.media' },
+      ],
+    })}\n`,
+  );
+  const mapFile = path.join(root, 'image-map.json');
+  await writeFile(
+    mapFile,
+    JSON.stringify([
+      {
+        source: { family: 'cms', type: 'image', apiName: item.apiName },
+        contentKey: { strategy: 'fresh', value: 'fresh-image-key' },
+        apiName: { strategy: 'fresh', value: 'fresh_image' },
+        title: { strategy: 'fresh', value: 'Fresh image' },
+        urlName: { strategy: 'generated' },
+      },
+    ]),
+  );
+  return { mapFile, source };
+}
+
 describe('CMS import workspace command', () => {
   const $$ = new TestContext();
   const temporaryDirectories: string[] = [];
@@ -134,6 +231,7 @@ describe('CMS import workspace command', () => {
       'source-dir',
       'native-copy-map',
       'email-fragment-map',
+      'image-map',
       'editable-dir',
       'apply',
       'allow-partial',
@@ -146,8 +244,18 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
     expect(ImportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['native-copy-map']);
+    expect(ImportWorkspace.flags['native-copy-map'].exclusive).to.deep.equal([
+      'email-fragment-map',
+      'image-map',
+    ]);
     expect(ImportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
       'native-copy-map',
+      'editable-dir',
+      'image-map',
+    ]);
+    expect(ImportWorkspace.flags['image-map'].exclusive).to.deep.equal([
+      'native-copy-map',
+      'email-fragment-map',
       'editable-dir',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(
@@ -215,7 +323,7 @@ describe('CMS import workspace command', () => {
     const result = await command.run();
     expect(result.status).to.equal('success');
     expect(posted).not.to.have.property('contentKey');
-    expect(result.result?.mappings[0].target.targetReference).to.equal('generated');
+    expect(v1Result(result).mappings[0].target.targetReference).to.equal('generated');
   });
 
   for (const failure of [
@@ -310,7 +418,7 @@ describe('CMS import workspace command', () => {
           1,
         );
         expect(result.diagnostics.warnings[0].code).to.equal('EDITABLE_HTML_INPUT');
-        expect(result.result?.integrity.verifiedItemCount).to.equal(1);
+        expect(v1Result(result).integrity.verifiedItemCount).to.equal(1);
       } else {
         expect(result.result).to.equal(null);
         expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(
@@ -320,6 +428,136 @@ describe('CMS import workspace command', () => {
       }
     });
   }
+
+  it('runs the v2 image profile as dry-run preflight without mutation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-'));
+    temporaryDirectories.push(root);
+    const { mapFile, source } = await writeImageSource(root);
+    const request = $$.SANDBOX.stub().callsFake(
+      ({ method, url }: { method: string; url: string }) => {
+        if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+        if (url.startsWith('/connect/cms/items/search'))
+          return fakeRequest({ items: [], total: 0 });
+        if (url === '/connect/cms/contents/fresh-image-key') return missingRequest();
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      },
+    );
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          apply: false,
+          'api-version': '67.0',
+          'contract-version': 2,
+          'image-map': mapFile,
+          'source-dir': source,
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.deep.include({
+      contract: 'sf-cms-workspace-import@2',
+      contractVersion: '2.0.0',
+      status: 'success',
+    });
+    expect(result.result).to.deep.include({ status: 'planned' });
+    expect((result.result as { assets: unknown[] }).assets).to.have.length(1);
+    expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
+  });
+
+  it('applies the v2 image profile only with a new report directory', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-apply-'));
+    temporaryDirectories.push(root);
+    const { mapFile, source } = await writeImageSource(root);
+    const reportDirectory = path.join(root, 'image-report');
+    let searches = 0;
+    const request = $$.SANDBOX.stub().callsFake(
+      ({ method, url }: { method: string; url: string }) => {
+        if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+        if (url.startsWith('/connect/cms/items/search')) {
+          searches += 1;
+          return fakeRequest({ items: [], total: 0 });
+        }
+        if (url === '/connect/cms/contents/fresh-image-key') return missingRequest();
+        if (url === '/connect/cms/contents' && method === 'POST') {
+          return fakeRequest({
+            contentKey: 'fresh-image-key',
+            managedContentId: 'image-content',
+            managedContentVariantId: 'image-variant',
+          });
+        }
+        if (url === '/connect/cms/contents/variants/image-variant') {
+          return fakeRequest({
+            id: 'image-variant',
+            apiName: 'fresh_image',
+            contentKey: 'fresh-image-key',
+            title: 'Fresh image',
+            urlName: 'generated-image-url',
+            contentSpace: { id: 'space' },
+            contentType: 'sfdc_cms__image',
+            isPublished: false,
+            status: { status: 'Draft' },
+          });
+        }
+        throw new Error(`Unexpected request: ${method} ${url}`);
+      },
+    );
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          apply: true,
+          'api-version': '67.0',
+          'contract-version': 2,
+          'image-map': mapFile,
+          'report-dir': reportDirectory,
+          'source-dir': source,
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(searches).to.equal(2);
+    expect(result).to.deep.include({ contractVersion: '2.0.0', status: 'success' });
+    expect(result.result).to.deep.include({ status: 'completed' });
+    expect(
+      JSON.parse(await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8')),
+    ).to.include({ state: 'completed' });
+  });
+
+  it('blocks image profile contract mismatch before source or org access', async () => {
+    const getOrgContext = $$.SANDBOX.stub();
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          apply: false,
+          'api-version': '67.0',
+          'contract-version': 1,
+          'image-map': 'missing-map',
+          'source-dir': 'missing-source',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.deep.include({ contractVersion: '2.0.0', status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'UNSUPPORTED_CONTRACT_VERSION' });
+    expect(getOrgContext.notCalled).to.equal(true);
+  });
 
   it('requires a report directory for apply before local or remote work', async () => {
     const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
@@ -576,7 +814,7 @@ describe('CMS import workspace command', () => {
       const result = await command.run();
 
       expect(result).to.include({ status: 'success' });
-      expect(result.result?.mappings).to.deep.equal([]);
+      expect(v1Result(result).mappings).to.deep.equal([]);
       expect(request.callCount).to.equal(2);
       expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
       expect(jsonEnabled ? log.notCalled : log.callCount > 0).to.equal(true);
@@ -635,13 +873,13 @@ describe('CMS import workspace command', () => {
 
     expect(result).to.include({ status: 'success' });
     expect(process.exitCode).to.equal(0);
-    expect(result.result?.mappings).to.have.length(1);
-    expect(result.result?.mappings[0]).to.include({
+    expect(v1Result(result).mappings).to.have.length(1);
+    expect(v1Result(result).mappings[0]).to.include({
       operation: 'created',
       status: 'resolved',
       cmsReferencesRewritten: true,
     });
-    expect(result.result?.mappings[0].target).to.deep.equal({
+    expect(v1Result(result).mappings[0].target).to.deep.equal({
       targetId: 'content-id',
       targetReference: 'command-key',
     });
