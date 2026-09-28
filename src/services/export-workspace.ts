@@ -76,6 +76,10 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   generatedAt?: string;
   editableDirectory?: string;
   editablePublish?: EditablePublishOptions;
+  selection?: {
+    readonly contentType: string;
+    readonly apiNames: readonly string[];
+  };
   atomicPublish?: DirectoryPublishOptions &
     CleanupOptions & {
       readonly makeTemporaryDirectory?: typeof mkdtemp;
@@ -316,6 +320,21 @@ export async function exportWorkspace(
   }
   if (await exists(destination))
     throw new Error(`Export destination already exists: ${destination}`);
+  const selection = options.selection;
+  if (selection !== undefined) {
+    if (!nonemptyString(selection.contentType) || !Array.isArray(selection.apiNames)) {
+      throw new TypeError('Component export selection is malformed');
+    }
+    if (
+      selection.apiNames.length === 0 ||
+      selection.apiNames.some((value) => !nonemptyString(value))
+    ) {
+      throw new TypeError('Component export selection requires one or more exact API names');
+    }
+    if (new Set(selection.apiNames).size !== selection.apiNames.length) {
+      throw new TypeError('Component export API names must be unique');
+    }
+  }
 
   const warnings: WorkspaceExportWarning[] = [
     {
@@ -339,10 +358,11 @@ export async function exportWorkspace(
       {
         query: {
           contentSpaceOrFolderIds: [workspaceId],
+          ...(selection === undefined ? {} : { contentTypeFQN: selection.contentType }),
           languages: ['All'],
           page,
           pageSize: PAGE_SIZE,
-          queryTerm: '*',
+          queryTerm: selection === undefined ? '*' : selection.apiNames.join(' '),
         },
       },
       options,
@@ -431,6 +451,28 @@ export async function exportWorkspace(
     });
   }
 
+  if (selection !== undefined) {
+    const selected = new Map(selection.apiNames.map((apiName) => [apiName, [] as string[]]));
+    for (const [variantId, detail] of details) {
+      const contentType = isRecord(detail.contentType)
+        ? detail.contentType.fullyQualifiedName
+        : detail.contentType;
+      if (contentType !== selection.contentType || !nonemptyString(detail.apiName)) continue;
+      selected.get(detail.apiName)?.push(variantId);
+    }
+    for (const [apiName, matches] of selected) {
+      if (matches.length !== 1) {
+        throw new TypeError(
+          `Exact component API name must resolve once for ${selection.contentType}: ${apiName}`,
+        );
+      }
+    }
+    const selectedIds = new Set([...selected.values()].flat());
+    for (const variantId of details.keys()) {
+      if (!selectedIds.has(variantId)) details.delete(variantId);
+    }
+  }
+
   const entries = [...details.keys()].toSorted().map((variantId) => ({
     file: `items/${variantId}.json`,
     variantId,
@@ -466,8 +508,8 @@ export async function exportWorkspace(
       pageSize: PAGE_SIZE,
       queryTerm: '*',
     },
-    expectedCount,
-    foundCount: candidates.size,
+    expectedCount: selection === undefined ? expectedCount : selection.apiNames.length,
+    foundCount: selection === undefined ? candidates.size : details.size,
     exportedCount: entries.length,
     pagesRequested,
     entries,

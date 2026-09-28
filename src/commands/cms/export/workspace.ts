@@ -1,4 +1,5 @@
 import { Flags } from '@salesforce/sf-plugins-core';
+import { readFile } from 'node:fs/promises';
 import {
   assertWorkspaceExportSetResult,
   type WorkspaceExportSetResult,
@@ -28,6 +29,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
   public static readonly examples = [
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --web-fragment-map ./web-fragments.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --experimental-media --json',
     '<%= config.bin %> cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json',
     '<%= config.bin %> cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json',
@@ -56,6 +58,12 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       dependsOn: ['all'],
       parse: async (input) => normalizeWorkspaceType(input),
       summary: 'Bulk-only workspace type filter: Marketing or Content (case-insensitive).',
+    }),
+    'web-fragment-map': Flags.file({
+      exists: true,
+      exclusive: ['all'],
+      summary:
+        'JSON array of exact sfdc_cms__webFragment API names to export; every name must resolve exactly once.',
     }),
     'experimental-media': Flags.boolean({
       exclusive: ['all'],
@@ -140,8 +148,27 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     }
     const experimentalMedia =
       flags['experimental-media'] === true ? resolveExperimentalMedia(connection) : undefined;
+    const webFragmentApiNames =
+      flags['web-fragment-map'] === undefined
+        ? undefined
+        : (JSON.parse(await readFile(flags['web-fragment-map'], 'utf8')) as unknown);
+    if (
+      webFragmentApiNames !== undefined &&
+      (!Array.isArray(webFragmentApiNames) ||
+        webFragmentApiNames.some((value) => typeof value !== 'string'))
+    ) {
+      throw new TypeError('--web-fragment-map must contain a JSON array of API-name strings.');
+    }
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
+      ...(webFragmentApiNames === undefined
+        ? {}
+        : {
+            selection: {
+              contentType: 'sfdc_cms__webFragment',
+              apiNames: webFragmentApiNames,
+            },
+          }),
       pluginVersion: this.pluginVersion,
       sourceOrgId: orgId,
       ...(experimentalMedia === undefined ? {} : { experimentalMedia }),

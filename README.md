@@ -302,7 +302,52 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 
 Apply performs fresh create-only import under the destination root folder. It creates only the destination-default-language parent and leaves it Draft and unpublished. It preserves the source body, title, and URL name while replacing only the mapped `contentKey` and `apiName`; it does not modify the source package. No update, overwrite, publication, activation, send, child-language creation, or automatic retry is supported.
 
-Bodies with nonempty components, references, media, data providers, expressions, attachments, variants, extra fields, or near-match layout definitions/attributes are rejected before mutation. Other email-fragment shapes and the remaining reusable landing-page/block types are unsupported. The separate `workspace.import.email-fragment-create` capability remains `experimental` because live acceptance covers only this narrow profile, not general email-fragment or workspace restoration.
+Bodies with nonempty components, references, media, data providers, expressions, attachments, variants, extra fields, or near-match layout definitions/attributes are rejected before mutation. Other email-fragment shapes remain unsupported. The separate `workspace.import.email-fragment-create` capability remains `experimental` because live acceptance covers only this narrow profile, not general email-fragment or workspace restoration.
+
+#### Landing-page content blocks (`--web-fragment-map`)
+
+Export one or many `sfdc_cms__webFragment` components by exact API name with a JSON string array. Every requested name must resolve exactly once in the selected workspace and type; otherwise export fails closed.
+
+```json
+["LandingHero", "LandingFooter"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-web-fragments --web-fragment-map ./web-fragments.json --json
+```
+
+Import uses a nonempty JSON array with exact typed source selection, fresh target identities, and one explicit row for every source Data Graph provider. Preserve names by repeating them, or map both the developer name and data-space developer name explicitly.
+
+```json
+[
+  {
+    "source": {
+      "family": "cms",
+      "type": "webFragment",
+      "apiName": "LandingHero"
+    },
+    "target": {
+      "contentKey": "fresh_landing_hero_key",
+      "apiName": "LandingHeroTarget"
+    },
+    "dataGraphs": [
+      {
+        "sourceDeveloperName": "Marketing",
+        "sourceDataSpace": "default",
+        "targetDeveloperName": "Marketing",
+        "targetDataSpace": "default"
+      }
+    ]
+  }
+]
+```
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --contract-version 1 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --apply --report-dir ./cms-web-fragment-report --contract-version 1 --json
+```
+
+Dry-run proves fresh content-key and API-name availability plus exact unique `DataGraph.DeveloperName` and `DataSpaceDevName` matches. Apply repeats API-name and Data Graph validation immediately before each CREATE, creates sequentially, and journals every prerequisite mapping and mutation in `workspace-import-run.json`. Missing, ambiguous, unqueryable, or mismatched prerequisites block creation; no default Data Graph substitution is allowed. The profile creates Draft content only: no update fallback, overwrite, publication, activation, or send is performed. Deploy referenced CMS images before dependent fragments. Live installed-host fragment CREATE/readback acceptance is still pending.
 
 #### Editable HTML companion (`--editable-dir`)
 

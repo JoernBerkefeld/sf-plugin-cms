@@ -26,6 +26,11 @@ import { variantIdentity } from './variant-identity.js';
 import { inventoryExportReferences } from './export-references.js';
 import { planImportIdentities, planNativeCopies } from './import-identities.js';
 import { planEmailFragmentCopies } from './email-fragment.js';
+import {
+  planWebFragmentCopies,
+  validateDataGraphPrerequisites,
+  type WebFragmentDataGraphPrerequisite,
+} from './web-fragment.js';
 import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -115,6 +120,7 @@ export type WorkspaceImportOperation = {
 export type WorkspaceImportRunReport = {
   readonly editableSource?: EditableHtmlEvidence;
   readonly createdParents: CreatedParentRecord[];
+  readonly dataGraphPrerequisites?: readonly WebFragmentDataGraphPrerequisite[];
   readonly destinationOrgId: string;
   readonly destinationWorkspaceId: string;
   readonly operations: WorkspaceImportOperation[];
@@ -153,6 +159,7 @@ export type ExecuteWorkspaceImportOptions = {
   readonly loadedSource?: LoadedWorkspaceExport;
   readonly identityMappings?: unknown;
   readonly nativeCopyMappings?: unknown;
+  readonly webFragmentMappings?: unknown;
   readonly reportDirectory?: string;
   readonly reportPersistence?: WorkspaceImportReportPersistence;
   readonly requestOptions?: JsonRequestOptions;
@@ -1015,12 +1022,20 @@ export async function executeWorkspaceImport(
   validateRelationships(source.items);
   const native = options.nativeCopyMappings !== undefined;
   const emailFragment = options.emailFragmentMappings !== undefined;
-  if (Number(native) + Number(emailFragment) + Number(options.identityMappings !== undefined) > 1)
+  const webFragment = options.webFragmentMappings !== undefined;
+  if (
+    Number(native) +
+      Number(emailFragment) +
+      Number(webFragment) +
+      Number(options.identityMappings !== undefined) >
+    1
+  )
     throw new TypeError('Choose one identity profile');
   if (options.editableDirectory !== undefined && !native)
     throw new TypeError('editableDirectory requires nativeCopyMappings');
   let proposal;
   let editableSource: EditableHtmlEvidence | undefined;
+  let webFragmentProposal: ReturnType<typeof planWebFragmentCopies> | undefined;
   if (native) {
     ({ proposal, editableSource } = await planNativeWorkspaceImport(
       source,
@@ -1029,6 +1044,9 @@ export async function executeWorkspaceImport(
     ));
   } else if (emailFragment) {
     proposal = planEmailFragmentCopies(source, options.emailFragmentMappings);
+  } else if (webFragment) {
+    webFragmentProposal = planWebFragmentCopies(source, options.webFragmentMappings);
+    proposal = webFragmentProposal;
   } else if (options.identityMappings !== undefined)
     proposal = planImportIdentities(source, options.identityMappings);
   const selectedIds = new Set(proposal?.items.map((item) => item.id));
@@ -1042,7 +1060,8 @@ export async function executeWorkspaceImport(
             retryable: false,
           },
         ];
-  const selectedSource = native || emailFragment ? { ...source, items: proposal!.items } : source;
+  const selectedSource =
+    native || emailFragment || webFragment ? { ...source, items: proposal!.items } : source;
   const sourcePlan = planWorkspaceImport(
     selectedSource,
     options.destinationWorkspace,
@@ -1065,7 +1084,10 @@ export async function executeWorkspaceImport(
   preflightReferences(plan, native ? selectedNativeReferences(source, proposal!.items) : undefined);
   const requestOptions = options.requestOptions ?? {};
   if (!native) await preflightConflicts(options.connection, plan, requestOptions);
-  if (emailFragment) await preflightApiNames(options.connection, plan);
+  if (emailFragment || webFragment) await preflightApiNames(options.connection, plan);
+  if (webFragment) {
+    await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
+  }
   const hasNamedIdentities = plan.groups.some((group) =>
     [group.primary, ...group.variants].some(
       (item) =>
@@ -1074,7 +1096,7 @@ export async function executeWorkspaceImport(
         item.contentBody['sfdc_cms:urlName'] !== undefined,
     ),
   );
-  if (!native && !emailFragment && hasNamedIdentities && options.dryRun !== true) {
+  if (!native && !emailFragment && !webFragment && hasNamedIdentities && options.dryRun !== true) {
     throw new TypeError(
       'Destination API-name/URL-name uniqueness cannot be verified by the supported CMS APIs; import is blocked',
     );
@@ -1106,9 +1128,10 @@ export async function executeWorkspaceImport(
     if (hasNamedIdentities && !native) {
       diagnostics.unshift({
         code: 'NAME_AVAILABILITY_UNVERIFIED',
-        message: emailFragment
-          ? 'Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup; other server conflict behavior remains unverified.'
-          : 'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
+        message:
+          emailFragment || webFragment
+            ? `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment ? ' every named Data Graph prerequisite was proven by exact developer-name/data-space equality;' : ''} other server conflict behavior remains unverified.`
+            : 'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
         retryable: false,
       });
     }
@@ -1127,6 +1150,9 @@ export async function executeWorkspaceImport(
   const reportFile = path.join(reportDirectory, 'workspace-import-run.json');
   const report: WorkspaceImportRunReport = {
     ...(editableSource === undefined ? {} : { editableSource }),
+    ...(webFragmentProposal === undefined
+      ? {}
+      : { dataGraphPrerequisites: webFragmentProposal.dataGraphs }),
     createdParents: [],
     destinationOrgId: options.destinationOrgId,
     destinationWorkspaceId: plan.destinationWorkspaceId,
@@ -1240,6 +1266,14 @@ export async function executeWorkspaceImport(
       )
         throw new TypeError('Editable CREATE payload changed after initial journal');
       await rewrite(reportFile, report);
+      if (webFragment) {
+        await preflightApiNames(options.connection, {
+          ...plan,
+          groups: [rewrittenGroup],
+        });
+        await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
+        await rewrite(reportFile, report);
+      }
       let parentResponse: Record<string, unknown>;
       try {
         parentResponse = await createContent(options.connection, parentPayload, requestOptions);

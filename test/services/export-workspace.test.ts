@@ -298,6 +298,74 @@ describe('workspace export service', () => {
     expect(await readdir(path.join(destination, 'items'))).to.deep.equal(['a.json', 'b.json']);
   });
 
+  it('exports one or many exact web-fragment API names and fails on missing or ambiguous matches', async () => {
+    const selectedDetails = {
+      one: detail('one', 'space', {
+        apiName: 'BlockOne',
+        contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
+      }),
+      two: detail('two', 'space', {
+        apiName: 'BlockTwo',
+        contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
+      }),
+      other: detail('other', 'space', {
+        apiName: 'Other',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+      }),
+    };
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__webFragment');
+        expect(query.get('queryTerm')).to.equal('BlockOne BlockTwo');
+        return fakeRequest({ items: [row('one'), row('two'), row('other')], total: 3 });
+      }
+      return fakeRequest(
+        selectedDetails[
+          decodeURIComponent(url.split('/').at(-1) ?? '') as keyof typeof selectedDetails
+        ],
+      );
+    });
+    const destination = path.join(root, 'selected-export');
+    const result = await exportWorkspace({ request }, 'space', destination, {
+      selection: {
+        contentType: 'sfdc_cms__webFragment',
+        apiNames: ['BlockOne', 'BlockTwo'],
+      },
+    });
+    expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['one', 'two']);
+
+    for (const details of [
+      [selectedDetails.one],
+      [selectedDetails.one, { ...selectedDetails.one, id: 'duplicate' }],
+    ]) {
+      const selectedRequest = sinon
+        .stub()
+        .callsFake(({ url }: { url: string }) =>
+          url.startsWith('/connect/cms/items/search')
+            ? fakeRequest({ items: details.map(({ id }) => row(id)), total: details.length })
+            : fakeRequest(details.find(({ id }) => url.endsWith(id))),
+        );
+      let failure: unknown;
+      try {
+        await exportWorkspace(
+          { request: selectedRequest },
+          'space',
+          path.join(root, `blocked-${details.length}`),
+          {
+            selection: {
+              contentType: 'sfdc_cms__webFragment',
+              apiNames: details.length === 1 ? ['Missing'] : ['BlockOne'],
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(TypeError);
+    }
+  });
+
   it('inventories evidenced CMS content identity without inspecting unknown payload fields', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/items/search')) {
