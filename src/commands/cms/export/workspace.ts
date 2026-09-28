@@ -30,6 +30,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --web-fragment-map ./web-fragments.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-template-map ./landing-page-templates.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --experimental-media --json',
     '<%= config.bin %> cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json',
     '<%= config.bin %> cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json',
@@ -61,9 +62,15 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     }),
     'web-fragment-map': Flags.file({
       exists: true,
-      exclusive: ['all'],
+      exclusive: ['all', 'landing-page-template-map'],
       summary:
         'JSON array of exact sfdc_cms__webFragment API names to export; every name must resolve exactly once.',
+    }),
+    'landing-page-template-map': Flags.file({
+      exists: true,
+      exclusive: ['all', 'web-fragment-map'],
+      summary:
+        'JSON array of exact sfdc_cms__landingPageTemplate API names to export; every name must resolve exactly once.',
     }),
     'experimental-media': Flags.boolean({
       exclusive: ['all'],
@@ -148,25 +155,29 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     }
     const experimentalMedia =
       flags['experimental-media'] === true ? resolveExperimentalMedia(connection) : undefined;
-    const webFragmentApiNames =
-      flags['web-fragment-map'] === undefined
+    const selectionFile = flags['web-fragment-map'] ?? flags['landing-page-template-map'];
+    const selectedApiNames =
+      selectionFile === undefined
         ? undefined
-        : (JSON.parse(await readFile(flags['web-fragment-map'], 'utf8')) as unknown);
+        : (JSON.parse(await readFile(selectionFile, 'utf8')) as unknown);
     if (
-      webFragmentApiNames !== undefined &&
-      (!Array.isArray(webFragmentApiNames) ||
-        webFragmentApiNames.some((value) => typeof value !== 'string'))
+      selectedApiNames !== undefined &&
+      (!Array.isArray(selectedApiNames) ||
+        selectedApiNames.some((value) => typeof value !== 'string'))
     ) {
-      throw new TypeError('--web-fragment-map must contain a JSON array of API-name strings.');
+      throw new TypeError('Component map must contain a JSON array of API-name strings.');
     }
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
-      ...(webFragmentApiNames === undefined
+      ...(selectedApiNames === undefined
         ? {}
         : {
             selection: {
-              contentType: 'sfdc_cms__webFragment',
-              apiNames: webFragmentApiNames,
+              contentType:
+                flags['web-fragment-map'] === undefined
+                  ? 'sfdc_cms__landingPageTemplate'
+                  : 'sfdc_cms__webFragment',
+              apiNames: selectedApiNames,
             },
           }),
       pluginVersion: this.pluginVersion,

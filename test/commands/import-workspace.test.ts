@@ -235,6 +235,7 @@ describe('CMS import workspace command', () => {
       'native-copy-map',
       'email-fragment-map',
       'web-fragment-map',
+      'landing-page-template-map',
       'image-map',
       'editable-dir',
       'apply',
@@ -251,17 +252,27 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags['native-copy-map'].exclusive).to.deep.equal([
       'email-fragment-map',
       'web-fragment-map',
+      'landing-page-template-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
       'native-copy-map',
       'web-fragment-map',
+      'landing-page-template-map',
       'editable-dir',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
       'native-copy-map',
       'email-fragment-map',
+      'landing-page-template-map',
+      'editable-dir',
+      'image-map',
+    ]);
+    expect(ImportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
+      'native-copy-map',
+      'email-fragment-map',
+      'web-fragment-map',
       'editable-dir',
       'image-map',
     ]);
@@ -269,6 +280,7 @@ describe('CMS import workspace command', () => {
       'native-copy-map',
       'email-fragment-map',
       'web-fragment-map',
+      'landing-page-template-map',
       'editable-dir',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(

@@ -349,6 +349,59 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 
 Dry-run proves fresh content-key and API-name availability plus exact unique `DataGraph.DeveloperName` and `DataSpaceDevName` matches. Apply repeats API-name and Data Graph validation immediately before each CREATE, creates sequentially, and journals every prerequisite mapping and mutation in `workspace-import-run.json`. Missing, ambiguous, unqueryable, or mismatched prerequisites block creation; no default Data Graph substitution is allowed. The profile creates Draft content only: no update fallback, overwrite, publication, activation, or send is performed. Deploy referenced CMS images before dependent fragments. Live installed-host fragment CREATE/readback acceptance is still pending.
 
+#### Landing-page templates (`--landing-page-template-map`)
+
+Export one or many `sfdc_cms__landingPageTemplate` components by exact API name. The selection file is a nonempty JSON string array; each name must resolve exactly once in the selected workspace and exact content type.
+
+```json
+["MCBSUMZKCZFFEU3MZFHAZWVTWNGY"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-templates --landing-page-template-map ./landing-page-templates.json --json
+```
+
+Import uses exact typed source selection, fresh create identities, explicit mappings for every captured CMS image/web-fragment reference, and explicit mappings for every Data Graph provider. `targetTitle` is optional and is used only when the exact target API-name lookup succeeds with zero matches; fallback remains exact, type-qualified, workspace-scoped, and must resolve uniquely.
+
+```json
+[
+  {
+    "source": {
+      "family": "cms",
+      "type": "landingPageTemplate",
+      "apiName": "MCBSUMZKCZFFEU3MZFHAZWVTWNGY"
+    },
+    "target": {
+      "contentKey": "fresh_landing_template_key",
+      "apiName": "FreshLandingTemplate"
+    },
+    "cmsDependencies": [
+      {
+        "sourceContentKey": "MCX2CQNLBTIBHUTDNGOLKCRUZW2Q",
+        "sourceType": "image",
+        "targetApiName": "TargetLogoImage",
+        "targetTitle": "Logo Placeholder"
+      }
+    ],
+    "dataGraphs": [
+      {
+        "sourceDeveloperName": "Marketing",
+        "sourceDataSpace": "default",
+        "targetDeveloperName": "Marketing",
+        "targetDataSpace": "default"
+      }
+    ]
+  }
+]
+```
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --contract-version 1 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --apply --report-dir ./cms-landing-template-report --contract-version 1 --json
+```
+
+Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. Live installed-host template CREATE/readback acceptance remains pending.
+
 #### Editable HTML companion (`--editable-dir`)
 
 For local HTML editing, keep two separate directories: the unchanged workspace export is the integrity/provenance baseline, and an opt-in companion contains literal HTML beside its variant metadata. Export with both explicit destinations:
