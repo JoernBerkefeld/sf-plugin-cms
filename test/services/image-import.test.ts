@@ -27,6 +27,9 @@ function failedRequest(value: unknown): FakeRequest<never> {
 }
 
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const SOURCE_CONTENT_KEY = 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const SECOND_SOURCE_CONTENT_KEY = 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB';
+const FRESH_CONTENT_KEY = 'MCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 function map(overrides: Record<string, unknown> = {}) {
   return {
@@ -50,7 +53,7 @@ async function writePackage(
   const item = {
     apiName: 'source_api',
     contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-    contentKey: 'source-key',
+    contentKey: SOURCE_CONTENT_KEY,
     contentSpace: { id: 'space' },
     contentType: 'sfdc_cms__image',
     id: 'variant',
@@ -62,7 +65,7 @@ async function writePackage(
   if (schemaVersion === 2) await writeFile(path.join(source, 'media/variant.png'), PNG);
   const media = {
     variantId: 'variant',
-    contentKey: 'source-key',
+    contentKey: SOURCE_CONTENT_KEY,
     path: 'media/variant.png',
     sha256: createHash('sha256').update(PNG).digest('hex'),
     md5: createHash('md5').update(PNG).digest('hex'),
@@ -143,7 +146,11 @@ describe('image import contracts and loader', () => {
     const result = planImageImports(source, [map()]);
     expect(result).to.have.length(1);
     expect(result[0].identities).to.deep.equal({
-      contentKey: { strategy: 'preserve', source: 'source-key', submitted: 'source-key' },
+      contentKey: {
+        strategy: 'preserve',
+        source: SOURCE_CONTENT_KEY,
+        submitted: SOURCE_CONTENT_KEY,
+      },
       apiName: { strategy: 'fresh', source: 'source_api', submitted: 'fresh_api' },
       title: { strategy: 'fresh', source: 'Source title', submitted: 'Fresh title' },
       urlName: { strategy: 'generated' },
@@ -168,6 +175,37 @@ describe('image import contracts and loader', () => {
     );
     expect(() => normalizeImageMultipartFilename('variant', 'image/svg+xml')).to.throw(
       'MIME type is unsupported',
+    );
+  });
+
+  it('rejects malformed explicit image content keys during planning', async () => {
+    const loaded = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const invalidKeys = [
+      'mcAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'MC_AAAAAAAAAAAAAAAAAAAAAAAAA',
+      'MCAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'MCAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'MC00000000000000000000000000',
+      'MC11111111111111111111111111',
+      'MC88888888888888888888888888',
+    ];
+
+    for (const value of invalidKeys) {
+      expect(() =>
+        planImageImports(loaded, [map({ contentKey: { strategy: 'fresh', value } })]),
+      ).to.throw('must match ^MC[A-Z2-7]{26}$');
+    }
+
+    const invalidPreserve = {
+      ...loaded,
+      items: [{ ...loaded.items[0], contentKey: 'source-key' }],
+      manifest: {
+        ...loaded.manifest,
+        media: [{ ...loaded.manifest.media![0], contentKey: 'source-key' }],
+      },
+    };
+    expect(() => planImageImports(invalidPreserve, [map()])).to.throw(
+      'contentKey preserve source must match ^MC[A-Z2-7]{26}$',
     );
   });
 
@@ -196,12 +234,12 @@ describe('image import contracts and loader', () => {
       ...loaded.items[0],
       id: 'variant-two',
       apiName: 'source_api_two',
-      contentKey: 'source-key-two',
+      contentKey: SECOND_SOURCE_CONTENT_KEY,
     };
     const secondMedia = {
       ...loaded.manifest.media![0],
       variantId: 'variant-two',
-      contentKey: 'source-key-two',
+      contentKey: SECOND_SOURCE_CONTENT_KEY,
       path: 'media/variant-two.png',
     };
     const multiple = {
@@ -212,7 +250,7 @@ describe('image import contracts and loader', () => {
     const rows = [
       map({
         source: { family: 'cms', type: 'image', apiName: 'source_api_two' },
-        contentKey: { strategy: 'fresh', value: 'two' },
+        contentKey: { strategy: 'fresh', value: FRESH_CONTENT_KEY },
       }),
       map({ source: { family: 'cms', type: 'image', apiName: 'source_api', serverId: 'variant' } }),
     ];
@@ -254,7 +292,7 @@ describe('image import contracts and loader', () => {
         expect(query.get('queryTerm')).to.equal('fresh_api');
         return fakeRequest({ items: [], total: 0 });
       }
-      if (url === '/connect/cms/contents/source-key') {
+      if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
         return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -305,7 +343,7 @@ describe('image import contracts and loader', () => {
         if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
         if (url.startsWith('/connect/cms/items/search'))
           return fakeRequest({ items: [], total: 0 });
-        if (url === '/connect/cms/contents/source-key') {
+        if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
           return failedRequest(
             Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
               data: {
@@ -397,7 +435,7 @@ describe('image import contracts and loader', () => {
         if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
         if (url.startsWith('/connect/cms/items/search'))
           return fakeRequest({ items: [], total: 0 });
-        if (url === '/connect/cms/contents/source-key') {
+        if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
           return failedRequest(
             Object.assign(
               new Error('errorMessage' in shape ? shape.errorMessage : 'Request failed'),
@@ -432,7 +470,8 @@ describe('image import contracts and loader', () => {
     const wrongOperationRequest = sinon.stub().callsFake(({ url }: { url: string }) => {
       if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
       if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
-      if (url === '/connect/cms/contents/source-key') return failedRequest(wrongOperation);
+      if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`)
+        return failedRequest(wrongOperation);
       throw new Error(`Unexpected request: ${url}`);
     });
     expect(
@@ -454,12 +493,12 @@ describe('image import contracts and loader', () => {
       ...source.items[0],
       id: 'variant-two',
       apiName: 'source_api_two',
-      contentKey: 'source-key-two',
+      contentKey: SECOND_SOURCE_CONTENT_KEY,
     };
     const secondMedia = {
       ...source.manifest.media![0],
       variantId: 'variant-two',
-      contentKey: 'source-key-two',
+      contentKey: SECOND_SOURCE_CONTENT_KEY,
       path: 'media/variant-two.png',
     };
     const multiple = {
@@ -471,7 +510,7 @@ describe('image import contracts and loader', () => {
       map(),
       map({
         source: { family: 'cms', type: 'image', apiName: 'source_api_two' },
-        contentKey: { strategy: 'fresh', value: 'fresh-key-two' },
+        contentKey: { strategy: 'fresh', value: FRESH_CONTENT_KEY },
         apiName: { strategy: 'fresh', value: 'fresh_api_two' },
       }),
     ]);
@@ -582,6 +621,7 @@ describe('image import contracts and loader', () => {
             expect(body!.toString('latin1')).to.include(
               'filename="variant.png"\r\nContent-Type: application/octet-stream; charset=ISO-8859-1',
             );
+            expect(body!.toString('latin1')).not.to.include('name="contentKey"');
             postedBodySha256 = createHash('sha256').update(body!).digest('hex');
             return fakeRequest({
               contentKey: 'generated-key',
@@ -641,7 +681,7 @@ describe('image import contracts and loader', () => {
     expect(result.contractResult.assets[0].identities).to.deep.include({
       contentKey: {
         strategy: 'generated',
-        source: 'source-key',
+        source: SOURCE_CONTENT_KEY,
         returned: 'generated-key',
       },
       apiName: {
@@ -711,7 +751,7 @@ describe('image import contracts and loader', () => {
     const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
       if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
       if (url.startsWith('/connect/cms/items/search')) return fakeRequest({ items: [], total: 0 });
-      if (url === '/connect/cms/contents/source-key') {
+      if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
         contentKeyChecks += 1;
         return failedRequest(
           Object.assign(new Error('Provide a valid content key, ID, or FQN.'), {
@@ -779,7 +819,7 @@ describe('image import contracts and loader', () => {
           contentType: 'sfdc_cms__image',
         });
       }
-      if (url === '/connect/cms/contents/source-key') {
+      if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
         return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
       }
       throw new Error(`Unexpected request: ${method} ${url}`);
@@ -811,7 +851,7 @@ describe('image import contracts and loader', () => {
         searches += 1;
         return fakeRequest({ items: [], total: 0 });
       }
-      if (url === '/connect/cms/contents/source-key') {
+      if (url === `/connect/cms/contents/${SOURCE_CONTENT_KEY}`) {
         return failedRequest({ data: { errorCode: 'NOT_FOUND' } });
       }
       if (url === '/connect/cms/contents' && method === 'POST') {

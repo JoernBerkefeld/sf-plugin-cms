@@ -179,6 +179,12 @@ function sourceValue(
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function assertCanonicalImageContentKey(value: string, label: string): void {
+  if (!/^MC[A-Z2-7]{26}$/u.test(value)) {
+    fail(`${label} must match ^MC[A-Z2-7]{26}$`);
+  }
+}
+
 function validateField(
   raw: unknown,
   field: ImageImportIdentityField,
@@ -196,10 +202,13 @@ function validateField(
     if (raw.value !== undefined) fail(`${field} preserve must not provide a value`);
     if (source === undefined)
       fail(`${field} cannot be preserved because the source value is missing`);
+    if (field === 'contentKey')
+      assertCanonicalImageContentKey(source, 'contentKey preserve source');
     return { strategy, source, submitted: source } as ImageImportFieldPlan;
   }
   if (strategy === 'fresh') {
     nonempty(raw.value, `${field} fresh value`);
+    if (field === 'contentKey') assertCanonicalImageContentKey(raw.value, 'contentKey fresh value');
     if (raw.value === source) fail(`${field} fresh value must differ from the source`);
     return {
       strategy,

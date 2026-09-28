@@ -13,6 +13,9 @@ function v1Result(result: Awaited<ReturnType<ImportWorkspace['run']>>): Workspac
 }
 import ImportWorkspace from '../../src/commands/cms/import/workspace.js';
 
+const SOURCE_IMAGE_CONTENT_KEY = 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const FRESH_IMAGE_CONTENT_KEY = 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
 type FakeRequest<T> = Promise<T> & { stream(): { destroy(): void } };
 
 function fakeRequest<T>(value: T): FakeRequest<T> {
@@ -119,7 +122,7 @@ async function writeImageSource(root: string): Promise<{ mapFile: string; source
   const item = {
     apiName: 'source_image',
     contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-    contentKey: 'source-image-key',
+    contentKey: SOURCE_IMAGE_CONTENT_KEY,
     contentSpace: { id: 'source-space' },
     contentType: 'sfdc_cms__image',
     id: 'source-image-variant',
@@ -193,7 +196,7 @@ async function writeImageSource(root: string): Promise<{ mapFile: string; source
     JSON.stringify([
       {
         source: { family: 'cms', type: 'image', apiName: item.apiName },
-        contentKey: { strategy: 'fresh', value: 'fresh-image-key' },
+        contentKey: { strategy: 'fresh', value: FRESH_IMAGE_CONTENT_KEY },
         apiName: { strategy: 'fresh', value: 'fresh_image' },
         title: { strategy: 'fresh', value: 'Fresh image' },
         urlName: { strategy: 'generated' },
@@ -429,6 +432,48 @@ describe('CMS import workspace command', () => {
     });
   }
 
+  it('blocks a malformed image content key before org context', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-invalid-key-'));
+    temporaryDirectories.push(root);
+    const { mapFile, source } = await writeImageSource(root);
+    const mappings = JSON.parse(await readFile(mapFile, 'utf8')) as Array<{
+      contentKey: { strategy: string; value: string };
+    }>;
+    mappings[0].contentKey.value = 'fresh-image-key';
+    await writeFile(mapFile, JSON.stringify(mappings));
+    const getOrgContext = $$.SANDBOX.stub();
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          apply: true,
+          'api-version': '67.0',
+          'contract-version': 2,
+          'image-map': mapFile,
+          'report-dir': path.join(root, 'report'),
+          'source-dir': source,
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.deep.include({ contractVersion: '2.0.0', status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+    expect(result.diagnostics.errors[0].message).to.include('must match ^MC[A-Z2-7]{26}$');
+    expect(getOrgContext.notCalled).to.equal(true);
+    let reportExists = true;
+    try {
+      await readFile(path.join(root, 'report', 'workspace-import-run.json'));
+    } catch (error) {
+      reportExists = (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    }
+    expect(reportExists).to.equal(false);
+  });
+
   it('runs the v2 image profile as dry-run preflight without mutation', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-'));
     temporaryDirectories.push(root);
@@ -438,7 +483,7 @@ describe('CMS import workspace command', () => {
         if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
         if (url.startsWith('/connect/cms/items/search'))
           return fakeRequest({ items: [], total: 0 });
-        if (url === '/connect/cms/contents/fresh-image-key') return missingRequest();
+        if (url === `/connect/cms/contents/${FRESH_IMAGE_CONTENT_KEY}`) return missingRequest();
         throw new Error(`Unexpected request: ${method} ${url}`);
       },
     );
@@ -483,10 +528,10 @@ describe('CMS import workspace command', () => {
           searches += 1;
           return fakeRequest({ items: [], total: 0 });
         }
-        if (url === '/connect/cms/contents/fresh-image-key') return missingRequest();
+        if (url === `/connect/cms/contents/${FRESH_IMAGE_CONTENT_KEY}`) return missingRequest();
         if (url === '/connect/cms/contents' && method === 'POST') {
           return fakeRequest({
-            contentKey: 'fresh-image-key',
+            contentKey: FRESH_IMAGE_CONTENT_KEY,
             managedContentId: 'image-content',
             managedContentVariantId: 'image-variant',
           });
@@ -496,7 +541,7 @@ describe('CMS import workspace command', () => {
             managedContentId: 'image-content',
             managedContentVariantId: 'image-variant',
             apiName: 'fresh_image',
-            contentKey: 'fresh-image-key',
+            contentKey: FRESH_IMAGE_CONTENT_KEY,
             title: 'Fresh image',
             urlName: 'generated-image-url',
             contentSpace: { id: 'space' },
