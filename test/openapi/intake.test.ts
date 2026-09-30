@@ -105,9 +105,9 @@ describe('OpenAPI semantic intake', () => {
   it('validates the canonical v67 document with exactly 48 operations', async () => {
     const canonicalPath = path.resolve('resources', 'openapi', 'connect-rest-api-cms-v67.yaml');
     const result = await intakeOpenApi(canonicalPath);
-    expect(result.byteSize).to.equal(243_152);
+    expect(result.byteSize).to.equal(243_608);
     expect(result.sha256).to.equal(
-      'c3f8b5c29821a884a1c06485925485a218c7be68808bf98491074d6625773434',
+      '87c9a24773d96ae10f3d735b245e9600b2c92ce794223351d7810113b59ef550',
     );
     expect(result.operationCount).to.equal(48);
     expect(new Set(result.operations.map(({ operationId }) => operationId)).size).to.equal(48);

@@ -74,7 +74,35 @@ describe('bulk workspace export service', () => {
     expect(result.selected.map(({ id, name, type }) => ({ id, name, type }))).to.deep.equal([
       { id: 'b', name: 'Canonical B', type: 'Marketing' },
     ]);
+    expect(request.firstCall.args[0].url).to.include('spaceType=Marketing');
     expect(request.callCount).to.equal(4);
+  });
+
+  it('uses the server-side type filter so unrelated workspace types do not block export', async () => {
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/spaces?')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        const spaces =
+          query.get('spaceType') === 'Marketing'
+            ? [workspace('marketing', 'Marketing Workspace', 'marketing')]
+            : [
+                workspace('marketing', 'Marketing Workspace', 'marketing'),
+                workspace('enablement', 'Enablement Workspace', 'enablement'),
+              ];
+        return fakeRequest({ spaces: pageNumber(url) === 0 ? spaces : [] });
+      }
+      return fakeRequest(workspace('marketing', 'Marketing Workspace', 'marketing'));
+    });
+
+    const result = await preflightBulkWorkspaceExport(
+      { request },
+      path.join(root, 'cms'),
+      'Marketing',
+    );
+
+    expect(result).to.deep.include({ discoveredCount: 1 });
+    expect(result.selected.map(({ id }) => id)).to.deep.equal(['marketing']);
+    expect(request.firstCall.args[0].url).to.include('spaceType=Marketing');
   });
 
   it('uses exact-ID-correlated list type when canonical detail omits spaceType', async () => {

@@ -2006,6 +2006,24 @@ paths:
         required: false
         schema:
           type: integer
+      - name: spaceType
+        in: query
+        description: |
+          Limits the response to managed content spaces of the selected type.
+        required: false
+        schema:
+          type: string
+          enum:
+          - App_Dev
+          - Content
+          - Enablement
+          - Experience
+          - ExperienceContainer
+          - Fragment_Space
+          - Gen_AI
+          - Library
+          - Marketing
+          - SalesEngagement
       responses:
         '200':
           description: Collection of managed content spaces.

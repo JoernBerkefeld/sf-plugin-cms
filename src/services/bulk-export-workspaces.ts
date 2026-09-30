@@ -138,7 +138,7 @@ export async function preflightBulkWorkspaceExport(
   const listed = await enumerateWorkspaces(
     connection,
     options,
-    {},
+    workspaceType === undefined ? {} : { spaceType: workspaceType },
     {
       collectWorkspaceType: true,
       workspaceTypes: listedTypes,

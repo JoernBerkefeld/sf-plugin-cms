@@ -3,9 +3,9 @@ import process from 'node:process';
 import { intakeOpenApi, OpenApiIntakeError } from '../lib/openapi/intake.js';
 
 const EXPECTED_CANONICAL = {
-  byteSize: 243152,
+  byteSize: 243608,
   operationCount: 48,
-  sha256: 'c3f8b5c29821a884a1c06485925485a218c7be68808bf98491074d6625773434',
+  sha256: '87c9a24773d96ae10f3d735b245e9600b2c92ce794223351d7810113b59ef550',
 };
 
 const sourceArgument = process.argv[2];

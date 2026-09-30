@@ -240,6 +240,12 @@ export const SELECTED_OPERATIONS = [
         "name": "pageSize",
         "required": false,
         "type": "integer"
+      },
+      {
+        "location": "query",
+        "name": "spaceType",
+        "required": false,
+        "type": "string"
       }
     ],
     "path": "/connect/cms/spaces",
