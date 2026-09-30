@@ -1,4 +1,5 @@
 import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
+import { assertCanonicalContentKey } from './content-key.js';
 
 /**
  * Build the bounded native raw-HTML copy profile without allocating a content key.
@@ -267,7 +268,9 @@ export function planImportIdentities(
   for (const row of input) {
     if (!record(row)) throw new TypeError('Identity mapping must be an object');
     exactKeys(row, ['sourceContentKey', 'contentKey', 'apiName', 'urlNames'], 'Identity mapping');
-    for (const name of ['sourceContentKey', 'contentKey', 'apiName']) identity(row[name], name);
+    for (const name of ['sourceContentKey', 'apiName']) identity(row[name], name);
+    if (typeof row.contentKey !== 'string') throw new TypeError('contentKey must be a string');
+    assertCanonicalContentKey(row.contentKey, 'contentKey');
     const { sourceContentKey, contentKey, apiName } = row as Record<string, string>;
     if (!sourceKeys.has(sourceContentKey) || mappings.has(sourceContentKey)) {
       throw new TypeError('Identity mapping has an unknown or duplicate source content key');

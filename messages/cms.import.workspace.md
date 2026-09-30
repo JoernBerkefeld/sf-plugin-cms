@@ -4,7 +4,7 @@ Safely plan or apply a create-only import into a CMS workspace.
 
 # description
 
-Validates the complete source workspace export locally before any org request, selects one destination workspace by exact ID or exact case-sensitive name, and defaults to a non-mutating dry run. The default profile checks each planned source content key for destination existence, but complete server conflict validation and API-name/URL-name availability are not established; named default-profile apply remains blocked. --native-copy-map instead selects bounded native raw-HTML email/template copies with fresh names and server-generated keys. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir to create content.
+Validates the complete source workspace export locally before any org request, selects one destination workspace by exact ID or exact case-sensitive name, and defaults to a non-mutating dry run. The default profile checks each planned source content key for destination existence, but complete server conflict validation and API-name/URL-name availability are not established; named default-profile apply remains blocked. --native-copy-map instead selects bounded native raw-HTML email/template copies with fresh names and server-generated keys. --landing-page-map consumes paired landing-page/template exports, resolves the destination Draft template plus image and Data Graph prerequisites during preflight, and repeats immutable resolution immediately before CREATE. Source template resolution is title-first; canonical package identity and normalized body hashes are compatibility evidence, not historical provenance. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir to create content.
 
 # examples
 
@@ -68,9 +68,13 @@ JSON array selecting exact typed cms/emailFragment API names with fresh target c
 
 Verified HTML-only companion for --native-copy-map. Requires the unchanged --source-dir baseline; opaque rawHtml is not dependency-resolved, sanitized, or scanned through Phase 7.
 
+# flags.landing-page-map.summary
+
+JSON array selecting paired cms/landingPage sources, fresh page identities, an exact Draft destination template selector, and explicit image/Data Graph prerequisite mappings. The source pair is title-first; canonical package identity proves compatibility, not provenance.
+
 # flags.apply.summary
 
-Create the planned content after local validation and the profile's bounded preflight checks pass. Dry-run does not establish full conflict or apply readiness.
+Create the planned content after local validation and the profile's bounded preflight checks pass. Landing-page apply writes the initial journal before mutation, then re-resolves every prerequisite and rebuilds the request from immutable source baselines. Dry-run writes no report and does not establish full conflict or apply readiness.
 
 # flags.allow-partial.summary
 

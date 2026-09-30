@@ -1,19 +1,17 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
-import {
-  getSelectedOperation,
-  requestJson,
-  type JsonRequestOptions,
-} from '../transport/json-request.js';
+import type { JsonRequestOptions } from '../transport/json-request.js';
 import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
 import type { PlannedImportIdentities } from './import-identities.js';
-import { getVariant } from './read.js';
+import { assertCanonicalContentKey } from './content-key.js';
+import { lookupExactCmsVariants } from './cms-prerequisite-lookup.js';
 import {
   validateDataGraphPrerequisites,
   type WebFragmentDataGraphPrerequisite,
 } from './web-fragment.js';
 
 const TEMPLATE_TYPE = 'sfdc_cms__landingPageTemplate';
+const SALESFORCE_LABEL_MAX_LENGTH = 80;
 const DATA_GRAPH_PROVIDER = 'sfdc_cms__dataGraphDataProvider';
 const BODY_KEYS = [
   'lightning:backgroundImage',
@@ -31,11 +29,8 @@ const CMS_DEPENDENCY_TYPES = new Map([
   ['image', 'sfdc_cms__image'],
   ['webFragment', 'sfdc_cms__webFragment'],
 ]);
-const PAGE_SIZE = 250;
-const PAGE_CAP = 1000;
-
 type JsonRecord = Record<string, unknown>;
-type RequestConnection = Pick<Connection, 'request'>;
+type RequestConnection = Pick<Connection, 'request'> & Partial<Pick<Connection, 'version'>>;
 type QueryConnection = { readonly query?: Connection['query'] };
 
 export type LandingPageTemplateCmsPrerequisite = {
@@ -68,6 +63,19 @@ function identifier(value: unknown, label: string): asserts value is string {
   nonempty(value, label);
   if (!/^[A-Za-z][A-Za-z\d_]*$/u.test(value)) {
     throw new TypeError(`${label} must be an exact developer/API name`);
+  }
+}
+
+export function assertDerivedLabelLength(
+  apiName: string,
+  contentType: string,
+  label: string,
+): void {
+  const derivedLabel = `${apiName}--${contentType}`;
+  if (derivedLabel.length > SALESFORCE_LABEL_MAX_LENGTH) {
+    throw new TypeError(
+      `${label} ${apiName} produces Salesforce label ${derivedLabel} with length ${derivedLabel.length}; maximum is ${SALESFORCE_LABEL_MAX_LENGTH}`,
+    );
   }
 }
 
@@ -213,6 +221,23 @@ export function planLandingPageTemplateCopies(
   source: LoadedWorkspaceExport,
   input: unknown,
 ): PlannedLandingPageTemplateCopies {
+  return planLandingPageTemplateCopiesForType(source, input, TEMPLATE_TYPE, 'Template mapping');
+}
+
+/**
+ * Plan template-shaped creates while validating the actual outgoing content type.
+ * @param {LoadedWorkspaceExport} source - Verified source workspace package.
+ * @param {unknown} input - User-supplied template-shaped mapping JSON.
+ * @param {string} targetContentType - Outgoing Salesforce content type.
+ * @param {string} targetMappingLabel - User-facing mapping label.
+ * @returns {PlannedLandingPageTemplateCopies} Validated create proposal.
+ */
+export function planLandingPageTemplateCopiesForType(
+  source: LoadedWorkspaceExport,
+  input: unknown,
+  targetContentType: string,
+  targetMappingLabel: string,
+): PlannedLandingPageTemplateCopies {
   if (!source.integrity.verified) throw new TypeError('Source integrity must be verified first');
   const sourceKeys = new Set(source.items.map((item) => item.contentKey));
   const sourceNames = new Set(
@@ -256,8 +281,14 @@ export function planLandingPageTemplateCopies(
     if (!record(row.target))
       throw new TypeError(`Template mapping ${index}.target must be an object`);
     exactKeys(row.target, ['contentKey', 'apiName'], [], `Template mapping ${index}.target`);
-    identifier(row.target.contentKey, `Template mapping ${index}.target.contentKey`);
+    nonempty(row.target.contentKey, `Template mapping ${index}.target.contentKey`);
+    assertCanonicalContentKey(row.target.contentKey, `Template mapping ${index}.target.contentKey`);
     identifier(row.target.apiName, `Template mapping ${index}.target.apiName`);
+    assertDerivedLabelLength(
+      row.target.apiName,
+      targetContentType,
+      `${targetMappingLabel} ${index}.target.apiName`,
+    );
     if (sourceKeys.has(row.target.contentKey) || targetKeys.has(row.target.contentKey)) {
       throw new TypeError('Target template content keys must be fresh and unique');
     }
@@ -384,87 +415,6 @@ export function planLandingPageTemplateCopies(
   };
 }
 
-function responseItems(value: unknown): unknown[] {
-  if (!record(value) || !Array.isArray(value.items))
-    throw new TypeError('CMS prerequisite search must return items');
-  return value.items;
-}
-
-function responseCount(value: unknown): number {
-  if (record(value)) {
-    for (const key of ['total', 'totalCount', 'count']) {
-      if (typeof value[key] === 'number' && Number.isInteger(value[key]) && value[key] >= 0)
-        return value[key];
-    }
-  }
-  throw new TypeError('CMS prerequisite search must return a count');
-}
-
-async function exactMatches(
-  connection: RequestConnection,
-  workspaceId: string,
-  contentType: string,
-  queryTerm: string,
-  predicate: (detail: JsonRecord) => boolean,
-  options: JsonRequestOptions,
-): Promise<JsonRecord[]> {
-  const candidates = new Map<string, true>();
-  let expected: number | undefined;
-  for (let page = 0; page < PAGE_CAP; page += 1) {
-    const response = await requestJson<unknown>(
-      connection,
-      getSelectedOperation('workspace.variant.search'),
-      {
-        query: {
-          contentSpaceOrFolderIds: [workspaceId],
-          contentTypeFQN: contentType,
-          languages: ['All'],
-          page,
-          pageSize: PAGE_SIZE,
-          queryTerm,
-        },
-      },
-      options,
-    );
-    const items = responseItems(response.data);
-    const count = responseCount(response.data);
-    if (expected === undefined) expected = count;
-    else if (expected !== count) throw new TypeError('CMS prerequisite search count changed');
-    for (const item of items) {
-      if (
-        !record(item) ||
-        item.type !== 'ManagedContentVariantSearchResultRepresentation' ||
-        typeof item.id !== 'string' ||
-        item.managedContentSpaceId !== workspaceId ||
-        candidates.has(item.id)
-      ) {
-        throw new TypeError('CMS prerequisite search returned ambiguous scope evidence');
-      }
-      candidates.set(item.id, true);
-    }
-    if (items.length === 0 || candidates.size >= count) break;
-    if (page === PAGE_CAP - 1) throw new TypeError('CMS prerequisite search exceeded page cap');
-  }
-  if (expected === undefined || candidates.size !== expected)
-    throw new TypeError('CMS prerequisite search count was not satisfied');
-  const matches: JsonRecord[] = [];
-  for (const id of candidates.keys()) {
-    const detail = await getVariant(connection, id, options);
-    const type = record(detail.contentType)
-      ? detail.contentType.fullyQualifiedName
-      : detail.contentType;
-    if (
-      !record(detail.contentSpace) ||
-      detail.contentSpace.id !== workspaceId ||
-      type !== contentType
-    ) {
-      throw new TypeError('CMS prerequisite detail changed workspace or type scope');
-    }
-    if (predicate(detail as JsonRecord)) matches.push(detail as JsonRecord);
-  }
-  return matches;
-}
-
 /**
  * Resolve exact typed CMS dependencies, with title fallback only after zero API-name matches.
  * @param {RequestConnection & QueryConnection} connection - Destination org connection.
@@ -483,7 +433,7 @@ export async function validateLandingPageTemplatePrerequisites(
   const resolved = new Map<string, string>();
   for (const prerequisite of proposal.cmsPrerequisites) {
     try {
-      const apiMatches = await exactMatches(
+      const apiMatches = await lookupExactCmsVariants(
         connection,
         workspaceId,
         prerequisite.targetContentType,
@@ -505,7 +455,7 @@ export async function validateLandingPageTemplatePrerequisites(
             `CMS prerequisite API name was not found and no title fallback was provided: ${prerequisite.targetApiName}`,
           );
         }
-        const titleMatches = await exactMatches(
+        const titleMatches = await lookupExactCmsVariants(
           connection,
           workspaceId,
           prerequisite.targetContentType,

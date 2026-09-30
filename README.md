@@ -300,7 +300,7 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --apply --report-dir ./cms-image-report --json
 ```
 
-Every row selects exactly one integrity-verified `cms/image` item by exact API name, with optional source bindings such as workspace, language, server ID, title, or version. Each of the four identity fields has an explicit strategy: `preserve` submits the evidenced source value, `fresh` submits a different map-provided value, and `generated` omits the value for the server to assign. `title` supports only `preserve` or `fresh`. Content keys supplied through `preserve` or `fresh` must use the canonical `MC` plus 26 base32-character shape. Duplicate source selections and duplicate non-generated target identity tuples are rejected.
+Every row selects exactly one integrity-verified `cms/image` item by exact API name, with optional source bindings such as workspace, language, server ID, title, or version. Each of the four identity fields has an explicit strategy: `preserve` submits the evidenced source value, `fresh` submits a different map-provided value, and `generated` omits the value for the server to assign. `title` supports only `preserve` or `fresh`. Every explicitly submitted Enhanced CMS target content key must match `^MC[A-Z2-7]{26}$`: the `MC` prefix followed by exactly 26 uppercase base32 characters (`A`–`Z` or `2`–`7`). Image keys supplied through `preserve` or `fresh` follow the same rule. Duplicate source selections and duplicate non-generated target identity tuples are rejected.
 
 Dry-run validates the complete v2 package, verifies media bytes and hashes, resolves the exact destination workspace, and checks every selected destination identity before reporting the plan. Apply repeats destination checks immediately before each sequential multipart CREATE, records a pending operation before transport, and verifies returned identity, workspace, type, Draft state, authoring metadata, and canonical variant readback. Binary byte proof is reported separately because the authoring readback may not expose original bytes. Multipart filenames are normalized to the declared GIF, JPEG, PNG, or WebP MIME type; missing extensions are added and mismatches are rejected.
 
@@ -308,7 +308,17 @@ Image import is create-only. It has no update fallback, overwrite, publication, 
 
 #### Bounded email-fragment copies (`--email-fragment-map`)
 
-`--email-fragment-map <json-file>` opts into the experimental first Phase 4 profile. It supports only dependency-free `sfdc_cms__emailFragment` content whose body exactly matches the evidenced root-content-block → one section → one empty column shape, including the exact accepted layout attributes and empty provider, expression, attachment, and variant arrays. It is not general reusable-block or workspace restoration support.
+Export one or many `sfdc_cms__emailFragment` components by exact API name. The selection file is a nonempty JSON string array; every requested name must resolve exactly once in the selected workspace and exact content type. Only selected variants are packaged, so relationship descriptors owned by unrelated workspace content are excluded while the resulting package retains normal manifest and hash verification.
+
+```json
+["ReusableHeader", "ReusableFooter"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-email-fragments --email-fragment-map ./email-fragments.json --json
+```
+
+For import, `--email-fragment-map <json-file>` opts into the experimental first Phase 4 profile. It supports only dependency-free `sfdc_cms__emailFragment` content whose body exactly matches the evidenced root-content-block → one section → one empty column shape, including the exact accepted layout attributes and empty provider, expression, attachment, and variant arrays. It is not general reusable-block or workspace restoration support.
 
 The mapping file is a nonempty JSON array with exact typed source selectors and fresh target identities:
 
@@ -321,7 +331,7 @@ The mapping file is a nonempty JSON array with exact typed source selectors and 
       "apiName": "source_fragment_api"
     },
     "target": {
-      "contentKey": "fresh-fragment-key",
+      "contentKey": "MCAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "apiName": "fresh_fragment_api"
     }
   }
@@ -364,7 +374,7 @@ Import uses a nonempty JSON array with exact typed source selection, fresh targe
       "apiName": "LandingHero"
     },
     "target": {
-      "contentKey": "fresh_landing_hero_key",
+      "contentKey": "MCBBBBBBBBBBBBBBBBBBBBBBBBBB",
       "apiName": "LandingHeroTarget"
     },
     "dataGraphs": [
@@ -384,7 +394,7 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --apply --report-dir ./cms-web-fragment-report --contract-version 1 --json
 ```
 
-Dry-run proves fresh content-key and API-name availability plus exact unique `DataGraph.DeveloperName` and `DataSpaceDevName` matches. Apply repeats API-name and Data Graph validation immediately before each CREATE, creates sequentially, and journals every prerequisite mapping and mutation in `workspace-import-run.json`. Missing, ambiguous, unqueryable, or mismatched prerequisites block creation; no default Data Graph substitution is allowed. The profile creates Draft content only: no update fallback, overwrite, publication, activation, or send is performed. Deploy referenced CMS images before dependent fragments. Live installed-host fragment CREATE/readback acceptance is still pending.
+Dry-run proves fresh content-key and API-name availability, then resolves each exact target Data Graph with a named Connect GET at `/services/data/v{version}/ssot/data-graphs/{encodedDeveloperName}` using the connection-selected API version. A prerequisite qualifies only when the response is a non-array object whose nonempty `name` and `dataspaceName` exactly and case-sensitively match the mapped target pair, and whose nonblank status is `ready` or `active` case-insensitively. Apply repeats API-name and Data Graph validation immediately before each CREATE, creates sequentially, and journals every prerequisite mapping, validation result, and mutation in `workspace-import-run.json`. Duplicate target pairs share one request within each validation pass, but dry-run and apply revalidation remain separate. Request failures and malformed, missing, mismatched, or non-ready responses block creation; there is no SOQL, metadata/list fallback, data-space query-parameter reliance, or default Data Graph substitution. The profile creates Draft content only: no update fallback, overwrite, publication, activation, or send is performed. Deploy referenced CMS images before dependent fragments. The bounded packed installed-host acceptance matrix includes fresh Draft CREATE and independent readback for this exact profile; broader web-fragment shapes remain unsupported.
 
 #### Landing-page templates (`--landing-page-template-map`)
 
@@ -398,7 +408,7 @@ Export one or many `sfdc_cms__landingPageTemplate` components by exact API name.
 sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-templates --landing-page-template-map ./landing-page-templates.json --json
 ```
 
-Import uses exact typed source selection, fresh create identities, explicit mappings for every captured CMS image/web-fragment reference, and explicit mappings for every Data Graph provider. `targetTitle` is optional and is used only when the exact target API-name lookup succeeds with zero matches; fallback remains exact, type-qualified, workspace-scoped, and must resolve uniquely.
+Import uses exact typed source selection, fresh create identities, explicit mappings for every captured CMS image/web-fragment reference, and explicit mappings for every Data Graph provider. Salesforce derives the template Label as `<target.apiName>--sfdc_cms__landingPageTemplate` and limits it to 80 characters, so `target.apiName` is limited to 49 characters. `targetTitle` is optional and is used only when the exact target API-name lookup succeeds with zero matches; fallback remains exact, type-qualified, workspace-scoped, and must resolve uniquely.
 
 ```json
 [
@@ -409,7 +419,7 @@ Import uses exact typed source selection, fresh create identities, explicit mapp
       "apiName": "MCBSUMZKCZFFEU3MZFHAZWVTWNGY"
     },
     "target": {
-      "contentKey": "fresh_landing_template_key",
+      "contentKey": "MCCCCCCCCCCCCCCCCCCCCCCCCCCC",
       "apiName": "FreshLandingTemplate"
     },
     "cmsDependencies": [
@@ -437,7 +447,28 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --apply --report-dir ./cms-landing-template-report --contract-version 1 --json
 ```
 
-Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. Live installed-host template CREATE/readback acceptance remains pending.
+Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. The bounded packed installed-host acceptance matrix includes fresh Draft CREATE and independent readback for this exact template profile, with prerequisite revalidation and drift checks.
+
+#### Paired landing pages and declared templates (`--landing-page-pair-map`)
+
+Use this export-only compatibility baseline when a landing page declares a Landing Page Template relationship. The input is a nonempty array of explicit pairs:
+
+```json
+[
+  {
+    "page": { "apiName": "SourceLandingPage" },
+    "template": { "title": "Human Template Label" }
+  }
+]
+```
+
+The page selector is its exact API name. The expected template path is its exact human title/label because the relationship value can be opaque or unreadable. Title lookup is strict: zero or multiple exact matches fail closed, and lookup errors are never treated as zero matches. An optional `template.apiName` may corroborate a separately known API name, but the command never parses, compares, or asks the user to enter the opaque relationship value as a selector.
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-page-pairs --landing-page-pair-map ./landing-page-pairs.json --json
+```
+
+The bounded export retrieves complete exact-type inventories for `sfdc_cms__landingPage` and `sfdc_cms__landingPageTemplate` in the selected workspace, exports only the selected pages and resolved templates, and records deterministic `landingPageTemplatePairs` metadata. Each row binds the requested template title to the resolved canonical template API name, content key, and variant ID, plus the page API name/content key/variant ID. Compatibility is structural: each selected page must contain exactly one declared Landing Page Template relationship descriptor. The descriptor remains retained as a generic unsupported relationship; this baseline does not claim historical provenance and does not parse or compare the opaque relationship value. Multiple pages may bind the same exported template. No import mapping, destination lookup, body rewrite, journaling, or mutation is implemented by this flag.
 
 #### Landing pages (`--landing-page-map`)
 
@@ -451,7 +482,9 @@ Export one or many `sfdc_cms__landingPage` components by exact API name. The sel
 sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-pages --landing-page-map ./landing-pages.json --json
 ```
 
-The bounded import profile supports only the captured landing-page shape: the exact top-level body fields, the `sfdc_cms__dataGraphDataProvider` with `dataGraphApiName` and `dataspace`, and image blocks whose `source.type` is `imageReference`, whose `source.ref.contentKey` identifies the image, and whose URL begins with `/cms/media/{contentKey}`. The available fixture does not evidence landing-page-template or web-fragment references, so this profile does not resolve or rewrite them and fails closed if an unsupported reference shape appears.
+The bounded import profile consumes the paired export evidence above. Source template selection is title-first; the independently retained canonical template API name/content key/variant ID and normalized page/template body hashes prove structural compatibility, not historical provenance. The opaque relationship descriptor is bound only through that declared pair; any additional unsupported relationship remains blocking. The outgoing page body receives no template-reference field injection.
+
+The supported page shape retains the exact top-level body fields, the `sfdc_cms__dataGraphDataProvider` with `dataGraphApiName` and `dataspace`, and image blocks whose `source.type` is `imageReference`, whose `source.ref.contentKey` identifies the image, and whose URL begins with `/cms/media/{contentKey}`. Salesforce derives the page Label as `<target.apiName>--sfdc_cms__landingPage` and limits it to 80 characters, so `target.apiName` is limited to 57 characters.
 
 ```json
 [
@@ -462,7 +495,7 @@ The bounded import profile supports only the captured landing-page shape: the ex
       "apiName": "MCJV5RXRKOMRF5HD3OD3OFQSO5C4"
     },
     "target": {
-      "contentKey": "fresh_landing_page_key",
+      "contentKey": "MCDDDDDDDDDDDDDDDDDDDDDDDDDD",
       "apiName": "FreshLandingPage"
     },
     "imageDependencies": [
@@ -489,7 +522,9 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --apply --report-dir ./cms-landing-page-report --contract-version 1 --json
 ```
 
-Image resolution is exact API name first within the destination workspace and `sfdc_cms__image` type. `targetTitle` is considered only after that lookup completes successfully with zero matches, and the exact title fallback must resolve once. Dry-run performs no writes. Apply creates Draft pages sequentially, immediately rechecks content-key/API-name availability plus all image and Data Graph prerequisites before each CREATE, rewrites the resolved image content keys and their matching `/cms/media/{contentKey}` URLs, and durably journals prerequisite results, request hashes, and returned IDs in `workspace-import-run.json`. There is no update, overwrite, upsert, publish, activate, send, or implicit dependency deployment. Installed-host live landing-page CREATE/readback acceptance remains pending and was not performed for this slice.
+Destination template resolution uses the explicitly requested content key, or exact API name with exact-title fallback only after a successful zero-match API-name lookup. The resolved template must remain the same exact type/workspace, Draft, unpublished identity and body at preflight and immediately before CREATE. Image resolution is exact API name first within the destination workspace and `sfdc_cms__image` type; `targetTitle` is considered only after that lookup completes successfully with zero matches. Data Graph developer-name/data-space identity and target page identity are also revalidated.
+
+Dry-run creates no report and performs no mutation, but returns the same `templatePrerequisites` evidence shape as apply preflight. Apply writes `workspace-import-run.json` before any mutation, then rebuilds the outgoing body from immutable source page/template baselines and fresh image/Data Graph resolutions immediately before each CREATE. It fails before CREATE on template status/body/workspace/type drift, image/Data Graph drift, or target page identity drift. Evidence includes the source page and declared source template identities, requested target selector, normalization version/body hashes, relationship descriptor binding, phase timestamps/status/hashes, final request-body SHA-256, and returned IDs. The final packed installed-host acceptance performed exactly one fresh Landing Page CREATE and independent readback, proving the bounded result Draft and unpublished while the source/original content remained unchanged. The acceptance matrix also exercised prerequisite and drift checks. There is no update, overwrite, upsert, publish, activate, send, implicit dependency deployment, or template-reference injection.
 
 #### Editable HTML companion (`--editable-dir`)
 
@@ -658,7 +693,7 @@ The correlation table exists only at `result.externalReferenceCorrelations`. Eac
 
 ### Package layout and integrity
 
-A workspace export package contains `manifest.json` plus regular item files. Packages without image candidates use manifest v1. Image candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful image downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
+A workspace export package contains `manifest.json` plus regular item files. Packages without image candidates use manifest v1. Paired landing-page exports can additionally contain deterministic `landingPageTemplatePairs` rows that bind each selected page item to a title-resolved canonical template item while retaining the page's generic unsupported relationship descriptor. Image candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful image downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
 
 Each item records exactly `{ path, sha256, kind, referenceId? }`, with lowercase SHA-256 calculated over the finalized exact file bytes. Import independently validates the manifest major, enumerates the package, rejects missing, substituted, duplicate-path, or unlisted files, and verifies every item hash. Only after the listed set and hashes are verified does it hash the exact `manifest.json` bytes and use that hash as package identity.
 

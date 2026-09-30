@@ -48,6 +48,20 @@ export type WorkspaceExportMedia = {
   transport: 'experimental-undocumented-authoring-media';
 };
 
+export type LandingPageTemplatePair = {
+  page: { apiName: string; contentKey: string; variantId: string };
+  template: {
+    requestedTitle: string;
+    apiName: string;
+    contentKey: string;
+    variantId: string;
+  };
+  compatibility: {
+    basis: 'declared-source-pair';
+    relationship: 'opaque-structural-match';
+  };
+};
+
 export type WorkspaceExportManifest = {
   schemaVersion: 1 | 2;
   mode: 'experimental-best-effort';
@@ -91,6 +105,7 @@ export type WorkspaceExportManifest = {
   };
   completeness: 'complete' | 'partial';
   dependencies: string[];
+  landingPageTemplatePairs?: LandingPageTemplatePair[];
   externalReferences: OpaqueCmsReference[];
   items: WorkspaceExportManifestItem[];
 };
@@ -162,6 +177,9 @@ export function assertWorkspaceExportManifest(
       'provenance',
       'completeness',
       'dependencies',
+      ...(typeof value === 'object' && value !== null && 'landingPageTemplatePairs' in value
+        ? ['landingPageTemplatePairs']
+        : []),
       'externalReferences',
       'items',
     ],
@@ -234,6 +252,7 @@ export function assertWorkspaceExportManifest(
       'manifest.dependencies must be empty while dependency discovery is unavailable',
     );
   }
+  assertLandingPageTemplatePairs(value);
   let previousReference = '';
   const referenceIds = new Set<string>();
   for (const [index, reference] of value.externalReferences.entries()) {
@@ -281,6 +300,65 @@ export function assertWorkspaceExportManifest(
   if (value.schemaVersion === 2) assertManifestMediaIntegrity(value as WorkspaceExportManifest);
   if (value.completeness === 'complete' && hasAuthoritativeIncompleteness(value)) {
     throw new TypeError('manifest.completeness contradicts authoritative incompleteness evidence');
+  }
+}
+
+function assertLandingPageTemplatePairs(value: Record<string, unknown>): void {
+  if (!('landingPageTemplatePairs' in value)) return;
+  if (
+    !Array.isArray(value.landingPageTemplatePairs) ||
+    value.landingPageTemplatePairs.length === 0
+  ) {
+    throw new TypeError('manifest.landingPageTemplatePairs must be a nonempty array');
+  }
+  const entries = new Set(
+    (value.entries as WorkspaceExportManifest['entries']).map(({ variantId }) => variantId),
+  );
+  let previous = '';
+  const pageVariantIds = new Set<string>();
+  for (const [index, pair] of value.landingPageTemplatePairs.entries()) {
+    const label = `manifest.landingPageTemplatePairs[${index}]`;
+    assertExactKeys(pair, ['page', 'template', 'compatibility'], label);
+    assertExactKeys(pair.page, ['apiName', 'contentKey', 'variantId'], `${label}.page`);
+    assertExactKeys(
+      pair.template,
+      ['requestedTitle', 'apiName', 'contentKey', 'variantId'],
+      `${label}.template`,
+    );
+    assertExactKeys(pair.compatibility, ['basis', 'relationship'], `${label}.compatibility`);
+    for (const [field, fieldValue] of Object.entries(pair.page)) {
+      assertNonemptyString(fieldValue, `${label}.page.${field}`);
+    }
+    for (const [field, fieldValue] of Object.entries(pair.template)) {
+      assertNonemptyString(fieldValue, `${label}.template.${field}`);
+    }
+    if (
+      pair.compatibility.basis !== 'declared-source-pair' ||
+      pair.compatibility.relationship !== 'opaque-structural-match'
+    ) {
+      throw new TypeError(`${label}.compatibility is unsupported`);
+    }
+    const pageVariantId = pair.page.variantId as string;
+    const templateVariantId = pair.template.variantId as string;
+    if (!entries.has(pageVariantId) || !entries.has(templateVariantId)) {
+      throw new TypeError(`${label} must bind exported item variants`);
+    }
+    if (pageVariantId === templateVariantId) {
+      throw new TypeError(`${label} must bind distinct page and template variants`);
+    }
+    if (pageVariantIds.has(pageVariantId)) {
+      throw new TypeError('manifest.landingPageTemplatePairs contains a duplicate page');
+    }
+    pageVariantIds.add(pageVariantId);
+    const sortKey = [
+      pair.page.apiName as string,
+      pair.template.requestedTitle as string,
+      pair.template.apiName as string,
+    ].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0) {
+      throw new TypeError('manifest.landingPageTemplatePairs must be sorted');
+    }
+    previous = sortKey;
   }
 }
 

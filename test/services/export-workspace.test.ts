@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   mkdir,
   mkdtemp,
@@ -14,6 +15,8 @@ import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/atomic-publish.js';
+import { bindLandingPageTemplatePairs } from '../../src/services/landing-page-pair-export.js';
+import type { CmsRecord } from '../../src/services/read.js';
 import {
   defaultWorkspaceDestination,
   exportWorkspace,
@@ -32,6 +35,29 @@ function failedRequest(message = 'detail failed'): FakeRequest<never> {
 
 function row(id: string, managedContentSpaceId = 'space') {
   return { id, managedContentSpaceId, type: 'ManagedContentVariantSearchResultRepresentation' };
+}
+
+function acceptedVariantAliases(variantId: string): CmsRecord[] {
+  return [
+    { id: variantId },
+    { managedContentVariantId: variantId },
+    { id: variantId, managedContentVariantId: variantId },
+  ];
+}
+
+function rejectedVariantAliases(variantId: string): CmsRecord[] {
+  return [
+    { id: variantId, managedContentVariantId: `different-${variantId}` },
+    {},
+    { id: `different-${variantId}`, managedContentVariantId: `different-${variantId}` },
+  ];
+}
+
+function withVariantAliases(record: CmsRecord, fields: CmsRecord): CmsRecord {
+  const copy = { ...record };
+  delete copy.id;
+  delete copy.managedContentVariantId;
+  return { ...copy, ...fields };
 }
 
 function detail(id: string, workspaceId = 'space', overrides = {}) {
@@ -308,17 +334,13 @@ describe('workspace export service', () => {
         apiName: 'BlockTwo',
         contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
       }),
-      other: detail('other', 'space', {
-        apiName: 'Other',
-        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
-      }),
     };
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/items/search')) {
         const query = new URL(url, 'https://example.test').searchParams;
         expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__webFragment');
-        expect(query.get('queryTerm')).to.equal('BlockOne BlockTwo');
-        return fakeRequest({ items: [row('one'), row('two'), row('other')], total: 3 });
+        if (query.get('queryTerm') !== '*') return fakeRequest({ items: [], total: 0 });
+        return fakeRequest({ items: [row('one'), row('two')], total: 2 });
       }
       return fakeRequest(
         selectedDetails[
@@ -363,6 +385,548 @@ describe('workspace export service', () => {
         failure = error;
       }
       expect(failure).to.be.instanceOf(TypeError);
+    }
+  });
+
+  it('fails closed when exact web-fragment inventory completeness is not proven', async () => {
+    const selectedDetail = detail('match', 'space', {
+      apiName: 'MCNEXT_P4_Landing_Block_2026_09_27',
+      contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
+    });
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__webFragment');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({ items: [row('match')], total: 2 });
+      }
+      return fakeRequest(selectedDetail);
+    });
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'incomplete-web'), {
+        selection: {
+          contentType: 'sfdc_cms__webFragment',
+          apiNames: ['MCNEXT_P4_Landing_Block_2026_09_27'],
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(TypeError);
+    expect((failure as Error).message).to.equal(
+      'Exact component API names require a complete sfdc_cms__webFragment inventory for the requested workspace.',
+    );
+  });
+
+  it('exports exact email-fragment API names deterministically and scopes package references', async () => {
+    const selectedDetails = {
+      z: detail('z', 'space', {
+        apiName: 'FooterBlock',
+        contentId: 'footer-content',
+        contentKey: 'footer-key',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+      }),
+      a: detail('a', 'space', {
+        apiName: 'HeaderBlock',
+        contentId: 'header-content',
+        contentKey: 'header-key',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+      }),
+      unrelated: detail('unrelated', 'space', {
+        apiName: 'UnrelatedBlock',
+        contentBody: { image: { ref: { contentKey: 'image-key' } } },
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+        references: [{ id: 'unrelated-reference' }],
+      }),
+    };
+    const makeRequest = () =>
+      sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/items/search')) {
+          const query = new URL(url, 'https://example.test').searchParams;
+          expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__emailFragment');
+          if (query.get('queryTerm') !== '*') return fakeRequest({ items: [], total: 0 });
+          return fakeRequest(
+            pageNumber(url) === 0
+              ? { items: [row('z'), row('unrelated')], total: 3 }
+              : { items: [row('a')], total: 3 },
+          );
+        }
+        return fakeRequest(
+          selectedDetails[
+            decodeURIComponent(url.split('/').at(-1) ?? '') as keyof typeof selectedDetails
+          ],
+        );
+      });
+
+    const multiple = await exportWorkspace(
+      { request: makeRequest() },
+      'space',
+      path.join(root, 'selected-email-fragments'),
+      {
+        selection: {
+          contentType: 'sfdc_cms__emailFragment',
+          apiNames: ['FooterBlock', 'HeaderBlock'],
+        },
+      },
+    );
+    expect(multiple.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['a', 'z']);
+    expect(multiple.manifest.items.map(({ path: itemPath }) => itemPath)).to.deep.equal([
+      'items/a.json',
+      'items/z.json',
+    ]);
+    expect(multiple.manifest.externalReferences).to.have.length(2);
+    expect(multiple.manifest.externalReferences.map(({ source }) => source.sourceId)).to.deep.equal(
+      ['header-content', 'footer-content'],
+    );
+    expect(multiple.manifest.warnings.map(({ code }) => code)).not.to.include(
+      'REFERENCE_UNSUPPORTED',
+    );
+
+    const singleRequest = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/items/search')
+          ? fakeRequest({ items: [row('a')], total: 1 })
+          : fakeRequest(selectedDetails.a),
+      );
+    const single = await exportWorkspace(
+      { request: singleRequest },
+      'space',
+      path.join(root, 'selected-email-fragment'),
+      {
+        selection: { contentType: 'sfdc_cms__emailFragment', apiNames: ['HeaderBlock'] },
+      },
+    );
+    expect(single.manifest.entries).to.deep.equal([{ file: 'items/a.json', variantId: 'a' }]);
+  });
+
+  it('fails closed when exact email-fragment inventory completeness is not proven', async () => {
+    const selectedDetail = detail('match', 'space', {
+      apiName: 'ReusableBlock',
+      contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+    });
+    const cases: Array<{
+      name: string;
+      search: (page: number) => { items: ReturnType<typeof row>[]; total: number };
+      detail: (id: string) => FakeRequest<unknown>;
+    }> = [
+      {
+        name: 'bounded page capacity is below the advertised count',
+        search: (page) => ({ items: page === 0 ? [row('match')] : [], total: 250_001 }),
+        detail: () => fakeRequest(selectedDetail),
+      },
+      {
+        name: 'search terminates on a premature empty page',
+        search: (page) => ({ items: page === 0 ? [row('match')] : [], total: 2 }),
+        detail: () => fakeRequest(selectedDetail),
+      },
+      {
+        name: 'search makes no progress below the advertised count',
+        search: (page) => ({
+          items: page === 0 ? [row('match')] : [row('match'), row('match')],
+          total: 2,
+        }),
+        detail: () => fakeRequest(selectedDetail),
+      },
+      {
+        name: 'a rejected foreign search row is fatal even when valid local counts match',
+        search: () => ({
+          items: [row('match'), row('second-match'), row('foreign', 'other-space')],
+          total: 2,
+        }),
+        detail: () => fakeRequest(selectedDetail),
+      },
+      {
+        name: 'a detail request fails',
+        search: () => ({ items: [row('match'), row('unavailable')], total: 2 }),
+        detail: (id) => (id === 'match' ? fakeRequest(selectedDetail) : failedRequest()),
+      },
+      {
+        name: 'a detail belongs to a different workspace',
+        search: () => ({ items: [row('match'), row('foreign')], total: 2 }),
+        detail: (id) =>
+          fakeRequest(id === 'match' ? selectedDetail : detail('foreign', 'other-space')),
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/items/search')) {
+          return fakeRequest(testCase.search(pageNumber(url)));
+        }
+        return testCase.detail(decodeURIComponent(url.split('/').at(-1) ?? ''));
+      });
+      let failure: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, `incomplete-email-${index}`), {
+          selection: {
+            contentType: 'sfdc_cms__emailFragment',
+            apiNames: ['ReusableBlock'],
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure, testCase.name).to.be.instanceOf(TypeError);
+      expect((failure as Error).message, testCase.name).to.equal(
+        'Exact component API names require a complete sfdc_cms__emailFragment inventory for the requested workspace.',
+      );
+    }
+  });
+
+  it('rejects missing, ambiguous, and wrong-type email-fragment export selections', async () => {
+    const email = detail('email', 'space', {
+      apiName: 'ReusableBlock',
+      contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+    });
+    const cases = [
+      { details: [email], apiName: 'MissingBlock' },
+      { details: [email, { ...email, id: 'duplicate' }], apiName: 'ReusableBlock' },
+      {
+        details: [
+          detail('wrong-type', 'space', {
+            apiName: 'ReusableBlock',
+            contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
+          }),
+        ],
+        apiName: 'ReusableBlock',
+      },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/items/search')
+          ? fakeRequest({
+              items: testCase.details.map(({ id }) => row(id)),
+              total: testCase.details.length,
+            })
+          : fakeRequest(testCase.details.find(({ id }) => url.endsWith(id))),
+      );
+      let failure: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, `blocked-email-${index}`), {
+          selection: {
+            contentType: 'sfdc_cms__emailFragment',
+            apiNames: [testCase.apiName],
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(TypeError);
+      expect((failure as Error).message).to.include('sfdc_cms__emailFragment');
+    }
+  });
+
+  it('rejects empty or combined landing-page pair selection before transport', async () => {
+    const request = sinon.stub();
+    for (const options of [
+      { landingPagePairs: [] },
+      {
+        landingPagePairs: [{ page: { apiName: 'Page' }, template: { title: 'Template' } }],
+        selection: { contentType: 'sfdc_cms__landingPage', apiNames: ['Page'] },
+      },
+    ]) {
+      let failure: unknown;
+      try {
+        await exportWorkspace(
+          { request },
+          'space',
+          path.join(root, `invalid-${request.callCount}`),
+          options,
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(TypeError);
+    }
+    expect(request.notCalled).to.equal(true);
+  });
+
+  it('exports exact landing pages with title-resolved declared templates and deterministic pair integrity', async () => {
+    const page = detail('page-variant', 'space', {
+      apiName: 'LandingPageOne',
+      contentId: 'page-content',
+      contentKey: 'page-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPage' },
+      references: [
+        {
+          apiName: 'opaque-unreadable-value',
+          contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+        },
+      ],
+      title: 'Page One',
+    });
+    const template = detail('template-variant', 'space', {
+      apiName: 'CanonicalTemplateApi',
+      contentId: 'template-content',
+      contentKey: 'template-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+      title: 'Human Template Label',
+    });
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const type = new URL(url, 'https://example.test').searchParams.get('contentTypeFQN');
+        return fakeRequest(
+          type === 'sfdc_cms__landingPage'
+            ? { items: [row('page-variant')], total: 1 }
+            : { items: [row('template-variant')], total: 1 },
+        );
+      }
+      return fakeRequest(url.endsWith('page-variant') ? page : template);
+    });
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'paired'), {
+      landingPagePairs: [
+        { page: { apiName: 'LandingPageOne' }, template: { title: 'Human Template Label' } },
+      ],
+      generatedAt: '2026-09-30T00:00:00.000Z',
+    });
+
+    expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal([
+      'page-variant',
+      'template-variant',
+    ]);
+    expect(result.manifest.landingPageTemplatePairs).to.deep.equal([
+      {
+        page: {
+          apiName: 'LandingPageOne',
+          contentKey: 'page-key',
+          variantId: 'page-variant',
+        },
+        template: {
+          requestedTitle: 'Human Template Label',
+          apiName: 'CanonicalTemplateApi',
+          contentKey: 'template-key',
+          variantId: 'template-variant',
+        },
+        compatibility: {
+          basis: 'declared-source-pair',
+          relationship: 'opaque-structural-match',
+        },
+      },
+    ]);
+    expect(result.manifest.warnings.map(({ code }) => code)).to.include('REFERENCE_UNSUPPORTED');
+    expect(
+      result.manifest.externalReferences.some(({ kind }) => kind === 'cms.relationship'),
+    ).to.equal(true);
+    expect(result.manifestSha256).to.equal(
+      createHash('sha256')
+        .update(await readFile(path.join(root, 'paired/manifest.json')))
+        .digest('hex'),
+    );
+  });
+
+  it('normalizes strict Managed Content variant aliases in landing-page pair details', () => {
+    const pageBase = detail('page-variant', 'space', {
+      apiName: 'LandingPageOne',
+      contentKey: 'page-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPage' },
+      references: [{ contentTypeFQN: 'sfdc_cms__landingPageTemplate' }],
+      title: 'Page One',
+    });
+    const template = detail('template-variant', 'space', {
+      apiName: 'CanonicalTemplateApi',
+      contentKey: 'template-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+      title: 'Human Template Label',
+    });
+    const selectors = [
+      { page: { apiName: 'LandingPageOne' }, template: { title: 'Human Template Label' } },
+    ];
+    for (const fields of acceptedVariantAliases('page-variant')) {
+      const pairs = bindLandingPageTemplatePairs(
+        selectors,
+        new Map<string, CmsRecord>([
+          ['page-variant', withVariantAliases(pageBase, fields)],
+          ['template-variant', template],
+        ]),
+      );
+      expect(pairs[0].page.variantId).to.equal('page-variant');
+    }
+    for (const fields of acceptedVariantAliases('template-variant')) {
+      const pairs = bindLandingPageTemplatePairs(
+        selectors,
+        new Map<string, CmsRecord>([
+          ['page-variant', pageBase],
+          ['template-variant', withVariantAliases(template, fields)],
+        ]),
+      );
+      expect(pairs[0].template.variantId).to.equal('template-variant');
+    }
+    for (const fields of rejectedVariantAliases('page-variant')) {
+      expect(() =>
+        bindLandingPageTemplatePairs(
+          selectors,
+          new Map<string, CmsRecord>([
+            ['page-variant', withVariantAliases(pageBase, fields)],
+            ['template-variant', template],
+          ]),
+        ),
+      ).to.throw(TypeError);
+    }
+    for (const fields of rejectedVariantAliases('template-variant')) {
+      expect(() =>
+        bindLandingPageTemplatePairs(
+          selectors,
+          new Map<string, CmsRecord>([
+            ['page-variant', pageBase],
+            ['template-variant', withVariantAliases(template, fields)],
+          ]),
+        ),
+      ).to.throw(TypeError);
+    }
+  });
+
+  it('rejects conflicting Managed Content variant aliases in landing-page pair details', async () => {
+    const page = detail('page-variant', 'space', {
+      apiName: 'LandingPageOne',
+      contentKey: 'page-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPage' },
+      managedContentVariantId: 'different-page-variant',
+      references: [{ contentTypeFQN: 'sfdc_cms__landingPageTemplate' }],
+      title: 'Page One',
+    });
+    const template = detail('template-variant', 'space', {
+      apiName: 'CanonicalTemplateApi',
+      contentKey: 'template-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+      title: 'Human Template Label',
+    });
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const type = new URL(url, 'https://example.test').searchParams.get('contentTypeFQN');
+        return fakeRequest({
+          items: [row(type === 'sfdc_cms__landingPage' ? 'page-variant' : 'template-variant')],
+          total: 1,
+        });
+      }
+      return fakeRequest(url.endsWith('page-variant') ? page : template);
+    });
+
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'conflicting-pair'), {
+        landingPagePairs: [
+          { page: { apiName: 'LandingPageOne' }, template: { title: 'Human Template Label' } },
+        ],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(TypeError);
+  });
+
+  it('supports shared templates and fails closed on invalid landing-page pair resolution', async () => {
+    const page = (id: string, apiName: string, descriptors = 1, workspace = 'space') =>
+      detail(id, workspace, {
+        apiName,
+        contentKey: `${id}-key`,
+        contentType: { fullyQualifiedName: 'sfdc_cms__landingPage' },
+        references: Array.from({ length: descriptors }, () => ({
+          contentTypeFQN: 'sfdc_cms__landingPageTemplate',
+          apiName: 'opaque-value',
+        })),
+        title: apiName,
+      });
+    const template = detail('template', 'space', {
+      apiName: 'CanonicalTemplate',
+      contentKey: 'template-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+      title: 'Shared Template',
+    });
+    const validDetails = [page('page-a', 'PageA'), page('page-b', 'PageB'), template];
+    const validRequest = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const type = new URL(url, 'https://example.test').searchParams.get('contentTypeFQN');
+        const values =
+          type === 'sfdc_cms__landingPage' ? validDetails.slice(0, 2) : validDetails.slice(2);
+        return fakeRequest({ items: values.map(({ id }) => row(id)), total: values.length });
+      }
+      return fakeRequest(validDetails.find(({ id }) => url.endsWith(id)));
+    });
+    const valid = await exportWorkspace(
+      { request: validRequest },
+      'space',
+      path.join(root, 'shared'),
+      {
+        landingPagePairs: [
+          { page: { apiName: 'PageB' }, template: { title: 'Shared Template' } },
+          { page: { apiName: 'PageA' }, template: { title: 'Shared Template' } },
+        ],
+      },
+    );
+    expect(valid.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal([
+      'page-a',
+      'page-b',
+      'template',
+    ]);
+    expect(
+      valid.manifest.landingPageTemplatePairs?.map(({ page: value }) => value.apiName),
+    ).to.deep.equal(['PageA', 'PageB']);
+
+    const cases = [
+      {
+        name: 'missing page',
+        pages: [page('page-a', 'PageA')],
+        templates: [template],
+        api: 'Missing',
+      },
+      {
+        name: 'duplicate page',
+        pages: [page('page-a', 'PageA'), page('page-b', 'PageA')],
+        templates: [template],
+        api: 'PageA',
+      },
+      {
+        name: 'missing title',
+        pages: [page('page-a', 'PageA')],
+        templates: [template],
+        api: 'PageA',
+        title: 'Missing',
+      },
+      {
+        name: 'duplicate title',
+        pages: [page('page-a', 'PageA')],
+        templates: [template, { ...template, id: 'template-2' }],
+        api: 'PageA',
+      },
+      {
+        name: 'structural mismatch',
+        pages: [page('page-a', 'PageA', 0)],
+        templates: [template],
+        api: 'PageA',
+      },
+      {
+        name: 'multiple relationships',
+        pages: [page('page-a', 'PageA', 2)],
+        templates: [template],
+        api: 'PageA',
+      },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const details = [...testCase.pages, ...testCase.templates];
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/items/search')) {
+          const type = new URL(url, 'https://example.test').searchParams.get('contentTypeFQN');
+          const values = type === 'sfdc_cms__landingPage' ? testCase.pages : testCase.templates;
+          return fakeRequest({ items: values.map(({ id }) => row(id)), total: values.length });
+        }
+        return fakeRequest(details.find(({ id }) => url.endsWith(id)));
+      });
+      let failure: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, `invalid-pair-${index}`), {
+          landingPagePairs: [
+            {
+              page: { apiName: testCase.api },
+              template: { title: testCase.title ?? 'Shared Template' },
+            },
+          ],
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure, testCase.name).to.be.instanceOf(TypeError);
     }
   });
 

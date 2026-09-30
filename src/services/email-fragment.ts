@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
 import type { PlannedImportIdentities } from './import-identities.js';
+import { assertCanonicalContentKey } from './content-key.js';
 
 const EMAIL_FRAGMENT_TYPE = 'sfdc_cms__emailFragment';
 const BLOCK_KEY = 'sfdc_cms:block';
@@ -220,7 +221,13 @@ export function planEmailFragmentCopies(
     if (!record(row.target))
       throw new TypeError(`Email fragment mapping ${index}.target must be an object`);
     exactKeys(row.target, ['contentKey', 'apiName'], `Email fragment mapping ${index}.target`);
-    identity(row.target.contentKey, `Email fragment mapping ${index}.target.contentKey`);
+    if (typeof row.target.contentKey !== 'string') {
+      throw new TypeError(`Email fragment mapping ${index}.target.contentKey must be a string`);
+    }
+    assertCanonicalContentKey(
+      row.target.contentKey,
+      `Email fragment mapping ${index}.target.contentKey`,
+    );
     identity(row.target.apiName, `Email fragment mapping ${index}.target.apiName`);
     const contentKey = row.target.contentKey;
     const apiName = row.target.apiName;

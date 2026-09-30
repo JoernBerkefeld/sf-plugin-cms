@@ -128,6 +128,7 @@ export type WorkspaceImportResult = {
   };
   mappings: WorkspaceImportMapping[];
   references: WorkspaceImportReference[];
+  templatePrerequisites?: readonly unknown[];
 };
 
 function assertComponentIdentity(
@@ -269,9 +270,17 @@ export function assertWorkspaceImageImportResultV2(
 export function assertWorkspaceImportResult(
   value: unknown,
 ): asserts value is WorkspaceImportResult {
+  const result = value as Partial<WorkspaceImportResult>;
   assertExactKeys(
     value,
-    ['sourcePackage', 'target', 'integrity', 'mappings', 'references'],
+    [
+      'sourcePackage',
+      'target',
+      'integrity',
+      'mappings',
+      'references',
+      ...(result.templatePrerequisites === undefined ? [] : ['templatePrerequisites']),
+    ],
     'result',
   );
   assertExactKeys(value.sourcePackage, ['manifestSha256', 'workspaceId'], 'result.sourcePackage');
@@ -298,6 +307,12 @@ export function assertWorkspaceImportResult(
   }
   if (!Array.isArray(value.mappings) || !Array.isArray(value.references)) {
     throw new TypeError('result mappings/references arrays are required');
+  }
+  if (
+    value.templatePrerequisites !== undefined &&
+    (!Array.isArray(value.templatePrerequisites) || value.templatePrerequisites.length === 0)
+  ) {
+    throw new TypeError('result.templatePrerequisites must be a nonempty array when present');
   }
   assertMappings(value.mappings);
   assertReferences(value.references);

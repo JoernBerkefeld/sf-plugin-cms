@@ -845,18 +845,18 @@ describe('workspace import core', () => {
     const mappings = [
       {
         sourceContentKey: 'key',
-        contentKey: 'new-key',
+        contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
         apiName: 'new_api',
         urlNames: { en: 'new-en', fr: 'new-fr' },
       },
     ];
     const planned = planImportIdentities(coherent, mappings);
-    expect(planned.targetContentKeys).to.deep.equal(['new-key']);
+    expect(planned.targetContentKeys).to.deep.equal(['MCAAAAAAAAAAAAAAAAAAAAAAAAAA']);
     expect(
       planned.items.map(({ contentKey, apiName, urlName }) => ({ contentKey, apiName, urlName })),
     ).to.deep.equal([
-      { contentKey: 'new-key', apiName: 'new_api', urlName: 'new-en' },
-      { contentKey: 'new-key', apiName: 'new_api', urlName: 'new-fr' },
+      { contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA', apiName: 'new_api', urlName: 'new-en' },
+      { contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA', apiName: 'new_api', urlName: 'new-fr' },
     ]);
     expect(planned.items[0].contentBody).to.deep.equal({
       ...body,
@@ -885,7 +885,7 @@ describe('workspace import core', () => {
       const identityMappings = [
         {
           sourceContentKey: 'key',
-          contentKey: 'fresh-key',
+          contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
           apiName: 'fresh_api',
           urlNames: { en: 'fresh-en' },
         },
@@ -917,7 +917,7 @@ describe('workspace import core', () => {
       ]);
       expect(request.callCount).to.equal(1);
       expect(request.firstCall.args[0]).to.include({ method: 'GET' });
-      expect(request.firstCall.args[0].url).to.include('/fresh-key');
+      expect(request.firstCall.args[0].url).to.include('/MCAAAAAAAAAAAAAAAAAAAAAAAAAA');
       expect(JSON.stringify(loaded)).to.equal(before);
       expect(JSON.stringify(await loadWorkspaceExport(source))).to.equal(before);
       expect(await readdir(root)).to.deep.equal(['source']);
@@ -929,7 +929,7 @@ describe('workspace import core', () => {
     const loaded = await loadWorkspaceExport(source);
     const mapping = {
       sourceContentKey: 'key',
-      contentKey: 'new-key',
+      contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
       apiName: 'new_api',
       urlNames: { en: 'new-en', fr: 'new-fr' },
     };
@@ -963,7 +963,7 @@ describe('workspace import core', () => {
     const mapping = [
       {
         sourceContentKey: 'key',
-        contentKey: 'new-key',
+        contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
         apiName: 'new_api',
         urlNames: { en: 'new-en' },
       },
@@ -991,7 +991,7 @@ describe('workspace import core', () => {
       ],
     } as LoadedWorkspaceExport;
     expect(planImportIdentities(imageSource, mapping).items[0].contentBody).to.deep.equal({
-      source: { type: 'imageReference', ref: { contentKey: 'new-key' } },
+      source: { type: 'imageReference', ref: { contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA' } },
     });
     const wrongType = {
       ...imageSource,
@@ -1011,13 +1011,13 @@ describe('workspace import core', () => {
     const loaded = await loadWorkspaceExport(source);
     const first = {
       sourceContentKey: 'key',
-      contentKey: 'new-key',
+      contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
       apiName: 'new_api',
       urlNames: { en: 'new-en' },
     };
     const second = {
       sourceContentKey: 'other',
-      contentKey: 'new-other',
+      contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
       apiName: 'new_other',
       urlNames: { en: 'new-other-en' },
     };
@@ -1050,7 +1050,7 @@ describe('workspace import core', () => {
         identityMappings: [
           {
             sourceContentKey: 'key',
-            contentKey: 'fresh-key',
+            contentKey: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
             apiName: 'fresh_api',
             urlNames: { en: 'fresh-en', fr: 'fresh-fr' },
           },
@@ -1061,7 +1061,7 @@ describe('workspace import core', () => {
     }
     expect((failure as Error).message).to.include('uniqueness cannot be verified');
     expect(request.callCount).to.equal(1);
-    expect(request.firstCall.args[0].url).to.include('/fresh-key');
+    expect(request.firstCall.args[0].url).to.include('/MCAAAAAAAAAAAAAAAAAAAAAAAAAA');
     expect(request.firstCall.args[0].method).to.equal('GET');
     expect(JSON.stringify(loaded)).to.equal(before);
     expect(await readdir(root)).to.deep.equal(['source']);

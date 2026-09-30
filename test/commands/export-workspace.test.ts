@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TestContext } from '@salesforce/core/testSetup';
@@ -34,9 +34,11 @@ describe('CMS export workspace command', () => {
       'workspace-id',
       'workspace-name',
       'workspace-type',
+      'email-fragment-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'landing-page-pair-map',
       'experimental-media',
       'output-dir',
       'editable-dir',
@@ -48,26 +50,52 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['contract-version'].default).to.equal(1);
     expect(ExportWorkspace.flags.all.required).not.to.equal(true);
     expect(ExportWorkspace.flags['workspace-type'].dependsOn).to.deep.equal(['all']);
-    expect(ExportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
+    expect(ExportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
       'all',
+      'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'landing-page-pair-map',
+    ]);
+    expect(ExportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
+      'all',
+      'email-fragment-map',
+      'landing-page-template-map',
+      'landing-page-map',
+      'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
       'all',
+      'email-fragment-map',
       'web-fragment-map',
       'landing-page-map',
+      'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
       'all',
+      'email-fragment-map',
       'web-fragment-map',
       'landing-page-template-map',
+      'landing-page-pair-map',
     ]);
+    expect(ExportWorkspace.flags['landing-page-pair-map'].exclusive).to.deep.equal([
+      'all',
+      'email-fragment-map',
+      'web-fragment-map',
+      'landing-page-template-map',
+      'landing-page-map',
+    ]);
+    expect(ExportWorkspace.flags['email-fragment-map'].summary).to.match(
+      /exact sfdc_cms__emailFragment API names/iu,
+    );
     expect(ExportWorkspace.flags['landing-page-template-map'].summary).to.match(
       /exact sfdc_cms__landingPageTemplate API names/iu,
     );
     expect(ExportWorkspace.flags['landing-page-map'].summary).to.match(
       /exact sfdc_cms__landingPage API names/iu,
+    );
+    expect(ExportWorkspace.flags['landing-page-pair-map'].summary).to.match(
+      /exact source template title/iu,
     );
     expect(ExportWorkspace.flags['experimental-media'].exclusive).to.deep.equal(['all']);
     expect(ExportWorkspace.flags['experimental-media'].summary).to.match(/single-workspace/iu);
@@ -75,6 +103,241 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.description).to.match(
       /experimental.*not a complete or guaranteed backup/iu,
     );
+  });
+
+  it('wires the email-fragment JSON selection flag to the exact export type', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'email-fragments.json');
+    await writeFile(selectionFile, '["FooterBlock","HeaderBlock"]\n', 'utf8');
+    const destination = path.join(root, 'export');
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__emailFragment');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({
+          items: [
+            {
+              id: 'z',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+            {
+              id: 'a',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+          total: 2,
+        });
+      }
+      const id = decodeURIComponent(url.split('/').at(-1) ?? '');
+      return fakeRequest({
+        apiName: id === 'a' ? 'HeaderBlock' : 'FooterBlock',
+        contentId: `${id}-content`,
+        contentKey: `${id}-key`,
+        contentSpace: { id: 'space' },
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailFragment' },
+        id,
+      });
+    });
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': destination,
+          'email-fragment-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+
+    expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['a', 'z']);
+    expect(result.manifest.expectedCount).to.equal(2);
+    expect(result.manifest.exportedCount).to.equal(2);
+  });
+
+  it('wires the web-fragment JSON selection flag through wildcard inventory resolution', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-web-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'web-fragments.json');
+    await writeFile(selectionFile, '["MCNEXT_P4_Landing_Block_2026_09_27"]\n', 'utf8');
+    const destination = path.join(root, 'export');
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__webFragment');
+        if (query.get('queryTerm') !== '*') return fakeRequest({ items: [], total: 0 });
+        return fakeRequest({
+          items: [
+            {
+              id: 'web-draft',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+          total: 1,
+        });
+      }
+      return fakeRequest({
+        apiName: 'MCNEXT_P4_Landing_Block_2026_09_27',
+        contentId: 'web-content',
+        contentKey: 'web-key',
+        contentSpace: { id: 'space' },
+        contentType: { fullyQualifiedName: 'sfdc_cms__webFragment' },
+        id: 'web-draft',
+        status: 'Draft',
+      });
+    });
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': destination,
+          'web-fragment-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+
+    expect(result.manifest.entries).to.deep.equal([
+      { file: 'items/web-draft.json', variantId: 'web-draft' },
+    ]);
+    expect(result.manifest.expectedCount).to.equal(1);
+    expect(result.manifest.exportedCount).to.equal(1);
+  });
+
+  it('wires title-resolved landing-page pairs and records canonical template identity', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-pair-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'pairs.json');
+    await writeFile(
+      selectionFile,
+      `${JSON.stringify([
+        {
+          page: { apiName: 'SourcePage' },
+          template: { title: 'Human Template Label' },
+        },
+      ])}\n`,
+      'utf8',
+    );
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const type = new URL(url, 'https://example.test').searchParams.get('contentTypeFQN');
+        return fakeRequest(
+          type === 'sfdc_cms__landingPage'
+            ? {
+                items: [
+                  {
+                    id: 'page',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                total: 1,
+              }
+            : {
+                items: [
+                  {
+                    id: 'template',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                total: 1,
+              },
+        );
+      }
+      return fakeRequest(
+        url.endsWith('/page')
+          ? {
+              apiName: 'SourcePage',
+              contentKey: 'page-key',
+              contentSpace: { id: 'space' },
+              contentType: { fullyQualifiedName: 'sfdc_cms__landingPage' },
+              id: 'page',
+              references: [
+                {
+                  apiName: 'opaque-value',
+                  contentTypeFQN: 'sfdc_cms__landingPageTemplate',
+                },
+              ],
+            }
+          : {
+              apiName: 'CanonicalTemplate',
+              contentKey: 'template-key',
+              contentSpace: { id: 'space' },
+              contentType: { fullyQualifiedName: 'sfdc_cms__landingPageTemplate' },
+              id: 'template',
+              title: 'Human Template Label',
+            },
+      );
+    });
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': path.join(root, 'export'),
+          'landing-page-pair-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+    expect(result.manifest.landingPageTemplatePairs?.[0].template).to.deep.include({
+      requestedTitle: 'Human Template Label',
+      apiName: 'CanonicalTemplate',
+      contentKey: 'template-key',
+      variantId: 'template',
+    });
+  });
+
+  it('rejects malformed email-fragment selection JSON before export search', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-selection-command-'));
+    temporaryDirectories.push(root);
+    for (const [index, json] of ['{}', '["Valid",1]'].entries()) {
+      const selectionFile = path.join(root, `invalid-${index}.json`);
+      await writeFile(selectionFile, `${json}\n`, 'utf8');
+      const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
+      const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'workspace-id': 'space',
+            'output-dir': path.join(root, `export-${index}`),
+            'email-fragment-map': selectionFile,
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      });
+      let failure: unknown;
+      try {
+        await command.run();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(TypeError);
+      expect((failure as Error).message).to.include('JSON array of API-name strings');
+      expect(request.calledOnce).to.equal(true);
+    }
   });
 
   it('rejects invalid editable flags and both overlap directions before org access or writes', async () => {

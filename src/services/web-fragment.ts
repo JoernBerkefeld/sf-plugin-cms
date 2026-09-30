@@ -2,6 +2,7 @@ import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
 import type { PlannedImportIdentities } from './import-identities.js';
+import { assertCanonicalContentKey } from './content-key.js';
 
 const WEB_FRAGMENT_TYPE = 'sfdc_cms__webFragment';
 const DATA_GRAPH_PROVIDER = 'sfdc_cms__dataGraphDataProvider';
@@ -17,7 +18,15 @@ const BODY_KEYS = [
 const BACKGROUND_IMAGE = { position: 'center center', repeat: 'no-repeat', size: 'cover' };
 
 type JsonRecord = Record<string, unknown>;
-type QueryConnection = { readonly query?: Connection['query'] };
+type RequestConnection = Pick<Connection, 'request'> & Partial<Pick<Connection, 'version'>>;
+
+export type DataGraphValidationEvidence = {
+  readonly url: string;
+  readonly name?: string;
+  readonly dataspaceName?: string;
+  readonly status?: string;
+  readonly failure?: string;
+};
 
 export type WebFragmentDataGraphPrerequisite = {
   readonly sourceDeveloperName: string;
@@ -26,6 +35,7 @@ export type WebFragmentDataGraphPrerequisite = {
   readonly targetDataSpace: string;
   readonly resolution: 'preserved' | 'explicit-map';
   validationStatus?: 'pending' | 'passed' | 'failed';
+  validationEvidence?: DataGraphValidationEvidence;
 };
 
 export type PlannedWebFragmentCopies = PlannedImportIdentities & {
@@ -194,7 +204,11 @@ export function planWebFragmentCopies(
     if (!record(row.target))
       throw new TypeError(`Web fragment mapping ${index}.target must be an object`);
     exactKeys(row.target, ['contentKey', 'apiName'], `Web fragment mapping ${index}.target`);
-    identifier(row.target.contentKey, `Web fragment mapping ${index}.target.contentKey`);
+    nonempty(row.target.contentKey, `Web fragment mapping ${index}.target.contentKey`);
+    assertCanonicalContentKey(
+      row.target.contentKey,
+      `Web fragment mapping ${index}.target.contentKey`,
+    );
     identifier(row.target.apiName, `Web fragment mapping ${index}.target.apiName`);
     const contentKey = row.target.contentKey;
     const apiName = row.target.apiName;
@@ -279,41 +293,77 @@ export function planWebFragmentCopies(
   };
 }
 
-function soqlString(value: string): string {
-  return `'${value.replaceAll('\\', '\\\\').replaceAll("'", String.raw`\'`)}'`;
-}
-
 /**
- * Prove each exact target Data Graph developer-name/data-space pair exists uniquely.
- * @param {QueryConnection} connection - Destination org query transport.
+ * Prove each exact target Data Graph developer-name/data-space pair is ready for use.
+ * @param {RequestConnection} connection - Destination org request transport and selected version.
  * @param {readonly WebFragmentDataGraphPrerequisite[]} prerequisites - Exact target prerequisites.
- * @returns {Promise<void>} Fulfilled only when every prerequisite resolves exactly once.
+ * @returns {Promise<void>} Fulfilled only when every named response qualifies exactly.
  */
 export async function validateDataGraphPrerequisites(
-  connection: QueryConnection,
+  connection: RequestConnection,
   prerequisites: readonly WebFragmentDataGraphPrerequisite[],
 ): Promise<void> {
-  if (connection.query === undefined) {
-    throw new TypeError('Destination Data Graph prerequisites cannot be queried');
+  if (typeof connection.version !== 'string' || connection.version.trim().length === 0) {
+    throw new TypeError('Destination connection must provide its selected API version');
   }
-  const unique = new Map(
-    prerequisites.map((value) => [`${value.targetDeveloperName}\0${value.targetDataSpace}`, value]),
-  );
-  for (const prerequisite of unique.values()) {
-    const result = await connection.query<{ DeveloperName?: string; DataSpaceDevName?: string }>(
-      `SELECT DeveloperName, DataSpaceDevName FROM DataGraph WHERE DeveloperName = ${soqlString(prerequisite.targetDeveloperName)} AND DataSpaceDevName = ${soqlString(prerequisite.targetDataSpace)}`,
-    );
-    const matches = result.records.filter(
-      (record) =>
-        record.DeveloperName === prerequisite.targetDeveloperName &&
-        record.DataSpaceDevName === prerequisite.targetDataSpace,
-    );
-    if (result.totalSize !== 1 || result.records.length !== 1 || matches.length !== 1) {
-      prerequisite.validationStatus = 'failed';
+  const groups = new Map<string, WebFragmentDataGraphPrerequisite[]>();
+  for (const prerequisite of prerequisites) {
+    const key = `${prerequisite.targetDeveloperName}\0${prerequisite.targetDataSpace}`;
+    const group = groups.get(key) ?? [];
+    group.push(prerequisite);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    const prerequisite = group[0];
+    const url = `/services/data/v${connection.version}/ssot/data-graphs/${encodeURIComponent(prerequisite.targetDeveloperName)}`;
+    let response: unknown;
+    try {
+      response = await connection.request({ method: 'GET', url });
+    } catch (error) {
+      const evidence: DataGraphValidationEvidence = {
+        url,
+        failure: error instanceof Error ? error.message : String(error),
+      };
+      for (const occurrence of group) {
+        occurrence.validationStatus = 'failed';
+        occurrence.validationEvidence = evidence;
+      }
       throw new TypeError(
-        `Data Graph prerequisite must resolve exactly once: ${prerequisite.targetDeveloperName}/${prerequisite.targetDataSpace}`,
+        `Data Graph prerequisite request failed: ${prerequisite.targetDeveloperName}/${prerequisite.targetDataSpace}`,
+        { cause: error },
       );
     }
-    prerequisite.validationStatus = 'passed';
+
+    const evidence: DataGraphValidationEvidence = {
+      url,
+      ...(record(response) && typeof response.name === 'string' ? { name: response.name } : {}),
+      ...(record(response) && typeof response.dataspaceName === 'string'
+        ? { dataspaceName: response.dataspaceName }
+        : {}),
+      ...(record(response) && typeof response.status === 'string'
+        ? { status: response.status }
+        : {}),
+    };
+    const qualifies =
+      record(response) &&
+      typeof response.name === 'string' &&
+      response.name.length > 0 &&
+      response.name === prerequisite.targetDeveloperName &&
+      typeof response.dataspaceName === 'string' &&
+      response.dataspaceName.length > 0 &&
+      response.dataspaceName === prerequisite.targetDataSpace &&
+      typeof response.status === 'string' &&
+      response.status.trim().length > 0 &&
+      ['ready', 'active'].includes(response.status.trim().toLowerCase());
+    for (const occurrence of group) {
+      occurrence.validationStatus = qualifies ? 'passed' : 'failed';
+      occurrence.validationEvidence = evidence;
+    }
+    if (!qualifies) {
+      throw new TypeError(
+        `Data Graph prerequisite response did not qualify: ${prerequisite.targetDeveloperName}/${prerequisite.targetDataSpace}`,
+      );
+    }
   }
 }

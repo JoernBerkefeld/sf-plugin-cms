@@ -32,9 +32,19 @@ import {
   EXPERIMENTAL_MEDIA_POLICY,
   type ExperimentalMediaDownloadOptions,
 } from '../transport/experimental-media.js';
+import {
+  bindLandingPageTemplatePairs,
+  LANDING_PAGE_TEMPLATE_TYPE,
+  LANDING_PAGE_TYPE,
+  type LandingPagePairSelector,
+} from './landing-page-pair-export.js';
 
 const PAGE_SIZE = 250;
 const ABSOLUTE_PAGE_CAP = 1000;
+const INVENTORY_EXACT_API_NAME_TYPES = new Set([
+  'sfdc_cms__emailFragment',
+  'sfdc_cms__webFragment',
+]);
 
 function mediaByteCap(value: number | undefined, maximum: number, label: string): number {
   const configured = value ?? maximum;
@@ -80,6 +90,7 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
     readonly contentType: string;
     readonly apiNames: readonly string[];
   };
+  landingPagePairs?: readonly LandingPagePairSelector[];
   atomicPublish?: DirectoryPublishOptions &
     CleanupOptions & {
       readonly makeTemporaryDirectory?: typeof mkdtemp;
@@ -321,6 +332,12 @@ export async function exportWorkspace(
   if (await exists(destination))
     throw new Error(`Export destination already exists: ${destination}`);
   const selection = options.selection;
+  if (selection !== undefined && options.landingPagePairs !== undefined) {
+    throw new TypeError('Component export selection modes are mutually exclusive');
+  }
+  if (options.landingPagePairs !== undefined && options.landingPagePairs.length === 0) {
+    throw new TypeError('Landing-page pair selection requires one or more pairs');
+  }
   if (selection !== undefined) {
     if (!nonemptyString(selection.contentType) || !Array.isArray(selection.apiNames)) {
       throw new TypeError('Component export selection is malformed');
@@ -348,64 +365,87 @@ export async function exportWorkspace(
   const candidates = new Map<string, SearchRow>();
   let expectedCount = 0;
   let pagesRequested = 0;
-  let page = 0;
-  let pageLimit = 1;
+  const pairSelection = options.landingPagePairs;
+  const inventoryExactApiNames =
+    selection !== undefined && INVENTORY_EXACT_API_NAME_TYPES.has(selection.contentType);
+  let inventoryExceedsPageCapacity = false;
+  const searchTypes =
+    pairSelection === undefined
+      ? [selection?.contentType]
+      : [LANDING_PAGE_TYPE, LANDING_PAGE_TEMPLATE_TYPE];
 
-  while (page < pageLimit) {
-    const response = await requestJson<unknown>(
-      connection,
-      getSelectedOperation('workspace.variant.search'),
-      {
-        query: {
-          contentSpaceOrFolderIds: [workspaceId],
-          ...(selection === undefined ? {} : { contentTypeFQN: selection.contentType }),
-          languages: ['All'],
-          page,
-          pageSize: PAGE_SIZE,
-          queryTerm: selection === undefined ? '*' : selection.apiNames.join(' '),
+  for (const searchType of searchTypes) {
+    let searchExpectedCount = 0;
+    let page = 0;
+    let pageLimit = 1;
+    let searchCandidateCount = 0;
+    while (page < pageLimit) {
+      const response = await requestJson<unknown>(
+        connection,
+        getSelectedOperation('workspace.variant.search'),
+        {
+          query: {
+            contentSpaceOrFolderIds: [workspaceId],
+            ...(searchType === undefined ? {} : { contentTypeFQN: searchType }),
+            languages: ['All'],
+            page,
+            pageSize: PAGE_SIZE,
+            queryTerm:
+              pairSelection !== undefined || selection === undefined || inventoryExactApiNames
+                ? '*'
+                : selection.apiNames.join(' '),
+          },
         },
-      },
-      options,
-    );
-    pagesRequested += 1;
-    const items = responseItems(response.data);
-    if (page === 0) {
-      expectedCount = responseCount(response.data);
-      pageLimit = Math.min(
-        ABSOLUTE_PAGE_CAP,
-        Math.max(1, Math.ceil(expectedCount / PAGE_SIZE) + 2),
+        options,
+      );
+      pagesRequested += 1;
+      const items = responseItems(response.data);
+      if (page === 0) {
+        searchExpectedCount = responseCount(response.data);
+        expectedCount += searchExpectedCount;
+        inventoryExceedsPageCapacity ||= searchExpectedCount > ABSOLUTE_PAGE_CAP * PAGE_SIZE;
+        pageLimit = Math.min(
+          ABSOLUTE_PAGE_CAP,
+          Math.max(1, Math.ceil(searchExpectedCount / PAGE_SIZE) + 2),
+        );
+      }
+
+      let additions = 0;
+      for (const item of items) {
+        const row = searchRow(item);
+        if (!row) continue;
+        if (row.managedContentSpaceId !== workspaceId) {
+          rejected.add(row.id);
+          ownershipMismatchIds.add(row.id);
+          continue;
+        }
+        if (candidates.has(row.id)) {
+          duplicateIds.add(row.id);
+        } else {
+          candidates.set(row.id, row);
+          searchCandidateCount += 1;
+          additions += 1;
+        }
+      }
+
+      if (searchCandidateCount >= searchExpectedCount) break;
+      if (items.length === 0) {
+        if (searchCandidateCount < searchExpectedCount) {
+          warnings.push({
+            code: 'PREMATURE_EMPTY_PAGE',
+            message: `Search returned an empty page before the advertised count was satisfied.`,
+          });
+        }
+        break;
+      }
+      if (additions === 0) break;
+      page += 1;
+    }
+    if (pairSelection !== undefined && searchCandidateCount !== searchExpectedCount) {
+      throw new TypeError(
+        `Landing-page pair export requires a complete ${searchType} inventory for the requested workspace.`,
       );
     }
-
-    let additions = 0;
-    for (const item of items) {
-      const row = searchRow(item);
-      if (!row) continue;
-      if (row.managedContentSpaceId !== workspaceId) {
-        rejected.add(row.id);
-        ownershipMismatchIds.add(row.id);
-        continue;
-      }
-      if (candidates.has(row.id)) {
-        duplicateIds.add(row.id);
-      } else {
-        candidates.set(row.id, row);
-        additions += 1;
-      }
-    }
-
-    if (candidates.size >= expectedCount) break;
-    if (items.length === 0) {
-      if (candidates.size < expectedCount) {
-        warnings.push({
-          code: 'PREMATURE_EMPTY_PAGE',
-          message: `Search returned an empty page before the advertised count was satisfied.`,
-        });
-      }
-      break;
-    }
-    if (additions === 0) break;
-    page += 1;
   }
 
   if (duplicateIds.size > 0) {
@@ -449,6 +489,40 @@ export async function exportWorkspace(
       message: 'Variants outside the requested workspace were rejected.',
       variantIds: [...ownershipMismatchIds].toSorted(),
     });
+  }
+
+  if (inventoryExactApiNames && selection !== undefined) {
+    const validInventoryDetails = [...details.values()].filter((detail) => {
+      const contentType = isRecord(detail.contentType)
+        ? detail.contentType.fullyQualifiedName
+        : detail.contentType;
+      return contentType === selection.contentType && nonemptyString(detail.apiName);
+    });
+    if (
+      inventoryExceedsPageCapacity ||
+      candidates.size !== expectedCount ||
+      ownershipMismatchIds.size > 0 ||
+      failedIds.length > 0 ||
+      validInventoryDetails.length !== expectedCount
+    ) {
+      throw new TypeError(
+        `Exact component API names require a complete ${selection.contentType} inventory for the requested workspace.`,
+      );
+    }
+  }
+
+  const landingPageTemplatePairs =
+    pairSelection === undefined ? undefined : bindLandingPageTemplatePairs(pairSelection, details);
+  if (landingPageTemplatePairs !== undefined) {
+    const selectedIds = new Set(
+      landingPageTemplatePairs.flatMap(({ page, template }) => [
+        page.variantId,
+        template.variantId,
+      ]),
+    );
+    for (const variantId of details.keys()) {
+      if (!selectedIds.has(variantId)) details.delete(variantId);
+    }
   }
 
   if (selection !== undefined) {
@@ -498,6 +572,7 @@ export async function exportWorkspace(
     const evidence = imageEvidence(detail);
     return evidence === undefined ? [] : [{ variantId, evidence }];
   });
+  const selectedExpectedCount = selection === undefined ? expectedCount : selection.apiNames.length;
   const manifest: WorkspaceExportManifest = {
     schemaVersion: mediaCandidates.length > 0 ? 2 : 1,
     mode: 'experimental-best-effort',
@@ -508,7 +583,7 @@ export async function exportWorkspace(
       pageSize: PAGE_SIZE,
       queryTerm: '*',
     },
-    expectedCount: selection === undefined ? expectedCount : selection.apiNames.length,
+    expectedCount: landingPageTemplatePairs === undefined ? selectedExpectedCount : details.size,
     foundCount: selection === undefined ? candidates.size : details.size,
     exportedCount: entries.length,
     pagesRequested,
@@ -528,6 +603,7 @@ export async function exportWorkspace(
     },
     completeness,
     dependencies: referenceInventory.dependencies,
+    ...(landingPageTemplatePairs === undefined ? {} : { landingPageTemplatePairs }),
     externalReferences: referenceInventory.externalReferences,
     items: manifestItems,
   };

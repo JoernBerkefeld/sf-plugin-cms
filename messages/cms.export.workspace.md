@@ -56,6 +56,26 @@ Exact case-insensitive CMS workspace name.
 
 Bulk-only workspace type filter: Marketing or Content (case-insensitive).
 
+# flags.email-fragment-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__emailFragment` API names. Every name must resolve exactly once.
+
+# flags.web-fragment-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__webFragment` API names. Every name must resolve exactly once.
+
+# flags.landing-page-template-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__landingPageTemplate` API names. Every name must resolve exactly once.
+
+# flags.landing-page-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__landingPage` API names. Every name must resolve exactly once.
+
+# flags.landing-page-pair-map.summary
+
+JSON file containing one or more explicit page/template pairs. Each page is selected by exact `sfdc_cms__landingPage` API name. Each source template is resolved by exact human title/label with strict zero/one/many behavior; an optional independently known API name can corroborate the resolved canonical template identity but is never derived from the opaque page relationship value. The package records the requested title plus the resolved template API name, content key, and variant ID.
+
 # flags.editable-dir.summary
 
 New single-workspace companion directory for eligible native email/template HTML. Requires explicit --output-dir; paths must be new and disjoint.

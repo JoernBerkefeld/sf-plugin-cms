@@ -129,10 +129,21 @@ function source(items: WorkspaceImportItem[] = [template()]): LoadedWorkspaceExp
   };
 }
 
+const VALID_TEMPLATE_CONTENT_KEYS = {
+  fresh_second: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
+  fresh_template: 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA',
+} as const;
+
 function mapping(sourceApiName = 'source_template', targetApiName = 'fresh_template') {
   return {
     source: { family: 'cms', type: 'landingPageTemplate', apiName: sourceApiName },
-    target: { contentKey: `${targetApiName}_key`, apiName: targetApiName },
+    target: {
+      contentKey:
+        targetApiName === 'fresh_second'
+          ? VALID_TEMPLATE_CONTENT_KEYS.fresh_second
+          : VALID_TEMPLATE_CONTENT_KEYS.fresh_template,
+      apiName: targetApiName,
+    },
     cmsDependencies: [
       {
         sourceContentKey: 'source-image-key',
@@ -176,6 +187,66 @@ describe('landing-page-template create-only profile', () => {
     expect(loaded).to.deep.equal(before);
   });
 
+  it('rejects a noncanonical explicitly submitted target content key', () => {
+    const invalid = {
+      ...mapping(),
+      target: { ...mapping().target, contentKey: 'fresh_landing_template_key' },
+    };
+    expect(() => planLandingPageTemplateCopies(source(), [invalid])).to.throw(
+      'Template mapping 0.target.contentKey must match ^MC[A-Z2-7]{26}$',
+    );
+  });
+
+  it('accepts the exact derived-label boundary and rejects boundary plus one', () => {
+    const boundary = 'T'.repeat(49);
+    expect(
+      planLandingPageTemplateCopies(source(), [mapping('source_template', boundary)]),
+    ).to.have.nested.property('items[0].apiName', boundary);
+
+    const tooLong = 'T'.repeat(50);
+    expect(() =>
+      planLandingPageTemplateCopies(source(), [mapping('source_template', tooLong)]),
+    ).to.throw(
+      `Template mapping 0.target.apiName ${tooLong} produces Salesforce label ${tooLong}--sfdc_cms__landingPageTemplate with length 81; maximum is 80`,
+    );
+  });
+
+  it('reproduces the failed target API name before any destination interaction', async () => {
+    const failedApiName = 'MCNEXT_P4_Landing_Template_Accept_20260929160723_b714f972';
+    expect(() =>
+      planLandingPageTemplateCopies(source(), [mapping('source_template', failedApiName)]),
+    ).to.throw(
+      `Template mapping 0.target.apiName ${failedApiName} produces Salesforce label ${failedApiName}--sfdc_cms__landingPageTemplate with length 88; maximum is 80`,
+    );
+
+    const query = sinon.stub();
+    const request = sinon.stub();
+    let error: unknown;
+    try {
+      await executeWorkspaceImport({
+        connection: { query, request, version: '67.0' },
+        destinationOrgId: 'target-org',
+        destinationWorkspace: {
+          defaultLanguage: 'en_US',
+          id: 'destination-space',
+          rootFolderId: 'root-folder',
+        },
+        dryRun: false,
+        landingPageTemplateMappings: [mapping('source_template', failedApiName)],
+        loadedSource: source(),
+        reportDirectory: 'unused-because-planning-fails',
+        sourceDirectory: 'synthetic-source',
+        workspaceId: 'destination-space',
+      });
+    } catch (error_) {
+      error = error_;
+    }
+    expect(error).to.be.instanceOf(TypeError);
+    expect((error as Error).message).to.include(failedApiName);
+    sinon.assert.notCalled(query);
+    sinon.assert.notCalled(request);
+  });
+
   it('rejects wrong types, unsupported dependency shapes, and missing exact maps', () => {
     expect(() =>
       assertLandingPageTemplateItem({ ...template(), contentType: 'sfdc_cms__landingPage' }),
@@ -210,6 +281,8 @@ describe('landing-page-template create-only profile', () => {
       totalSize: 1,
     });
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.includes('/ssot/data-graphs/'))
+        return Promise.resolve({ name: 'Marketing', dataspaceName: 'default', status: 'ready' });
       if (url.includes('/items/search'))
         return Promise.resolve({
           items: [
@@ -232,7 +305,7 @@ describe('landing-page-template create-only profile', () => {
     });
 
     await validateLandingPageTemplatePrerequisites(
-      { query, request },
+      { query, request, version: '67.0' },
       'destination-space',
       proposal,
     );
@@ -250,6 +323,8 @@ describe('landing-page-template create-only profile', () => {
     const proposal = planLandingPageTemplateCopies(source(), [mapping()]);
     let searches = 0;
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.includes('/ssot/data-graphs/'))
+        return Promise.resolve({ name: 'Marketing', dataspaceName: 'default', status: 'ready' });
       if (url.includes('/items/search')) {
         searches += 1;
         return Promise.resolve(
@@ -284,6 +359,7 @@ describe('landing-page-template create-only profile', () => {
           totalSize: 1,
         }),
         request,
+        version: '67.0',
       },
       'destination-space',
       proposal,
@@ -294,21 +370,17 @@ describe('landing-page-template create-only profile', () => {
 
   it('dry-runs without mutation and apply rechecks every prerequisite sequentially', async () => {
     let apiQueries = 0;
-    let graphQueries = 0;
+    let graphRequests = 0;
     let searches = 0;
     const query = sinon.stub().callsFake((soql: string) => {
-      if (soql.startsWith('SELECT ApiName')) {
-        apiQueries += 1;
-        return Promise.resolve({ done: true, records: [], totalSize: 0 });
-      }
-      graphQueries += 1;
-      return Promise.resolve({
-        done: true,
-        records: [{ DeveloperName: 'Marketing', DataSpaceDevName: 'default' }],
-        totalSize: 1,
-      });
+      if (soql.startsWith('SELECT ApiName')) apiQueries += 1;
+      return Promise.resolve({ done: true, records: [], totalSize: 0 });
     });
     const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+      if (url.includes('/ssot/data-graphs/')) {
+        graphRequests += 1;
+        return Promise.resolve({ name: 'Marketing', dataspaceName: 'default', status: 'ready' });
+      }
       if (url.includes('/items/search')) {
         searches += 1;
         return Promise.resolve({
@@ -334,13 +406,13 @@ describe('landing-page-template create-only profile', () => {
       }
       if (method === 'GET') return fakeNotFound();
       return Promise.resolve({
-        contentKey: 'fresh_template_key',
+        contentKey: VALID_TEMPLATE_CONTENT_KEYS.fresh_template,
         id: 'created-content',
         primaryVariantId: 'created-variant',
       });
     });
     const common = {
-      connection: { query, request },
+      connection: { query, request, version: '67.0' },
       destinationOrgId: 'target-org',
       destinationWorkspace: {
         defaultLanguage: 'en_US',
@@ -362,6 +434,10 @@ describe('landing-page-template create-only profile', () => {
     try {
       const postBodies: Array<Record<string, unknown>> = [];
       request.callsFake(({ body, method, url }: { body?: string; method: string; url: string }) => {
+        if (url.includes('/ssot/data-graphs/')) {
+          graphRequests += 1;
+          return Promise.resolve({ name: 'Marketing', dataspaceName: 'default', status: 'active' });
+        }
         if (url.includes('/items/search')) {
           searches += 1;
           return Promise.resolve({
@@ -388,7 +464,7 @@ describe('landing-page-template create-only profile', () => {
         if (method === 'GET') return fakeNotFound();
         postBodies.push(JSON.parse(body ?? '{}') as Record<string, unknown>);
         return Promise.resolve({
-          contentKey: 'fresh_template_key',
+          contentKey: VALID_TEMPLATE_CONTENT_KEYS.fresh_template,
           id: 'created-content',
           primaryVariantId: 'created-variant',
         });
@@ -404,7 +480,7 @@ describe('landing-page-template create-only profile', () => {
         validationStatus: 'passed',
       });
       expect(apiQueries).to.equal(3);
-      expect(graphQueries).to.equal(3);
+      expect(graphRequests).to.equal(3);
       expect(searches).to.equal(3);
       expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
       expect(postBodies).to.have.length(1);

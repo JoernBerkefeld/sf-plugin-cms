@@ -40,7 +40,13 @@ import {
   validateLandingPageTemplatePrerequisites,
   type LandingPageTemplateCmsPrerequisite,
 } from './landing-page-template.js';
-import { planLandingPageCopies, validateLandingPagePrerequisites } from './landing-page.js';
+import {
+  planLandingPageCopies,
+  resolveLandingPageTemplateDependencies,
+  validateLandingPagePrerequisites,
+  type PlannedLandingPageCopies,
+  type LandingPageResolvedTemplateIdentity,
+} from './landing-page.js';
 import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -50,9 +56,10 @@ import {
   type CreateVariantInput,
 } from './write.js';
 
-type RequestConnection = Pick<Connection, 'request'> & {
-  readonly query?: Connection['query'];
-};
+type RequestConnection = Pick<Connection, 'request'> &
+  Partial<Pick<Connection, 'version'>> & {
+    readonly query?: Connection['query'];
+  };
 type JsonObject = { readonly [key: string]: JsonValue };
 type JsonValue = boolean | JsonObject | readonly JsonValue[] | null | number | string;
 
@@ -127,6 +134,52 @@ export type WorkspaceImportOperation = {
   state: 'pending' | 'succeeded' | 'failed';
 };
 
+export type LandingPageTemplatePrerequisiteEvidence = {
+  readonly sourcePage: {
+    readonly apiName: string;
+    readonly contentKey: string;
+    readonly variantId: string;
+  };
+  readonly sourceTemplate: {
+    readonly requestedTitle: string;
+    readonly apiName: string;
+    readonly contentKey: string;
+    readonly variantId: string;
+  };
+  readonly requestedTargetSelector: {
+    readonly contentKey?: string;
+    readonly apiName?: string;
+    readonly title?: string;
+  };
+  readonly relationship: {
+    readonly referenceId: string;
+    readonly descriptorSha256: string;
+  };
+  readonly normalization: {
+    readonly version: string;
+    readonly pageBodySha256: string;
+    readonly templateBodySha256: string;
+  };
+  readonly preflight: LandingPagePrerequisitePhaseEvidence;
+  preCreate?: LandingPagePrerequisitePhaseEvidence;
+  finalRequestSha256?: string;
+  returned?: {
+    readonly contentId: string;
+    readonly contentKey: string;
+    readonly primaryVariantId: string;
+    readonly state: 'unverified';
+  };
+};
+
+export type LandingPagePrerequisitePhaseEvidence = {
+  readonly checkedAt: string;
+  readonly status: 'passed';
+  readonly template: LandingPageResolvedTemplateIdentity;
+  readonly imageResolutionSha256: string;
+  readonly dataGraphResolutionSha256: string;
+  readonly targetPageIdentitySha256: string;
+};
+
 export type WorkspaceImportRunReport = {
   readonly editableSource?: EditableHtmlEvidence;
   readonly createdParents: CreatedParentRecord[];
@@ -135,6 +188,7 @@ export type WorkspaceImportRunReport = {
   readonly destinationOrgId: string;
   readonly destinationWorkspaceId: string;
   readonly operations: WorkspaceImportOperation[];
+  readonly templatePrerequisites?: LandingPageTemplatePrerequisiteEvidence[];
   readonly runId: string;
   readonly sourceDirectory: string;
   readonly sourceManifestSha256: string;
@@ -185,6 +239,7 @@ export type WorkspaceImportExecutionResult = {
   readonly contractResult: WorkspaceImportContractResult;
   readonly dryRun: boolean;
   readonly plan: WorkspaceImportPlan;
+  readonly templatePrerequisites?: readonly LandingPageTemplatePrerequisiteEvidence[];
   readonly report?: WorkspaceImportRunReport;
   readonly reportFile?: string;
 };
@@ -644,7 +699,13 @@ function variantPayload(item: WorkspaceImportItem, contentKey: string): CreateVa
 
 function isProvenNotFound(error: unknown): boolean {
   return (
-    error instanceof CmsRequestError && error.operationKey === 'content.get' && error.status === 404
+    error instanceof CmsRequestError &&
+    error.operationKey === 'content.get' &&
+    (error.status === 404 ||
+      ((error.status === 400 || error.status === undefined) &&
+        error.errorEntryCount === 1 &&
+        error.errorCode === 'INVALID_ID_FIELD' &&
+        error.responseMessage === 'Provide a valid content key, ID, or FQN.'))
   );
 }
 
@@ -667,12 +728,18 @@ function assertTransportableBody(value: JsonValue): void {
 function selectedLandingPageTemplateReferences(
   source: LoadedWorkspaceExport,
   selectedItems: readonly WorkspaceImportItem[],
+  resolvableRelationshipIds?: ReadonlySet<string>,
 ): WorkspaceExportManifest['externalReferences'] {
   const selectedIds = new Set(selectedItems.map(({ id }) => id));
-  return source.manifest.externalReferences.filter(
-    (reference) =>
-      reference.kind !== 'cms.relationship' || !selectedIds.has(reference.source.sourceId),
-  );
+  return source.manifest.externalReferences.filter((reference) => {
+    if (reference.kind !== 'cms.relationship' || !selectedIds.has(reference.source.sourceId)) {
+      return true;
+    }
+    return (
+      resolvableRelationshipIds !== undefined &&
+      !resolvableRelationshipIds.has(reference.referenceId)
+    );
+  });
 }
 
 function selectedNativeReferences(
@@ -810,6 +877,7 @@ function importContractResult(
   plan: WorkspaceImportPlan,
   mappings: WorkspaceImportMapping[],
   references: WorkspaceImportReference[],
+  templatePrerequisites?: readonly LandingPageTemplatePrerequisiteEvidence[],
 ): WorkspaceImportContractResult {
   return {
     sourcePackage: {
@@ -823,11 +891,78 @@ function importContractResult(
     integrity: source.integrity,
     mappings: mappings.toSorted(compareMappingIdentity),
     references: references.toSorted(compareMappingIdentity),
+    ...(templatePrerequisites === undefined ? {} : { templatePrerequisites }),
   };
 }
 
 function jsonBytes(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sha256Json(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function landingPagePhaseEvidence(
+  proposal: PlannedLandingPageCopies,
+  item: WorkspaceImportItem,
+): LandingPagePrerequisitePhaseEvidence {
+  const dependencyIndex = proposal.compatibility.findIndex(
+    ({ pageVariantId }) => pageVariantId === item.id,
+  );
+  const dependency = proposal.templateDependencies[dependencyIndex];
+  if (dependency?.validationStatus !== 'passed' || dependency.target === undefined) {
+    throw new TypeError('Landing-page target template validation evidence is incomplete');
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    status: 'passed',
+    template: structuredClone(dependency.target),
+    imageResolutionSha256: sha256Json(proposal.cmsPrerequisites),
+    dataGraphResolutionSha256: sha256Json(proposal.dataGraphs),
+    targetPageIdentitySha256: sha256Json({
+      apiName: item.apiName,
+      contentKey: item.contentKey,
+      contentType: item.contentType,
+      title: item.title,
+      urlName: item.urlName,
+    }),
+  };
+}
+
+function landingPageTemplateEvidence(
+  source: LoadedWorkspaceExport,
+  proposal: PlannedLandingPageCopies,
+): LandingPageTemplatePrerequisiteEvidence[] {
+  return proposal.items.map((item, index) => {
+    const compatibility = proposal.compatibility[index];
+    const dependency = proposal.templateDependencies[index];
+    const pair = source.manifest.landingPageTemplatePairs?.find(
+      ({ page }) => page.variantId === compatibility.pageVariantId,
+    );
+    if (pair === undefined) throw new TypeError('Landing-page template pair evidence is missing');
+    return {
+      sourcePage: pair.page,
+      sourceTemplate: pair.template,
+      requestedTargetSelector: {
+        ...(dependency.targetContentKey === undefined
+          ? {}
+          : { contentKey: dependency.targetContentKey }),
+        ...(dependency.targetApiName === undefined ? {} : { apiName: dependency.targetApiName }),
+        ...(dependency.targetTitle === undefined ? {} : { title: dependency.targetTitle }),
+      },
+      relationship: {
+        referenceId: compatibility.relationshipReferenceId,
+        descriptorSha256: compatibility.relationshipDescriptorSha256,
+      },
+      normalization: {
+        version: compatibility.normalizationVersion,
+        pageBodySha256: compatibility.normalizedPageBodySha256,
+        templateBodySha256: compatibility.normalizedTemplateBodySha256,
+      },
+      preflight: landingPagePhaseEvidence(proposal, item),
+    };
+  });
 }
 
 async function writeExclusive(file: string, value: unknown): Promise<void> {
@@ -1125,8 +1260,18 @@ export async function executeWorkspaceImport(
         };
   let selectedReferences: WorkspaceExportManifest['externalReferences'] | undefined;
   if (native) selectedReferences = selectedNativeReferences(source, proposal!.items);
-  else if (landingPageTemplate || landingPage) {
+  else if (landingPageTemplate) {
     selectedReferences = selectedLandingPageTemplateReferences(source, proposal!.items);
+  } else if (landingPage) {
+    selectedReferences = selectedLandingPageTemplateReferences(
+      source,
+      proposal!.items,
+      new Set(
+        landingPageProposal!.compatibility.map(
+          ({ relationshipReferenceId }) => relationshipReferenceId,
+        ),
+      ),
+    );
   }
   preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
   const requestOptions = options.requestOptions ?? {};
@@ -1144,13 +1289,21 @@ export async function executeWorkspaceImport(
       requestOptions,
     );
   }
+  let templatePrerequisites: LandingPageTemplatePrerequisiteEvidence[] | undefined;
   if (landingPage) {
+    await resolveLandingPageTemplateDependencies(
+      options.connection,
+      plan.destinationWorkspaceId,
+      landingPageProposal!,
+      requestOptions,
+    );
     await validateLandingPagePrerequisites(
       options.connection,
       plan.destinationWorkspaceId,
       landingPageProposal!,
       requestOptions,
     );
+    templatePrerequisites = landingPageTemplateEvidence(source, landingPageProposal!);
   }
   const hasNamedIdentities = plan.groups.some((group) =>
     [group.primary, ...group.variants].some(
@@ -1173,13 +1326,19 @@ export async function executeWorkspaceImport(
       'Destination API-name/URL-name uniqueness cannot be verified by the supported CMS APIs; import is blocked',
     );
   }
+  const pairedRelationshipIds = new Set(
+    landingPageProposal?.compatibility.map(
+      ({ relationshipReferenceId }) => relationshipReferenceId,
+    ),
+  );
   const references = source.manifest.externalReferences
     .filter(({ resolution }) => resolution !== 'included')
-    .map<WorkspaceImportReference>(({ kind, referenceId, resolution }) => ({
-      referenceId,
-      kind,
-      status: resolution === 'unsupported' ? 'unsupported' : 'unresolved',
-    }))
+    .map<WorkspaceImportReference>(({ kind, referenceId, resolution }) => {
+      let status: WorkspaceImportReference['status'] = 'unresolved';
+      if (pairedRelationshipIds.has(referenceId)) status = 'resolved';
+      else if (resolution === 'unsupported') status = 'unsupported';
+      return { referenceId, kind, status };
+    })
     .toSorted(compareMappingIdentity);
   if (options.dryRun === true) {
     const diagnostics: CmsDiagnostic[] = [
@@ -1209,9 +1368,17 @@ export async function executeWorkspaceImport(
     }
     return {
       diagnostics,
-      contractResult: importContractResult(source, options.destinationOrgId, plan, [], references),
+      contractResult: importContractResult(
+        source,
+        options.destinationOrgId,
+        plan,
+        [],
+        references,
+        templatePrerequisites,
+      ),
       dryRun: true,
       plan,
+      ...(templatePrerequisites === undefined ? {} : { templatePrerequisites }),
     };
   }
   if (!nonemptyString(options.reportDirectory)) {
@@ -1242,6 +1409,9 @@ export async function executeWorkspaceImport(
     destinationOrgId: options.destinationOrgId,
     destinationWorkspaceId: plan.destinationWorkspaceId,
     operations: [],
+    ...(templatePrerequisites === undefined
+      ? {}
+      : { templatePrerequisites: structuredClone(templatePrerequisites) }),
     runId: randomUUID(),
     sourceDirectory: source.sourceDirectory,
     sourceManifestSha256: source.manifestSha256,
@@ -1300,13 +1470,6 @@ export async function executeWorkspaceImport(
           landingPageTemplateProposal!,
           requestOptions,
         );
-      } else if (landingPage) {
-        await validateLandingPagePrerequisites(
-          options.connection,
-          plan.destinationWorkspaceId,
-          landingPageProposal!,
-          requestOptions,
-        );
       }
       const finalPrimary =
         proposal?.items.find((item) => item.id === group.primary.id) ?? group.primary;
@@ -1360,6 +1523,47 @@ export async function executeWorkspaceImport(
           await validateDataGraphPrerequisites(options.connection, webFragmentProposal!.dataGraphs);
         }
       }
+      let finalPayload = parentPayload;
+      if (landingPage) {
+        const freshProposal = planLandingPageCopies(source, options.landingPageMappings);
+        await resolveLandingPageTemplateDependencies(
+          options.connection,
+          plan.destinationWorkspaceId,
+          freshProposal,
+          requestOptions,
+        );
+        await validateLandingPagePrerequisites(
+          options.connection,
+          plan.destinationWorkspaceId,
+          freshProposal,
+          requestOptions,
+        );
+        const freshItem = freshProposal.items.find(({ id }) => id === group.primary.id);
+        if (freshItem === undefined) throw new TypeError('Landing-page pre-create item is missing');
+        const evidenceIndex = report.templatePrerequisites?.findIndex(
+          ({ sourcePage }) => sourcePage.variantId === group.primary.id,
+        );
+        if (evidenceIndex === undefined || evidenceIndex < 0) {
+          throw new TypeError('Landing-page durable template evidence is missing');
+        }
+        const preflight = report.templatePrerequisites![evidenceIndex].preflight;
+        const preCreate = landingPagePhaseEvidence(freshProposal, freshItem);
+        if (
+          !isDeepStrictEqual(preflight.template, preCreate.template) ||
+          preflight.imageResolutionSha256 !== preCreate.imageResolutionSha256 ||
+          preflight.dataGraphResolutionSha256 !== preCreate.dataGraphResolutionSha256 ||
+          preflight.targetPageIdentitySha256 !== preCreate.targetPageIdentitySha256
+        ) {
+          throw new TypeError(
+            'Landing-page template, image, Data Graph, or target page identity drifted before CREATE',
+          );
+        }
+        report.templatePrerequisites![evidenceIndex].preCreate = preCreate;
+        finalPayload = createPayload(
+          { ...group, primary: freshItem, variants: [] },
+          plan.rootFolderId,
+        );
+      }
       const parentOperation =
         editableSource === undefined
           ? pendingOperation(
@@ -1367,25 +1571,33 @@ export async function executeWorkspaceImport(
               'create-parent',
               group.contentKey,
               group.primary.language,
-              parentPayload,
+              finalPayload,
             )
           : report.operations.find((operation) => operation.contentKey === group.contentKey)!;
       if (editableSource === undefined) report.operations.push(parentOperation);
-      else if (
+      if (landingPage && report.templatePrerequisites !== undefined) {
+        const evidence = report.templatePrerequisites.find(
+          ({ sourcePage }) => sourcePage.variantId === group.primary.id,
+        );
+        if (evidence === undefined) throw new TypeError('Landing-page journal evidence is missing');
+        evidence.finalRequestSha256 = createHash('sha256')
+          .update(JSON.stringify(finalPayload))
+          .digest('hex');
+      } else if (
         parentOperation.requestSha256 !==
         operationIdentity(
           report.runId,
           'create-parent',
           group.contentKey,
           group.primary.language,
-          parentPayload,
+          finalPayload,
         ).requestSha256
       )
         throw new TypeError('Editable CREATE payload changed after initial journal');
       await rewrite(reportFile, report);
       let parentResponse: Record<string, unknown>;
       try {
-        parentResponse = await createContent(options.connection, parentPayload, requestOptions);
+        parentResponse = await createContent(options.connection, finalPayload, requestOptions);
       } catch (error) {
         parentOperation.state = native ? 'pending' : 'failed';
         if (native) report.state = 'ownership-uncertain';
@@ -1424,6 +1636,18 @@ export async function executeWorkspaceImport(
         contentKey: created.contentKey,
         primaryVariantId: created.primaryVariantId,
       };
+      if (landingPage && report.templatePrerequisites !== undefined) {
+        const evidence = report.templatePrerequisites.find(
+          ({ sourcePage }) => sourcePage.variantId === group.primary.id,
+        );
+        if (evidence === undefined) throw new TypeError('Landing-page result evidence is missing');
+        evidence.returned = {
+          contentId: created.contentId,
+          contentKey: created.contentKey,
+          primaryVariantId: created.primaryVariantId,
+          state: 'unverified',
+        };
+      }
       await persistOperationResult(reportFile, report, parentOperation, rewrite);
       if (native) {
         if (
@@ -1543,9 +1767,13 @@ export async function executeWorkspaceImport(
       plan,
       mappings,
       references,
+      report.templatePrerequisites,
     ),
     dryRun: false,
     plan,
+    ...(report.templatePrerequisites === undefined
+      ? {}
+      : { templatePrerequisites: report.templatePrerequisites }),
     report,
     reportFile,
   };

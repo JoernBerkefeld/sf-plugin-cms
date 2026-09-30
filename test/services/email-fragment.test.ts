@@ -71,7 +71,7 @@ function fragment(overrides: Partial<WorkspaceImportItem> = {}): WorkspaceImport
   return {
     apiName: 'source_fragment_api',
     contentBody: fragmentBody,
-    contentKey: 'source-fragment-key',
+    contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
     contentSpace: { id: 'source-space' },
     contentType: 'sfdc_cms__emailFragment',
     id: 'source-fragment-variant',
@@ -141,10 +141,14 @@ function source(item = fragment()): LoadedWorkspaceExport {
   };
 }
 
+const VALID_EMAIL_FRAGMENT_CONTENT_KEY = 'MCAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const mapping = [
   {
     source: { family: 'cms', type: 'emailFragment', apiName: 'source_fragment_api' },
-    target: { contentKey: 'fresh-fragment-key', apiName: 'fresh_fragment_api' },
+    target: {
+      contentKey: VALID_EMAIL_FRAGMENT_CONTENT_KEY,
+      apiName: 'fresh_fragment_api',
+    },
   },
 ];
 const invalidColumnAttributeCases = [
@@ -175,15 +179,23 @@ describe('bounded email fragment create profile', () => {
     expect(() => assertEmailFragmentItem(fragment())).not.to.throw();
   });
 
+  it('rejects a noncanonical explicitly submitted target content key', () => {
+    expect(() =>
+      planEmailFragmentCopies(source(), [
+        { ...mapping[0], target: { ...mapping[0].target, contentKey: 'fresh-fragment-key' } },
+      ]),
+    ).to.throw('Email fragment mapping 0.target.contentKey must match ^MC[A-Z2-7]{26}$');
+  });
+
   it('preserves the complete evidenced body while changing only fresh parent identities', () => {
     const loaded = source();
     const before = structuredClone(loaded);
     const result = planEmailFragmentCopies(loaded, mapping);
 
-    expect(result.targetContentKeys).to.deep.equal(['fresh-fragment-key']);
+    expect(result.targetContentKeys).to.deep.equal([VALID_EMAIL_FRAGMENT_CONTENT_KEY]);
     expect(result.items[0]).to.deep.equal({
       ...loaded.items[0],
-      contentKey: 'fresh-fragment-key',
+      contentKey: VALID_EMAIL_FRAGMENT_CONTENT_KEY,
       apiName: 'fresh_fragment_api',
     });
     expect(result.items[0].contentBody).to.equal(loaded.items[0].contentBody);
@@ -330,7 +342,7 @@ describe('bounded email fragment create profile', () => {
     const loaded = source();
     const before = structuredClone(loaded);
     for (const target of [
-      { ...mapping[0].target, contentKey: 'source-fragment-key' },
+      { ...mapping[0].target, contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB' },
       { ...mapping[0].target, apiName: 'source_fragment_api' },
     ]) {
       expect(() => planEmailFragmentCopies(loaded, [{ ...mapping[0], target }])).to.throw(

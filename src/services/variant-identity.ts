@@ -25,6 +25,36 @@ function retainedIdentifier(
 }
 
 /**
+ * Reads a required Managed Content variant ID from current or legacy response fields.
+ * @param {Record<string, unknown>} record - Managed Content variant response.
+ * @param {string} [label] - Human-readable error label.
+ * @returns {string} Exact variant identifier.
+ */
+export function requiredVariantIdentifier(
+  record: Record<string, unknown>,
+  label = 'Variant',
+): string {
+  const variantId = retainedIdentifier(record, 'managedContentVariantId', 'id');
+  if (variantId === undefined) throw new TypeError(`${label} identity is missing`);
+  return variantId;
+}
+
+/**
+ * Reads a required Managed Content parent ID from current or legacy response fields.
+ * @param {Record<string, unknown>} record - Managed Content variant response.
+ * @param {string} [label] - Human-readable error label.
+ * @returns {string} Exact parent content identifier.
+ */
+export function requiredContentIdentifier(
+  record: Record<string, unknown>,
+  label = 'Content',
+): string {
+  const contentId = retainedIdentifier(record, 'managedContentId', 'contentId');
+  if (contentId === undefined) throw new TypeError(`${label} identity is missing`);
+  return contentId;
+}
+
+/**
  * Reads documented variant response IDs and this package's legacy fixture fields.
  * Never treats a variant ID as the parent content ID.
  * @param {Record<string, unknown>} record - Retained variant response.

@@ -16,6 +16,7 @@ import {
   type WorkspaceExportWarning,
 } from '../../../services/export-workspace.js';
 import { preflightEditableExport } from '../../../services/editable-raw-html-export.js';
+import { parseLandingPagePairSelectors } from '../../../services/landing-page-pair-export.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
@@ -29,9 +30,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
   public static readonly examples = [
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --email-fragment-map ./email-fragments.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --web-fragment-map ./web-fragments.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-template-map ./landing-page-templates.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-map ./landing-pages.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-pair-map ./landing-page-pairs.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --experimental-media --json',
     '<%= config.bin %> cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json',
     '<%= config.bin %> cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json',
@@ -61,23 +64,65 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       parse: async (input) => normalizeWorkspaceType(input),
       summary: 'Bulk-only workspace type filter: Marketing or Content (case-insensitive).',
     }),
+    'email-fragment-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact sfdc_cms__emailFragment API names to export; every name must resolve exactly once.',
+    }),
     'web-fragment-map': Flags.file({
       exists: true,
-      exclusive: ['all', 'landing-page-template-map', 'landing-page-map'],
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'landing-page-pair-map',
+      ],
       summary:
         'JSON array of exact sfdc_cms__webFragment API names to export; every name must resolve exactly once.',
     }),
     'landing-page-template-map': Flags.file({
       exists: true,
-      exclusive: ['all', 'web-fragment-map', 'landing-page-map'],
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-map',
+        'landing-page-pair-map',
+      ],
       summary:
         'JSON array of exact sfdc_cms__landingPageTemplate API names to export; every name must resolve exactly once.',
     }),
     'landing-page-map': Flags.file({
       exists: true,
-      exclusive: ['all', 'web-fragment-map', 'landing-page-template-map'],
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-pair-map',
+      ],
       summary:
         'JSON array of exact sfdc_cms__landingPage API names to export; every name must resolve exactly once.',
+    }),
+    'landing-page-pair-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+      ],
+      summary:
+        'JSON pairs of exact landing-page API name and exact source template title; the template API name is optional corroboration.',
     }),
     'experimental-media': Flags.boolean({
       exclusive: ['all'],
@@ -162,8 +207,12 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     }
     const experimentalMedia =
       flags['experimental-media'] === true ? resolveExperimentalMedia(connection) : undefined;
+    const pairSelectionFile = flags['landing-page-pair-map'];
     const selectionFile =
-      flags['web-fragment-map'] ?? flags['landing-page-template-map'] ?? flags['landing-page-map'];
+      flags['email-fragment-map'] ??
+      flags['web-fragment-map'] ??
+      flags['landing-page-template-map'] ??
+      flags['landing-page-map'];
     const selectedApiNames =
       selectionFile === undefined
         ? undefined
@@ -175,8 +224,15 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     ) {
       throw new TypeError('Component map must contain a JSON array of API-name strings.');
     }
+    const landingPagePairs =
+      pairSelectionFile === undefined
+        ? undefined
+        : parseLandingPagePairSelectors(
+            JSON.parse(await readFile(pairSelectionFile, 'utf8')) as unknown,
+          );
     let selectedContentType: string | undefined;
-    if (flags['web-fragment-map'] !== undefined) selectedContentType = 'sfdc_cms__webFragment';
+    if (flags['email-fragment-map'] !== undefined) selectedContentType = 'sfdc_cms__emailFragment';
+    else if (flags['web-fragment-map'] !== undefined) selectedContentType = 'sfdc_cms__webFragment';
     else if (flags['landing-page-template-map'] !== undefined)
       selectedContentType = 'sfdc_cms__landingPageTemplate';
     else if (flags['landing-page-map'] !== undefined) selectedContentType = 'sfdc_cms__landingPage';
@@ -190,6 +246,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
               apiNames: selectedApiNames,
             },
           }),
+      ...(landingPagePairs === undefined ? {} : { landingPagePairs }),
       pluginVersion: this.pluginVersion,
       sourceOrgId: orgId,
       ...(experimentalMedia === undefined ? {} : { experimentalMedia }),
