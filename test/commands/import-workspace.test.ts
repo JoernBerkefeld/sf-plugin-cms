@@ -402,6 +402,8 @@ describe('CMS import workspace command', () => {
       'form-map',
       'form-handler-map',
       'consent-banner-map',
+      'brand-map',
+      'preference-page-map',
       'image-map',
       'editable-dir',
       'apply',
@@ -415,50 +417,7 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
     expect(ImportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['native-copy-map']);
-    expect(ImportWorkspace.flags['native-copy-map'].exclusive).to.deep.equal([
-      'email-fragment-map',
-      'web-fragment-map',
-      'landing-page-template-map',
-      'landing-page-map',
-      'form-map',
-      'form-handler-map',
-      'consent-banner-map',
-      'image-map',
-    ]);
-    expect(ImportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
-      'native-copy-map',
-      'web-fragment-map',
-      'landing-page-template-map',
-      'landing-page-map',
-      'editable-dir',
-      'form-map',
-      'form-handler-map',
-      'consent-banner-map',
-      'image-map',
-    ]);
-    expect(ImportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
-      'native-copy-map',
-      'email-fragment-map',
-      'landing-page-template-map',
-      'landing-page-map',
-      'editable-dir',
-      'form-map',
-      'form-handler-map',
-      'consent-banner-map',
-      'image-map',
-    ]);
-    expect(ImportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
-      'native-copy-map',
-      'email-fragment-map',
-      'web-fragment-map',
-      'landing-page-map',
-      'editable-dir',
-      'form-map',
-      'form-handler-map',
-      'consent-banner-map',
-      'image-map',
-    ]);
-    expect(ImportWorkspace.flags['image-map'].exclusive).to.deep.equal([
+    const familyFlags = [
       'native-copy-map',
       'email-fragment-map',
       'web-fragment-map',
@@ -467,19 +426,21 @@ describe('CMS import workspace command', () => {
       'form-map',
       'form-handler-map',
       'consent-banner-map',
-      'editable-dir',
-    ]);
-    expect(ImportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
-      'native-copy-map',
-      'email-fragment-map',
-      'web-fragment-map',
-      'landing-page-template-map',
-      'editable-dir',
-      'form-map',
-      'form-handler-map',
-      'consent-banner-map',
+      'brand-map',
+      'preference-page-map',
       'image-map',
-    ]);
+    ];
+    const flags = ImportWorkspace.flags as Record<string, { exclusive?: string[] }>;
+    for (const flag of familyFlags) {
+      for (const other of familyFlags) {
+        if (other !== flag) expect(flags[flag].exclusive).to.include(other);
+      }
+    }
+    expect(ImportWorkspace.flags['preference-page-map'].summary).to.match(
+      /channel\/subchannel ID mappings/iu,
+    );
+    expect(ImportWorkspace.flags['landing-page-map'].exclusive).to.include('editable-dir');
+    expect(ImportWorkspace.flags['image-map'].exclusive).to.include('editable-dir');
     expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(
       /exact typed cms\/emailFragment API names/iu,
     );
@@ -903,7 +864,7 @@ describe('CMS import workspace command', () => {
       expect(result).to.include({ status: 'blocked', result: null });
       expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
       expect(result.diagnostics.errors[0].message).to.equal(
-        'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+        'Typed Preference Page reports require the explicit Preference Page import profile.',
       );
       expect(getOrgContext.notCalled).to.equal(true);
       expect(await readdir(root)).to.deep.equal(['source']);
@@ -950,7 +911,7 @@ describe('CMS import workspace command', () => {
       expect(result).to.include({ status: 'blocked', result: null });
       expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
       expect(result.diagnostics.errors[0].message).to.equal(
-        'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
+        'Typed Brand reports require the explicit Brand import profile.',
       );
       expect(getOrgContext.notCalled).to.equal(true);
       expect(await readdir(root)).to.deep.equal(['source']);

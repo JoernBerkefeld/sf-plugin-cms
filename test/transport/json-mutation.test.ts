@@ -18,6 +18,8 @@ function failedRequest(error: Error): FakeRequest<never> {
 function ignoreRejection(): void {}
 
 describe('JSON mutation transport', () => {
+  afterEach(() => sinon.restore());
+
   it('sends the exact POST URL, JSON header, direct object body, timeout, and no-retry option', async () => {
     const request = sinon.stub().returns(fakeRequest({ id: 'created' }));
     const contentBody = { body: '<p>Hello</p>', nested: { value: true } };
@@ -33,7 +35,7 @@ describe('JSON mutation transport', () => {
       getSelectedOperation('content.create'),
       body,
       {},
-      { timeoutMs: 1234 },
+      { allowCallerConnection: true, timeoutMs: 1234 },
     );
 
     expect(result).to.deep.equal({ data: { id: 'created' }, operationKey: 'content.create' });
@@ -48,6 +50,42 @@ describe('JSON mutation transport', () => {
       { retry: { maxRetries: 0 }, timeout: 1234 },
     ]);
     expect(JSON.parse(request.firstCall.args[0].body)).to.deep.equal(body);
+  });
+
+  it('sends documented JSON variant updates as one-shot PUT requests', async () => {
+    const request = sinon.stub(JsforceConnection.prototype, 'request').returns(
+      fakeRequest({
+        contentBody: { body: 'Updated' },
+        isPublished: false,
+        language: 'en_US',
+        managedContentId: 'content-id',
+        managedContentVariantId: 'variant-id',
+      }),
+    );
+    const body = { contentBody: { body: 'Updated' }, title: 'Updated title' };
+
+    const callerRequest = sinon.stub();
+    await requestJsonMutation(
+      {
+        accessToken: 'token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        request: callerRequest,
+        version: '67.0',
+      },
+      getSelectedOperation('variant.update'),
+      body,
+      { path: { variantId: 'variant/id' } },
+    );
+
+    expect(callerRequest.notCalled).to.equal(true);
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0]).to.deep.equal({
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+      method: 'PUT',
+      url: '/connect/cms/contents/variants/variant%2Fid',
+    });
+    expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
   });
 
   it('uses a token-only connection to prevent refresh replay', async () => {
@@ -71,17 +109,25 @@ describe('JSON mutation transport', () => {
     expect(request.calledOnce).to.equal(true);
     expect(request.thisValues[0]).not.to.equal(refreshingConnection);
     expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
-    request.restore();
   });
 
   it('accepts an empty successful delete without inventing body or status', async () => {
-    const request = sinon.stub().returns(fakeRequest());
+    const request = sinon.stub(JsforceConnection.prototype, 'request').returns(fakeRequest());
+    const callerRequest = sinon.stub();
 
-    const result = await requestEmptyMutation({ request }, getSelectedOperation('variant.delete'), {
-      path: { variantId: 'variant/id' },
-    });
+    const result = await requestEmptyMutation(
+      {
+        accessToken: 'token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        request: callerRequest,
+        version: '67.0',
+      },
+      getSelectedOperation('variant.delete'),
+      { path: { variantId: 'variant/id' } },
+    );
 
     expect(result).to.deep.equal({ operationKey: 'variant.delete' });
+    expect(callerRequest.notCalled).to.equal(true);
     expect(request.firstCall.args[0]).to.deep.equal({
       headers: { 'content-type': 'application/json' },
       method: 'DELETE',
@@ -97,7 +143,12 @@ describe('JSON mutation transport', () => {
     for (const options of [{ timeoutMs: 0 }, { signal: controller.signal }]) {
       try {
         await requestEmptyMutation(
-          { request },
+          {
+            accessToken: 'token',
+            instanceUrl: 'https://example.my.salesforce.com',
+            request,
+            version: '67.0',
+          },
           getSelectedOperation('variant.delete'),
           { path: { variantId: 'variant' } },
           options,
@@ -118,12 +169,17 @@ describe('JSON mutation transport', () => {
       rejectRequest = reject;
     });
     const requestPromise = Object.assign(pending, { stream: () => stream });
-    const request = sinon.stub().returns(requestPromise);
+    sinon.stub(JsforceConnection.prototype, 'request').returns(requestPromise);
     const destroy = sinon.spy(stream, 'destroy');
     const controller = new AbortController();
 
     const result = requestEmptyMutation(
-      { request },
+      {
+        accessToken: 'token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        request: sinon.stub(),
+        version: '67.0',
+      },
       getSelectedOperation('variant.delete'),
       { path: { variantId: 'variant' } },
       { signal: controller.signal },
@@ -148,11 +204,17 @@ describe('JSON mutation transport', () => {
     const request = sinon.stub().returns(failedRequest(failure));
 
     try {
-      await requestJsonMutation({ request }, getSelectedOperation('variant.create'), {
-        contentBody: {},
-        language: 'fr',
-        managedContentKeyOrId: 'content',
-      });
+      await requestJsonMutation(
+        { request },
+        getSelectedOperation('variant.create'),
+        {
+          contentBody: {},
+          language: 'fr',
+          managedContentKeyOrId: 'content',
+        },
+        {},
+        { allowCallerConnection: true },
+      );
       expect.fail('expected API error');
     } catch (error) {
       expect(error).to.be.instanceOf(CmsRequestError);

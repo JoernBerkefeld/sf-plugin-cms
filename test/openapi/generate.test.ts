@@ -158,9 +158,9 @@ describe('selected OpenAPI generation', () => {
     const { operations } = await generateSelectedOpenApi(canonicalPath);
     expect(operations).to.not.include('getManagedContentDelivery');
     expect(operations).to.not.include('getManagedContentDeliveryMedia');
-    expect(operations).to.not.include('putManagedContentVariant');
-    expect(operations).to.not.include('postManagedContentDocumentPublish');
-    expect(operations).to.not.include('postManagedContentDocumentUnpublish');
+    expect(operations).to.include('putManagedContentVariant');
+    expect(operations).to.include('postManagedContentPublish');
+    expect(operations).to.include('postManagedContentUnpublish');
     expect(operations).to.not.include('responseType');
   });
 });

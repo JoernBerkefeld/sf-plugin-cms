@@ -14,6 +14,16 @@ describe('selected OpenAPI operations', () => {
         operationId: 'postManagedContentDocumentCreate',
       },
       {
+        localKey: 'content.publish',
+        method: 'POST',
+        operationId: 'postManagedContentPublish',
+      },
+      {
+        localKey: 'content.unpublish',
+        method: 'POST',
+        operationId: 'postManagedContentUnpublish',
+      },
+      {
         localKey: 'variant.create',
         method: 'POST',
         operationId: 'postManagedContentVariantCreate',
@@ -23,23 +33,30 @@ describe('selected OpenAPI operations', () => {
         method: 'DELETE',
         operationId: 'deleteManagedContentVariant',
       },
+      {
+        localKey: 'variant.update',
+        method: 'PUT',
+        operationId: 'putManagedContentVariant',
+      },
     ]);
-    expect(mutations.some(({ method }) => String(method) === 'PUT')).to.equal(false);
-    expect(mutations.some(({ operationId }) => /publish|unpublish/iu.test(operationId))).to.equal(
-      false,
-    );
   });
 
   it('generates the narrow JSON request-body metadata deterministically', () => {
     const contentCreate = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'content.create');
+    const publish = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'content.publish');
+    const unpublish = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'content.unpublish');
     const variantCreate = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'variant.create');
     const variantDelete = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'variant.delete');
+    const variantUpdate = SELECTED_OPERATIONS.find(({ localKey }) => localKey === 'variant.update');
 
     expect(contentCreate?.requestBodyMediaTypes).to.deep.equal([
       'application/json',
       'multipart/form-data',
     ]);
+    expect(publish?.requestBodyMediaTypes).to.deep.equal(['application/json']);
+    expect(unpublish?.requestBodyMediaTypes).to.deep.equal(['application/json']);
     expect(variantCreate?.requestBodyMediaTypes).to.deep.equal(['application/json']);
+    expect(variantUpdate?.requestBodyMediaTypes).to.deep.equal(['multipart/form-data']);
     expect(variantDelete).to.include({
       path: '/connect/cms/contents/variants/{variantId}',
       requestBodyPresent: false,

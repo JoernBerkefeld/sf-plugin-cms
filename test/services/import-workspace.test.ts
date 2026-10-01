@@ -20,6 +20,7 @@ import { exportWorkspace } from '../../src/services/export-workspace.js';
 import type { WorkspaceImportRunReport } from '../../src/services/import-workspace.js';
 import { formDetail, formSource } from '../fixtures/form.js';
 import { formHandlerDetail } from '../fixtures/form-handler.js';
+import { brandDetail } from '../fixtures/brand.js';
 import { planImportIdentities, safeNativeRawHtml } from '../../src/services/import-identities.js';
 import { inventoryExportReferences } from '../../src/services/export-references.js';
 import {
@@ -155,6 +156,40 @@ async function writeExport(
     `${JSON.stringify(manifest(items, itemBytes, manifestOverrides))}\n`,
   );
   return source;
+}
+
+async function exportBrandPackage(root: string): Promise<string> {
+  const destination = path.join(root, 'brand-source');
+  const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+    if (method !== 'GET') return failedRequest(405, 'unexpected mutation');
+    if (url.startsWith('/connect/cms/items/search')) {
+      return fakeRequest({
+        items: [
+          {
+            id: 'variant-source-id',
+            managedContentSpaceId: 'source-space',
+            type: 'ManagedContentVariantSearchResultRepresentation',
+          },
+        ],
+        total: 1,
+      });
+    }
+    return fakeRequest(brandDetail('variant-source-id', 'source_brand_api', 'source-space'));
+  });
+  await exportWorkspace({ request }, 'source-space', destination, {
+    selection: {
+      contentType: 'sfdc_cms__brand',
+      apiNames: ['source_brand_api'],
+      brandReports: true,
+    },
+  });
+  const manifestFile = path.join(destination, 'manifest.json');
+  const strictManifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    warnings: unknown[];
+  };
+  strictManifest.warnings = [];
+  await writeFile(manifestFile, `${JSON.stringify(strictManifest)}\n`);
+  return destination;
 }
 
 async function exportFormPackage(root: string): Promise<string> {
@@ -1892,7 +1927,7 @@ describe('workspace import core', () => {
 
       expect(failure).to.be.instanceOf(TypeError);
       expect((failure as Error).message).to.equal(
-        'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+        'Typed Preference Page reports require the explicit Preference Page import profile.',
       );
       expect(request.notCalled).to.equal(true);
       expect(await readdir(root)).to.deep.equal(['source']);
@@ -1928,7 +1963,7 @@ describe('workspace import core', () => {
 
       expect(failure).to.be.instanceOf(TypeError);
       expect((failure as Error).message).to.equal(
-        'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
+        'Typed Brand reports require the explicit Brand import profile.',
       );
       expect(request.notCalled).to.equal(true);
       expect(await readdir(root)).to.deep.equal(['source']);
@@ -2497,6 +2532,190 @@ describe('workspace import core', () => {
       error: 'ambiguous Form Handler transport',
       language: 'en_US',
       operationKind: 'create-parent',
+      state: 'pending',
+    });
+  });
+
+  it('executes Brand CREATE from a strict package with a durable pre-POST journal and independent readback', async () => {
+    const sourceDirectory = await exportBrandPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'brand' });
+    const reportDirectory = path.join(root, 'brand-create');
+    let posted: Record<string, unknown> = {};
+    let inventoryCalls = 0;
+    const request = sinon
+      .stub()
+      .callsFake(async (request_: { body?: string; method: string; url: string }) => {
+        if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+          inventoryCalls += 1;
+          return fakeRequest({ items: [], total: 0 });
+        }
+        if (request_.method === 'POST') {
+          posted = JSON.parse(request_.body ?? '{}') as Record<string, unknown>;
+          const journal = JSON.parse(
+            await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+          ) as WorkspaceImportRunReport;
+          expect(journal.operations).to.have.length(1);
+          expect(journal.operations[0].state).to.equal('pending');
+          return fakeRequest({
+            contentKey: 'generated-brand-key',
+            managedContentId: 'generated-brand-id',
+            managedContentVariantId: 'generated-brand-variant-id',
+          });
+        }
+        const detail = {
+          ...posted,
+          contentKey: 'generated-brand-key',
+          contentSpace: { id: 'destination-space' },
+          isPublished: false,
+          language: 'en_US',
+          managedContentId: 'generated-brand-id',
+          managedContentVariantId: 'generated-brand-variant-id',
+          status: { label: 'Draft', status: 'Draft' },
+        };
+        return fakeRequest(
+          request_.url.includes('/variants/')
+            ? { ...detail, id: 'generated-brand-variant-id' }
+            : { ...detail, contentId: 'generated-brand-id' },
+        );
+      });
+
+    const options = {
+      brandMappings: [
+        {
+          source: { family: 'cms', type: 'brand', apiName: 'source_brand_api' },
+          target: {
+            apiName: 'target_brand_api',
+            title: 'Target Brand',
+            urlName: 'target-brand',
+          },
+        },
+      ],
+      connection: { request },
+      destinationOrgId: '00D-org-id',
+      destinationWorkspace: workspace('en_US'),
+      loadedSource: source,
+      reportDirectory,
+      sourceDirectory,
+      workspaceId: 'destination-space',
+    };
+    const dryRun = await executeWorkspaceImport({ ...options, dryRun: true });
+    expect(dryRun.dryRun).to.equal(true);
+    expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
+    request.resetHistory();
+    inventoryCalls = 0;
+
+    const result = await executeWorkspaceImport(options);
+    expect(inventoryCalls).to.equal(2);
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    expect(posted).not.to.have.property('contentKey');
+    expect(posted).to.include({
+      apiName: 'target_brand_api',
+      contentSpaceOrFolderId: 'root-folder',
+      contentType: 'sfdc_cms__brand',
+      title: 'Target Brand',
+      urlName: 'target-brand',
+    });
+    expect(result.report?.state).to.equal('completed');
+  });
+
+  it('blocks Brand collision drift on the immediate pre-POST recheck', async () => {
+    const sourceDirectory = await exportBrandPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'brand' });
+    let inventoryCalls = 0;
+    const request = sinon.stub().callsFake((request_: { method: string; url: string }) => {
+      if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+        inventoryCalls += 1;
+        return fakeRequest(
+          inventoryCalls === 1
+            ? { items: [], total: 0 }
+            : { items: [{ id: 'drifted-brand' }], total: 1 },
+        );
+      }
+      if (request_.method === 'GET' && request_.url.includes('/variants/drifted-brand')) {
+        return fakeRequest({
+          apiName: 'target_brand_api',
+          contentSpace: { id: 'destination-space' },
+          contentType: { fullyQualifiedName: 'sfdc_cms__brand' },
+          id: 'drifted-brand',
+          title: 'Other Brand',
+          urlName: 'other-brand',
+        });
+      }
+      return failedRequest(500, 'unexpected request');
+    });
+
+    await expectRejected(
+      executeWorkspaceImport({
+        brandMappings: [
+          {
+            source: { family: 'cms', type: 'brand', apiName: 'source_brand_api' },
+            target: {
+              apiName: 'target_brand_api',
+              title: 'Target Brand',
+              urlName: 'target-brand',
+            },
+          },
+        ],
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        loadedSource: source,
+        reportDirectory: path.join(root, 'brand-collision-drift'),
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(inventoryCalls).to.equal(2);
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
+  });
+
+  it('preserves durable Brand pending ownership after one ambiguous CREATE', async () => {
+    const sourceDirectory = await exportBrandPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'brand' });
+    const reportDirectory = path.join(root, 'brand-ambiguous-create');
+    const request = sinon.stub().callsFake((request_: { method: string; url: string }) => {
+      if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({ items: [], total: 0 });
+      }
+      if (request_.method === 'POST') return failedRequest(503, 'ambiguous Brand transport');
+      return failedRequest(500, 'unexpected request');
+    });
+
+    let failure: unknown;
+    try {
+      await executeWorkspaceImport({
+        brandMappings: [
+          {
+            source: { family: 'cms', type: 'brand', apiName: 'source_brand_api' },
+            target: {
+              apiName: 'target_brand_api',
+              title: 'Target Brand',
+              urlName: 'target-brand',
+            },
+          },
+        ],
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(Error);
+    expect((failure as Error).message).to.equal('ambiguous Brand transport');
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    const durable = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(durable.state).to.equal('ownership-uncertain');
+    expect(durable.operations[0]).to.include({
+      error: 'ambiguous Brand transport',
       state: 'pending',
     });
   });

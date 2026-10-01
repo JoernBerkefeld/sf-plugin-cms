@@ -10,7 +10,7 @@ import type { CmsRecord } from './read.js';
 
 type RequestConnection = Pick<Connection, 'request'>;
 
-export type CreateContentInput = JsonMutationBody & {
+type StandardCreateContentInput = JsonMutationBody & {
   apiName?: string;
   contentBody: Readonly<Record<string, unknown>>;
   contentKey?: string;
@@ -21,6 +21,18 @@ export type CreateContentInput = JsonMutationBody & {
   title: string;
   urlName?: string;
 };
+
+export type PreferencePageCreateContentInput = JsonMutationBody & {
+  apiName: string;
+  contentBody: Readonly<Record<string, unknown>>;
+  contentSpaceOrFolderId: string;
+  contentType: 'sfdc_cms__preferencePage';
+  contentKey?: never;
+  title?: never;
+  urlName?: never;
+};
+
+export type CreateContentInput = StandardCreateContentInput | PreferencePageCreateContentInput;
 
 export type CreateVariantInput = JsonMutationBody & {
   contentBody: Readonly<Record<string, unknown>>;
@@ -45,7 +57,7 @@ async function create(
     getSelectedOperation(operationKey),
     body,
     {},
-    options,
+    { ...options, allowCallerConnection: true },
   );
   if (!isRecord(response.data)) throw new TypeError(`Unexpected ${operationKey} response shape`);
   return response.data;
@@ -76,6 +88,6 @@ export function deleteVariant(
     connection,
     getSelectedOperation('variant.delete'),
     { path: { variantId } },
-    options,
+    { ...options, allowCallerConnection: true },
   );
 }

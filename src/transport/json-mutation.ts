@@ -21,6 +21,10 @@ export type EmptyMutationSuccess = {
   operationKey: SelectedOperation['localKey'];
 };
 
+export type JsonMutationOptions = JsonRequestOptions & {
+  allowCallerConnection?: boolean;
+};
+
 type RequestStream<T> = Promise<T> & {
   stream(): Duplex;
 };
@@ -48,25 +52,45 @@ function safeErrorMessage(error: unknown): string {
   return redactSecrets(message || 'CMS request failed');
 }
 
-function withoutRefreshReplay(connection: RequestConnection): Pick<Connection, 'request'> {
-  return connection.accessToken && connection.instanceUrl
-    ? new JsforceConnection({
-        accessToken: connection.accessToken,
-        instanceUrl: connection.instanceUrl,
-        version: connection.version,
-      })
-    : connection;
+function withoutRefreshReplay(
+  connection: RequestConnection,
+  operation: SelectedOperation,
+  allowCallerConnection: boolean,
+): Pick<Connection, 'request'> {
+  if (
+    typeof connection.accessToken !== 'string' ||
+    connection.accessToken.length === 0 ||
+    typeof connection.instanceUrl !== 'string' ||
+    connection.instanceUrl.length === 0
+  ) {
+    if (allowCallerConnection) return connection;
+    throw new CmsRequestError(
+      operation.localKey,
+      'Mutation transport requires an access token and instance URL',
+    );
+  }
+  return new JsforceConnection({
+    accessToken: connection.accessToken,
+    instanceUrl: connection.instanceUrl,
+    version: connection.version,
+  });
 }
 
 function validateMutationOperation(operation: SelectedOperation, hasBody: boolean): void {
-  if (operation.method !== 'POST' && operation.method !== 'DELETE') {
+  if (operation.method !== 'POST' && operation.method !== 'PUT' && operation.method !== 'DELETE') {
     throw new CmsRequestError(
       operation.localKey,
       `Unsupported mutation method: ${operation.method}`,
     );
   }
   const requestBodyMediaTypes = operation.requestBodyMediaTypes as readonly string[];
-  if (hasBody && !requestBodyMediaTypes.includes('application/json')) {
+  const documentedJsonVariantUpdate =
+    operation.localKey === 'variant.update' && operation.method === 'PUT';
+  if (
+    hasBody &&
+    !requestBodyMediaTypes.includes('application/json') &&
+    !documentedJsonVariantUpdate
+  ) {
     throw new CmsRequestError(
       operation.localKey,
       'Mutation operation does not accept application/json',
@@ -82,7 +106,7 @@ async function sendMutation<T>(
   operation: SelectedOperation,
   values: JsonRequestValues,
   body: JsonMutationBody | undefined,
-  options: JsonRequestOptions,
+  options: JsonMutationOptions,
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -93,7 +117,11 @@ async function sendMutation<T>(
   }
 
   validateMutationOperation(operation, body !== undefined);
-  const request = withoutRefreshReplay(connection).request<T>(
+  const request = withoutRefreshReplay(
+    connection,
+    operation,
+    options.allowCallerConnection === true,
+  ).request<T>(
     {
       method: operation.method,
       url: buildOperationUrl(operation, values),
@@ -122,7 +150,7 @@ export async function requestJsonMutation<T>(
   operation: SelectedOperation,
   body: JsonMutationBody,
   values: JsonRequestValues = {},
-  options: JsonRequestOptions = {},
+  options: JsonMutationOptions = {},
 ): Promise<JsonMutationSuccess<T>> {
   const data = await sendMutation<T>(connection, operation, values, body, options);
   return { data, operationKey: operation.localKey };
@@ -132,7 +160,7 @@ export async function requestEmptyMutation(
   connection: RequestConnection,
   operation: SelectedOperation,
   values: JsonRequestValues = {},
-  options: JsonRequestOptions = {},
+  options: JsonMutationOptions = {},
 ): Promise<EmptyMutationSuccess> {
   await sendMutation<unknown>(connection, operation, values, undefined, options);
   return { operationKey: operation.localKey };

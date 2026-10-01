@@ -94,6 +94,44 @@ export const SELECTED_OPERATIONS = [
     ]
   },
   {
+    "localKey": "content.publish",
+    "method": "POST",
+    "operationId": "postManagedContentPublish",
+    "parameters": [],
+    "path": "/connect/cms/contents/publish",
+    "requestBodyMediaTypes": [
+      "application/json"
+    ],
+    "requestBodyPresent": true,
+    "responses": [
+      {
+        "mediaTypes": [
+          "application/json"
+        ],
+        "status": "200"
+      }
+    ]
+  },
+  {
+    "localKey": "content.unpublish",
+    "method": "POST",
+    "operationId": "postManagedContentUnpublish",
+    "parameters": [],
+    "path": "/connect/cms/contents/unpublish",
+    "requestBodyMediaTypes": [
+      "application/json"
+    ],
+    "requestBodyPresent": true,
+    "responses": [
+      {
+        "mediaTypes": [
+          "application/json"
+        ],
+        "status": "200"
+      }
+    ]
+  },
+  {
     "localKey": "variant.create",
     "method": "POST",
     "operationId": "postManagedContentVariantCreate",
@@ -149,6 +187,32 @@ export const SELECTED_OPERATIONS = [
     "path": "/connect/cms/contents/variants/{variantId}",
     "requestBodyMediaTypes": [],
     "requestBodyPresent": false,
+    "responses": [
+      {
+        "mediaTypes": [
+          "application/json"
+        ],
+        "status": "200"
+      }
+    ]
+  },
+  {
+    "localKey": "variant.update",
+    "method": "PUT",
+    "operationId": "putManagedContentVariant",
+    "parameters": [
+      {
+        "location": "path",
+        "name": "variantId",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "path": "/connect/cms/contents/variants/{variantId}",
+    "requestBodyMediaTypes": [
+      "multipart/form-data"
+    ],
+    "requestBodyPresent": true,
     "responses": [
       {
         "mediaTypes": [

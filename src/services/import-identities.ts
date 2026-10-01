@@ -73,7 +73,7 @@ export function decodeNativeHtml(value: string): string {
     .replaceAll('&amp;', '&');
 }
 
-function assertNativeBody(item: WorkspaceImportItem): void {
+export function assertNativeBody(item: WorkspaceImportItem): void {
   if (!['sfdc_cms__email', 'sfdc_cms__emailTemplate'].includes(item.contentType))
     throw new TypeError('Native copy supports only raw-HTML email/template content');
   if (item.externalId != null || item.externalSource != null)

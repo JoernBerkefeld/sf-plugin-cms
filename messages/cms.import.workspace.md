@@ -28,11 +28,15 @@ Validates the complete source workspace export locally before any org request, s
 
 `--editable-dir` requires `--native-copy-map`. `--source-dir` must remain the unchanged integrity baseline; the companion may change only declared literal HTML files and is not itself an export package. The complete baseline, including unselected items, is integrity-validated. Structured/package reference and non-HTML metadata guards remain active, but native-copy and edited `rawHtml` are treated as opaque literal content through Phase 7. Embedded dependencies, media, references, dynamic syntax, and URLs are not discovered, resolved, rewritten, sanitized, or scanned. Dry-run success is not apply readiness or dependency/safety proof.
 
+`--brand-map` rows contain exact `source` and `target` objects. `source` is `{ "family": "cms", "type": "brand", "apiName": "..." }`; `target` supplies fresh `apiName`, `title`, and lowercase-hyphen `urlName`. The source package must be complete, strictly report-bound, and free of warnings, failures, rejected IDs, dependencies, and external references. Import requires a canonical Marketing workspace, proves complete exact Brand API-name/title/URL absence during dry-run and again immediately before each sequential POST, transports the complete raw body without a client-side shape allowlist, rewrites embedded `sfdc_cms:title` only when present, regenerates UUID-v4 values only for objective block nodes, omits `contentKey`, journals every ordered pending intent before the first mutation, never retries ambiguity, and independently verifies content-key plus variant Draft/unpublished readback. It never assigns the workspace default Brand, publishes, updates, or mutates dependent content.
+
 `--form-map` rows contain exact `source` and `target` objects. `source` is `{ "family": "cms", "type": "form", "apiName": "..." }`; `target` supplies fresh `apiName`, `title`, and lowercase-hyphen `urlName`. The source package must be complete and contain a strict typed Form report for every selected raw item; `--allow-partial` does not permit partial Form packages. Import is limited to canonical Marketing workspaces, proves complete destination Form inventory, rejects exact case-sensitive API-name/title/URL collisions at dry-run and again immediately before CREATE, regenerates every block UUID v4, omits `contentKey`, preserves all other source body semantics, writes pending intent before mutation, and independently verifies returned content-key and variant-ID readbacks as Draft/unpublished. The minimal profile is live-proven; broader providers, blocks, actions, and references are transported without a client-side shape allowlist and remain subject to Salesforce validation. Definitive server errors are surfaced, while ambiguous ownership is never automatically retried. It does not update, publish, unpublish, or submit Forms.
 
 `--form-handler-map` rows use source `{ "family": "cms", "type": "formHandler", "apiName": "..." }` and fresh target `apiName`, title, and lowercase-hyphen `urlName`. The source package must be complete even with `--allow-partial`, strictly loaded, report/raw bijective, and free of dependencies, external references, and warnings. Import regenerates the root UUID v4, omits `contentKey`, requires canonical Marketing workspace evidence, proves complete one-page Form Handler collision inventory twice, journals pending intent before one POST, never retries ambiguity, and independently verifies exact Draft/unpublished content-key and variant readbacks. Runtime submission, populated providers/bindings, UPDATE, publication, and broader lifecycle are unsupported.
 
 `--consent-banner-map` rows use source `{ "family": "cms", "type": "consentBanner", "apiName": "..." }` and fresh target `apiName`, title, and lowercase-hyphen `urlName`. The complete strict package must contain the exact dependency-free Draft/unpublished body with empty providers and only the built-in Reject and Accept actions. Import regenerates every block UUID v4, omits `contentKey`, requires canonical Marketing workspace evidence, proves complete Consent Banner collision inventory during dry-run and immediately before one POST, persists pending intent first, never retries ambiguity, and independently verifies exact content-key and variant readbacks. Publication, site association, consent-configuration mutation, action invocation, UPDATE, and broader lifecycle are unsupported.
+
+`--preference-page-map` consumes only typed partial Preference Page packages whose sole incompleteness is exact report-bound `REFERENCE_UNRESOLVED` channel/subchannel evidence. Rows select exact `cms/preferencePage` source API names, assign a fresh target API name, map every source channel and subchannel ID, and include one destination Brand selector if and only if source `{ contentKey }` Brand evidence exists. Destination `EngagementChannelType`, `CommSubscriptionChannelType`, their relationship, and optional workspace-scoped Brand are verified before mutation and again immediately before one non-retried public generic CMS POST. Import preserves body semantics except mapped dependencies, destination identity, and fresh package-wide UUID-v4 block IDs; omits root contentKey/title/urlName; rejects child variants; journals pending intent; and independently verifies exact Draft/unpublished readback. `createCpp`, variant creation, publication, default assignment, consent mutation, and runtime actions are forbidden.
 
 `--email-fragment-map` rows contain exact `source` and `target` objects. `source` must be `{ "family": "cms", "type": "emailFragment", "apiName": "..." }` and resolve exactly once to `sfdc_cms__emailFragment`; missing, ambiguous, wrong-type, and duplicate selections are rejected. `target` contains fresh `contentKey` and `apiName`. Source content keys remain provenance rather than selectors.
 
@@ -78,6 +82,10 @@ Verified HTML-only companion for --native-copy-map. Requires the unchanged --sou
 
 JSON array selecting paired cms/landingPage sources, fresh page identities, an exact Draft destination template selector, and explicit image/Data Graph prerequisite mappings. The source pair is title-first; canonical package identity proves compatibility, not provenance.
 
+# flags.brand-map.summary
+
+JSON array selecting typed `cms/brand` sources by exact case-sensitive API name and assigning fresh target apiName, title, and urlName values. Complete package/report integrity, canonical Marketing destination evidence, complete repeated collision inventory, faithful body transport, durable all-intent journaling, and independent Draft readback are required.
+
 # flags.form-map.summary
 
 JSON array selecting `cms/form` sources by exact case-sensitive API name and assigning fresh target apiName, title, and urlName values. Complete package/report integrity, canonical Marketing destination evidence, complete collision inventory, fresh block UUIDs, and exact Draft readback are required; Form body compatibility is decided by Salesforce at runtime.
@@ -90,13 +98,17 @@ JSON array selecting evidence-qualified `cms/formHandler` sources by exact case-
 
 JSON array selecting evidence-qualified `cms/consentBanner` sources by exact case-sensitive API name and assigning fresh target apiName, title, and urlName values. Only the exact dependency-free Reject/Accept Draft profile is accepted; canonical Marketing destination evidence and complete repeated collision inventory are required.
 
+# flags.preference-page-map.summary
+
+JSON array selecting strict typed `cms/preferencePage` sources by exact API name, a fresh target API name, exact source-to-destination channel/subchannel ID rows, and an optional explicit destination Brand selector only when source Brand evidence exists.
+
 # flags.apply.summary
 
 Create the planned content after local validation and the profile's bounded preflight checks pass. Landing-page apply writes the initial journal before mutation, then re-resolves every prerequisite and rebuilds the request from immutable source baselines. Dry-run writes no report and does not establish full conflict or apply readiness.
 
 # flags.allow-partial.summary
 
-Accept an export whose manifest records omissions or incomplete coverage, except Form, Form Handler, and Consent Banner imports, which always require a complete package.
+Accept recorded omissions. Brand, Form, Form Handler, and Consent Banner always require complete packages; Preference Page permits only exact typed report-bound unresolved channel/subchannel evidence.
 
 # flags.report-dir.summary
 

@@ -650,9 +650,7 @@ export async function exportWorkspace(
     for (const entry of entries) {
       const detail = details.get(entry.variantId);
       const apiName = detail?.apiName;
-      const normalizationInput = detail === undefined ? undefined : { ...detail };
-      if (normalizationInput !== undefined) delete normalizationInput.apiName;
-      const normalization = normalizePreferencePage(normalizationInput);
+      const normalization = normalizePreferencePage(detail);
       if (normalization === null) {
         throw new TypeError(`Preference Page normalization failed for ${entry.variantId}`);
       }

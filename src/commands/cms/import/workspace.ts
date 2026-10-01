@@ -36,6 +36,8 @@ import { planLandingPageCopies } from '../../../services/landing-page.js';
 import { planFormCopies } from '../../../services/form.js';
 import { planFormHandlerCopies } from '../../../services/form-handler.js';
 import { planConsentBannerCopies } from '../../../services/consent-banner.js';
+import { planPreferencePageCopies } from '../../../services/preference-page.js';
+import { planBrandCopies } from '../../../services/brand.js';
 import {
   applyImageImports,
   planImageImports,
@@ -76,7 +78,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
@@ -89,6 +91,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-forms --form-map ./form-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-form-handlers --form-handler-map ./form-handler-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-consent-banners --consent-banner-map ./consent-banner-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-brands --brand-map ./brand-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-preference-pages --preference-page-map ./preference-page-map.json --allow-partial --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-v2 --image-map ./image-map.json --contract-version 2 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-v2 --image-map ./image-map.json --contract-version 2 --apply --report-dir ./image-import-report --json',
   ];
@@ -125,6 +129,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -141,6 +147,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -157,6 +165,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -173,6 +183,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -189,6 +201,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -205,6 +219,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'editable-dir',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -221,6 +237,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'editable-dir',
         'form-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
@@ -237,10 +255,48 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'editable-dir',
         'form-map',
         'form-handler-map',
+        'brand-map',
+        'preference-page-map',
         'image-map',
       ],
       summary:
         'JSON array selecting strict typed cms/consentBanner reports by exact API name with fresh apiName, title, and urlName targets.',
+    }),
+    'brand-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'preference-page-map',
+        'image-map',
+      ],
+      summary:
+        'JSON array selecting typed cms/brand reports by exact API name with fresh apiName, title, and urlName targets.',
+    }),
+    'preference-page-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'brand-map',
+        'image-map',
+      ],
+      summary:
+        'JSON array selecting strict typed cms/preferencePage reports, fresh apiName targets, exact channel/subchannel ID mappings, and optional explicit Brand selectors.',
     }),
     'image-map': Flags.file({
       exists: true,
@@ -253,6 +309,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'form-map',
         'form-handler-map',
         'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
         'editable-dir',
       ],
       summary:
@@ -266,7 +324,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     'allow-partial': Flags.boolean({
       default: false,
       summary:
-        'Accept an export whose manifest records omissions or incomplete coverage, except Form, Form Handler, and Consent Banner imports.',
+        'Accept recorded omissions; Preference Page permits only its exact report-bound unresolved channel/subchannel evidence.',
     }),
     'report-dir': Flags.directory({
       dependsOn: ['apply'],
@@ -318,9 +376,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
 
     let source: LoadedWorkspaceExport;
     let emailFragmentMappings: unknown;
+    let brandMappings: unknown;
     let formMappings: unknown;
     let formHandlerMappings: unknown;
     let consentBannerMappings: unknown;
+    let preferencePageMappings: unknown;
     let imagePlans: ReturnType<typeof planImageImports> | undefined;
     let landingPageTemplateMappings: unknown;
     let landingPageMappings: unknown;
@@ -329,11 +389,20 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     try {
       if (flags['editable-dir'] !== undefined && flags['native-copy-map'] === undefined)
         throw new TypeError('--editable-dir requires --native-copy-map');
-      let loadProfile: 'consent-banner' | 'form' | 'form-handler' | 'general' | 'image' = 'general';
+      let loadProfile:
+        | 'brand'
+        | 'consent-banner'
+        | 'form'
+        | 'form-handler'
+        | 'general'
+        | 'image'
+        | 'preference-page' = 'general';
       if (imageProfile) loadProfile = 'image';
+      else if (flags['brand-map'] !== undefined) loadProfile = 'brand';
       else if (flags['form-map'] !== undefined) loadProfile = 'form';
       else if (flags['form-handler-map'] !== undefined) loadProfile = 'form-handler';
       else if (flags['consent-banner-map'] !== undefined) loadProfile = 'consent-banner';
+      else if (flags['preference-page-map'] !== undefined) loadProfile = 'preference-page';
       source = await loadWorkspaceExport(flags['source-dir'], {
         allowPartial: flags['allow-partial'],
         profile: loadProfile,
@@ -354,6 +423,10 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         ) as unknown;
         planEmailFragmentCopies(source, emailFragmentMappings);
       }
+      if (flags['brand-map'] !== undefined) {
+        brandMappings = JSON.parse(await readFile(flags['brand-map'], 'utf8')) as unknown;
+        planBrandCopies(source, brandMappings);
+      }
       if (flags['form-map'] !== undefined) {
         formMappings = JSON.parse(await readFile(flags['form-map'], 'utf8')) as unknown;
         planFormCopies(source, formMappings);
@@ -369,6 +442,12 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
           await readFile(flags['consent-banner-map'], 'utf8'),
         ) as unknown;
         planConsentBannerCopies(source, consentBannerMappings);
+      }
+      if (flags['preference-page-map'] !== undefined) {
+        preferencePageMappings = JSON.parse(
+          await readFile(flags['preference-page-map'], 'utf8'),
+        ) as unknown;
+        planPreferencePageCopies(source, preferencePageMappings);
       }
       if (flags['web-fragment-map'] !== undefined) {
         webFragmentMappings = JSON.parse(
@@ -426,9 +505,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         workspaceName: flags['workspace-name'],
       });
       if (
+        brandMappings !== undefined ||
         formMappings !== undefined ||
         formHandlerMappings !== undefined ||
-        consentBannerMappings !== undefined
+        consentBannerMappings !== undefined ||
+        preferencePageMappings !== undefined
       )
         await assertCanonicalMarketingWorkspace(connection, selected);
       if (imagePlans !== undefined) {
@@ -469,9 +550,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         loadedSource: source,
         editableDirectory: flags['editable-dir'],
         emailFragmentMappings,
+        brandMappings,
         formMappings,
         formHandlerMappings,
         consentBannerMappings,
+        preferencePageMappings,
         landingPageTemplateMappings,
         landingPageMappings,
         nativeCopyMappings,

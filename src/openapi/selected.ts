@@ -17,6 +17,14 @@ export const SELECTED_OPERATION_CONFIG: readonly SelectedOperationConfig[] = [
     operationId: 'getManagedContentDocument',
   },
   {
+    localKey: 'content.publish',
+    operationId: 'postManagedContentPublish',
+  },
+  {
+    localKey: 'content.unpublish',
+    operationId: 'postManagedContentUnpublish',
+  },
+  {
     localKey: 'variant.create',
     operationId: 'postManagedContentVariantCreate',
   },
@@ -27,6 +35,10 @@ export const SELECTED_OPERATION_CONFIG: readonly SelectedOperationConfig[] = [
   {
     localKey: 'variant.get',
     operationId: 'getManagedContentVariant',
+  },
+  {
+    localKey: 'variant.update',
+    operationId: 'putManagedContentVariant',
   },
   {
     localKey: 'workspace.channel.list',

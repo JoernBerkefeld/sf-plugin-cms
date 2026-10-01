@@ -15,24 +15,24 @@ function fakeRequest<T>(value: T): Promise<T> & { stream(): { destroy(): void } 
 
 function preferencePageDetail(id: string, apiName: string): Record<string, unknown> {
   return {
-    contentType: 'sfdc_cms__preferencePage',
+    apiName,
+    contentType: { fullyQualifiedName: 'sfdc_cms__preferencePage' },
     managedContentId: `content-${id}`,
     managedContentVariantId: id,
     id,
-    apiName,
-    contentSpace: { id: 'space' },
+    contentKey: `key-${id}`,
+    contentSpace: { id: 'space', resourceUrl: '/connect/cms/spaces/space' },
     contentBody: {
-      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
       'lightning:dataProviders': [],
       'sfdc_cms:title': `Title ${apiName}`,
       'sfdc_cms:description': `Description ${apiName}`,
       'sfdc_cms:block': {
-        id: `root-${id}`,
+        id: '10000000-0000-4000-8000-000000000001',
         type: 'block',
         definition: 'sfdc_cms/rootContentBlock',
         children: [
           {
-            id: `subscriptions-${id}`,
+            id: '10000000-0000-4000-8000-000000000002',
             type: 'block',
             definition: 'sfdc_cms/preferencePageSubscriptionsBlock',
             attributes: {
@@ -44,7 +44,7 @@ function preferencePageDetail(id: string, apiName: string): Record<string, unkno
             children: [],
           },
           {
-            id: `submit-${id}`,
+            id: '10000000-0000-4000-8000-000000000003',
             type: 'block',
             definition: 'sfdc_cms/preferencePageSubmitBlock',
             attributes: { label: 'Save' },
@@ -53,6 +53,19 @@ function preferencePageDetail(id: string, apiName: string): Record<string, unkno
         ],
       },
     },
+    contentFqn: null,
+    createdBy: {},
+    createdDate: '2026-10-01T00:00:00.000Z',
+    externalId: null,
+    folder: null,
+    isPublished: false,
+    language: 'en_US',
+    lastModifiedBy: {},
+    lastModifiedDate: '2026-10-01T00:00:00.000Z',
+    managedContentVersionId: `version-${id}`,
+    status: { label: 'Draft', status: 'Draft' },
+    title: `Title ${apiName}`,
+    urlName: `url-${id}`,
   };
 }
 

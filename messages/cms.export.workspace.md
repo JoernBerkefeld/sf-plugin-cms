@@ -24,13 +24,13 @@ Exports one Marketing Cloud CMS workspace selected by exact ID or case-insensiti
 
   <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-preference-pages --preference-page-map ./preference-pages.json --json
 
-Preference Page selection is exact and case-sensitive by API name. The read/export-only output retains raw source records and writes typed reports while leaving engagement-channel and communication-subchannel IDs as unresolved source references. Therefore expected runs are partial and exit 2. This profile has no CREATE/import support and performs no publication, default assignment, consent mutation, or other org write.
+Preference Page selection is exact and case-sensitive by API name. Output retains raw source records and writes typed reports while leaving engagement-channel and communication-subchannel IDs as unresolved source references. Therefore expected runs are partial and exit 2. The typed package can feed the strict create-only `--preference-page-map` import profile, which requires explicit destination mappings and never publishes, assigns defaults, mutates consent, or invokes runtime actions.
 
 - Export exact Brands as unchanged raw items plus typed read reports:
 
   <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brands --brand-map ./brands.json --json
 
-Brand selection is exact and case-sensitive by API name. The read-only output preserves each raw record and adds a strict `sf-cms-brand-read-report@1` report under `reports/brands/`, separating portable Brand semantics from source provenance. Only the retained Draft/unpublished Brand shape is accepted. There is no Brand CREATE/import, publication, workspace-default assignment, or other org write.
+Brand selection is exact and case-sensitive by API name. The output preserves each raw record and adds a strict `sf-cms-brand-read-report@1` report under `reports/brands/`, separating portable Brand semantics from source provenance. Only the retained Draft/unpublished Brand shape is accepted. Complete report-bound evidence can feed the strict create-only `--brand-map` importer with a fresh destination identity; it never publishes, assigns the workspace-default Brand, updates existing content, or performs broader lifecycle mutation.
 
 - Export exact Forms as unchanged raw items plus strict typed reports:
 
@@ -104,11 +104,11 @@ JSON file containing a nonempty array of exact `sfdc_cms__landingPage` API names
 
 # flags.preference-page-map.summary
 
-JSON file containing a nonempty array of exact `sfdc_cms__preferencePage` API names. Every name must resolve exactly once. This read/export-only profile retains each raw item and adds a typed `sf-cms-preference-page-read-report@1` report. Engagement-channel and communication-subchannel IDs remain unresolved source references, so expected exports are partial and exit with status 2. There is no Preference Page CREATE/import flag, publication, default assignment, consent mutation, or other org write.
+JSON file containing a nonempty array of exact `sfdc_cms__preferencePage` API names. Every name must resolve exactly once. The profile retains each raw item and adds a typed `sf-cms-preference-page-read-report@1` report. Engagement-channel and communication-subchannel IDs remain unresolved source references, so expected exports are partial and exit with status 2. The strict create-only import profile can consume this exact evidence with explicit destination mappings; it never publishes, assigns defaults, mutates consent, or invokes runtime actions.
 
 # flags.brand-map.summary
 
-JSON file containing a nonempty array of exact `sfdc_cms__brand` API names. Every name must resolve exactly once. This read-only profile preserves each raw item and adds a strict `sf-cms-brand-read-report@1` report. Typed Brand reports cannot be imported, and the capability performs no CREATE, publication, workspace-default Brand assignment, or other org write.
+JSON file containing a nonempty array of exact `sfdc_cms__brand` API names. Every name must resolve exactly once. The profile preserves each raw item and adds a strict `sf-cms-brand-read-report@1` report. The strict create-only `--brand-map` importer can consume complete report-bound evidence with a fresh destination identity; it never publishes, assigns the workspace-default Brand, updates existing content, or performs broader lifecycle mutation.
 
 # flags.form-map.summary
 

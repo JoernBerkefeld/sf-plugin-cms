@@ -461,9 +461,9 @@ Export one or more `sfdc_cms__preferencePage` records by exact, case-sensitive A
 sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-preference-pages --preference-page-map ./preference-pages.json --json
 ```
 
-This read/export-only profile writes both the unchanged raw source item under `items/` and a typed `sf-cms-preference-page-read-report@1` normalization under `reports/preference-pages/`. Engagement-channel and communication-subchannel IDs remain explicit unresolved source references in the typed report; they are not resolved, remapped, defaulted, or mutated. That unresolved evidence intentionally makes the export partial, emits warnings, and sets exit status `2` while preserving the unchanged three-field single-export JSON result: `destination`, `manifest`, and `manifestSha256`.
+This profile writes both the unchanged raw source item under `items/` and a typed `sf-cms-preference-page-read-report@1` normalization under `reports/preference-pages/`. Engagement-channel and communication-subchannel IDs remain explicit unresolved source references in the typed report. That exact report-bound evidence intentionally makes the export partial, emits warnings, and sets exit status `2` while preserving the unchanged three-field single-export JSON result: `destination`, `manifest`, and `manifestSha256`.
 
-There is no Preference Page CREATE/import flag or workflow. This capability does not create or update content, publish anything, assign defaults, mutate consent, or perform any other org write.
+Create-only import uses `--preference-page-map` with `--allow-partial`. Each row selects exact source `{ "family": "cms", "type": "preferencePage", "apiName": "..." }`, supplies one fresh target `apiName`, maps every source engagement-channel and communication-subchannel ID to an explicit destination ID, and supplies exactly one destination Brand selector only when the source body has exact `{ "contentKey": "..." }` Brand evidence. Destination channel/subchannel records and their relationship are verified through SOQL; an optional Brand resolves exactly once inside the canonical Marketing workspace. Import preserves body/style semantics, regenerates package-wide fresh UUID-v4 block IDs, omits root `contentKey`, `title`, and `urlName`, rejects child variants, repeats exact API-name/dependency checks immediately before one non-retried public generic CMS POST, journals pending intent first, and verifies independent content-key plus variant-ID Draft/unpublished readback. It never calls `createCpp`, `variant.create`, publish/unpublish, default assignment, consent mutation, or runtime actions.
 
 #### Brand read reports (`--brand-map`)
 
@@ -479,7 +479,22 @@ sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --outpu
 
 The read-only profile preserves every raw Brand item unchanged under `items/` and writes a strict `sf-cms-brand-read-report@1` report under `reports/brands/`. The typed report separates portable Brand semantics from source content, variant, and workspace provenance. It accepts only the retained Draft/unpublished content and variant envelopes and evidenced typography, color, spacing, button, provider, title, Einstein-brand, and empty variant structures. The retained body contains no external identifiers, so an otherwise complete Brand selection remains complete; unknown fields or shapes fail closed before publication.
 
-Typed Brand reports are not importable, including with `--allow-partial`. There is no Brand CREATE/import, publication, or workspace-default Brand assignment support, and the command performs no org mutation.
+Create-only import uses `--brand-map`. Each row selects exact source `{ "family": "cms", "type": "brand", "apiName": "..." }` and supplies fresh destination `apiName`, title, and lowercase-hyphen `urlName`. The package must be complete and strictly report-bound with no warnings, failed/rejected IDs, dependencies, or external references. Import requires the canonical Marketing workspace, proves a complete exact Brand inventory and API-name/title/URL absence during dry-run and again immediately before each sequential POST, transports the complete raw body without using the retained export schema as a speculative CREATE allowlist, updates embedded `sfdc_cms:title` only when present, and regenerates UUID-v4 values only for structurally identified block nodes if any exist. Every ordered request intent is durably journaled before the first mutation; `contentKey` is omitted for server generation; ambiguous writes are never retried; and independent content-key plus variant reads must match the target body and identity as Draft/unpublished. The command never assigns the workspace default Brand, publishes, updates, or mutates dependent content.
+
+Example mapping:
+
+```json
+[
+  {
+    "source": { "family": "cms", "type": "brand", "apiName": "Phase_5_Discovery_Brand" },
+    "target": { "apiName": "Imported_Brand", "title": "Imported Brand", "urlName": "imported-brand" }
+  }
+]
+```
+
+```sh
+sf cms import workspace --target-org target-org --workspace-id 0ZuTARGET --source-dir ./cms-brands --brand-map ./brand-import-map.json --json
+```
 
 #### Evidence-qualified Forms (`--form-map`)
 

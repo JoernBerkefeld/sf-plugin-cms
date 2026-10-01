@@ -83,6 +83,24 @@ import {
   type ConsentBannerReadReport,
   type PlannedConsentBannerCopies,
 } from './consent-banner.js';
+import {
+  assertPreferencePageReadback,
+  normalizePreferencePage,
+  planPreferencePageCopies,
+  preferencePageCreatePayload,
+  validatePreferencePageReadReport,
+  type PlannedPreferencePageCopies,
+  type PreferencePageReadReport,
+} from './preference-page.js';
+import { lookupExactCmsVariants } from './cms-prerequisite-lookup.js';
+import {
+  assertBrandReadback,
+  brandCreatePayload,
+  planBrandCopies,
+  validateBrandImportReadReport,
+  type BrandReadReport,
+  type PlannedBrandCopies,
+} from './brand.js';
 
 type RequestConnection = Pick<Connection, 'request'> &
   Partial<Pick<Connection, 'version'>> & {
@@ -115,14 +133,47 @@ export type LoadedWorkspaceExport = {
 };
 
 export type WorkspaceExportLoadProfile =
-  'general' | 'image' | 'form' | 'form-handler' | 'consent-banner';
+  'general' | 'image' | 'brand' | 'form' | 'form-handler' | 'consent-banner' | 'preference-page';
 
+const strictlyLoadedBrandSources = new WeakMap<LoadedWorkspaceExport, string>();
 const strictlyLoadedFormSources = new WeakMap<LoadedWorkspaceExport, string>();
 const strictlyLoadedFormHandlerSources = new WeakMap<LoadedWorkspaceExport, string>();
 const strictlyLoadedConsentBannerSources = new WeakMap<LoadedWorkspaceExport, string>();
+const strictlyLoadedPreferencePageSources = new WeakMap<LoadedWorkspaceExport, string>();
 
 function loadedSourceFingerprint(source: LoadedWorkspaceExport): string {
   return createHash('sha256').update(JSON.stringify(source)).digest('hex');
+}
+
+function assertStrictBrandSource(source: LoadedWorkspaceExport): void {
+  if (
+    source.isPartial ||
+    source.manifest.completeness !== 'complete' ||
+    source.manifest.exportedCount !== source.manifest.entries.length ||
+    source.manifest.expectedCount !== source.manifest.exportedCount ||
+    source.manifest.foundCount !== source.manifest.exportedCount ||
+    source.manifest.failedVariantIds.length > 0 ||
+    source.manifest.rejectedVariantIds.length > 0
+  ) {
+    throw new TypeError('Brand profile requires a complete workspace export');
+  }
+  const descriptors = source.manifest.brandReports ?? [];
+  if (
+    descriptors.length === 0 ||
+    descriptors.length !== source.items.length ||
+    source.manifest.dependencies.length > 0 ||
+    source.manifest.externalReferences.length > 0 ||
+    source.manifest.warnings.length > 0 ||
+    !source.integrity.verified ||
+    source.integrity.unlistedFileCount !== 0 ||
+    source.integrity.listedItemCount !== source.integrity.verifiedItemCount
+  ) {
+    throw new TypeError('Brand profile requires strict report, dependency, and integrity evidence');
+  }
+  const evidence = strictlyLoadedBrandSources.get(source);
+  if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
+    throw new TypeError('Injected Brand source must be produced unchanged by strict Brand loading');
+  }
 }
 
 function assertStrictFormSource(source: LoadedWorkspaceExport): void {
@@ -184,6 +235,47 @@ function assertStrictFormHandlerSource(source: LoadedWorkspaceExport): void {
   if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
     throw new TypeError(
       'Injected Form Handler source must be produced unchanged by strict Form Handler loading',
+    );
+  }
+}
+
+function assertStrictPreferencePageSource(source: LoadedWorkspaceExport): void {
+  const descriptors = source.manifest.preferencePageReports ?? [];
+  const descriptorVariantIds = descriptors.map(({ variantId }) => variantId).toSorted();
+  const entryVariantIds = source.manifest.entries.map(({ variantId }) => variantId).toSorted();
+  const warningVariantIds = source.manifest.warnings[0]?.variantIds;
+  const allowedWarnings =
+    source.manifest.warnings.length === 1 &&
+    source.manifest.warnings[0].code === 'REFERENCE_UNRESOLVED' &&
+    Array.isArray(warningVariantIds) &&
+    new Set(warningVariantIds).size === warningVariantIds.length &&
+    isDeepStrictEqual(warningVariantIds.toSorted(), descriptorVariantIds) &&
+    isDeepStrictEqual(descriptorVariantIds, entryVariantIds);
+  if (
+    !source.isPartial ||
+    source.manifest.completeness !== 'partial' ||
+    source.manifest.expectedCount !== source.manifest.entries.length ||
+    source.manifest.foundCount !== source.manifest.entries.length ||
+    source.manifest.exportedCount !== source.manifest.entries.length ||
+    source.manifest.failedVariantIds.length > 0 ||
+    source.manifest.rejectedVariantIds.length > 0 ||
+    source.manifest.dependencies.length > 0 ||
+    source.manifest.externalReferences.length > 0 ||
+    descriptors.length === 0 ||
+    descriptors.length !== source.items.length ||
+    !allowedWarnings ||
+    !source.integrity.verified ||
+    source.integrity.unlistedFileCount !== 0 ||
+    source.integrity.listedItemCount !== source.integrity.verifiedItemCount
+  ) {
+    throw new TypeError(
+      'Preference Page profile permits only exact report-bound REFERENCE_UNRESOLVED channel/subchannel partial evidence',
+    );
+  }
+  const evidence = strictlyLoadedPreferencePageSources.get(source);
+  if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
+    throw new TypeError(
+      'Injected Preference Page source must be produced unchanged by strict Preference Page loading',
     );
   }
 }
@@ -356,9 +448,11 @@ export type ExecuteWorkspaceImportOptions = {
   readonly dryRun?: boolean;
   readonly editableDirectory?: string;
   readonly emailFragmentMappings?: unknown;
+  readonly brandMappings?: unknown;
   readonly formMappings?: unknown;
   readonly formHandlerMappings?: unknown;
   readonly consentBannerMappings?: unknown;
+  readonly preferencePageMappings?: unknown;
   readonly loadedSource?: LoadedWorkspaceExport;
   readonly identityMappings?: unknown;
   readonly landingPageTemplateMappings?: unknown;
@@ -609,15 +703,19 @@ export async function loadWorkspaceExport(
   const manifestValue = parseJson(manifestBytes, 'manifest.json');
   assertWorkspaceExportManifest(manifestValue);
   const manifest = manifestValue;
-  if (manifest.items.some(({ kind }) => kind === 'cms.preference-page.read-report')) {
+  if (
+    options.profile !== 'preference-page' &&
+    manifest.items.some(({ kind }) => kind === 'cms.preference-page.read-report')
+  ) {
     throw new TypeError(
-      'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+      'Typed Preference Page reports require the explicit Preference Page import profile.',
     );
   }
-  if (manifest.items.some(({ kind }) => kind === 'cms.brand.read-report')) {
-    throw new TypeError(
-      'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
-    );
+  if (
+    options.profile !== 'brand' &&
+    manifest.items.some(({ kind }) => kind === 'cms.brand.read-report')
+  ) {
+    throw new TypeError('Typed Brand reports require the explicit Brand import profile.');
   }
   if (options.profile === 'image' && manifest.schemaVersion !== 2) {
     throw new UnsupportedWorkspacePackageVersionError(
@@ -660,6 +758,10 @@ export async function loadWorkspaceExport(
     string,
     NonNullable<ReturnType<typeof normalizeConsentBanner>>
   >();
+  const preferencePageNormalizations = new Map<
+    string,
+    NonNullable<ReturnType<typeof normalizePreferencePage>>
+  >();
   for (const [index, entry] of manifest.entries.entries()) {
     if (!isRecord(entry)) throw new TypeError(`manifest.entries[${index}] is malformed`);
     assertIdentifier(entry.variantId, `manifest.entries[${index}].variantId`);
@@ -693,12 +795,18 @@ export async function loadWorkspaceExport(
     const consentBannerNormalization = normalizeConsentBanner(rawItem);
     if (consentBannerNormalization !== null)
       consentBannerNormalizations.set(entry.variantId, consentBannerNormalization);
+    const preferencePageNormalization = normalizePreferencePage(rawItem);
+    if (preferencePageNormalization !== null)
+      preferencePageNormalizations.set(entry.variantId, preferencePageNormalization);
   }
   if (manifest.exportedCount !== manifest.entries.length) {
     throw new TypeError('manifest.exportedCount does not match manifest.entries.length');
   }
   validateRelationships(items);
   const isPartial = partialFromManifest(manifest);
+  if (options.profile === 'brand' && isPartial) {
+    throw new TypeError('Brand profile requires a complete workspace export');
+  }
   if (options.profile === 'form' && isPartial) {
     throw new TypeError('Form profile requires a complete workspace export');
   }
@@ -707,6 +815,56 @@ export async function loadWorkspaceExport(
   }
   if (options.profile === 'consent-banner' && isPartial) {
     throw new TypeError('Consent Banner profile requires a complete workspace export');
+  }
+  if (options.profile === 'brand') {
+    const descriptors = manifest.brandReports ?? [];
+    if (descriptors.length === 0 || descriptors.length !== items.length) {
+      throw new TypeError('Brand profile requires one typed report for every selected raw item');
+    }
+    if (
+      manifest.dependencies.length > 0 ||
+      manifest.externalReferences.length > 0 ||
+      manifest.warnings.length > 0 ||
+      manifest.failedVariantIds.length > 0 ||
+      manifest.rejectedVariantIds.length > 0
+    ) {
+      throw new TypeError(
+        'Brand profile requires empty dependency/reference evidence and no warnings',
+      );
+    }
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const descriptor of descriptors) {
+      const reportBytes = await readStableRegularFile(
+        path.join(canonicalSource, ...descriptor.path.split('/')),
+        `Brand report ${descriptor.variantId}`,
+      );
+      const report = parseJson(reportBytes, `Brand report ${descriptor.variantId}`);
+      if (
+        !validateBrandImportReadReport(report, {
+          workspaceId: manifest.workspaceId,
+          apiName: descriptor.apiName,
+          variantId: descriptor.variantId,
+          rawItemPath: descriptor.rawItemPath,
+        })
+      ) {
+        throw new TypeError(`Brand report ${descriptor.variantId} failed strict validation`);
+      }
+      const item = itemsById.get(descriptor.variantId);
+      const entry = manifest.entries.find(({ variantId }) => variantId === descriptor.variantId);
+      const typedReport = report as BrandReadReport;
+      if (
+        descriptor.workspaceId !== manifest.workspaceId ||
+        entry?.file !== descriptor.rawItemPath ||
+        item?.apiName !== descriptor.apiName ||
+        item.contentType !== 'sfdc_cms__brand' ||
+        item.title !== typedReport.normalization.semantic.title ||
+        typedReport.normalization.provenance.contentSpaceId !== manifest.workspaceId ||
+        typedReport.normalization.provenance.managedContentVariantId !== item.id ||
+        !isDeepStrictEqual(item.contentBody, typedReport.normalization.semantic.body)
+      ) {
+        throw new TypeError(`Brand raw item ${descriptor.variantId} does not match its report`);
+      }
+    }
   }
   if (options.profile === 'form') {
     const descriptors = manifest.formReports ?? [];
@@ -793,6 +951,63 @@ export async function loadWorkspaceExport(
       'Typed Form Handler reports require the explicit Form Handler import profile.',
     );
   }
+  if (options.profile === 'preference-page') {
+    const descriptors = manifest.preferencePageReports ?? [];
+    if (descriptors.length === 0 || descriptors.length !== items.length) {
+      throw new TypeError(
+        'Preference Page profile requires one typed report for every selected raw item',
+      );
+    }
+    if (
+      manifest.dependencies.length > 0 ||
+      manifest.externalReferences.length > 0 ||
+      manifest.failedVariantIds.length > 0 ||
+      manifest.rejectedVariantIds.length > 0 ||
+      manifest.warnings.some(
+        (warning) =>
+          warning.code !== 'REFERENCE_UNRESOLVED' ||
+          !Array.isArray(warning.variantIds) ||
+          warning.variantIds.some(
+            (variantId) => !descriptors.some((descriptor) => descriptor.variantId === variantId),
+          ),
+      )
+    ) {
+      throw new TypeError(
+        'Preference Page profile permits only report-bound REFERENCE_UNRESOLVED evidence',
+      );
+    }
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const descriptor of descriptors) {
+      const reportBytes = await readStableRegularFile(
+        path.join(canonicalSource, ...descriptor.path.split('/')),
+        `Preference Page report ${descriptor.variantId}`,
+      );
+      const report = parseJson(reportBytes, `Preference Page report ${descriptor.variantId}`);
+      if (
+        !validatePreferencePageReadReport(report, {
+          workspaceId: descriptor.workspaceId,
+          apiName: descriptor.apiName,
+          variantId: descriptor.variantId,
+          rawItemPath: descriptor.rawItemPath,
+        })
+      ) {
+        throw new TypeError(
+          `Preference Page report ${descriptor.variantId} failed strict validation`,
+        );
+      }
+      const item = itemsById.get(descriptor.variantId);
+      const normalized = preferencePageNormalizations.get(descriptor.variantId);
+      if (
+        normalized === undefined ||
+        !isDeepStrictEqual(normalized, (report as PreferencePageReadReport).normalization) ||
+        item?.apiName !== descriptor.apiName
+      ) {
+        throw new TypeError(
+          `Preference Page raw item ${descriptor.variantId} does not match its report`,
+        );
+      }
+    }
+  }
   if (options.profile === 'consent-banner') {
     const descriptors = manifest.consentBannerReports ?? [];
     if (descriptors.length === 0 || descriptors.length !== items.length) {
@@ -863,12 +1078,16 @@ export async function loadWorkspaceExport(
     manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
     sourceDirectory: canonicalSource,
   };
+  if (options.profile === 'brand')
+    strictlyLoadedBrandSources.set(loaded, loadedSourceFingerprint(loaded));
   if (options.profile === 'form')
     strictlyLoadedFormSources.set(loaded, loadedSourceFingerprint(loaded));
   if (options.profile === 'form-handler')
     strictlyLoadedFormHandlerSources.set(loaded, loadedSourceFingerprint(loaded));
   if (options.profile === 'consent-banner')
     strictlyLoadedConsentBannerSources.set(loaded, loadedSourceFingerprint(loaded));
+  if (options.profile === 'preference-page')
+    strictlyLoadedPreferencePageSources.set(loaded, loadedSourceFingerprint(loaded));
   return loaded;
 }
 
@@ -1284,6 +1503,171 @@ async function assertNoFormHandlerCollisions(
       throw new TypeError(
         `Destination Form Handler apiName, title, or urlName collision: ${target.apiName}`,
       );
+    }
+  }
+}
+
+async function assertNoBrandCollisions(
+  connection: RequestConnection,
+  workspaceId: string,
+  targets: PlannedBrandCopies['targets'],
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const response = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('workspace.variant.search'),
+    {
+      query: {
+        contentSpaceOrFolderIds: [workspaceId],
+        contentTypeFQN: 'sfdc_cms__brand',
+        languages: ['All'],
+        page: 0,
+        pageSize: 250,
+        queryTerm: '*',
+      },
+    },
+    requestOptions,
+  );
+  if (!isRecord(response.data) || !Array.isArray(response.data.items))
+    throw new TypeError('Destination Brand inventory response is malformed');
+  const count = consistentInventoryCount(response.data, 'Destination Brand');
+  const ids = response.data.items.map((row) =>
+    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
+  );
+  if (count > 250 || ids.includes(undefined) || new Set(ids).size !== count)
+    throw new TypeError('Destination Brand inventory completeness cannot be proven');
+  const details: CmsRecord[] = [];
+  for (const id of ids as string[]) {
+    const detail = await getVariant(connection, id, requestOptions);
+    const type = isRecord(detail.contentType)
+      ? detail.contentType.fullyQualifiedName
+      : detail.contentType;
+    if (
+      !isRecord(detail.contentSpace) ||
+      detail.contentSpace.id !== workspaceId ||
+      type !== 'sfdc_cms__brand'
+    )
+      throw new TypeError('Destination Brand detail changed exact scope');
+    details.push(detail);
+  }
+  for (const target of targets) {
+    if (
+      details.some(
+        (detail) =>
+          detail.apiName === target.apiName ||
+          detail.title === target.title ||
+          detail.urlName === target.urlName,
+      )
+    ) {
+      throw new TypeError(
+        `Destination Brand apiName, title, or urlName collision: ${target.apiName}`,
+      );
+    }
+  }
+}
+
+async function assertNoPreferencePageCollisions(
+  connection: RequestConnection,
+  workspaceId: string,
+  targets: PlannedPreferencePageCopies['targets'],
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const response = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('workspace.variant.search'),
+    {
+      query: {
+        contentSpaceOrFolderIds: [workspaceId],
+        contentTypeFQN: 'sfdc_cms__preferencePage',
+        languages: ['All'],
+        page: 0,
+        pageSize: 250,
+        queryTerm: '*',
+      },
+    },
+    requestOptions,
+  );
+  if (!isRecord(response.data) || !Array.isArray(response.data.items))
+    throw new TypeError('Destination Preference Page inventory response is malformed');
+  const count = consistentInventoryCount(response.data, 'Destination Preference Page');
+  const ids = response.data.items.map((row) =>
+    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
+  );
+  if (count > 250 || ids.includes(undefined) || new Set(ids).size !== count)
+    throw new TypeError('Destination Preference Page inventory completeness cannot be proven');
+  const apiNames: unknown[] = [];
+  for (const id of ids as string[]) {
+    const detail = await getVariant(connection, id, requestOptions);
+    const type = isRecord(detail.contentType)
+      ? detail.contentType.fullyQualifiedName
+      : detail.contentType;
+    if (
+      !isRecord(detail.contentSpace) ||
+      detail.contentSpace.id !== workspaceId ||
+      type !== 'sfdc_cms__preferencePage'
+    )
+      throw new TypeError('Destination Preference Page detail changed exact scope');
+    apiNames.push(detail.apiName);
+  }
+  for (const target of targets) {
+    if (apiNames.includes(target.apiName))
+      throw new TypeError(`Destination Preference Page apiName collision: ${target.apiName}`);
+  }
+}
+
+async function resolvePreferencePageDependencies(
+  connection: RequestConnection,
+  workspaceId: string,
+  proposal: PlannedPreferencePageCopies,
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  if (connection.query === undefined)
+    throw new TypeError('Preference Page channel relationship verification requires SOQL');
+  for (const copy of proposal.copies) {
+    const channelTargets = new Set(copy.channelMappings.map(({ targetId }) => targetId));
+    if (channelTargets.size !== 1)
+      throw new TypeError('Preference Page must map to exactly one destination engagement channel');
+    const channelId = [...channelTargets][0];
+    const channel = await connection.query<{ Id?: string }>(
+      `SELECT Id FROM EngagementChannelType WHERE Id = ${soqlString(channelId)} LIMIT 2`,
+    );
+    if (
+      channel.totalSize !== 1 ||
+      channel.records.length !== 1 ||
+      channel.records[0].Id !== channelId
+    )
+      throw new TypeError(`Destination EngagementChannelType is absent or ambiguous: ${channelId}`);
+    for (const { targetId } of copy.subchannelMappings) {
+      const subchannel = await connection.query<{ Id?: string; EngagementChannelTypeId?: string }>(
+        `SELECT Id, EngagementChannelTypeId FROM CommSubscriptionChannelType WHERE Id = ${soqlString(targetId)} LIMIT 2`,
+      );
+      if (
+        subchannel.totalSize !== 1 ||
+        subchannel.records.length !== 1 ||
+        subchannel.records[0].Id !== targetId ||
+        subchannel.records[0].EngagementChannelTypeId !== channelId
+      )
+        throw new TypeError(
+          `Destination CommSubscriptionChannelType is absent, ambiguous, or belongs to another engagement channel: ${targetId}`,
+        );
+    }
+    if (copy.brandSelector !== undefined) {
+      const matches = await lookupExactCmsVariants(
+        connection,
+        workspaceId,
+        'sfdc_cms__brand',
+        copy.brandSelector.apiName ?? copy.brandSelector.contentKey!,
+        (detail) =>
+          (copy.brandSelector?.apiName === undefined ||
+            detail.apiName === copy.brandSelector.apiName) &&
+          (copy.brandSelector?.contentKey === undefined ||
+            detail.contentKey === copy.brandSelector.contentKey),
+        requestOptions,
+      );
+      if (matches.length !== 1 || !nonemptyString(matches[0].contentKey))
+        throw new TypeError('Destination Brand selector must resolve to exactly one Brand');
+      const body = copy.item.contentBody as Record<string, unknown>;
+      body['lightning:brandSource'] = { contentKey: matches[0].contentKey };
     }
   }
 }
@@ -1713,18 +2097,22 @@ export async function executeWorkspaceImport(
     throw new TypeError('destinationOrgId must be the nonempty destination org ID');
   }
   let loadProfile: WorkspaceExportLoadProfile = 'general';
-  if (options.formMappings !== undefined) loadProfile = 'form';
+  if (options.brandMappings !== undefined) loadProfile = 'brand';
+  else if (options.formMappings !== undefined) loadProfile = 'form';
   else if (options.formHandlerMappings !== undefined) loadProfile = 'form-handler';
   else if (options.consentBannerMappings !== undefined) loadProfile = 'consent-banner';
+  else if (options.preferencePageMappings !== undefined) loadProfile = 'preference-page';
   const source =
     options.loadedSource ??
     (await loadWorkspaceExport(options.sourceDirectory, {
       allowPartial: options.allowPartial,
       profile: loadProfile,
     }));
+  if (options.brandMappings !== undefined) assertStrictBrandSource(source);
   if (options.formMappings !== undefined) assertStrictFormSource(source);
   if (options.formHandlerMappings !== undefined) assertStrictFormHandlerSource(source);
   if (options.consentBannerMappings !== undefined) assertStrictConsentBannerSource(source);
+  if (options.preferencePageMappings !== undefined) assertStrictPreferencePageSource(source);
   if (!source.integrity.verified) throw new TypeError('Source integrity must be verified first');
   if (source.isPartial && options.allowPartial !== true) {
     throw new TypeError('Workspace export is partial; explicit allowPartial is required');
@@ -1732,18 +2120,22 @@ export async function executeWorkspaceImport(
   validateRelationships(source.items);
   const native = options.nativeCopyMappings !== undefined;
   const emailFragment = options.emailFragmentMappings !== undefined;
+  const brand = options.brandMappings !== undefined;
   const form = options.formMappings !== undefined;
   const formHandler = options.formHandlerMappings !== undefined;
   const consentBanner = options.consentBannerMappings !== undefined;
+  const preferencePage = options.preferencePageMappings !== undefined;
   const webFragment = options.webFragmentMappings !== undefined;
   const landingPageTemplate = options.landingPageTemplateMappings !== undefined;
   const landingPage = options.landingPageMappings !== undefined;
   if (
     Number(native) +
       Number(emailFragment) +
+      Number(brand) +
       Number(form) +
       Number(formHandler) +
       Number(consentBanner) +
+      Number(preferencePage) +
       Number(webFragment) +
       Number(landingPageTemplate) +
       Number(landingPage) +
@@ -1755,13 +2147,17 @@ export async function executeWorkspaceImport(
     throw new TypeError('editableDirectory requires nativeCopyMappings');
   let proposal:
     | PlannedImportIdentities
+    | PlannedBrandCopies
     | PlannedFormCopies
     | PlannedFormHandlerCopies
     | PlannedConsentBannerCopies
+    | PlannedPreferencePageCopies
     | undefined;
+  let brandProposal: PlannedBrandCopies | undefined;
   let formProposal: PlannedFormCopies | undefined;
   let formHandlerProposal: PlannedFormHandlerCopies | undefined;
   let consentBannerProposal: PlannedConsentBannerCopies | undefined;
+  let preferencePageProposal: PlannedPreferencePageCopies | undefined;
   let editableSource: EditableHtmlEvidence | undefined;
   let landingPageTemplateProposal: ReturnType<typeof planLandingPageTemplateCopies> | undefined;
   let landingPageProposal: ReturnType<typeof planLandingPageCopies> | undefined;
@@ -1774,6 +2170,9 @@ export async function executeWorkspaceImport(
     ));
   } else if (emailFragment) {
     proposal = planEmailFragmentCopies(source, options.emailFragmentMappings);
+  } else if (brand) {
+    brandProposal = planBrandCopies(source, options.brandMappings);
+    proposal = brandProposal;
   } else if (form) {
     formProposal = planFormCopies(source, options.formMappings);
     proposal = formProposal;
@@ -1783,6 +2182,9 @@ export async function executeWorkspaceImport(
   } else if (consentBanner) {
     consentBannerProposal = planConsentBannerCopies(source, options.consentBannerMappings);
     proposal = consentBannerProposal;
+  } else if (preferencePage) {
+    preferencePageProposal = planPreferencePageCopies(source, options.preferencePageMappings);
+    proposal = preferencePageProposal;
   } else if (webFragment) {
     webFragmentProposal = planWebFragmentCopies(source, options.webFragmentMappings);
     proposal = webFragmentProposal;
@@ -1811,9 +2213,11 @@ export async function executeWorkspaceImport(
   const selectedSource =
     native ||
     emailFragment ||
+    brand ||
     form ||
     formHandler ||
     consentBanner ||
+    preferencePage ||
     webFragment ||
     landingPageTemplate ||
     landingPage
@@ -1853,9 +2257,21 @@ export async function executeWorkspaceImport(
       ),
     );
   }
-  if (!form) preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
+  if (!brand && !form && !preferencePage)
+    preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
+  if (brand && plan.groups.some(({ variants }) => variants.length > 0))
+    throw new TypeError('Brand child variants are unsupported');
+  if (preferencePage && plan.groups.some(({ variants }) => variants.length > 0))
+    throw new TypeError('Preference Page child variants are unsupported');
   const requestOptions = options.requestOptions ?? {};
-  if (form)
+  if (brand)
+    await assertNoBrandCollisions(
+      options.connection,
+      plan.destinationWorkspaceId,
+      brandProposal!.targets,
+      requestOptions,
+    );
+  else if (form)
     await assertNoFormCollisions(
       options.connection,
       plan.destinationWorkspaceId,
@@ -1876,7 +2292,20 @@ export async function executeWorkspaceImport(
       consentBannerProposal!.targets,
       requestOptions,
     );
-  else if (!native) await preflightConflicts(options.connection, plan, requestOptions);
+  else if (preferencePage) {
+    await assertNoPreferencePageCollisions(
+      options.connection,
+      plan.destinationWorkspaceId,
+      preferencePageProposal!.targets,
+      requestOptions,
+    );
+    await resolvePreferencePageDependencies(
+      options.connection,
+      plan.destinationWorkspaceId,
+      preferencePageProposal!,
+      requestOptions,
+    );
+  } else if (!native) await preflightConflicts(options.connection, plan, requestOptions);
   if (emailFragment || webFragment || landingPageTemplate || landingPage)
     await preflightApiNames(options.connection, plan);
   if (webFragment) {
@@ -1917,9 +2346,11 @@ export async function executeWorkspaceImport(
   if (
     !native &&
     !emailFragment &&
+    !brand &&
     !form &&
     !formHandler &&
     !consentBanner &&
+    !preferencePage &&
     !webFragment &&
     !landingPageTemplate &&
     !landingPage &&
@@ -1950,6 +2381,9 @@ export async function executeWorkspaceImport(
     if (native) {
       conflictMessage =
         'Native copy omits contentKey. API-name conflicts can reject; duplicate URLs can create distinct objects. Destination name availability is not prevalidated.';
+    } else if (brand) {
+      conflictMessage =
+        'Exact destination Brand apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE transports the complete body, omits contentKey, and apply repeats the complete collision check immediately before each sequential POST.';
     } else if (form) {
       conflictMessage =
         'Exact destination Form apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE omits contentKey so the server generates it; apply repeats the complete collision check immediately before POST.';
@@ -1959,6 +2393,9 @@ export async function executeWorkspaceImport(
     } else if (consentBanner) {
       conflictMessage =
         'Exact destination Consent Banner apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE omits contentKey so the server generates it; apply repeats the complete collision check immediately before POST.';
+    } else if (preferencePage) {
+      conflictMessage =
+        'Exact destination Preference Page apiName absence and mapped channel/subchannel/optional Brand dependencies were proven. CREATE omits root contentKey, title, and urlName; apply repeats collision and dependency checks immediately before the single POST.';
     }
     const diagnostics: CmsDiagnostic[] = [
       ...editableDiagnostics,
@@ -1979,7 +2416,10 @@ export async function executeWorkspaceImport(
       if (emailFragment || webFragment || landingPageTemplate || landingPage) {
         nameAvailabilityMessage = `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment || landingPageTemplate || landingPage ? ' every named prerequisite was proven in exact type/workspace scope;' : ''} other server conflict behavior remains unverified.`;
       }
-      if (form) {
+      if (brand) {
+        nameAvailabilityMessage =
+          'Exact destination Brand apiName, title, and urlName absence was proven from the complete unique Brand variant inventory.';
+      } else if (form) {
         nameAvailabilityMessage =
           'Exact destination Form apiName, title, and urlName absence was proven from the complete unique Form variant inventory.';
       } else if (formHandler) {
@@ -1988,6 +2428,9 @@ export async function executeWorkspaceImport(
       } else if (consentBanner) {
         nameAvailabilityMessage =
           'Exact destination Consent Banner apiName, title, and urlName absence was proven from the complete unique Consent Banner variant inventory.';
+      } else if (preferencePage) {
+        nameAvailabilityMessage =
+          'Exact destination Preference Page apiName absence was proven from the complete unique Preference Page variant inventory.';
       }
       diagnostics.unshift({
         code: 'NAME_AVAILABILITY_UNVERIFIED',
@@ -2070,14 +2513,18 @@ export async function executeWorkspaceImport(
   );
   const sourceReferenceValues = new Set(sourceReferencesByValue.keys());
   const unresolvedMappingIds = new Set<string>();
-  // Editable native copies have no reference-bearing body or child variants. Bind every
+  // Editable native and Brand copies have no unresolved dependency rewrite. Bind every
   // exact CREATE payload in the initial durable journal, before any mutation.
-  if (editableSource !== undefined) {
+  if (editableSource !== undefined || brand) {
     for (const group of plan.groups) {
-      const payload = createPayload(group, plan.destinationWorkspaceId);
-      delete payload.contentKey;
-      delete payload.externalId;
-      delete payload.externalSource;
+      const payload = brand
+        ? brandCreatePayload(group.primary, plan.rootFolderId)
+        : createPayload(group, plan.destinationWorkspaceId);
+      if (!brand) {
+        delete (payload as { contentKey?: string }).contentKey;
+        delete (payload as { externalId?: string }).externalId;
+        delete (payload as { externalSource?: JsonObject }).externalSource;
+      }
       report.operations.push(
         pendingOperation(
           report,
@@ -2126,7 +2573,7 @@ export async function executeWorkspaceImport(
         }
       }
       const rewrittenGroup =
-        form || hasUnknownRequiredMapping
+        brand || form || hasUnknownRequiredMapping
           ? finalGroup
           : {
               ...finalGroup,
@@ -2134,22 +2581,36 @@ export async function executeWorkspaceImport(
               variants: finalGroup.variants.map((variant) => rewriteItem(variant, replacements)),
             };
       let parentPayload: CreateContentInput;
-      if (form) parentPayload = formCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      if (brand) parentPayload = brandCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      else if (form) parentPayload = formCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
       else if (formHandler)
         parentPayload = formHandlerCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
       else if (consentBanner)
         parentPayload = consentBannerCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      else if (preferencePage)
+        parentPayload = preferencePageCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
       else
         parentPayload = createPayload(
           rewrittenGroup,
           native ? plan.destinationWorkspaceId : plan.rootFolderId,
         );
       if (native && !form) {
-        delete parentPayload.contentKey;
-        delete parentPayload.externalId;
-        delete parentPayload.externalSource;
+        delete (parentPayload as { contentKey?: string }).contentKey;
+        delete (parentPayload as { externalId?: string }).externalId;
+        delete (parentPayload as { externalSource?: JsonObject }).externalSource;
       }
-      if (form) {
+      if (brand) {
+        await assertNoBrandCollisions(
+          options.connection,
+          plan.destinationWorkspaceId,
+          [
+            brandProposal!.targets.find(
+              ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+            )!,
+          ],
+          requestOptions,
+        );
+      } else if (form) {
         await assertNoFormCollisions(
           options.connection,
           plan.destinationWorkspaceId,
@@ -2180,6 +2641,35 @@ export async function executeWorkspaceImport(
               ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
             )!,
           ],
+          requestOptions,
+        );
+      } else if (preferencePage) {
+        await assertNoPreferencePageCollisions(
+          options.connection,
+          plan.destinationWorkspaceId,
+          [
+            preferencePageProposal!.targets.find(
+              ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+            )!,
+          ],
+          requestOptions,
+        );
+        await resolvePreferencePageDependencies(
+          options.connection,
+          plan.destinationWorkspaceId,
+          {
+            items: [rewrittenGroup.primary],
+            targets: [
+              preferencePageProposal!.targets.find(
+                ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+              )!,
+            ],
+            copies: [
+              preferencePageProposal!.copies.find(
+                ({ target }) => target.apiName === rewrittenGroup.primary.apiName,
+              )!,
+            ],
+          },
           requestOptions,
         );
       }
@@ -2236,7 +2726,7 @@ export async function executeWorkspaceImport(
         );
       }
       const parentOperation =
-        editableSource === undefined
+        editableSource === undefined && !brand
           ? pendingOperation(
               report,
               'create-parent',
@@ -2245,7 +2735,7 @@ export async function executeWorkspaceImport(
               finalPayload,
             )
           : report.operations.find((operation) => operation.contentKey === group.contentKey)!;
-      if (editableSource === undefined) report.operations.push(parentOperation);
+      if (editableSource === undefined && !brand) report.operations.push(parentOperation);
       if (landingPage && report.templatePrerequisites !== undefined) {
         const evidence = report.templatePrerequisites.find(
           ({ sourcePage }) => sourcePage.variantId === group.primary.id,
@@ -2276,11 +2766,12 @@ export async function executeWorkspaceImport(
           error.status !== undefined &&
           error.status >= 400 &&
           error.status < 500;
-        const uncertainCreateProfile = native || form || formHandler || consentBanner;
+        const uncertainCreateProfile =
+          native || brand || form || formHandler || consentBanner || preferencePage;
         parentOperation.state =
           uncertainCreateProfile && !definitiveFormRejection ? 'pending' : 'failed';
         if (definitiveFormRejection) report.state = 'failed';
-        else if (native || form || formHandler || consentBanner)
+        else if (native || brand || form || formHandler || consentBanner || preferencePage)
           report.state = 'ownership-uncertain';
         parentOperation.error = error instanceof Error ? error.message : String(error);
         try {
@@ -2291,7 +2782,7 @@ export async function executeWorkspaceImport(
         throw error;
       }
       // Persist returned identity before any semantic verification or further requests.
-      if (native || form || formHandler || consentBanner) {
+      if (native || brand || form || formHandler || consentBanner || preferencePage) {
         parentOperation.result = {
           contentKey:
             typeof parentResponse.contentKey === 'string' ? parentResponse.contentKey : undefined,
@@ -2306,7 +2797,7 @@ export async function executeWorkspaceImport(
       }
       const created = validateParentResponse(
         parentResponse,
-        native || form || formHandler || consentBanner
+        native || brand || form || formHandler || consentBanner || preferencePage
           ? responseIdentifier(parentResponse, ['contentKey'], 'generated key')
           : group.contentKey,
       );
@@ -2317,7 +2808,8 @@ export async function executeWorkspaceImport(
         contentKey: created.contentKey,
         primaryVariantId: created.primaryVariantId,
       };
-      if (native || form || formHandler || consentBanner) report.state = 'applying';
+      if (native || brand || form || formHandler || consentBanner || preferencePage)
+        report.state = 'applying';
       if (landingPage && report.templatePrerequisites !== undefined) {
         const evidence = report.templatePrerequisites.find(
           ({ sourcePage }) => sourcePage.variantId === group.primary.id,
@@ -2347,6 +2839,32 @@ export async function executeWorkspaceImport(
           requestOptions,
         );
         verifyNativeCopy(readback, parentPayload, created, group.primary.language);
+        report.state = 'applying';
+      }
+      if (brand) {
+        if (rewrittenGroup.variants.length > 0)
+          throw new TypeError('Brand child variants are unsupported');
+        const content = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        const variant = await getVariant(
+          options.connection,
+          created.primaryVariantId,
+          requestOptions,
+        );
+        assertBrandReadback(content, variant, {
+          workspaceId: plan.destinationWorkspaceId,
+          apiName: rewrittenGroup.primary.apiName!,
+          title: rewrittenGroup.primary.title,
+          urlName: rewrittenGroup.primary.urlName!,
+          contentId: created.contentId,
+          variantId: created.primaryVariantId,
+          language: rewrittenGroup.primary.language,
+          body: rewrittenGroup.primary.contentBody,
+        });
         report.state = 'applying';
       }
       if (form) {
@@ -2406,6 +2924,29 @@ export async function executeWorkspaceImport(
             language: rewrittenGroup.primary.language,
             body: rewrittenGroup.primary.contentBody,
           },
+        });
+        report.state = 'applying';
+      }
+      if (preferencePage) {
+        if (rewrittenGroup.variants.length > 0)
+          throw new TypeError('Preference Page child variants are unsupported');
+        const content = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        const variant = await getVariant(
+          options.connection,
+          created.primaryVariantId,
+          requestOptions,
+        );
+        assertPreferencePageReadback(content, variant, {
+          workspaceId: plan.destinationWorkspaceId,
+          apiName: rewrittenGroup.primary.apiName!,
+          contentId: created.contentId,
+          variantId: created.primaryVariantId,
+          body: rewrittenGroup.primary.contentBody,
         });
         report.state = 'applying';
       }

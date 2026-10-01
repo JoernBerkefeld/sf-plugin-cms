@@ -1,4 +1,10 @@
+import { randomUUID as nodeRandomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
+
 const BRAND_TYPE = 'sfdc_cms__brand' as const;
+const TITLE_KEY = 'sfdc_cms:title' as const;
+const UUID_V4 = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/iu;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -90,6 +96,43 @@ export type BrandReadReport = {
 export type BrandReadReportInput = Omit<BrandReadReport, 'format'>;
 export type BrandReadReportExpectedIdentity = Partial<Omit<BrandReadReport, 'format'>>;
 
+export type BrandCopyMapping = {
+  readonly source: { readonly family: 'cms'; readonly type: 'brand'; readonly apiName: string };
+  readonly target: { readonly apiName: string; readonly title: string; readonly urlName: string };
+};
+
+export type PlannedBrandTargetIdentity = {
+  readonly sourceApiName: string;
+  readonly apiName: string;
+  readonly title: string;
+  readonly urlName: string;
+};
+
+export type PlannedBrandCopies = {
+  readonly items: readonly WorkspaceImportItem[];
+  readonly targets: readonly PlannedBrandTargetIdentity[];
+};
+
+export type BrandCreatePayload = {
+  readonly apiName: string;
+  readonly contentBody: WorkspaceImportItem['contentBody'];
+  readonly contentSpaceOrFolderId: string;
+  readonly contentType: typeof BRAND_TYPE;
+  readonly title: string;
+  readonly urlName: string;
+};
+
+export type BrandReadbackExpectation = {
+  readonly workspaceId: string;
+  readonly apiName: string;
+  readonly title: string;
+  readonly urlName: string;
+  readonly contentId: string;
+  readonly variantId: string;
+  readonly language: string;
+  readonly body: WorkspaceImportItem['contentBody'];
+};
+
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -107,6 +150,33 @@ function exactKeys(value: JsonRecord, keys: readonly string[]): boolean {
 
 function onlyKeys(value: JsonRecord, keys: readonly string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function assertExactKeys(value: JsonRecord, keys: readonly string[], label: string): void {
+  if (!exactKeys(value, keys))
+    throw new TypeError(`${label} must contain exactly ${keys.join(', ')}`);
+}
+
+function identifier(value: unknown, label: string): asserts value is string {
+  if (!nonemptyString(value) || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new TypeError(`${label} must be a nonempty identifier without whitespace or separators`);
+  }
+}
+
+function urlName(value: unknown, label: string): asserts value is string {
+  if (!nonemptyString(value) || !/^[a-z0-9-]+$/u.test(value)) {
+    throw new TypeError(`${label} must contain lowercase letters, digits, or hyphens`);
+  }
+}
+
+function contentTypeName(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!record(value)) return undefined;
+  return typeof value.fullyQualifiedName === 'string' ? value.fullyQualifiedName : undefined;
+}
+
+function uuidV4(value: unknown): value is string {
+  return typeof value === 'string' && UUID_V4.test(value);
 }
 
 function measurement(value: unknown, units: readonly string[] = ['rem']): boolean {
@@ -387,4 +457,287 @@ export function validateBrandReadReport(
     return false;
   }
   return Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue);
+}
+
+/**
+ * Validate Brand report identity for import without treating the retained export body schema as a CREATE allowlist.
+ * @param {unknown} value - Candidate report.
+ * @param {BrandReadReportExpectedIdentity} expected - Exact descriptor identity bindings.
+ * @returns {value is BrandReadReport} Whether the report has safe identity/provenance structure and an opaque JSON body.
+ */
+export function validateBrandImportReadReport(
+  value: unknown,
+  expected: BrandReadReportExpectedIdentity = {},
+): value is BrandReadReport {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'apiName',
+      'format',
+      'normalization',
+      'rawItemPath',
+      'variantId',
+      'workspaceId',
+    ]) ||
+    value.format !== BRAND_READ_REPORT_FORMAT ||
+    !nonemptyString(value.workspaceId) ||
+    !nonemptyString(value.apiName) ||
+    !nonemptyString(value.variantId) ||
+    !safeRawItemPath(value.rawItemPath) ||
+    !record(value.normalization) ||
+    !exactKeys(value.normalization, ['semantic', 'provenance', 'unresolvedReferences']) ||
+    !record(value.normalization.semantic) ||
+    !exactKeys(value.normalization.semantic, ['body', 'contentType', 'title']) ||
+    value.normalization.semantic.contentType !== BRAND_TYPE ||
+    !nonemptyString(value.normalization.semantic.title) ||
+    !record(value.normalization.semantic.body) ||
+    !record(value.normalization.provenance) ||
+    !exactKeys(value.normalization.provenance, [
+      'contentSpaceId',
+      'managedContentId',
+      'managedContentVariantId',
+    ]) ||
+    !nonemptyString(value.normalization.provenance.contentSpaceId) ||
+    !nonemptyString(value.normalization.provenance.managedContentId) ||
+    !nonemptyString(value.normalization.provenance.managedContentVariantId) ||
+    value.normalization.provenance.managedContentId ===
+      value.normalization.provenance.managedContentVariantId ||
+    value.variantId !== value.normalization.provenance.managedContentVariantId ||
+    !Array.isArray(value.normalization.unresolvedReferences) ||
+    value.normalization.unresolvedReferences.length > 0
+  ) {
+    return false;
+  }
+  return Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue);
+}
+
+function collectBlockIds(value: unknown, ids: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const child of value) collectBlockIds(child, ids);
+    return;
+  }
+  if (!record(value)) return;
+  if (value.type === 'block' && nonemptyString(value.id)) ids.add(value.id);
+  for (const child of Object.values(value)) collectBlockIds(child, ids);
+}
+
+function regenerateBlockIds(
+  value: unknown,
+  generate: () => string,
+  sourceIds: ReadonlySet<string>,
+  generatedIds: Set<string>,
+): unknown {
+  if (Array.isArray(value))
+    return value.map((child) => regenerateBlockIds(child, generate, sourceIds, generatedIds));
+  if (!record(value)) return value;
+  const generated = value.type === 'block' && nonemptyString(value.id) ? generate() : undefined;
+  if (
+    generated !== undefined &&
+    (!uuidV4(generated) || sourceIds.has(generated) || generatedIds.has(generated))
+  ) {
+    throw new TypeError('Generated Brand block IDs must be fresh unique UUID v4 values');
+  }
+  if (generated !== undefined) generatedIds.add(generated);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === 'id' && generated !== undefined
+        ? generated
+        : regenerateBlockIds(child, generate, sourceIds, generatedIds),
+    ]),
+  );
+}
+
+/**
+ * Plan detached Brand copies while preserving complete body semantics.
+ * @param {LoadedWorkspaceExport} source - Strictly loaded typed Brand package.
+ * @param {unknown} input - Nonempty exact Brand mapping rows.
+ * @param {() => string} generateId - UUID generator for objective block nodes, if present.
+ * @returns {PlannedBrandCopies} Selected detached items and fresh target identities.
+ */
+export function planBrandCopies(
+  source: LoadedWorkspaceExport,
+  input: unknown,
+  generateId: () => string = nodeRandomUUID,
+): PlannedBrandCopies {
+  if (!source.integrity.verified) throw new TypeError('Source integrity must be verified first');
+  if (!Array.isArray(input) || input.length === 0)
+    throw new TypeError('Brand mappings must be a nonempty array');
+  const sourceApiNames = new Set(source.items.map(({ apiName }) => apiName));
+  const sourceTitles = new Set(source.items.map(({ title }) => title));
+  const sourceUrls = new Set(source.items.map(({ urlName }) => urlName));
+  const sourceBlockIds = new Set<string>();
+  for (const item of source.items) collectBlockIds(item.contentBody, sourceBlockIds);
+  const generatedBlockIds = new Set<string>();
+  const selected = new Set<string>();
+  const targetApiNames = new Set<string>();
+  const targetTitles = new Set<string>();
+  const targetUrls = new Set<string>();
+  const items: WorkspaceImportItem[] = [];
+  const targets: PlannedBrandTargetIdentity[] = [];
+
+  for (const [index, row] of input.entries()) {
+    if (!record(row)) throw new TypeError(`Brand mapping ${index} must be an object`);
+    assertExactKeys(row, ['source', 'target'], `Brand mapping ${index}`);
+    if (!record(row.source) || !record(row.target))
+      throw new TypeError(`Brand mapping ${index} source and target must be objects`);
+    assertExactKeys(row.source, ['apiName', 'family', 'type'], `Brand mapping ${index}.source`);
+    assertExactKeys(row.target, ['apiName', 'title', 'urlName'], `Brand mapping ${index}.target`);
+    if (row.source.family !== 'cms' || row.source.type !== 'brand')
+      throw new TypeError(`Brand mapping ${index}.source must select cms/brand`);
+    identifier(row.source.apiName, `Brand mapping ${index}.source.apiName`);
+    identifier(row.target.apiName, `Brand mapping ${index}.target.apiName`);
+    if (!nonemptyString(row.target.title))
+      throw new TypeError(`Brand mapping ${index}.target.title must be nonempty`);
+    urlName(row.target.urlName, `Brand mapping ${index}.target.urlName`);
+    const sourceApiName = row.source.apiName;
+    const targetApiName = row.target.apiName;
+    const targetTitle = row.target.title;
+    const targetUrlName = row.target.urlName;
+    if (selected.has(sourceApiName))
+      throw new TypeError(`Duplicate Brand selection: ${sourceApiName}`);
+    const matches = source.items.filter(
+      (item) => item.contentType === BRAND_TYPE && item.apiName === sourceApiName,
+    );
+    if (matches.length !== 1)
+      throw new TypeError(`Source apiName must match exactly one Brand: ${sourceApiName}`);
+    if (
+      sourceApiNames.has(targetApiName) ||
+      sourceTitles.has(targetTitle) ||
+      sourceUrls.has(targetUrlName) ||
+      targetApiNames.has(targetApiName) ||
+      targetTitles.has(targetTitle) ||
+      targetUrls.has(targetUrlName)
+    ) {
+      throw new TypeError('Target Brand apiName, title, and urlName must be fresh and unique');
+    }
+    const item = matches[0];
+    if (!record(item.contentBody)) throw new TypeError('Brand contentBody must be an object');
+    const regenerated = regenerateBlockIds(
+      structuredClone(item.contentBody),
+      generateId,
+      sourceBlockIds,
+      generatedBlockIds,
+    );
+    if (!record(regenerated)) throw new TypeError('Generated Brand body must be an object');
+    if (TITLE_KEY in regenerated) regenerated[TITLE_KEY] = targetTitle;
+    const planned = {
+      ...structuredClone(item),
+      apiName: targetApiName,
+      title: targetTitle,
+      urlName: targetUrlName,
+      contentBody: regenerated as WorkspaceImportItem['contentBody'],
+    } as WorkspaceImportItem;
+    selected.add(sourceApiName);
+    targetApiNames.add(targetApiName);
+    targetTitles.add(targetTitle);
+    targetUrls.add(targetUrlName);
+    items.push(planned);
+    targets.push({
+      sourceApiName,
+      apiName: targetApiName,
+      title: targetTitle,
+      urlName: targetUrlName,
+    });
+  }
+  return { items, targets };
+}
+
+/**
+ * Build a generic Brand CREATE payload without source identity provenance.
+ * @param {WorkspaceImportItem} item - Planned Brand item retaining only source provenance outside the request.
+ * @param {string} contentSpaceOrFolderId - Exact destination root folder ID.
+ * @returns {BrandCreatePayload} Brand CREATE payload with the source content key omitted.
+ */
+export function brandCreatePayload(
+  item: WorkspaceImportItem,
+  contentSpaceOrFolderId: string,
+): BrandCreatePayload {
+  if (item.contentType !== BRAND_TYPE || item.apiName === undefined || item.urlName === undefined)
+    throw new TypeError('Brand CREATE requires exact type, apiName, and urlName');
+  identifier(contentSpaceOrFolderId, 'Brand destination root folder ID');
+  return {
+    apiName: item.apiName,
+    contentBody: structuredClone(item.contentBody),
+    contentSpaceOrFolderId,
+    contentType: BRAND_TYPE,
+    title: item.title,
+    urlName: item.urlName,
+  };
+}
+
+function readback(value: unknown): {
+  readonly apiName: string;
+  readonly title: string;
+  readonly urlName: string;
+  readonly language: string;
+  readonly body: JsonRecord;
+  readonly contentId: string;
+  readonly variantId: string;
+  readonly workspaceId: string;
+} | null {
+  if (!record(value) || contentTypeName(value.contentType) !== BRAND_TYPE) return null;
+  const contentId = [value.managedContentId, value.contentId].find(nonemptyString);
+  const variantId = [value.managedContentVariantId, value.id].find(nonemptyString);
+  if (
+    !nonemptyString(value.apiName) ||
+    !nonemptyString(value.title) ||
+    !nonemptyString(value.urlName) ||
+    !nonemptyString(value.language) ||
+    !nonemptyString(contentId) ||
+    !nonemptyString(variantId) ||
+    !record(value.contentSpace) ||
+    !nonemptyString(value.contentSpace.id) ||
+    !record(value.contentBody) ||
+    value.isPublished !== false ||
+    !record(value.status) ||
+    value.status.status !== 'Draft'
+  ) {
+    return null;
+  }
+  return {
+    apiName: value.apiName,
+    title: value.title,
+    urlName: value.urlName,
+    language: value.language,
+    body: value.contentBody,
+    contentId,
+    variantId,
+    workspaceId: value.contentSpace.id,
+  };
+}
+
+/**
+ * Compare independent content-key and variant readback without imposing a body schema.
+ * @param {unknown} content - Independent content-key detail response.
+ * @param {unknown} variant - Independent variant-ID detail response.
+ * @param {BrandReadbackExpectation} expected - Exact target identity, body, and returned IDs.
+ * @returns {void} Nothing when both readbacks match exactly.
+ */
+export function assertBrandReadback(
+  content: unknown,
+  variant: unknown,
+  expected: BrandReadbackExpectation,
+): void {
+  const contentValue = readback(content);
+  const variantValue = readback(variant);
+  if (contentValue === null || variantValue === null)
+    throw new TypeError(
+      'Brand readback must contain Draft unpublished content and variant envelopes',
+    );
+  const expectedValue = {
+    apiName: expected.apiName,
+    title: expected.title,
+    urlName: expected.urlName,
+    language: expected.language,
+    body: expected.body,
+    contentId: expected.contentId,
+    variantId: expected.variantId,
+    workspaceId: expected.workspaceId,
+  };
+  if (
+    !isDeepStrictEqual(contentValue, expectedValue) ||
+    !isDeepStrictEqual(variantValue, expectedValue)
+  )
+    throw new TypeError('Brand readback identity, workspace, status, or body differs from target');
 }
