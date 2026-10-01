@@ -28,6 +28,41 @@ import {
 } from './editable-raw-html-export.js';
 import { getVariant, type CmsRecord } from './read.js';
 import {
+  buildPreferencePageReadReport,
+  normalizePreferencePage,
+  PREFERENCE_PAGE_READ_REPORT_FORMAT,
+  validatePreferencePageReadReport,
+  type PreferencePageReadReport,
+} from './preference-page.js';
+import {
+  BRAND_READ_REPORT_FORMAT,
+  buildBrandReadReport,
+  normalizeBrand,
+  validateBrandReadReport,
+  type BrandReadReport,
+} from './brand.js';
+import {
+  FORM_READ_REPORT_FORMAT,
+  buildFormReadReport,
+  normalizeForm,
+  validateFormReadReport,
+  type FormReadReport,
+} from './form.js';
+import {
+  FORM_HANDLER_READ_REPORT_FORMAT,
+  buildFormHandlerReadReport,
+  normalizeFormHandler,
+  validateFormHandlerReadReport,
+  type FormHandlerReadReport,
+} from './form-handler.js';
+import {
+  CONSENT_BANNER_READ_REPORT_FORMAT,
+  buildConsentBannerReadReport,
+  normalizeConsentBanner,
+  validateConsentBannerReadReport,
+  type ConsentBannerReadReport,
+} from './consent-banner.js';
+import {
   downloadExperimentalCmsMedia,
   EXPERIMENTAL_MEDIA_POLICY,
   type ExperimentalMediaDownloadOptions,
@@ -41,9 +76,19 @@ import {
 
 const PAGE_SIZE = 250;
 const ABSOLUTE_PAGE_CAP = 1000;
+const PREFERENCE_PAGE_TYPE = 'sfdc_cms__preferencePage';
+const BRAND_TYPE = 'sfdc_cms__brand';
+const FORM_TYPE = 'sfdc_cms__form';
+const FORM_HANDLER_TYPE = 'sfdc_cms__formHandler';
+const CONSENT_BANNER_TYPE = 'sfdc_cms__consentBanner';
 const INVENTORY_EXACT_API_NAME_TYPES = new Set([
   'sfdc_cms__emailFragment',
   'sfdc_cms__webFragment',
+  PREFERENCE_PAGE_TYPE,
+  BRAND_TYPE,
+  FORM_TYPE,
+  FORM_HANDLER_TYPE,
+  CONSENT_BANNER_TYPE,
 ]);
 
 function mediaByteCap(value: number | undefined, maximum: number, label: string): number {
@@ -89,6 +134,11 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   selection?: {
     readonly contentType: string;
     readonly apiNames: readonly string[];
+    readonly preferencePageReports?: boolean;
+    readonly brandReports?: boolean;
+    readonly formReports?: boolean;
+    readonly formHandlerReports?: boolean;
+    readonly consentBannerReports?: boolean;
   };
   landingPagePairs?: readonly LandingPagePairSelector[];
   atomicPublish?: DirectoryPublishOptions &
@@ -351,6 +401,50 @@ export async function exportWorkspace(
     if (new Set(selection.apiNames).size !== selection.apiNames.length) {
       throw new TypeError('Component export API names must be unique');
     }
+    if (
+      selection.preferencePageReports !== undefined &&
+      (selection.preferencePageReports !== true || selection.contentType !== PREFERENCE_PAGE_TYPE)
+    ) {
+      throw new TypeError(
+        'Preference Page reports require an exact sfdc_cms__preferencePage selection',
+      );
+    }
+    if (
+      selection.brandReports !== undefined &&
+      (selection.brandReports !== true || selection.contentType !== BRAND_TYPE)
+    ) {
+      throw new TypeError('Brand reports require an exact sfdc_cms__brand selection');
+    }
+    if (
+      selection.formReports !== undefined &&
+      (selection.formReports !== true || selection.contentType !== FORM_TYPE)
+    ) {
+      throw new TypeError('Form reports require an exact sfdc_cms__form selection');
+    }
+    if (
+      selection.formHandlerReports !== undefined &&
+      (selection.formHandlerReports !== true || selection.contentType !== FORM_HANDLER_TYPE)
+    ) {
+      throw new TypeError('Form Handler reports require an exact sfdc_cms__formHandler selection');
+    }
+    if (
+      selection.consentBannerReports !== undefined &&
+      (selection.consentBannerReports !== true || selection.contentType !== CONSENT_BANNER_TYPE)
+    ) {
+      throw new TypeError(
+        'Consent Banner reports require an exact sfdc_cms__consentBanner selection',
+      );
+    }
+    if (
+      Number(selection.preferencePageReports === true) +
+        Number(selection.brandReports === true) +
+        Number(selection.formReports === true) +
+        Number(selection.formHandlerReports === true) +
+        Number(selection.consentBannerReports === true) >
+      1
+    ) {
+      throw new TypeError('Typed component report modes are mutually exclusive');
+    }
   }
 
   const warnings: WorkspaceExportWarning[] = [
@@ -551,7 +645,191 @@ export async function exportWorkspace(
     file: `items/${variantId}.json`,
     variantId,
   }));
-  const referenceInventory = inventoryExportReferences(workspaceId, details);
+  const preferencePageReports = new Map<string, PreferencePageReadReport>();
+  if (selection?.preferencePageReports === true) {
+    for (const entry of entries) {
+      const detail = details.get(entry.variantId);
+      const apiName = detail?.apiName;
+      const normalizationInput = detail === undefined ? undefined : { ...detail };
+      if (normalizationInput !== undefined) delete normalizationInput.apiName;
+      const normalization = normalizePreferencePage(normalizationInput);
+      if (normalization === null) {
+        throw new TypeError(`Preference Page normalization failed for ${entry.variantId}`);
+      }
+      if (!nonemptyString(apiName)) {
+        throw new TypeError(`Preference Page API name is missing for ${entry.variantId}`);
+      }
+      const report = buildPreferencePageReadReport({
+        workspaceId,
+        apiName,
+        variantId: entry.variantId,
+        rawItemPath: entry.file,
+        normalization,
+      });
+      if (
+        normalization.provenance.contentSpaceId !== workspaceId ||
+        !validatePreferencePageReadReport(report, {
+          workspaceId,
+          apiName,
+          variantId: entry.variantId,
+          rawItemPath: entry.file,
+          normalization,
+        })
+      ) {
+        throw new TypeError(`Preference Page report validation failed for ${entry.variantId}`);
+      }
+      preferencePageReports.set(entry.variantId, report);
+    }
+    const unresolvedVariantIds = [...preferencePageReports]
+      .filter(([, report]) => report.normalization.unresolvedReferences.length > 0)
+      .map(([variantId]) => variantId);
+    if (unresolvedVariantIds.length > 0) {
+      warnings.push({
+        code: 'REFERENCE_UNRESOLVED',
+        message:
+          'Preference Page channel and subchannel references remain source-bound and unresolved.',
+        variantIds: unresolvedVariantIds,
+      });
+    }
+  }
+  const brandReports = new Map<string, BrandReadReport>();
+  if (selection?.brandReports === true) {
+    for (const entry of entries) {
+      const detail = details.get(entry.variantId);
+      const apiName = detail?.apiName;
+      const normalization = normalizeBrand(detail);
+      if (normalization === null)
+        throw new TypeError(`Brand normalization failed for ${entry.variantId}`);
+      if (!nonemptyString(apiName))
+        throw new TypeError(`Brand API name is missing for ${entry.variantId}`);
+      const report = buildBrandReadReport({
+        workspaceId,
+        apiName,
+        variantId: entry.variantId,
+        rawItemPath: entry.file,
+        normalization,
+      });
+      if (
+        normalization.provenance.contentSpaceId !== workspaceId ||
+        !validateBrandReadReport(report, {
+          workspaceId,
+          apiName,
+          variantId: entry.variantId,
+          rawItemPath: entry.file,
+          normalization,
+        })
+      ) {
+        throw new TypeError(`Brand report validation failed for ${entry.variantId}`);
+      }
+      brandReports.set(entry.variantId, report);
+    }
+  }
+  const formReports = new Map<string, FormReadReport>();
+  if (selection?.formReports === true) {
+    for (const entry of entries) {
+      const detail = details.get(entry.variantId);
+      const apiName = detail?.apiName;
+      const normalization = normalizeForm(detail);
+      if (normalization === null)
+        throw new TypeError(`Form normalization failed for ${entry.variantId}`);
+      if (!nonemptyString(apiName))
+        throw new TypeError(`Form API name is missing for ${entry.variantId}`);
+      const report = buildFormReadReport({
+        workspaceId,
+        apiName,
+        variantId: entry.variantId,
+        rawItemPath: entry.file,
+        normalization,
+      });
+      if (
+        normalization.provenance.contentSpaceId !== workspaceId ||
+        !validateFormReadReport(report, {
+          workspaceId,
+          apiName,
+          variantId: entry.variantId,
+          rawItemPath: entry.file,
+        })
+      ) {
+        throw new TypeError(`Form report validation failed for ${entry.variantId}`);
+      }
+      formReports.set(entry.variantId, report);
+    }
+  }
+  const formHandlerReports = new Map<string, FormHandlerReadReport>();
+  if (selection?.formHandlerReports === true) {
+    for (const entry of entries) {
+      const detail = details.get(entry.variantId);
+      const apiName = detail?.apiName;
+      const normalization = normalizeFormHandler(detail);
+      if (normalization === null)
+        throw new TypeError(`Form Handler normalization failed for ${entry.variantId}`);
+      if (!nonemptyString(apiName))
+        throw new TypeError(`Form Handler API name is missing for ${entry.variantId}`);
+      const report = buildFormHandlerReadReport({
+        workspaceId,
+        apiName,
+        variantId: entry.variantId,
+        rawItemPath: entry.file,
+        normalization,
+      });
+      if (
+        normalization.provenance.contentSpaceId !== workspaceId ||
+        !validateFormHandlerReadReport(report, {
+          workspaceId,
+          apiName,
+          variantId: entry.variantId,
+          rawItemPath: entry.file,
+        })
+      ) {
+        throw new TypeError(`Form Handler report validation failed for ${entry.variantId}`);
+      }
+      formHandlerReports.set(entry.variantId, report);
+    }
+  }
+  const consentBannerReports = new Map<string, ConsentBannerReadReport>();
+  if (selection?.consentBannerReports === true) {
+    for (const entry of entries) {
+      const detail = details.get(entry.variantId);
+      const apiName = detail?.apiName;
+      const normalization = normalizeConsentBanner(detail);
+      if (normalization === null)
+        throw new TypeError(`Consent Banner normalization failed for ${entry.variantId}`);
+      if (!nonemptyString(apiName))
+        throw new TypeError(`Consent Banner API name is missing for ${entry.variantId}`);
+      const report = buildConsentBannerReadReport({
+        workspaceId,
+        apiName,
+        variantId: entry.variantId,
+        rawItemPath: entry.file,
+        normalization,
+      });
+      if (
+        normalization.provenance.contentSpaceId !== workspaceId ||
+        !validateConsentBannerReadReport(report, {
+          workspaceId,
+          apiName,
+          variantId: entry.variantId,
+          rawItemPath: entry.file,
+        })
+      ) {
+        throw new TypeError(`Consent Banner report validation failed for ${entry.variantId}`);
+      }
+      consentBannerReports.set(entry.variantId, report);
+    }
+  }
+  const referenceInventory =
+    selection?.preferencePageReports === true ||
+    selection?.brandReports === true ||
+    selection?.formReports === true ||
+    selection?.formHandlerReports === true ||
+    selection?.consentBannerReports === true
+      ? {
+          dependencies: [],
+          externalReferences: [],
+          itemReferenceIds: new Map<string, string>(),
+          warnings: [],
+        }
+      : inventoryExportReferences(workspaceId, details);
   warnings.push(...referenceInventory.warnings);
   const completeness =
     warnings.some(({ code }) => code !== 'UNSUPPORTED_WILDCARD') ||
@@ -568,6 +846,41 @@ export async function exportWorkspace(
       ...(referenceId === undefined ? {} : { referenceId }),
     };
   });
+  for (const [variantId, report] of preferencePageReports) {
+    manifestItems.push({
+      path: `reports/preference-pages/${variantId}.json`,
+      sha256: sha256(jsonBytes(report)),
+      kind: 'cms.preference-page.read-report',
+    });
+  }
+  for (const [variantId, report] of brandReports) {
+    manifestItems.push({
+      path: `reports/brands/${variantId}.json`,
+      sha256: sha256(jsonBytes(report)),
+      kind: 'cms.brand.read-report',
+    });
+  }
+  for (const [variantId, report] of formReports) {
+    manifestItems.push({
+      path: `reports/forms/${variantId}.json`,
+      sha256: sha256(jsonBytes(report)),
+      kind: 'cms.form.read-report',
+    });
+  }
+  for (const [variantId, report] of formHandlerReports) {
+    manifestItems.push({
+      path: `reports/form-handlers/${variantId}.json`,
+      sha256: sha256(jsonBytes(report)),
+      kind: 'cms.form-handler.read-report',
+    });
+  }
+  for (const [variantId, report] of consentBannerReports) {
+    manifestItems.push({
+      path: `reports/consent-banners/${variantId}.json`,
+      sha256: sha256(jsonBytes(report)),
+      kind: 'cms.consent-banner.read-report',
+    });
+  }
   const mediaCandidates = [...details.entries()].flatMap(([variantId, detail]) => {
     const evidence = imageEvidence(detail);
     return evidence === undefined ? [] : [{ variantId, evidence }];
@@ -604,6 +917,73 @@ export async function exportWorkspace(
     completeness,
     dependencies: referenceInventory.dependencies,
     ...(landingPageTemplatePairs === undefined ? {} : { landingPageTemplatePairs }),
+    ...(preferencePageReports.size === 0
+      ? {}
+      : {
+          preferencePageReports: [...preferencePageReports.entries()].map(
+            ([variantId, report]) => ({
+              path: `reports/preference-pages/${variantId}.json`,
+              rawItemPath: report.rawItemPath,
+              workspaceId,
+              contentType: PREFERENCE_PAGE_TYPE,
+              variantId,
+              apiName: report.apiName,
+              format: PREFERENCE_PAGE_READ_REPORT_FORMAT,
+            }),
+          ),
+        }),
+    ...(brandReports.size === 0
+      ? {}
+      : {
+          brandReports: [...brandReports.entries()].map(([variantId, report]) => ({
+            path: `reports/brands/${variantId}.json`,
+            rawItemPath: report.rawItemPath,
+            workspaceId,
+            contentType: BRAND_TYPE,
+            variantId,
+            apiName: report.apiName,
+            format: BRAND_READ_REPORT_FORMAT,
+          })),
+        }),
+    ...(formReports.size === 0
+      ? {}
+      : {
+          formReports: [...formReports.entries()].map(([variantId, report]) => ({
+            path: `reports/forms/${variantId}.json`,
+            rawItemPath: report.rawItemPath,
+            workspaceId,
+            contentType: FORM_TYPE,
+            variantId,
+            apiName: report.apiName,
+            format: FORM_READ_REPORT_FORMAT,
+          })),
+        }),
+    ...(formHandlerReports.size === 0
+      ? {}
+      : {
+          formHandlerReports: [...formHandlerReports.entries()].map(([variantId, report]) => ({
+            path: `reports/form-handlers/${variantId}.json`,
+            rawItemPath: report.rawItemPath,
+            workspaceId,
+            contentType: FORM_HANDLER_TYPE,
+            variantId,
+            apiName: report.apiName,
+            format: FORM_HANDLER_READ_REPORT_FORMAT,
+          })),
+        }),
+    ...(consentBannerReports.size === 0
+      ? {}
+      : {
+          consentBannerReports: [...consentBannerReports.entries()].map(([variantId, report]) => ({
+            path: `reports/consent-banners/${variantId}.json`,
+            rawItemPath: report.rawItemPath,
+            workspaceId,
+            contentType: CONSENT_BANNER_TYPE,
+            variantId,
+            apiName: report.apiName,
+            format: CONSENT_BANNER_READ_REPORT_FORMAT,
+          })),
+        }),
     externalReferences: referenceInventory.externalReferences,
     items: manifestItems,
   };
@@ -629,6 +1009,48 @@ export async function exportWorkspace(
     await mkdir(path.join(temporary, 'items'));
     for (const entry of entries) {
       await writeExclusive(path.join(temporary, entry.file), details.get(entry.variantId));
+    }
+    if (preferencePageReports.size > 0) {
+      await mkdir(path.join(temporary, 'reports', 'preference-pages'), { recursive: true });
+      for (const [variantId, report] of preferencePageReports) {
+        await writeExclusive(
+          path.join(temporary, 'reports', 'preference-pages', `${variantId}.json`),
+          report,
+        );
+      }
+    }
+    if (brandReports.size > 0) {
+      await mkdir(path.join(temporary, 'reports', 'brands'), { recursive: true });
+      for (const [variantId, report] of brandReports) {
+        await writeExclusive(
+          path.join(temporary, 'reports', 'brands', `${variantId}.json`),
+          report,
+        );
+      }
+    }
+    if (formReports.size > 0) {
+      await mkdir(path.join(temporary, 'reports', 'forms'), { recursive: true });
+      for (const [variantId, report] of formReports) {
+        await writeExclusive(path.join(temporary, 'reports', 'forms', `${variantId}.json`), report);
+      }
+    }
+    if (formHandlerReports.size > 0) {
+      await mkdir(path.join(temporary, 'reports', 'form-handlers'), { recursive: true });
+      for (const [variantId, report] of formHandlerReports) {
+        await writeExclusive(
+          path.join(temporary, 'reports', 'form-handlers', `${variantId}.json`),
+          report,
+        );
+      }
+    }
+    if (consentBannerReports.size > 0) {
+      await mkdir(path.join(temporary, 'reports', 'consent-banners'), { recursive: true });
+      for (const [variantId, report] of consentBannerReports) {
+        await writeExclusive(
+          path.join(temporary, 'reports', 'consent-banners', `${variantId}.json`),
+          report,
+        );
+      }
     }
     if (mediaCandidates.length > 0 && options.experimentalMedia !== undefined) {
       await mkdir(path.join(temporary, 'media'));

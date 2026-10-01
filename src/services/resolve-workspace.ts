@@ -27,6 +27,7 @@ type ListedWorkspaceTypeEvidence = CanonicalWorkspaceType | 'invalid' | 'missing
 
 type WorkspaceEnumerationOptions = {
   readonly collectWorkspaceType?: boolean;
+  readonly requireCanonicalWorkspaceType?: boolean;
   readonly workspaceTypes?: Map<string, CanonicalWorkspaceType>;
 };
 
@@ -43,6 +44,14 @@ function listedWorkspaceTypeEvidence(value: unknown): ListedWorkspaceTypeEvidenc
   const normalized = candidate.toLocaleLowerCase('en-US');
   if (normalized === 'marketing') return 'Marketing';
   if (normalized === 'content') return 'Content';
+  return 'invalid';
+}
+
+function canonicalWorkspaceTypeEvidence(value: unknown): ListedWorkspaceTypeEvidence {
+  if (value === undefined) return 'missing';
+  if (!isRecord(value) || Object.keys(value).length !== 1) return 'invalid';
+  if (value.apiName === 'Marketing') return 'Marketing';
+  if (value.apiName === 'Content') return 'Content';
   return 'invalid';
 }
 
@@ -103,12 +112,16 @@ export async function enumerateWorkspaces(
     }
 
     const summaries = response.items.map((item) => workspaceSummary(item, page));
+    const workspaceTypeEvidence =
+      enumerationOptions.requireCanonicalWorkspaceType === true
+        ? canonicalWorkspaceTypeEvidence
+        : listedWorkspaceTypeEvidence;
     const fingerprint = JSON.stringify(
       response.items.map((item, index) => [
         summaries[index].id,
         summaries[index].name ?? '',
         enumerationOptions.collectWorkspaceType === true
-          ? listedWorkspaceTypeEvidence(item.spaceType)
+          ? workspaceTypeEvidence(item.spaceType)
           : null,
       ]),
     );
@@ -128,7 +141,7 @@ export async function enumerateWorkspaces(
       }
       foldedIds.set(foldedId, summary.id);
       if (enumerationOptions.collectWorkspaceType === true) {
-        const evidence = listedWorkspaceTypeEvidence(response.items[index].spaceType);
+        const evidence = workspaceTypeEvidence(response.items[index].spaceType);
         const existingEvidence = typeEvidence.get(summary.id);
         if (existingEvidence !== undefined && existingEvidence !== evidence) {
           throw new Error(
@@ -169,6 +182,54 @@ export function assertWorkspaceSelector(selector: WorkspaceSelector): void {
   const hasName = nonemptyString(selector.workspaceName);
   if (hasId === hasName) {
     throw new Error('Specify exactly one of --workspace-id or --workspace-name.');
+  }
+}
+
+export async function assertMarketingWorkspace(
+  connection: RequestConnection,
+  resolved: ResolvedWorkspace,
+  options: JsonRequestOptions = {},
+): Promise<void> {
+  const detailEvidence = listedWorkspaceTypeEvidence(resolved.workspace.spaceType);
+  if (detailEvidence === 'Marketing') return;
+  if (detailEvidence !== 'missing') {
+    throw new Error(`Destination workspace ${resolved.id} is not canonically Marketing.`);
+  }
+  const workspaceTypes = new Map<string, CanonicalWorkspaceType>();
+  await enumerateWorkspaces(
+    connection,
+    options,
+    {},
+    { collectWorkspaceType: true, workspaceTypes },
+  );
+  if (workspaceTypes.get(resolved.id) !== 'Marketing') {
+    throw new Error(
+      `Destination workspace ${resolved.id} lacks consistent exact-ID Marketing type evidence.`,
+    );
+  }
+}
+
+export async function assertCanonicalMarketingWorkspace(
+  connection: RequestConnection,
+  resolved: ResolvedWorkspace,
+  options: JsonRequestOptions = {},
+): Promise<void> {
+  const detailEvidence = canonicalWorkspaceTypeEvidence(resolved.workspace.spaceType);
+  if (detailEvidence === 'Marketing') return;
+  if (detailEvidence !== 'missing') {
+    throw new Error(`Destination workspace ${resolved.id} is not canonically Marketing.`);
+  }
+  const workspaceTypes = new Map<string, CanonicalWorkspaceType>();
+  await enumerateWorkspaces(
+    connection,
+    options,
+    {},
+    { collectWorkspaceType: true, requireCanonicalWorkspaceType: true, workspaceTypes },
+  );
+  if (workspaceTypes.get(resolved.id) !== 'Marketing') {
+    throw new Error(
+      `Destination workspace ${resolved.id} lacks consistent exact-ID Marketing type evidence.`,
+    );
   }
 }
 

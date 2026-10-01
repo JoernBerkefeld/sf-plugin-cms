@@ -21,7 +21,7 @@ import type {
   WorkspaceImportReference,
   WorkspaceImportResult as WorkspaceImportContractResult,
 } from '../contracts/workspace-import.js';
-import { getContent, type CmsRecord } from './read.js';
+import { getContent, getVariant, type CmsRecord } from './read.js';
 import { variantIdentity } from './variant-identity.js';
 import { inventoryExportReferences } from './export-references.js';
 import {
@@ -55,6 +55,34 @@ import {
   type CreateContentInput,
   type CreateVariantInput,
 } from './write.js';
+import {
+  assertFormReadback,
+  formCreatePayload,
+  normalizeForm,
+  planFormCopies,
+  validateFormReadReport,
+  type FormReadReport,
+  type PlannedFormCopies,
+} from './form.js';
+import { getSelectedOperation, requestJson } from '../transport/json-request.js';
+import {
+  assertFormHandlerReadback,
+  formHandlerCreatePayload,
+  normalizeFormHandler,
+  planFormHandlerCopies,
+  validateFormHandlerReadReport,
+  type FormHandlerReadReport,
+  type PlannedFormHandlerCopies,
+} from './form-handler.js';
+import {
+  assertConsentBannerReadback,
+  consentBannerCreatePayload,
+  normalizeConsentBanner,
+  planConsentBannerCopies,
+  validateConsentBannerReadReport,
+  type ConsentBannerReadReport,
+  type PlannedConsentBannerCopies,
+} from './consent-banner.js';
 
 type RequestConnection = Pick<Connection, 'request'> &
   Partial<Pick<Connection, 'version'>> & {
@@ -86,7 +114,114 @@ export type LoadedWorkspaceExport = {
   readonly sourceDirectory: string;
 };
 
-export type WorkspaceExportLoadProfile = 'general' | 'image';
+export type WorkspaceExportLoadProfile =
+  'general' | 'image' | 'form' | 'form-handler' | 'consent-banner';
+
+const strictlyLoadedFormSources = new WeakMap<LoadedWorkspaceExport, string>();
+const strictlyLoadedFormHandlerSources = new WeakMap<LoadedWorkspaceExport, string>();
+const strictlyLoadedConsentBannerSources = new WeakMap<LoadedWorkspaceExport, string>();
+
+function loadedSourceFingerprint(source: LoadedWorkspaceExport): string {
+  return createHash('sha256').update(JSON.stringify(source)).digest('hex');
+}
+
+function assertStrictFormSource(source: LoadedWorkspaceExport): void {
+  if (
+    source.isPartial ||
+    source.manifest.completeness !== 'complete' ||
+    source.manifest.exportedCount !== source.manifest.entries.length ||
+    source.manifest.expectedCount !== source.manifest.exportedCount ||
+    source.manifest.foundCount !== source.manifest.exportedCount ||
+    source.manifest.failedVariantIds.length > 0 ||
+    source.manifest.rejectedVariantIds.length > 0
+  ) {
+    throw new TypeError('Form profile requires a complete workspace export');
+  }
+  const descriptors = source.manifest.formReports ?? [];
+  if (
+    descriptors.length === 0 ||
+    descriptors.length !== source.items.length ||
+    !source.integrity.verified ||
+    source.integrity.unlistedFileCount !== 0 ||
+    source.integrity.listedItemCount !== source.integrity.verifiedItemCount
+  ) {
+    throw new TypeError('Form profile requires strict report and integrity evidence');
+  }
+  const evidence = strictlyLoadedFormSources.get(source);
+  if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
+    throw new TypeError('Injected Form source must be produced unchanged by strict Form loading');
+  }
+}
+
+function assertStrictFormHandlerSource(source: LoadedWorkspaceExport): void {
+  if (
+    source.isPartial ||
+    source.manifest.completeness !== 'complete' ||
+    source.manifest.exportedCount !== source.manifest.entries.length ||
+    source.manifest.expectedCount !== source.manifest.exportedCount ||
+    source.manifest.foundCount !== source.manifest.exportedCount ||
+    source.manifest.failedVariantIds.length > 0 ||
+    source.manifest.rejectedVariantIds.length > 0
+  ) {
+    throw new TypeError('Form Handler profile requires a complete workspace export');
+  }
+  const descriptors = source.manifest.formHandlerReports ?? [];
+  if (
+    descriptors.length === 0 ||
+    descriptors.length !== source.items.length ||
+    source.manifest.dependencies.length > 0 ||
+    source.manifest.externalReferences.length > 0 ||
+    source.manifest.warnings.length > 0 ||
+    !source.integrity.verified ||
+    source.integrity.unlistedFileCount !== 0 ||
+    source.integrity.listedItemCount !== source.integrity.verifiedItemCount
+  ) {
+    throw new TypeError(
+      'Form Handler profile requires strict report, dependency, and integrity evidence',
+    );
+  }
+  const evidence = strictlyLoadedFormHandlerSources.get(source);
+  if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
+    throw new TypeError(
+      'Injected Form Handler source must be produced unchanged by strict Form Handler loading',
+    );
+  }
+}
+
+function assertStrictConsentBannerSource(source: LoadedWorkspaceExport): void {
+  if (
+    source.isPartial ||
+    source.manifest.completeness !== 'complete' ||
+    source.manifest.exportedCount !== source.manifest.entries.length ||
+    source.manifest.expectedCount !== source.manifest.exportedCount ||
+    source.manifest.foundCount !== source.manifest.exportedCount ||
+    source.manifest.failedVariantIds.length > 0 ||
+    source.manifest.rejectedVariantIds.length > 0
+  ) {
+    throw new TypeError('Consent Banner profile requires a complete workspace export');
+  }
+  const descriptors = source.manifest.consentBannerReports ?? [];
+  if (
+    descriptors.length === 0 ||
+    descriptors.length !== source.items.length ||
+    source.manifest.dependencies.length > 0 ||
+    source.manifest.externalReferences.length > 0 ||
+    source.manifest.warnings.length > 0 ||
+    !source.integrity.verified ||
+    source.integrity.unlistedFileCount !== 0 ||
+    source.integrity.listedItemCount !== source.integrity.verifiedItemCount
+  ) {
+    throw new TypeError(
+      'Consent Banner profile requires strict report, dependency, and integrity evidence',
+    );
+  }
+  const evidence = strictlyLoadedConsentBannerSources.get(source);
+  if (evidence === undefined || evidence !== loadedSourceFingerprint(source)) {
+    throw new TypeError(
+      'Injected Consent Banner source must be produced unchanged by strict Consent Banner loading',
+    );
+  }
+}
 
 export type DestinationWorkspace = JsonObject & {
   readonly defaultLanguage: string;
@@ -221,6 +356,9 @@ export type ExecuteWorkspaceImportOptions = {
   readonly dryRun?: boolean;
   readonly editableDirectory?: string;
   readonly emailFragmentMappings?: unknown;
+  readonly formMappings?: unknown;
+  readonly formHandlerMappings?: unknown;
+  readonly consentBannerMappings?: unknown;
   readonly loadedSource?: LoadedWorkspaceExport;
   readonly identityMappings?: unknown;
   readonly landingPageTemplateMappings?: unknown;
@@ -471,6 +609,16 @@ export async function loadWorkspaceExport(
   const manifestValue = parseJson(manifestBytes, 'manifest.json');
   assertWorkspaceExportManifest(manifestValue);
   const manifest = manifestValue;
+  if (manifest.items.some(({ kind }) => kind === 'cms.preference-page.read-report')) {
+    throw new TypeError(
+      'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+    );
+  }
+  if (manifest.items.some(({ kind }) => kind === 'cms.brand.read-report')) {
+    throw new TypeError(
+      'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
+    );
+  }
   if (options.profile === 'image' && manifest.schemaVersion !== 2) {
     throw new UnsupportedWorkspacePackageVersionError(
       'Image import profile requires workspace package manifest version 2',
@@ -503,6 +651,15 @@ export async function loadWorkspaceExport(
   const seenFiles = new Set<string>();
   const seenIds = new Set<string>();
   const items: WorkspaceImportItem[] = [];
+  const formNormalizations = new Map<string, NonNullable<ReturnType<typeof normalizeForm>>>();
+  const formHandlerNormalizations = new Map<
+    string,
+    NonNullable<ReturnType<typeof normalizeFormHandler>>
+  >();
+  const consentBannerNormalizations = new Map<
+    string,
+    NonNullable<ReturnType<typeof normalizeConsentBanner>>
+  >();
   for (const [index, entry] of manifest.entries.entries()) {
     if (!isRecord(entry)) throw new TypeError(`manifest.entries[${index}] is malformed`);
     assertIdentifier(entry.variantId, `manifest.entries[${index}].variantId`);
@@ -525,25 +682,175 @@ export async function loadWorkspaceExport(
     if (actualSha256 !== declaredItem.sha256) {
       throw new TypeError(`Item file for ${entry.variantId} failed SHA-256 verification`);
     }
-    items.push(
-      validateItem(
-        parseJson(itemBytes, `Item file for ${entry.variantId}`),
-        entry.variantId,
-        manifest.workspaceId,
-      ),
-    );
+    const rawItem = parseJson(itemBytes, `Item file for ${entry.variantId}`);
+    const item = validateItem(rawItem, entry.variantId, manifest.workspaceId);
+    items.push(item);
+    const formNormalization = normalizeForm(rawItem);
+    if (formNormalization !== null) formNormalizations.set(entry.variantId, formNormalization);
+    const formHandlerNormalization = normalizeFormHandler(rawItem);
+    if (formHandlerNormalization !== null)
+      formHandlerNormalizations.set(entry.variantId, formHandlerNormalization);
+    const consentBannerNormalization = normalizeConsentBanner(rawItem);
+    if (consentBannerNormalization !== null)
+      consentBannerNormalizations.set(entry.variantId, consentBannerNormalization);
   }
   if (manifest.exportedCount !== manifest.entries.length) {
     throw new TypeError('manifest.exportedCount does not match manifest.entries.length');
   }
   validateRelationships(items);
   const isPartial = partialFromManifest(manifest);
+  if (options.profile === 'form' && isPartial) {
+    throw new TypeError('Form profile requires a complete workspace export');
+  }
+  if (options.profile === 'form-handler' && isPartial) {
+    throw new TypeError('Form Handler profile requires a complete workspace export');
+  }
+  if (options.profile === 'consent-banner' && isPartial) {
+    throw new TypeError('Consent Banner profile requires a complete workspace export');
+  }
+  if (options.profile === 'form') {
+    const descriptors = manifest.formReports ?? [];
+    if (descriptors.length === 0 || descriptors.length !== items.length) {
+      throw new TypeError('Form profile requires one typed report for every selected raw item');
+    }
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const descriptor of descriptors) {
+      const reportBytes = await readStableRegularFile(
+        path.join(canonicalSource, ...descriptor.path.split('/')),
+        `Form report ${descriptor.variantId}`,
+      );
+      const report = parseJson(reportBytes, `Form report ${descriptor.variantId}`);
+      if (
+        !validateFormReadReport(report, {
+          workspaceId: descriptor.workspaceId,
+          apiName: descriptor.apiName,
+          variantId: descriptor.variantId,
+          rawItemPath: descriptor.rawItemPath,
+        })
+      ) {
+        throw new TypeError(`Form report ${descriptor.variantId} failed strict validation`);
+      }
+      const item = itemsById.get(descriptor.variantId);
+      const normalized = formNormalizations.get(descriptor.variantId);
+      if (
+        normalized === undefined ||
+        !isDeepStrictEqual(normalized, (report as FormReadReport).normalization) ||
+        item?.apiName !== descriptor.apiName
+      ) {
+        throw new TypeError(`Form raw item ${descriptor.variantId} does not match its report`);
+      }
+    }
+  } else if (manifest.items.some(({ kind }) => kind === 'cms.form.read-report')) {
+    throw new TypeError('Typed Form reports require the explicit Form import profile.');
+  }
+  if (options.profile === 'form-handler') {
+    const descriptors = manifest.formHandlerReports ?? [];
+    if (descriptors.length === 0 || descriptors.length !== items.length) {
+      throw new TypeError(
+        'Form Handler profile requires one typed report for every selected raw item',
+      );
+    }
+    if (
+      manifest.dependencies.length > 0 ||
+      manifest.externalReferences.length > 0 ||
+      manifest.warnings.length > 0
+    ) {
+      throw new TypeError(
+        'Form Handler profile requires empty dependency/reference evidence and no warnings',
+      );
+    }
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const descriptor of descriptors) {
+      const reportBytes = await readStableRegularFile(
+        path.join(canonicalSource, ...descriptor.path.split('/')),
+        `Form Handler report ${descriptor.variantId}`,
+      );
+      const report = parseJson(reportBytes, `Form Handler report ${descriptor.variantId}`);
+      if (
+        !validateFormHandlerReadReport(report, {
+          workspaceId: descriptor.workspaceId,
+          apiName: descriptor.apiName,
+          variantId: descriptor.variantId,
+          rawItemPath: descriptor.rawItemPath,
+        })
+      ) {
+        throw new TypeError(`Form Handler report ${descriptor.variantId} failed strict validation`);
+      }
+      const item = itemsById.get(descriptor.variantId);
+      const normalized = formHandlerNormalizations.get(descriptor.variantId);
+      if (
+        normalized === undefined ||
+        !isDeepStrictEqual(normalized, (report as FormHandlerReadReport).normalization) ||
+        item?.apiName !== descriptor.apiName
+      ) {
+        throw new TypeError(
+          `Form Handler raw item ${descriptor.variantId} does not match its report`,
+        );
+      }
+    }
+  } else if (manifest.items.some(({ kind }) => kind === 'cms.form-handler.read-report')) {
+    throw new TypeError(
+      'Typed Form Handler reports require the explicit Form Handler import profile.',
+    );
+  }
+  if (options.profile === 'consent-banner') {
+    const descriptors = manifest.consentBannerReports ?? [];
+    if (descriptors.length === 0 || descriptors.length !== items.length) {
+      throw new TypeError(
+        'Consent Banner profile requires one typed report for every selected raw item',
+      );
+    }
+    if (
+      manifest.dependencies.length > 0 ||
+      manifest.externalReferences.length > 0 ||
+      manifest.warnings.length > 0
+    ) {
+      throw new TypeError(
+        'Consent Banner profile requires empty dependency/reference evidence and no warnings',
+      );
+    }
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const descriptor of descriptors) {
+      const reportBytes = await readStableRegularFile(
+        path.join(canonicalSource, ...descriptor.path.split('/')),
+        `Consent Banner report ${descriptor.variantId}`,
+      );
+      const report = parseJson(reportBytes, `Consent Banner report ${descriptor.variantId}`);
+      if (
+        !validateConsentBannerReadReport(report, {
+          workspaceId: descriptor.workspaceId,
+          apiName: descriptor.apiName,
+          variantId: descriptor.variantId,
+          rawItemPath: descriptor.rawItemPath,
+        })
+      ) {
+        throw new TypeError(
+          `Consent Banner report ${descriptor.variantId} failed strict validation`,
+        );
+      }
+      const item = itemsById.get(descriptor.variantId);
+      const normalized = consentBannerNormalizations.get(descriptor.variantId);
+      if (
+        normalized === undefined ||
+        !isDeepStrictEqual(normalized, (report as ConsentBannerReadReport).normalization) ||
+        item?.apiName !== descriptor.apiName
+      ) {
+        throw new TypeError(
+          `Consent Banner raw item ${descriptor.variantId} does not match its report`,
+        );
+      }
+    }
+  } else if (manifest.items.some(({ kind }) => kind === 'cms.consent-banner.read-report')) {
+    throw new TypeError(
+      'Typed Consent Banner reports require the explicit Consent Banner import profile.',
+    );
+  }
   if (isPartial && options.allowPartial !== true) {
     throw new TypeError(
       'Workspace export is partial; pass allowPartial only to accept recorded omissions',
     );
   }
-  return {
+  const loaded: LoadedWorkspaceExport = {
     integrity: {
       listedItemCount: manifest.items.length,
       verifiedItemCount: manifest.items.length,
@@ -556,6 +863,13 @@ export async function loadWorkspaceExport(
     manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
     sourceDirectory: canonicalSource,
   };
+  if (options.profile === 'form')
+    strictlyLoadedFormSources.set(loaded, loadedSourceFingerprint(loaded));
+  if (options.profile === 'form-handler')
+    strictlyLoadedFormHandlerSources.set(loaded, loadedSourceFingerprint(loaded));
+  if (options.profile === 'consent-banner')
+    strictlyLoadedConsentBannerSources.set(loaded, loadedSourceFingerprint(loaded));
+  return loaded;
 }
 
 function destinationWorkspace(value: unknown, expectedId: string): DestinationWorkspace {
@@ -815,6 +1129,234 @@ function preflightReferences(
         if (urls.has(url)) throw new TypeError('Target URL names must be unique across variants');
         urls.add(url);
       }
+    }
+  }
+}
+
+function consistentInventoryCount(value: Record<string, unknown>, label: string): number {
+  const counts = [value.total, value.totalCount, value.count].filter(
+    (candidate): candidate is number =>
+      typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0,
+  );
+  if (counts.length === 0 || new Set(counts).size !== 1) {
+    throw new TypeError(`${label} inventory completeness cannot be proven`);
+  }
+  return counts[0];
+}
+
+async function assertNoFormCollisions(
+  connection: RequestConnection,
+  workspaceId: string,
+  targets: PlannedFormCopies['targets'],
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const response = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('workspace.variant.search'),
+    {
+      query: {
+        contentSpaceOrFolderIds: [workspaceId],
+        contentTypeFQN: 'sfdc_cms__form',
+        languages: ['All'],
+        page: 0,
+        pageSize: 250,
+        queryTerm: '*',
+      },
+    },
+    requestOptions,
+  );
+  if (!isRecord(response.data) || !Array.isArray(response.data.items)) {
+    throw new TypeError('Destination Form inventory response is malformed');
+  }
+  const count = consistentInventoryCount(response.data, 'Destination Form');
+  const variantIds = response.data.items.map((row) =>
+    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
+  );
+  const uniqueVariantIds = new Set(variantIds.filter((id): id is string => id !== undefined));
+  if (
+    count > 250 ||
+    variantIds.includes(undefined) ||
+    uniqueVariantIds.size !== response.data.items.length ||
+    uniqueVariantIds.size !== count
+  ) {
+    throw new TypeError('Destination Form inventory completeness cannot be proven');
+  }
+  const details = [];
+  for (const row of response.data.items) {
+    if (!isRecord(row) || !nonemptyString(row.id) || row.managedContentSpaceId !== workspaceId) {
+      throw new TypeError('Destination Form inventory identity is malformed');
+    }
+    const detail = await getVariant(connection, row.id, requestOptions);
+    const type = isRecord(detail.contentType)
+      ? detail.contentType.fullyQualifiedName
+      : detail.contentType;
+    if (
+      !isRecord(detail.contentSpace) ||
+      detail.contentSpace.id !== workspaceId ||
+      type !== 'sfdc_cms__form'
+    ) {
+      throw new TypeError('Destination Form detail is outside the exact workspace/type scope');
+    }
+    details.push(detail);
+  }
+  for (const target of targets) {
+    if (
+      details.some(
+        (detail) =>
+          detail.apiName === target.apiName ||
+          detail.title === target.title ||
+          detail.urlName === target.urlName,
+      )
+    ) {
+      throw new TypeError(
+        `Destination Form apiName, title, or urlName collision: ${target.apiName}`,
+      );
+    }
+  }
+}
+
+async function assertNoFormHandlerCollisions(
+  connection: RequestConnection,
+  workspaceId: string,
+  targets: PlannedFormHandlerCopies['targets'],
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const response = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('workspace.variant.search'),
+    {
+      query: {
+        contentSpaceOrFolderIds: [workspaceId],
+        contentTypeFQN: 'sfdc_cms__formHandler',
+        languages: ['All'],
+        page: 0,
+        pageSize: 250,
+        queryTerm: '*',
+      },
+    },
+    requestOptions,
+  );
+  if (!isRecord(response.data) || !Array.isArray(response.data.items)) {
+    throw new TypeError('Destination Form Handler inventory response is malformed');
+  }
+  const count = consistentInventoryCount(response.data, 'Destination Form Handler');
+  const variantIds = response.data.items.map((row) =>
+    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
+  );
+  const unique = new Set(variantIds.filter((id): id is string => id !== undefined));
+  if (
+    count > 250 ||
+    variantIds.includes(undefined) ||
+    unique.size !== response.data.items.length ||
+    unique.size !== count
+  ) {
+    throw new TypeError('Destination Form Handler inventory completeness cannot be proven');
+  }
+  const details = [];
+  for (const row of response.data.items) {
+    if (!isRecord(row) || !nonemptyString(row.id) || row.managedContentSpaceId !== workspaceId) {
+      throw new TypeError('Destination Form Handler inventory identity is malformed');
+    }
+    const detail = await getVariant(connection, row.id, requestOptions);
+    const type = isRecord(detail.contentType)
+      ? detail.contentType.fullyQualifiedName
+      : detail.contentType;
+    if (
+      !isRecord(detail.contentSpace) ||
+      detail.contentSpace.id !== workspaceId ||
+      type !== 'sfdc_cms__formHandler'
+    ) {
+      throw new TypeError(
+        'Destination Form Handler detail is outside the exact workspace/type scope',
+      );
+    }
+    details.push(detail);
+  }
+  for (const target of targets) {
+    if (
+      details.some(
+        (detail) =>
+          detail.apiName === target.apiName ||
+          detail.title === target.title ||
+          detail.urlName === target.urlName,
+      )
+    ) {
+      throw new TypeError(
+        `Destination Form Handler apiName, title, or urlName collision: ${target.apiName}`,
+      );
+    }
+  }
+}
+
+async function assertNoConsentBannerCollisions(
+  connection: RequestConnection,
+  workspaceId: string,
+  targets: PlannedConsentBannerCopies['targets'],
+  requestOptions: JsonRequestOptions,
+): Promise<void> {
+  const response = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('workspace.variant.search'),
+    {
+      query: {
+        contentSpaceOrFolderIds: [workspaceId],
+        contentTypeFQN: 'sfdc_cms__consentBanner',
+        languages: ['All'],
+        page: 0,
+        pageSize: 250,
+        queryTerm: '*',
+      },
+    },
+    requestOptions,
+  );
+  if (!isRecord(response.data) || !Array.isArray(response.data.items)) {
+    throw new TypeError('Destination Consent Banner inventory response is malformed');
+  }
+  const count = consistentInventoryCount(response.data, 'Destination Consent Banner');
+  const variantIds = response.data.items.map((row) =>
+    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
+  );
+  const unique = new Set(variantIds.filter((id): id is string => id !== undefined));
+  if (
+    count > 250 ||
+    variantIds.includes(undefined) ||
+    unique.size !== response.data.items.length ||
+    unique.size !== count
+  ) {
+    throw new TypeError('Destination Consent Banner inventory completeness cannot be proven');
+  }
+  const details = [];
+  for (const row of response.data.items) {
+    if (!isRecord(row) || !nonemptyString(row.id) || row.managedContentSpaceId !== workspaceId) {
+      throw new TypeError('Destination Consent Banner inventory identity is malformed');
+    }
+    const detail = await getVariant(connection, row.id, requestOptions);
+    const type = isRecord(detail.contentType)
+      ? detail.contentType.fullyQualifiedName
+      : detail.contentType;
+    if (
+      !isRecord(detail.contentSpace) ||
+      detail.contentSpace.id !== workspaceId ||
+      type !== 'sfdc_cms__consentBanner'
+    ) {
+      throw new TypeError(
+        'Destination Consent Banner detail is outside the exact workspace/type scope',
+      );
+    }
+    details.push(detail);
+  }
+  for (const target of targets) {
+    if (
+      details.some(
+        (detail) =>
+          detail.apiName === target.apiName ||
+          detail.title === target.title ||
+          detail.urlName === target.urlName,
+      )
+    ) {
+      throw new TypeError(
+        `Destination Consent Banner apiName, title, or urlName collision: ${target.apiName}`,
+      );
     }
   }
 }
@@ -1170,11 +1712,19 @@ export async function executeWorkspaceImport(
   if (!nonemptyString(options.destinationOrgId)) {
     throw new TypeError('destinationOrgId must be the nonempty destination org ID');
   }
+  let loadProfile: WorkspaceExportLoadProfile = 'general';
+  if (options.formMappings !== undefined) loadProfile = 'form';
+  else if (options.formHandlerMappings !== undefined) loadProfile = 'form-handler';
+  else if (options.consentBannerMappings !== undefined) loadProfile = 'consent-banner';
   const source =
     options.loadedSource ??
     (await loadWorkspaceExport(options.sourceDirectory, {
       allowPartial: options.allowPartial,
+      profile: loadProfile,
     }));
+  if (options.formMappings !== undefined) assertStrictFormSource(source);
+  if (options.formHandlerMappings !== undefined) assertStrictFormHandlerSource(source);
+  if (options.consentBannerMappings !== undefined) assertStrictConsentBannerSource(source);
   if (!source.integrity.verified) throw new TypeError('Source integrity must be verified first');
   if (source.isPartial && options.allowPartial !== true) {
     throw new TypeError('Workspace export is partial; explicit allowPartial is required');
@@ -1182,12 +1732,18 @@ export async function executeWorkspaceImport(
   validateRelationships(source.items);
   const native = options.nativeCopyMappings !== undefined;
   const emailFragment = options.emailFragmentMappings !== undefined;
+  const form = options.formMappings !== undefined;
+  const formHandler = options.formHandlerMappings !== undefined;
+  const consentBanner = options.consentBannerMappings !== undefined;
   const webFragment = options.webFragmentMappings !== undefined;
   const landingPageTemplate = options.landingPageTemplateMappings !== undefined;
   const landingPage = options.landingPageMappings !== undefined;
   if (
     Number(native) +
       Number(emailFragment) +
+      Number(form) +
+      Number(formHandler) +
+      Number(consentBanner) +
       Number(webFragment) +
       Number(landingPageTemplate) +
       Number(landingPage) +
@@ -1197,7 +1753,15 @@ export async function executeWorkspaceImport(
     throw new TypeError('Choose one identity profile');
   if (options.editableDirectory !== undefined && !native)
     throw new TypeError('editableDirectory requires nativeCopyMappings');
-  let proposal: PlannedImportIdentities | undefined;
+  let proposal:
+    | PlannedImportIdentities
+    | PlannedFormCopies
+    | PlannedFormHandlerCopies
+    | PlannedConsentBannerCopies
+    | undefined;
+  let formProposal: PlannedFormCopies | undefined;
+  let formHandlerProposal: PlannedFormHandlerCopies | undefined;
+  let consentBannerProposal: PlannedConsentBannerCopies | undefined;
   let editableSource: EditableHtmlEvidence | undefined;
   let landingPageTemplateProposal: ReturnType<typeof planLandingPageTemplateCopies> | undefined;
   let landingPageProposal: ReturnType<typeof planLandingPageCopies> | undefined;
@@ -1210,6 +1774,15 @@ export async function executeWorkspaceImport(
     ));
   } else if (emailFragment) {
     proposal = planEmailFragmentCopies(source, options.emailFragmentMappings);
+  } else if (form) {
+    formProposal = planFormCopies(source, options.formMappings);
+    proposal = formProposal;
+  } else if (formHandler) {
+    formHandlerProposal = planFormHandlerCopies(source, options.formHandlerMappings);
+    proposal = formHandlerProposal;
+  } else if (consentBanner) {
+    consentBannerProposal = planConsentBannerCopies(source, options.consentBannerMappings);
+    proposal = consentBannerProposal;
   } else if (webFragment) {
     webFragmentProposal = planWebFragmentCopies(source, options.webFragmentMappings);
     proposal = webFragmentProposal;
@@ -1236,7 +1809,14 @@ export async function executeWorkspaceImport(
           },
         ];
   const selectedSource =
-    native || emailFragment || webFragment || landingPageTemplate || landingPage
+    native ||
+    emailFragment ||
+    form ||
+    formHandler ||
+    consentBanner ||
+    webFragment ||
+    landingPageTemplate ||
+    landingPage
       ? { ...source, items: proposal!.items }
       : source;
   const sourcePlan = planWorkspaceImport(
@@ -1273,9 +1853,30 @@ export async function executeWorkspaceImport(
       ),
     );
   }
-  preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
+  if (!form) preflightReferences(plan, selectedReferences, landingPageTemplate || landingPage);
   const requestOptions = options.requestOptions ?? {};
-  if (!native) await preflightConflicts(options.connection, plan, requestOptions);
+  if (form)
+    await assertNoFormCollisions(
+      options.connection,
+      plan.destinationWorkspaceId,
+      formProposal!.targets,
+      requestOptions,
+    );
+  else if (formHandler)
+    await assertNoFormHandlerCollisions(
+      options.connection,
+      plan.destinationWorkspaceId,
+      formHandlerProposal!.targets,
+      requestOptions,
+    );
+  else if (consentBanner)
+    await assertNoConsentBannerCollisions(
+      options.connection,
+      plan.destinationWorkspaceId,
+      consentBannerProposal!.targets,
+      requestOptions,
+    );
+  else if (!native) await preflightConflicts(options.connection, plan, requestOptions);
   if (emailFragment || webFragment || landingPageTemplate || landingPage)
     await preflightApiNames(options.connection, plan);
   if (webFragment) {
@@ -1316,6 +1917,9 @@ export async function executeWorkspaceImport(
   if (
     !native &&
     !emailFragment &&
+    !form &&
+    !formHandler &&
+    !consentBanner &&
     !webFragment &&
     !landingPageTemplate &&
     !landingPage &&
@@ -1341,13 +1945,26 @@ export async function executeWorkspaceImport(
     })
     .toSorted(compareMappingIdentity);
   if (options.dryRun === true) {
+    let conflictMessage =
+      'Content-key absence was checked, but complete server conflict validation is unverified; this is a read-only proposal.';
+    if (native) {
+      conflictMessage =
+        'Native copy omits contentKey. API-name conflicts can reject; duplicate URLs can create distinct objects. Destination name availability is not prevalidated.';
+    } else if (form) {
+      conflictMessage =
+        'Exact destination Form apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE omits contentKey so the server generates it; apply repeats the complete collision check immediately before POST.';
+    } else if (formHandler) {
+      conflictMessage =
+        'Exact destination Form Handler apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE omits contentKey so the server generates it; apply repeats the complete collision check immediately before POST.';
+    } else if (consentBanner) {
+      conflictMessage =
+        'Exact destination Consent Banner apiName, title, and urlName absence was proven from a complete unique variant inventory. CREATE omits contentKey so the server generates it; apply repeats the complete collision check immediately before POST.';
+    }
     const diagnostics: CmsDiagnostic[] = [
       ...editableDiagnostics,
       {
         code: 'SERVER_CONFLICT_CHECK_UNVERIFIED',
-        message: native
-          ? 'Native copy omits contentKey. API-name conflicts can reject; duplicate URLs can create distinct objects. Destination name availability is not prevalidated.'
-          : 'Content-key absence was checked, but complete server conflict validation is unverified; this is a read-only proposal.',
+        message: conflictMessage,
         retryable: false,
       },
       {
@@ -1357,12 +1974,24 @@ export async function executeWorkspaceImport(
       },
     ];
     if (hasNamedIdentities && !native) {
+      let nameAvailabilityMessage =
+        'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.';
+      if (emailFragment || webFragment || landingPageTemplate || landingPage) {
+        nameAvailabilityMessage = `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment || landingPageTemplate || landingPage ? ' every named prerequisite was proven in exact type/workspace scope;' : ''} other server conflict behavior remains unverified.`;
+      }
+      if (form) {
+        nameAvailabilityMessage =
+          'Exact destination Form apiName, title, and urlName absence was proven from the complete unique Form variant inventory.';
+      } else if (formHandler) {
+        nameAvailabilityMessage =
+          'Exact destination Form Handler apiName, title, and urlName absence was proven from the complete unique Form Handler variant inventory.';
+      } else if (consentBanner) {
+        nameAvailabilityMessage =
+          'Exact destination Consent Banner apiName, title, and urlName absence was proven from the complete unique Consent Banner variant inventory.';
+      }
       diagnostics.unshift({
         code: 'NAME_AVAILABILITY_UNVERIFIED',
-        message:
-          emailFragment || webFragment || landingPageTemplate || landingPage
-            ? `Destination API-name absence was proven by exact ManagedContent.ApiName equality lookup;${webFragment || landingPageTemplate || landingPage ? ' every named prerequisite was proven in exact type/workspace scope;' : ''} other server conflict behavior remains unverified.`
-            : 'Destination API-name/URL-name availability is unverified; named apply remains blocked until collision evidence is available.',
+        message: nameAvailabilityMessage,
         retryable: false,
       });
     }
@@ -1496,21 +2125,63 @@ export async function executeWorkspaceImport(
           }
         }
       }
-      const rewrittenGroup = hasUnknownRequiredMapping
-        ? finalGroup
-        : {
-            ...finalGroup,
-            primary: rewriteItem(finalGroup.primary, replacements),
-            variants: finalGroup.variants.map((variant) => rewriteItem(variant, replacements)),
-          };
-      const parentPayload = createPayload(
-        rewrittenGroup,
-        native ? plan.destinationWorkspaceId : plan.rootFolderId,
-      );
-      if (native) {
+      const rewrittenGroup =
+        form || hasUnknownRequiredMapping
+          ? finalGroup
+          : {
+              ...finalGroup,
+              primary: rewriteItem(finalGroup.primary, replacements),
+              variants: finalGroup.variants.map((variant) => rewriteItem(variant, replacements)),
+            };
+      let parentPayload: CreateContentInput;
+      if (form) parentPayload = formCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      else if (formHandler)
+        parentPayload = formHandlerCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      else if (consentBanner)
+        parentPayload = consentBannerCreatePayload(rewrittenGroup.primary, plan.rootFolderId);
+      else
+        parentPayload = createPayload(
+          rewrittenGroup,
+          native ? plan.destinationWorkspaceId : plan.rootFolderId,
+        );
+      if (native && !form) {
         delete parentPayload.contentKey;
         delete parentPayload.externalId;
         delete parentPayload.externalSource;
+      }
+      if (form) {
+        await assertNoFormCollisions(
+          options.connection,
+          plan.destinationWorkspaceId,
+          [
+            formProposal!.targets.find(
+              ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+            )!,
+          ],
+          requestOptions,
+        );
+      } else if (formHandler) {
+        await assertNoFormHandlerCollisions(
+          options.connection,
+          plan.destinationWorkspaceId,
+          [
+            formHandlerProposal!.targets.find(
+              ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+            )!,
+          ],
+          requestOptions,
+        );
+      } else if (consentBanner) {
+        await assertNoConsentBannerCollisions(
+          options.connection,
+          plan.destinationWorkspaceId,
+          [
+            consentBannerProposal!.targets.find(
+              ({ apiName }) => apiName === rewrittenGroup.primary.apiName,
+            )!,
+          ],
+          requestOptions,
+        );
       }
       if (emailFragment || webFragment || landingPageTemplate || landingPage) {
         const currentPlan = {
@@ -1599,8 +2270,18 @@ export async function executeWorkspaceImport(
       try {
         parentResponse = await createContent(options.connection, finalPayload, requestOptions);
       } catch (error) {
-        parentOperation.state = native ? 'pending' : 'failed';
-        if (native) report.state = 'ownership-uncertain';
+        const definitiveFormRejection =
+          form &&
+          error instanceof CmsRequestError &&
+          error.status !== undefined &&
+          error.status >= 400 &&
+          error.status < 500;
+        const uncertainCreateProfile = native || form || formHandler || consentBanner;
+        parentOperation.state =
+          uncertainCreateProfile && !definitiveFormRejection ? 'pending' : 'failed';
+        if (definitiveFormRejection) report.state = 'failed';
+        else if (native || form || formHandler || consentBanner)
+          report.state = 'ownership-uncertain';
         parentOperation.error = error instanceof Error ? error.message : String(error);
         try {
           await rewrite(reportFile, report);
@@ -1610,7 +2291,7 @@ export async function executeWorkspaceImport(
         throw error;
       }
       // Persist returned identity before any semantic verification or further requests.
-      if (native) {
+      if (native || form || formHandler || consentBanner) {
         parentOperation.result = {
           contentKey:
             typeof parentResponse.contentKey === 'string' ? parentResponse.contentKey : undefined,
@@ -1625,7 +2306,7 @@ export async function executeWorkspaceImport(
       }
       const created = validateParentResponse(
         parentResponse,
-        native
+        native || form || formHandler || consentBanner
           ? responseIdentifier(parentResponse, ['contentKey'], 'generated key')
           : group.contentKey,
       );
@@ -1636,6 +2317,7 @@ export async function executeWorkspaceImport(
         contentKey: created.contentKey,
         primaryVariantId: created.primaryVariantId,
       };
+      if (native || form || formHandler || consentBanner) report.state = 'applying';
       if (landingPage && report.templatePrerequisites !== undefined) {
         const evidence = report.templatePrerequisites.find(
           ({ sourcePage }) => sourcePage.variantId === group.primary.id,
@@ -1665,6 +2347,96 @@ export async function executeWorkspaceImport(
           requestOptions,
         );
         verifyNativeCopy(readback, parentPayload, created, group.primary.language);
+        report.state = 'applying';
+      }
+      if (form) {
+        const content = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        const variant = await getVariant(
+          options.connection,
+          created.primaryVariantId,
+          requestOptions,
+        );
+        assertFormReadback(content, variant, {
+          workspaceId: plan.destinationWorkspaceId,
+          apiName: rewrittenGroup.primary.apiName!,
+          title: rewrittenGroup.primary.title,
+          urlName: rewrittenGroup.primary.urlName!,
+          contentId: created.contentId,
+          variantId: created.primaryVariantId,
+          semantic: {
+            contentType: 'sfdc_cms__form',
+            apiName: rewrittenGroup.primary.apiName!,
+            title: rewrittenGroup.primary.title,
+            urlName: rewrittenGroup.primary.urlName!,
+            language: rewrittenGroup.primary.language,
+            body: rewrittenGroup.primary.contentBody,
+          },
+        });
+        report.state = 'applying';
+      }
+      if (formHandler) {
+        const content = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        const variant = await getVariant(
+          options.connection,
+          created.primaryVariantId,
+          requestOptions,
+        );
+        assertFormHandlerReadback(content, variant, {
+          workspaceId: plan.destinationWorkspaceId,
+          apiName: rewrittenGroup.primary.apiName!,
+          title: rewrittenGroup.primary.title,
+          urlName: rewrittenGroup.primary.urlName!,
+          contentId: created.contentId,
+          variantId: created.primaryVariantId,
+          semantic: {
+            contentType: 'sfdc_cms__formHandler',
+            apiName: rewrittenGroup.primary.apiName!,
+            title: rewrittenGroup.primary.title,
+            urlName: rewrittenGroup.primary.urlName!,
+            language: rewrittenGroup.primary.language,
+            body: rewrittenGroup.primary.contentBody,
+          },
+        });
+        report.state = 'applying';
+      }
+      if (consentBanner) {
+        const content = await getContent(
+          options.connection,
+          created.contentKey,
+          {},
+          requestOptions,
+        );
+        const variant = await getVariant(
+          options.connection,
+          created.primaryVariantId,
+          requestOptions,
+        );
+        assertConsentBannerReadback(content, variant, {
+          workspaceId: plan.destinationWorkspaceId,
+          apiName: rewrittenGroup.primary.apiName!,
+          title: rewrittenGroup.primary.title,
+          urlName: rewrittenGroup.primary.urlName!,
+          contentId: created.contentId,
+          variantId: created.primaryVariantId,
+          semantic: {
+            contentType: 'sfdc_cms__consentBanner',
+            apiName: rewrittenGroup.primary.apiName!,
+            title: rewrittenGroup.primary.title,
+            urlName: rewrittenGroup.primary.urlName!,
+            language: rewrittenGroup.primary.language,
+            body: rewrittenGroup.primary.contentBody,
+          },
+        });
         report.state = 'applying';
       }
       const reference = referenceByVariantId.get(group.primary.id);

@@ -1,11 +1,15 @@
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import sinon from 'sinon';
 import { writeEditableRawHtml } from '../../src/services/editable-raw-html-export.js';
+import { exportWorkspace } from '../../src/services/export-workspace.js';
 import type { WorkspaceImportResult } from '../../src/contracts/workspace-import.js';
+import { formDetail } from '../fixtures/form.js';
+import { formHandlerDetail } from '../fixtures/form-handler.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
 
 function v1Result(result: Awaited<ReturnType<ImportWorkspace['run']>>): WorkspaceImportResult {
@@ -26,6 +30,98 @@ function missingRequest(): FakeRequest<never> {
   return Object.assign(Promise.reject(Object.assign(new Error('not found'), { statusCode: 404 })), {
     stream: () => ({ destroy: () => {} }),
   });
+}
+
+async function writeFormHandlerCommandSource(
+  root: string,
+): Promise<{ mapFile: string; source: string }> {
+  const source = path.join(root, 'form-handler-source');
+  const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+    if (method !== 'GET') return missingRequest();
+    if (url.startsWith('/connect/cms/items/search')) {
+      return fakeRequest({
+        items: [
+          {
+            id: 'variant-form-handler-id',
+            managedContentSpaceId: 'source-space',
+            type: 'ManagedContentVariantSearchResultRepresentation',
+          },
+        ],
+        total: 1,
+      });
+    }
+    return fakeRequest(formHandlerDetail('variant'));
+  });
+  await exportWorkspace({ request }, 'source-space', source, {
+    selection: {
+      contentType: 'sfdc_cms__formHandler',
+      apiNames: ['source_form_handler_api'],
+      formHandlerReports: true,
+    },
+  });
+  const manifestFile = path.join(source, 'manifest.json');
+  const strictManifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    warnings: unknown[];
+  };
+  strictManifest.warnings = [];
+  await writeFile(manifestFile, `${JSON.stringify(strictManifest)}\n`);
+  const mapFile = path.join(root, 'form-handler-map.json');
+  await writeFile(
+    mapFile,
+    `${JSON.stringify([
+      {
+        source: { family: 'cms', type: 'formHandler', apiName: 'source_form_handler_api' },
+        target: {
+          apiName: 'target_form_handler_api',
+          title: 'Target form handler',
+          urlName: 'target-form-handler',
+        },
+      },
+    ])}\n`,
+  );
+  return { mapFile, source };
+}
+
+async function writeFormCommandSource(root: string): Promise<{ mapFile: string; source: string }> {
+  const source = path.join(root, 'form-source');
+  const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+    if (method !== 'GET') return missingRequest();
+    if (url.startsWith('/connect/cms/items/search')) {
+      return fakeRequest({
+        items: [
+          {
+            id: 'variant-form-id',
+            managedContentSpaceId: 'source-space',
+            type: 'ManagedContentVariantSearchResultRepresentation',
+          },
+        ],
+        total: 1,
+      });
+    }
+    return fakeRequest(formDetail('variant'));
+  });
+  await exportWorkspace({ request }, 'source-space', source, {
+    selection: {
+      contentType: 'sfdc_cms__form',
+      apiNames: ['source_form_api'],
+      formReports: true,
+    },
+  });
+  const manifestFile = path.join(source, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+  manifest.completeness = 'partial';
+  await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+  const mapFile = path.join(root, 'form-map.json');
+  await writeFile(
+    mapFile,
+    `${JSON.stringify([
+      {
+        source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+        target: { apiName: 'target_form_api', title: 'Target form', urlName: 'target-form' },
+      },
+    ])}\n`,
+  );
+  return { mapFile, source };
 }
 
 async function writeSource(root: string, named = true, native = false): Promise<string> {
@@ -112,6 +208,72 @@ async function writeSource(root: string, named = true, native = false): Promise<
     })}\n`,
   );
   return source;
+}
+
+async function addPreferencePageReadReport(source: string): Promise<void> {
+  const manifestFile = path.join(source, 'manifest.json');
+  const value = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    completeness: string;
+    entries: Array<{ file: string; variantId: string }>;
+    items: Array<{ path: string; sha256: string; kind: string; referenceId?: string }>;
+    preferencePageReports?: unknown[];
+    workspaceId: string;
+  };
+  const variantId = value.entries[0].variantId;
+  const reportPath = `reports/preference-pages/${variantId}.json`;
+  const reportBytes = '{"format":"sf-cms-preference-page-read-report@1"}\n';
+  await mkdir(path.join(source, 'reports', 'preference-pages'), { recursive: true });
+  await writeFile(path.join(source, ...reportPath.split('/')), reportBytes);
+  value.completeness = 'partial';
+  value.preferencePageReports = [
+    {
+      path: reportPath,
+      rawItemPath: `items/${variantId}.json`,
+      workspaceId: value.workspaceId,
+      contentType: 'sfdc_cms__preferencePage',
+      variantId,
+      apiName: 'PreferencePage',
+      format: 'sf-cms-preference-page-read-report@1',
+    },
+  ];
+  value.items.push({
+    path: reportPath,
+    sha256: createHash('sha256').update(reportBytes).digest('hex'),
+    kind: 'cms.preference-page.read-report',
+  });
+  await writeFile(manifestFile, `${JSON.stringify(value)}\n`);
+}
+
+async function addBrandReadReport(source: string): Promise<void> {
+  const manifestFile = path.join(source, 'manifest.json');
+  const value = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    entries: Array<{ file: string; variantId: string }>;
+    items: Array<{ path: string; sha256: string; kind: string; referenceId?: string }>;
+    brandReports?: unknown[];
+    workspaceId: string;
+  };
+  const variantId = value.entries[0].variantId;
+  const reportPath = `reports/brands/${variantId}.json`;
+  const reportBytes = '{"format":"sf-cms-brand-read-report@1"}\n';
+  await mkdir(path.join(source, 'reports', 'brands'), { recursive: true });
+  await writeFile(path.join(source, ...reportPath.split('/')), reportBytes);
+  value.brandReports = [
+    {
+      path: reportPath,
+      rawItemPath: `items/${variantId}.json`,
+      workspaceId: value.workspaceId,
+      contentType: 'sfdc_cms__brand',
+      variantId,
+      apiName: 'Brand',
+      format: 'sf-cms-brand-read-report@1',
+    },
+  ];
+  value.items.push({
+    path: reportPath,
+    sha256: createHash('sha256').update(reportBytes).digest('hex'),
+    kind: 'cms.brand.read-report',
+  });
+  await writeFile(manifestFile, `${JSON.stringify(value)}\n`);
 }
 
 async function writeImageSource(root: string): Promise<{ mapFile: string; source: string }> {
@@ -237,6 +399,9 @@ describe('CMS import workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
       'editable-dir',
       'apply',
@@ -255,6 +420,9 @@ describe('CMS import workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
@@ -263,6 +431,9 @@ describe('CMS import workspace command', () => {
       'landing-page-template-map',
       'landing-page-map',
       'editable-dir',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
@@ -271,6 +442,9 @@ describe('CMS import workspace command', () => {
       'landing-page-template-map',
       'landing-page-map',
       'editable-dir',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
@@ -279,6 +453,9 @@ describe('CMS import workspace command', () => {
       'web-fragment-map',
       'landing-page-map',
       'editable-dir',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['image-map'].exclusive).to.deep.equal([
@@ -287,6 +464,9 @@ describe('CMS import workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'editable-dir',
     ]);
     expect(ImportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
@@ -295,6 +475,9 @@ describe('CMS import workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'editable-dir',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'image-map',
     ]);
     expect(ImportWorkspace.flags['email-fragment-map'].summary).to.match(
@@ -690,6 +873,100 @@ describe('CMS import workspace command', () => {
     expect(getOrgContext.notCalled).to.equal(true);
   });
 
+  for (const allowPartial of [false, true]) {
+    it(`blocks typed Preference Page reports before org access or artifacts (allowPartial=${allowPartial})`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-preference-'));
+      temporaryDirectories.push(root);
+      const source = await writeSource(root);
+      await addPreferencePageReadReport(source);
+      const reportDirectory = path.join(root, 'report');
+      const getOrgContext = $$.SANDBOX.stub();
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'allow-partial': allowPartial,
+            apply: true,
+            'api-version': '67.0',
+            'report-dir': reportDirectory,
+            'source-dir': source,
+            'target-org': 'mcnext-sdo',
+            'workspace-id': 'space',
+          },
+        }),
+        getOrgContext,
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+
+      const result = await command.run();
+
+      expect(result).to.include({ status: 'blocked', result: null });
+      expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+      expect(result.diagnostics.errors[0].message).to.equal(
+        'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+      );
+      expect(getOrgContext.notCalled).to.equal(true);
+      expect(await readdir(root)).to.deep.equal(['source']);
+      expect(await readFile(path.join(source, 'manifest.json'), 'utf8')).to.include(
+        'cms.preference-page.read-report',
+      );
+      let reportExists = true;
+      try {
+        await readFile(path.join(reportDirectory, 'workspace-import-run.json'));
+      } catch (error) {
+        reportExists = (error as NodeJS.ErrnoException).code !== 'ENOENT';
+      }
+      expect(reportExists).to.equal(false);
+    });
+  }
+
+  for (const allowPartial of [false, true]) {
+    it(`blocks typed Brand reports before org access or artifacts (allowPartial=${allowPartial})`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-brand-'));
+      temporaryDirectories.push(root);
+      const source = await writeSource(root);
+      await addBrandReadReport(source);
+      const reportDirectory = path.join(root, 'report');
+      const getOrgContext = $$.SANDBOX.stub();
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'allow-partial': allowPartial,
+            apply: true,
+            'api-version': '67.0',
+            'report-dir': reportDirectory,
+            'source-dir': source,
+            'target-org': 'mcnext-sdo',
+            'workspace-id': 'space',
+          },
+        }),
+        getOrgContext,
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+
+      const result = await command.run();
+
+      expect(result).to.include({ status: 'blocked', result: null });
+      expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+      expect(result.diagnostics.errors[0].message).to.equal(
+        'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
+      );
+      expect(getOrgContext.notCalled).to.equal(true);
+      expect(await readdir(root)).to.deep.equal(['source']);
+      expect(await readFile(path.join(source, 'manifest.json'), 'utf8')).to.include(
+        'cms.brand.read-report',
+      );
+      let reportExists = true;
+      try {
+        await readFile(path.join(reportDirectory, 'workspace-import-run.json'));
+      } catch (error) {
+        reportExists = (error as NodeJS.ErrnoException).code !== 'ENOENT';
+      }
+      expect(reportExists).to.equal(false);
+    });
+  }
+
   it('validates the source locally before requesting org context', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
     temporaryDirectories.push(root);
@@ -754,6 +1031,228 @@ describe('CMS import workspace command', () => {
     }
     expect(getOrgContext.calledOnce).to.equal(true);
   });
+
+  it('blocks a partial Form package before org access even with allow-partial', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-partial-'));
+    temporaryDirectories.push(root);
+    const { mapFile, source } = await writeFormCommandSource(root);
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    const getOrgContext = $$.SANDBOX.stub();
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': true,
+          apply: false,
+          'api-version': '67.0',
+          'form-map': mapFile,
+          'source-dir': source,
+          'target-org': 'mcnext-sdo',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext,
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.include({ status: 'blocked', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'PACKAGE_VALIDATION_FAILED' });
+    expect(result.diagnostics.errors[0].message).to.equal(
+      'Form profile requires a complete workspace export',
+    );
+    expect(getOrgContext.notCalled).to.equal(true);
+  });
+
+  for (const profile of ['form', 'form-handler'] as const) {
+    it(`requires canonical structured Marketing evidence for ${profile} import`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), `sf-plugin-cms-command-${profile}-space-`));
+      temporaryDirectories.push(root);
+      const { mapFile, source } =
+        profile === 'form'
+          ? await writeFormCommandSource(root)
+          : await writeFormHandlerCommandSource(root);
+      if (profile === 'form') {
+        const manifestFile = path.join(source, 'manifest.json');
+        const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<
+          string,
+          unknown
+        >;
+        manifest.completeness = 'complete';
+        await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+      }
+      const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+        if (url === '/connect/cms/spaces/space') {
+          return fakeRequest({
+            defaultLanguage: 'en',
+            id: 'space',
+            rootFolderId: 'root',
+            spaceType: 'Marketing',
+          });
+        }
+        return missingRequest();
+      });
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'allow-partial': false,
+            apply: false,
+            'api-version': '67.0',
+            [profile === 'form' ? 'form-map' : 'form-handler-map']: mapFile,
+            'source-dir': source,
+            'target-org': 'mcnext-sdo',
+            'workspace-id': 'space',
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+
+      const result = await command.run();
+      expect(result).to.include({ status: 'failed', result: null });
+      expect(result.diagnostics.errors[0].message).to.include('not canonically Marketing');
+      expect(request.calledOnce).to.equal(true);
+    });
+  }
+
+  it('keeps a pre-mutation Form workspace failure definitive without claiming a journal', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-workspace-'));
+    temporaryDirectories.push(root);
+    const { mapFile, source } = await writeFormCommandSource(root);
+    const manifestFile = path.join(source, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+    manifest.completeness = 'complete';
+    await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+    const reportDirectory = path.join(root, 'report');
+    const request = $$.SANDBOX.stub().returns(
+      Object.assign(
+        Promise.reject(Object.assign(new Error('workspace unavailable'), { statusCode: 503 })),
+        { stream: () => ({ destroy: () => {} }) },
+      ),
+    );
+    const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'allow-partial': false,
+          apply: true,
+          'api-version': '67.0',
+          'form-map': mapFile,
+          'report-dir': reportDirectory,
+          'source-dir': source,
+          'target-org': 'mcnext-sdo',
+          'workspace-id': 'space',
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+    });
+
+    const result = await command.run();
+
+    expect(result).to.include({ status: 'failed', result: null });
+    expect(result.diagnostics.errors[0]).to.include({ code: 'IMPORT_FAILED', retryable: false });
+    expect(result.diagnostics.errors[0].message).to.equal('workspace unavailable');
+    expect(result.diagnostics.errors[0].message).not.to.include('journal');
+    let journalExists = true;
+    try {
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'));
+    } catch (error) {
+      journalExists = (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    }
+    expect(journalExists).to.equal(false);
+  });
+
+  for (const rejection of [
+    {
+      statusCode: 503,
+      expectedCode: 'IMPORT_OWNERSHIP_UNCERTAIN',
+      message: 'temporary create failure',
+    },
+    { statusCode: 400, expectedCode: 'IMPORT_FAILED', message: 'invalid form payload' },
+  ]) {
+    it(`classifies Form CREATE ${rejection.statusCode} outcomes with reconciliation-safe command diagnostics`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-create-'));
+      temporaryDirectories.push(root);
+      const { mapFile, source } = await writeFormCommandSource(root);
+      const manifestFile = path.join(source, 'manifest.json');
+      const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+      manifest.completeness = 'complete';
+      await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+      const reportDirectory = path.join(root, 'report');
+      const request = $$.SANDBOX.stub().callsFake(
+        ({ method, url }: { method: string; url: string }) => {
+          if (url === '/connect/cms/spaces/space') {
+            return fakeRequest({
+              defaultLanguage: 'en_US',
+              id: 'space',
+              rootFolderId: 'root',
+              spaceType: { apiName: 'Marketing' },
+            });
+          }
+          if (method === 'POST') {
+            return Object.assign(
+              Promise.reject(
+                Object.assign(new Error(rejection.message), {
+                  statusCode: rejection.statusCode,
+                }),
+              ),
+              { stream: () => ({ destroy: () => {} }) },
+            );
+          }
+          return fakeRequest({ count: 0, items: [], total: 0, totalCount: 0 });
+        },
+      );
+      const log = $$.SANDBOX.stub();
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'allow-partial': false,
+            apply: true,
+            'api-version': '67.0',
+            'form-map': mapFile,
+            'report-dir': reportDirectory,
+            'source-dir': source,
+            'target-org': 'mcnext-sdo',
+            'workspace-id': 'space',
+          },
+        }),
+        getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+        jsonEnabled: $$.SANDBOX.stub().returns(false),
+        log,
+      });
+
+      const result = await command.run();
+
+      expect(result).to.include({ status: 'failed', result: null });
+      expect(result.diagnostics.errors[0], result.diagnostics.errors[0].message).to.include({
+        code: rejection.expectedCode,
+        retryable: false,
+      });
+      const diagnostic = result.diagnostics.errors[0].message;
+      if (rejection.statusCode === 503) {
+        const journalFile = path.join(reportDirectory, 'workspace-import-run.json');
+        expect(diagnostic).to.include('Ownership is uncertain');
+        expect(diagnostic).to.include(journalFile);
+        expect(diagnostic).to.include('Reconcile the durable journal');
+        expect(log.calledOnceWithExactly(diagnostic)).to.equal(true);
+        expect(JSON.parse(await readFile(journalFile, 'utf8'))).to.include({
+          state: 'ownership-uncertain',
+        });
+      } else {
+        expect(diagnostic).not.to.include('Ownership is uncertain');
+        expect(diagnostic).not.to.include('Reconcile the durable journal');
+        expect(log.notCalled).to.equal(true);
+        expect(
+          JSON.parse(
+            await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+          ),
+        ).to.include({ state: 'failed' });
+      }
+    });
+  }
 
   it('blocks contradictory complete packages before org access even with allow-partial', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));

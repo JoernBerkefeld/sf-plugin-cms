@@ -17,6 +17,8 @@ import sinon from 'sinon';
 import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/atomic-publish.js';
 import { bindLandingPageTemplatePairs } from '../../src/services/landing-page-pair-export.js';
 import type { CmsRecord } from '../../src/services/read.js';
+import { brandDetail } from '../fixtures/brand.js';
+import { formHandlerDetail } from '../fixtures/form-handler.js';
 import {
   defaultWorkspaceDestination,
   exportWorkspace,
@@ -66,6 +68,49 @@ function detail(id: string, workspaceId = 'space', overrides = {}) {
 
 function pageNumber(url: string): number {
   return Number(new URL(url, 'https://example.test').searchParams.get('page'));
+}
+
+function preferencePageDetail(id: string, apiName: string, workspaceId = 'space'): CmsRecord {
+  return {
+    contentType: 'sfdc_cms__preferencePage',
+    managedContentId: `content-${id}`,
+    managedContentVariantId: id,
+    id,
+    apiName,
+    contentSpace: { id: workspaceId },
+    contentBody: {
+      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+      'lightning:dataProviders': [],
+      'sfdc_cms:title': `Title ${apiName}`,
+      'sfdc_cms:description': `Description ${apiName}`,
+      'sfdc_cms:block': {
+        id: `root-${id}`,
+        type: 'block',
+        definition: 'sfdc_cms/rootContentBlock',
+        children: [
+          {
+            id: `subscriptions-${id}`,
+            type: 'block',
+            definition: 'sfdc_cms/preferencePageSubscriptionsBlock',
+            attributes: {
+              subscriptionConfig: {
+                engChannelTypeId: `channel-${id}`,
+                commSubChannelTypeIds: [`subchannel-b-${id}`, `subchannel-a-${id}`],
+              },
+            },
+            children: [],
+          },
+          {
+            id: `submit-${id}`,
+            type: 'block',
+            definition: 'sfdc_cms/preferencePageSubmitBlock',
+            attributes: { label: 'Save' },
+            children: [],
+          },
+        ],
+      },
+    },
+  };
 }
 
 describe('workspace export service', () => {
@@ -499,6 +544,412 @@ describe('workspace export service', () => {
       },
     );
     expect(single.manifest.entries).to.deep.equal([{ file: 'items/a.json', variantId: 'a' }]);
+  });
+
+  it('exports exact Preference Pages with deterministic reports, raw equality, hashes, and unresolved warnings', async () => {
+    const details = {
+      z: preferencePageDetail('z', 'PreferenceZ'),
+      a: preferencePageDetail('a', 'PreferenceA'),
+      unrelated: preferencePageDetail('unrelated', 'Unrelated'),
+    };
+    const request = sinon.stub().callsFake((request_: { method?: string; url: string }) => {
+      expect(request_.method ?? 'GET').to.equal('GET');
+      if (request_.url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(request_.url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__preferencePage');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({ items: [row('z'), row('unrelated'), row('a')], total: 3 });
+      }
+      return fakeRequest(
+        details[decodeURIComponent(request_.url.split('/').at(-1) ?? '') as keyof typeof details],
+      );
+    });
+    const destination = path.join(root, 'preference-pages');
+    const result = await exportWorkspace({ request }, 'space', destination, {
+      selection: {
+        contentType: 'sfdc_cms__preferencePage',
+        apiNames: ['PreferenceZ', 'PreferenceA'],
+        preferencePageReports: true,
+      },
+    });
+
+    expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['a', 'z']);
+    expect(result.manifest.completeness).to.equal('partial');
+    expect(result.manifest.externalReferences).to.deep.equal([]);
+    expect(result.manifest.items.map(({ path: itemPath }) => itemPath)).to.deep.equal([
+      'items/a.json',
+      'items/z.json',
+      'reports/preference-pages/a.json',
+      'reports/preference-pages/z.json',
+    ]);
+    expect(result.manifest.preferencePageReports).to.deep.equal([
+      {
+        path: 'reports/preference-pages/a.json',
+        rawItemPath: 'items/a.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__preferencePage',
+        variantId: 'a',
+        apiName: 'PreferenceA',
+        format: 'sf-cms-preference-page-read-report@1',
+      },
+      {
+        path: 'reports/preference-pages/z.json',
+        rawItemPath: 'items/z.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__preferencePage',
+        variantId: 'z',
+        apiName: 'PreferenceZ',
+        format: 'sf-cms-preference-page-read-report@1',
+      },
+    ]);
+    expect(result.manifest.warnings.at(-1)).to.deep.equal({
+      code: 'REFERENCE_UNRESOLVED',
+      message:
+        'Preference Page channel and subchannel references remain source-bound and unresolved.',
+      variantIds: ['a', 'z'],
+    });
+    for (const variantId of ['a', 'z'] as const) {
+      const rawBytes = await readFile(path.join(destination, `items/${variantId}.json`));
+      const reportBytes = await readFile(
+        path.join(destination, `reports/preference-pages/${variantId}.json`),
+      );
+      expect(JSON.parse(rawBytes.toString('utf8'))).to.deep.equal(details[variantId]);
+      const report = JSON.parse(reportBytes.toString('utf8')) as {
+        normalization: { unresolvedReferences: Array<{ sourceId: string }> };
+        rawItemPath: string;
+      };
+      expect(report.rawItemPath).to.equal(`items/${variantId}.json`);
+      expect(
+        report.normalization.unresolvedReferences.map(({ sourceId }) => sourceId),
+      ).to.deep.equal([
+        `channel-${variantId}`,
+        `subchannel-b-${variantId}`,
+        `subchannel-a-${variantId}`,
+      ]);
+      expect(
+        result.manifest.items.find(
+          ({ path: itemPath }) => itemPath === `reports/preference-pages/${variantId}.json`,
+        )?.sha256,
+      ).to.equal(createHash('sha256').update(reportBytes).digest('hex'));
+    }
+  });
+
+  it('exports exact Brands with deterministic reports, raw equality, hashes, and no unresolved references', async () => {
+    const details = {
+      z: brandDetail('z', 'BrandZ'),
+      a: brandDetail('a', 'BrandA'),
+      unrelated: brandDetail('unrelated', 'Unrelated'),
+    };
+    const request = sinon.stub().callsFake((request_: { method?: string; url: string }) => {
+      expect(request_.method ?? 'GET').to.equal('GET');
+      if (request_.url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(request_.url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__brand');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({ items: [row('z'), row('unrelated'), row('a')], total: 3 });
+      }
+      return fakeRequest(
+        details[decodeURIComponent(request_.url.split('/').at(-1) ?? '') as keyof typeof details],
+      );
+    });
+    const destination = path.join(root, 'brands');
+    const result = await exportWorkspace({ request }, 'space', destination, {
+      selection: {
+        contentType: 'sfdc_cms__brand',
+        apiNames: ['BrandZ', 'BrandA'],
+        brandReports: true,
+      },
+    });
+
+    expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['a', 'z']);
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.externalReferences).to.deep.equal([]);
+    expect(result.manifest.items.map(({ path: itemPath }) => itemPath)).to.deep.equal([
+      'items/a.json',
+      'items/z.json',
+      'reports/brands/a.json',
+      'reports/brands/z.json',
+    ]);
+    expect(result.manifest.brandReports).to.deep.equal([
+      {
+        path: 'reports/brands/a.json',
+        rawItemPath: 'items/a.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__brand',
+        variantId: 'a',
+        apiName: 'BrandA',
+        format: 'sf-cms-brand-read-report@1',
+      },
+      {
+        path: 'reports/brands/z.json',
+        rawItemPath: 'items/z.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__brand',
+        variantId: 'z',
+        apiName: 'BrandZ',
+        format: 'sf-cms-brand-read-report@1',
+      },
+    ]);
+    expect(result.manifest.warnings.map(({ code }) => code)).not.to.include('REFERENCE_UNRESOLVED');
+    for (const variantId of ['a', 'z'] as const) {
+      const rawBytes = await readFile(path.join(destination, `items/${variantId}.json`));
+      const reportBytes = await readFile(
+        path.join(destination, `reports/brands/${variantId}.json`),
+      );
+      expect(JSON.parse(rawBytes.toString('utf8'))).to.deep.equal(details[variantId]);
+      const report = JSON.parse(reportBytes.toString('utf8')) as {
+        normalization: { unresolvedReferences: unknown[] };
+        rawItemPath: string;
+      };
+      expect(report.rawItemPath).to.equal(`items/${variantId}.json`);
+      expect(report.normalization.unresolvedReferences).to.deep.equal([]);
+      expect(
+        result.manifest.items.find(
+          ({ path: itemPath }) => itemPath === `reports/brands/${variantId}.json`,
+        )?.sha256,
+      ).to.equal(createHash('sha256').update(reportBytes).digest('hex'));
+    }
+  });
+
+  it('exports exact Form Handlers with deterministic reports and raw/report binding', async () => {
+    const raw = formHandlerDetail('variant', {
+      contentSpace: { id: 'space', resourceUrl: '/connect/cms/spaces/space' },
+      id: 'handler',
+      managedContentVariantId: 'handler',
+    });
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/items/search')
+          ? fakeRequest({ items: [row('handler')], total: 1 })
+          : fakeRequest(raw),
+      );
+    const destination = path.join(root, 'form-handlers');
+    const result = await exportWorkspace({ request }, 'space', destination, {
+      selection: {
+        contentType: 'sfdc_cms__formHandler',
+        apiNames: ['source_form_handler_api'],
+        formHandlerReports: true,
+      },
+    });
+
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.formHandlerReports).to.deep.equal([
+      {
+        path: 'reports/form-handlers/handler.json',
+        rawItemPath: 'items/handler.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__formHandler',
+        variantId: 'handler',
+        apiName: 'source_form_handler_api',
+        format: 'sf-cms-form-handler-read-report@1',
+      },
+    ]);
+    expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal([
+      'cms.content',
+      'cms.form-handler.read-report',
+    ]);
+    const rawBytes = await readFile(path.join(destination, 'items/handler.json'));
+    const reportBytes = await readFile(
+      path.join(destination, 'reports/form-handlers/handler.json'),
+    );
+    expect(JSON.parse(rawBytes.toString('utf8'))).to.deep.equal(raw);
+    expect(JSON.parse(reportBytes.toString('utf8'))).to.include({
+      format: 'sf-cms-form-handler-read-report@1',
+      rawItemPath: 'items/handler.json',
+    });
+    expect(result.manifest.items[1].sha256).to.equal(
+      createHash('sha256').update(reportBytes).digest('hex'),
+    );
+  });
+
+  it('keeps generic Brand export raw-only unless typed reports are explicitly selected', async () => {
+    const raw = brandDetail('brand', 'Brand');
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/items/search')
+          ? fakeRequest({ items: [row('brand')], total: 1 })
+          : fakeRequest(raw),
+      );
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'brand-raw-only'));
+    expect(result.manifest.brandReports).to.equal(undefined);
+    expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
+  });
+
+  it('fails selected Brand export before publication for incomplete or invalid evidence', async () => {
+    const valid = brandDetail('brand', 'Brand') as CmsRecord;
+    const cases: Array<{
+      name: string;
+      rows: ReturnType<typeof row>[];
+      total: number;
+      details: CmsRecord[] | Error;
+      apiName?: string;
+    }> = [
+      { name: 'missing', rows: [row('brand')], total: 1, details: [valid], apiName: 'Missing' },
+      {
+        name: 'duplicate',
+        rows: [row('brand'), row('brand-copy')],
+        total: 2,
+        details: [valid, brandDetail('brand-copy', 'Brand') as CmsRecord],
+      },
+      {
+        name: 'wrong type',
+        rows: [row('brand')],
+        total: 1,
+        details: [{ ...valid, contentType: { fullyQualifiedName: 'sfdc_cms__form' } }],
+      },
+      {
+        name: 'foreign workspace',
+        rows: [row('brand')],
+        total: 1,
+        details: [brandDetail('brand', 'Brand', 'other-space') as CmsRecord],
+      },
+      { name: 'detail failure', rows: [row('brand')], total: 1, details: new Error('failed') },
+      {
+        name: 'normalizer failure',
+        rows: [row('brand')],
+        total: 1,
+        details: [{ ...valid, contentBody: {} }],
+      },
+      { name: 'incomplete inventory', rows: [row('brand')], total: 2, details: [valid] },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/items/search')) {
+          return fakeRequest({
+            items: pageNumber(url) === 0 ? testCase.rows : [],
+            total: testCase.total,
+          });
+        }
+        if (testCase.details instanceof Error) return failedRequest();
+        const id = decodeURIComponent(url.split('/').at(-1) ?? '');
+        return fakeRequest(
+          testCase.details.find(
+            (detail_) => detail_.id === id || detail_.managedContentVariantId === id,
+          ),
+        );
+      });
+      let failure: unknown;
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, `blocked-brand-${index}`), {
+          selection: {
+            contentType: 'sfdc_cms__brand',
+            apiNames: [testCase.apiName ?? 'Brand'],
+            brandReports: true,
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure, testCase.name).to.be.instanceOf(TypeError);
+      expect(await readdir(root)).not.to.include(`blocked-brand-${index}`);
+    }
+  });
+
+  it('keeps generic Preference Page export raw-only unless typed reports are explicitly selected', async () => {
+    const raw = preferencePageDetail('preference', 'Preference');
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        url.startsWith('/connect/cms/items/search')
+          ? fakeRequest({ items: [row('preference')], total: 1 })
+          : fakeRequest(raw),
+      );
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'raw-only'));
+    expect(result.manifest.preferencePageReports).to.equal(undefined);
+    expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
+  });
+
+  it('fails selected Preference Page export before publication for incomplete or invalid evidence', async () => {
+    const valid = preferencePageDetail('preference', 'Preference');
+    const cases: Array<{
+      name: string;
+      rows: ReturnType<typeof row>[];
+      total: number;
+      details: CmsRecord[] | Error;
+      apiName?: string;
+    }> = [
+      {
+        name: 'missing',
+        rows: [row('preference')],
+        total: 1,
+        details: [valid],
+        apiName: 'Missing',
+      },
+      {
+        name: 'duplicate',
+        rows: [row('preference'), row('preference-copy')],
+        total: 2,
+        details: [valid, preferencePageDetail('preference-copy', 'Preference')],
+      },
+      {
+        name: 'wrong type',
+        rows: [row('preference')],
+        total: 1,
+        details: [{ ...valid, contentType: 'sfdc_cms__form' }],
+      },
+      {
+        name: 'foreign workspace',
+        rows: [row('preference')],
+        total: 1,
+        details: [preferencePageDetail('preference', 'Preference', 'other-space')],
+      },
+      {
+        name: 'detail failure',
+        rows: [row('preference')],
+        total: 1,
+        details: new Error('failed'),
+      },
+      {
+        name: 'normalizer failure',
+        rows: [row('preference')],
+        total: 1,
+        details: [{ ...valid, contentBody: {} }],
+      },
+      {
+        name: 'incomplete inventory',
+        rows: [row('preference')],
+        total: 2,
+        details: [valid],
+      },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.startsWith('/connect/cms/items/search')) {
+          return fakeRequest({
+            items: pageNumber(url) === 0 ? testCase.rows : [],
+            total: testCase.total,
+          });
+        }
+        if (testCase.details instanceof Error) return failedRequest();
+        const id = decodeURIComponent(url.split('/').at(-1) ?? '');
+        return fakeRequest(
+          testCase.details.find(
+            (detail_) => detail_.id === id || detail_.managedContentVariantId === id,
+          ),
+        );
+      });
+      let failure: unknown;
+      try {
+        await exportWorkspace(
+          { request },
+          'space',
+          path.join(root, `blocked-preference-${index}`),
+          {
+            selection: {
+              contentType: 'sfdc_cms__preferencePage',
+              apiNames: [testCase.apiName ?? 'Preference'],
+              preferencePageReports: true,
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure, testCase.name).to.be.instanceOf(TypeError);
+      expect(await readdir(root)).not.to.include(`blocked-preference-${index}`);
+    }
   });
 
   it('fails closed when exact email-fragment inventory completeness is not proven', async () => {

@@ -32,6 +32,56 @@ export type WorkspaceExportManifestItem = {
   referenceId?: string;
 };
 
+export type WorkspaceExportPreferencePageReport = {
+  path: string;
+  rawItemPath: string;
+  workspaceId: string;
+  contentType: 'sfdc_cms__preferencePage';
+  variantId: string;
+  apiName: string;
+  format: 'sf-cms-preference-page-read-report@1';
+};
+
+export type WorkspaceExportBrandReport = {
+  path: string;
+  rawItemPath: string;
+  workspaceId: string;
+  contentType: 'sfdc_cms__brand';
+  variantId: string;
+  apiName: string;
+  format: 'sf-cms-brand-read-report@1';
+};
+
+export type WorkspaceExportFormReport = {
+  path: string;
+  rawItemPath: string;
+  workspaceId: string;
+  contentType: 'sfdc_cms__form';
+  variantId: string;
+  apiName: string;
+  format: 'sf-cms-form-read-report@1';
+};
+
+export type WorkspaceExportFormHandlerReport = {
+  path: string;
+  rawItemPath: string;
+  workspaceId: string;
+  contentType: 'sfdc_cms__formHandler';
+  variantId: string;
+  apiName: string;
+  format: 'sf-cms-form-handler-read-report@1';
+};
+
+export type WorkspaceExportConsentBannerReport = {
+  path: string;
+  rawItemPath: string;
+  workspaceId: string;
+  contentType: 'sfdc_cms__consentBanner';
+  variantId: string;
+  apiName: string;
+  format: 'sf-cms-consent-banner-read-report@1';
+};
+
 export type WorkspaceExportMedia = {
   variantId: string;
   contentKey: string;
@@ -106,6 +156,11 @@ export type WorkspaceExportManifest = {
   completeness: 'complete' | 'partial';
   dependencies: string[];
   landingPageTemplatePairs?: LandingPageTemplatePair[];
+  preferencePageReports?: WorkspaceExportPreferencePageReport[];
+  brandReports?: WorkspaceExportBrandReport[];
+  formReports?: WorkspaceExportFormReport[];
+  formHandlerReports?: WorkspaceExportFormHandlerReport[];
+  consentBannerReports?: WorkspaceExportConsentBannerReport[];
   externalReferences: OpaqueCmsReference[];
   items: WorkspaceExportManifestItem[];
 };
@@ -180,6 +235,21 @@ export function assertWorkspaceExportManifest(
       ...(typeof value === 'object' && value !== null && 'landingPageTemplatePairs' in value
         ? ['landingPageTemplatePairs']
         : []),
+      ...(typeof value === 'object' && value !== null && 'preferencePageReports' in value
+        ? ['preferencePageReports']
+        : []),
+      ...(typeof value === 'object' && value !== null && 'brandReports' in value
+        ? ['brandReports']
+        : []),
+      ...(typeof value === 'object' && value !== null && 'formReports' in value
+        ? ['formReports']
+        : []),
+      ...(typeof value === 'object' && value !== null && 'formHandlerReports' in value
+        ? ['formHandlerReports']
+        : []),
+      ...(typeof value === 'object' && value !== null && 'consentBannerReports' in value
+        ? ['consentBannerReports']
+        : []),
       'externalReferences',
       'items',
     ],
@@ -253,6 +323,11 @@ export function assertWorkspaceExportManifest(
     );
   }
   assertLandingPageTemplatePairs(value);
+  assertPreferencePageReports(value);
+  assertBrandReports(value);
+  assertFormReports(value);
+  assertFormHandlerReports(value);
+  assertConsentBannerReports(value);
   let previousReference = '';
   const referenceIds = new Set<string>();
   for (const [index, reference] of value.externalReferences.entries()) {
@@ -298,6 +373,11 @@ export function assertWorkspaceExportManifest(
     }
   }
   if (value.schemaVersion === 2) assertManifestMediaIntegrity(value as WorkspaceExportManifest);
+  assertPreferencePageReportIntegrity(value as WorkspaceExportManifest);
+  assertBrandReportIntegrity(value as WorkspaceExportManifest);
+  assertFormReportIntegrity(value as WorkspaceExportManifest);
+  assertFormHandlerReportIntegrity(value as WorkspaceExportManifest);
+  assertConsentBannerReportIntegrity(value as WorkspaceExportManifest);
   if (value.completeness === 'complete' && hasAuthoritativeIncompleteness(value)) {
     throw new TypeError('manifest.completeness contradicts authoritative incompleteness evidence');
   }
@@ -359,6 +439,362 @@ function assertLandingPageTemplatePairs(value: Record<string, unknown>): void {
       throw new TypeError('manifest.landingPageTemplatePairs must be sorted');
     }
     previous = sortKey;
+  }
+}
+
+function assertPreferencePageReports(value: Record<string, unknown>): void {
+  if (!('preferencePageReports' in value)) return;
+  if (!Array.isArray(value.preferencePageReports) || value.preferencePageReports.length === 0) {
+    throw new TypeError('manifest.preferencePageReports must be a nonempty array');
+  }
+  let previous = '';
+  const paths = new Set<string>();
+  const variants = new Set<string>();
+  for (const [index, report] of value.preferencePageReports.entries()) {
+    const label = `manifest.preferencePageReports[${index}]`;
+    assertExactKeys(
+      report,
+      ['path', 'rawItemPath', 'workspaceId', 'contentType', 'variantId', 'apiName', 'format'],
+      label,
+    );
+    assertRelativePosixPath(report.path, `${label}.path`);
+    if (
+      report.path !== `reports/preference-pages/${String(report.variantId)}.json` ||
+      !report.path.startsWith('reports/preference-pages/') ||
+      !report.path.endsWith('.json')
+    ) {
+      throw new TypeError(`${label}.path must bind its variant under reports/preference-pages/`);
+    }
+    assertRelativePosixPath(report.rawItemPath, `${label}.rawItemPath`);
+    if (!report.rawItemPath.startsWith('items/') || !report.rawItemPath.endsWith('.json')) {
+      throw new TypeError(`${label}.rawItemPath must use items/`);
+    }
+    assertIdentifier(report.workspaceId, `${label}.workspaceId`);
+    if (report.workspaceId !== value.workspaceId) {
+      throw new TypeError(`${label}.workspaceId must match manifest`);
+    }
+    if (report.contentType !== 'sfdc_cms__preferencePage') {
+      throw new TypeError(`${label}.contentType is unsupported`);
+    }
+    assertIdentifier(report.variantId, `${label}.variantId`);
+    assertNonemptyString(report.apiName, `${label}.apiName`);
+    if (report.format !== 'sf-cms-preference-page-read-report@1') {
+      throw new TypeError(`${label}.format is unsupported`);
+    }
+    if (paths.has(report.path) || variants.has(report.variantId)) {
+      throw new TypeError('manifest preference-page report paths and variants must be unique');
+    }
+    paths.add(report.path);
+    variants.add(report.variantId);
+    const sortKey = [report.variantId, report.apiName, report.path].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0) {
+      throw new TypeError('manifest.preferencePageReports must be sorted');
+    }
+    previous = sortKey;
+  }
+}
+
+function assertPreferencePageReportIntegrity(manifest: WorkspaceExportManifest): void {
+  const descriptors = manifest.preferencePageReports ?? [];
+  const reportItems = manifest.items.filter(
+    ({ kind }) => kind === 'cms.preference-page.read-report',
+  );
+  if (descriptors.length !== reportItems.length) {
+    throw new TypeError('manifest preference-page descriptors and report items must be bijective');
+  }
+  const descriptorPaths = new Set(descriptors.map(({ path }) => path));
+  if (reportItems.some(({ path }) => !descriptorPaths.has(path))) {
+    throw new TypeError('manifest contains an orphan preference-page report item');
+  }
+  const entries = new Map(manifest.entries.map((entry) => [entry.file, entry.variantId]));
+  const rawItems = new Map(
+    manifest.items.filter(({ kind }) => kind === 'cms.content').map((item) => [item.path, item]),
+  );
+  const reportItemPaths = new Set(reportItems.map(({ path }) => path));
+  for (const descriptor of descriptors) {
+    if (!reportItemPaths.has(descriptor.path)) {
+      throw new TypeError('manifest preference-page report descriptor has no report item');
+    }
+    if (
+      entries.get(descriptor.rawItemPath) !== descriptor.variantId ||
+      !rawItems.has(descriptor.rawItemPath)
+    ) {
+      throw new TypeError('manifest preference-page report must bind an existing raw CMS item');
+    }
+  }
+}
+
+function assertBrandReports(value: Record<string, unknown>): void {
+  if (!('brandReports' in value)) return;
+  if (!Array.isArray(value.brandReports) || value.brandReports.length === 0) {
+    throw new TypeError('manifest.brandReports must be a nonempty array');
+  }
+  let previous = '';
+  const paths = new Set<string>();
+  const variants = new Set<string>();
+  for (const [index, report] of value.brandReports.entries()) {
+    const label = `manifest.brandReports[${index}]`;
+    assertExactKeys(
+      report,
+      ['path', 'rawItemPath', 'workspaceId', 'contentType', 'variantId', 'apiName', 'format'],
+      label,
+    );
+    assertRelativePosixPath(report.path, `${label}.path`);
+    if (report.path !== `reports/brands/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.path must bind its variant under reports/brands/`);
+    }
+    assertRelativePosixPath(report.rawItemPath, `${label}.rawItemPath`);
+    if (!report.rawItemPath.startsWith('items/') || !report.rawItemPath.endsWith('.json')) {
+      throw new TypeError(`${label}.rawItemPath must use items/`);
+    }
+    assertIdentifier(report.workspaceId, `${label}.workspaceId`);
+    if (report.workspaceId !== value.workspaceId)
+      throw new TypeError(`${label}.workspaceId must match manifest`);
+    if (report.contentType !== 'sfdc_cms__brand')
+      throw new TypeError(`${label}.contentType is unsupported`);
+    assertIdentifier(report.variantId, `${label}.variantId`);
+    assertNonemptyString(report.apiName, `${label}.apiName`);
+    if (report.format !== 'sf-cms-brand-read-report@1')
+      throw new TypeError(`${label}.format is unsupported`);
+    if (paths.has(report.path) || variants.has(report.variantId)) {
+      throw new TypeError('manifest Brand report paths and variants must be unique');
+    }
+    paths.add(report.path);
+    variants.add(report.variantId);
+    const sortKey = [report.variantId, report.apiName, report.path].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0)
+      throw new TypeError('manifest.brandReports must be sorted');
+    previous = sortKey;
+  }
+}
+
+function assertBrandReportIntegrity(manifest: WorkspaceExportManifest): void {
+  const descriptors = manifest.brandReports ?? [];
+  const reportItems = manifest.items.filter(({ kind }) => kind === 'cms.brand.read-report');
+  if (descriptors.length !== reportItems.length) {
+    throw new TypeError('manifest Brand descriptors and report items must be bijective');
+  }
+  const descriptorPaths = new Set(descriptors.map(({ path }) => path));
+  if (reportItems.some(({ path }) => !descriptorPaths.has(path))) {
+    throw new TypeError('manifest contains an orphan Brand report item');
+  }
+  const entries = new Map(manifest.entries.map((entry) => [entry.file, entry.variantId]));
+  const rawItems = new Set(
+    manifest.items.filter(({ kind }) => kind === 'cms.content').map(({ path }) => path),
+  );
+  const reportPaths = new Set(reportItems.map(({ path }) => path));
+  for (const descriptor of descriptors) {
+    if (!reportPaths.has(descriptor.path))
+      throw new TypeError('manifest Brand report descriptor has no report item');
+    if (
+      entries.get(descriptor.rawItemPath) !== descriptor.variantId ||
+      !rawItems.has(descriptor.rawItemPath)
+    ) {
+      throw new TypeError('manifest Brand report must bind an existing raw CMS item');
+    }
+  }
+}
+
+function assertFormReports(value: Record<string, unknown>): void {
+  if (!('formReports' in value)) return;
+  if (!Array.isArray(value.formReports) || value.formReports.length === 0) {
+    throw new TypeError('manifest.formReports must be a nonempty array');
+  }
+  let previous = '';
+  const paths = new Set<string>();
+  const variants = new Set<string>();
+  for (const [index, report] of value.formReports.entries()) {
+    const label = `manifest.formReports[${index}]`;
+    assertExactKeys(
+      report,
+      ['path', 'rawItemPath', 'workspaceId', 'contentType', 'variantId', 'apiName', 'format'],
+      label,
+    );
+    assertRelativePosixPath(report.path, `${label}.path`);
+    if (report.path !== `reports/forms/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.path must bind its variant under reports/forms/`);
+    }
+    assertRelativePosixPath(report.rawItemPath, `${label}.rawItemPath`);
+    if (report.rawItemPath !== `items/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.rawItemPath must bind its variant under items/`);
+    }
+    assertIdentifier(report.workspaceId, `${label}.workspaceId`);
+    if (report.workspaceId !== value.workspaceId)
+      throw new TypeError(`${label}.workspaceId must match manifest`);
+    if (report.contentType !== 'sfdc_cms__form')
+      throw new TypeError(`${label}.contentType is unsupported`);
+    assertIdentifier(report.variantId, `${label}.variantId`);
+    assertNonemptyString(report.apiName, `${label}.apiName`);
+    if (report.format !== 'sf-cms-form-read-report@1')
+      throw new TypeError(`${label}.format is unsupported`);
+    if (paths.has(report.path) || variants.has(report.variantId)) {
+      throw new TypeError('manifest Form report paths and variants must be unique');
+    }
+    paths.add(report.path);
+    variants.add(report.variantId);
+    const sortKey = [report.variantId, report.apiName, report.path].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0)
+      throw new TypeError('manifest.formReports must be sorted');
+    previous = sortKey;
+  }
+}
+
+function assertFormReportIntegrity(manifest: WorkspaceExportManifest): void {
+  const descriptors = manifest.formReports ?? [];
+  const reportItems = manifest.items.filter(({ kind }) => kind === 'cms.form.read-report');
+  if (descriptors.length !== reportItems.length) {
+    throw new TypeError('manifest Form descriptors and report items must be bijective');
+  }
+  const entries = new Map(manifest.entries.map((entry) => [entry.file, entry.variantId]));
+  const rawItems = new Set(
+    manifest.items.filter(({ kind }) => kind === 'cms.content').map(({ path }) => path),
+  );
+  const reportPaths = new Set(reportItems.map(({ path }) => path));
+  for (const descriptor of descriptors) {
+    if (!reportPaths.has(descriptor.path))
+      throw new TypeError('manifest Form report descriptor has no report item');
+    if (
+      entries.get(descriptor.rawItemPath) !== descriptor.variantId ||
+      !rawItems.has(descriptor.rawItemPath)
+    ) {
+      throw new TypeError('manifest Form report must bind an existing raw CMS item');
+    }
+  }
+}
+
+function assertFormHandlerReports(value: Record<string, unknown>): void {
+  if (!('formHandlerReports' in value)) return;
+  if (!Array.isArray(value.formHandlerReports) || value.formHandlerReports.length === 0) {
+    throw new TypeError('manifest.formHandlerReports must be a nonempty array');
+  }
+  let previous = '';
+  const paths = new Set<string>();
+  const variants = new Set<string>();
+  for (const [index, report] of value.formHandlerReports.entries()) {
+    const label = `manifest.formHandlerReports[${index}]`;
+    assertExactKeys(
+      report,
+      ['path', 'rawItemPath', 'workspaceId', 'contentType', 'variantId', 'apiName', 'format'],
+      label,
+    );
+    assertRelativePosixPath(report.path, `${label}.path`);
+    if (report.path !== `reports/form-handlers/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.path must bind its variant under reports/form-handlers/`);
+    }
+    assertRelativePosixPath(report.rawItemPath, `${label}.rawItemPath`);
+    if (report.rawItemPath !== `items/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.rawItemPath must bind its variant under items/`);
+    }
+    assertIdentifier(report.workspaceId, `${label}.workspaceId`);
+    if (report.workspaceId !== value.workspaceId)
+      throw new TypeError(`${label}.workspaceId must match manifest`);
+    if (report.contentType !== 'sfdc_cms__formHandler')
+      throw new TypeError(`${label}.contentType is unsupported`);
+    assertIdentifier(report.variantId, `${label}.variantId`);
+    assertNonemptyString(report.apiName, `${label}.apiName`);
+    if (report.format !== 'sf-cms-form-handler-read-report@1')
+      throw new TypeError(`${label}.format is unsupported`);
+    if (paths.has(report.path) || variants.has(report.variantId)) {
+      throw new TypeError('manifest Form Handler report paths and variants must be unique');
+    }
+    paths.add(report.path);
+    variants.add(report.variantId);
+    const sortKey = [report.variantId, report.apiName, report.path].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0)
+      throw new TypeError('manifest.formHandlerReports must be sorted');
+    previous = sortKey;
+  }
+}
+
+function assertFormHandlerReportIntegrity(manifest: WorkspaceExportManifest): void {
+  const descriptors = manifest.formHandlerReports ?? [];
+  const reportItems = manifest.items.filter(({ kind }) => kind === 'cms.form-handler.read-report');
+  if (descriptors.length !== reportItems.length) {
+    throw new TypeError('manifest Form Handler descriptors and report items must be bijective');
+  }
+  const entries = new Map(manifest.entries.map((entry) => [entry.file, entry.variantId]));
+  const rawItems = new Set(
+    manifest.items.filter(({ kind }) => kind === 'cms.content').map(({ path }) => path),
+  );
+  const reportPaths = new Set(reportItems.map(({ path }) => path));
+  for (const descriptor of descriptors) {
+    if (!reportPaths.has(descriptor.path))
+      throw new TypeError('manifest Form Handler report descriptor has no report item');
+    if (
+      entries.get(descriptor.rawItemPath) !== descriptor.variantId ||
+      !rawItems.has(descriptor.rawItemPath)
+    ) {
+      throw new TypeError('manifest Form Handler report must bind an existing raw CMS item');
+    }
+  }
+}
+
+function assertConsentBannerReports(value: Record<string, unknown>): void {
+  if (!('consentBannerReports' in value)) return;
+  if (!Array.isArray(value.consentBannerReports) || value.consentBannerReports.length === 0) {
+    throw new TypeError('manifest.consentBannerReports must be a nonempty array');
+  }
+  let previous = '';
+  const paths = new Set<string>();
+  const variants = new Set<string>();
+  for (const [index, report] of value.consentBannerReports.entries()) {
+    const label = `manifest.consentBannerReports[${index}]`;
+    assertExactKeys(
+      report,
+      ['path', 'rawItemPath', 'workspaceId', 'contentType', 'variantId', 'apiName', 'format'],
+      label,
+    );
+    assertRelativePosixPath(report.path, `${label}.path`);
+    if (report.path !== `reports/consent-banners/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.path must bind its variant under reports/consent-banners/`);
+    }
+    assertRelativePosixPath(report.rawItemPath, `${label}.rawItemPath`);
+    if (report.rawItemPath !== `items/${String(report.variantId)}.json`) {
+      throw new TypeError(`${label}.rawItemPath must bind its variant under items/`);
+    }
+    assertIdentifier(report.workspaceId, `${label}.workspaceId`);
+    if (report.workspaceId !== value.workspaceId)
+      throw new TypeError(`${label}.workspaceId must match manifest`);
+    if (report.contentType !== 'sfdc_cms__consentBanner')
+      throw new TypeError(`${label}.contentType is unsupported`);
+    assertIdentifier(report.variantId, `${label}.variantId`);
+    assertNonemptyString(report.apiName, `${label}.apiName`);
+    if (report.format !== 'sf-cms-consent-banner-read-report@1')
+      throw new TypeError(`${label}.format is unsupported`);
+    if (paths.has(report.path) || variants.has(report.variantId)) {
+      throw new TypeError('manifest Consent Banner report paths and variants must be unique');
+    }
+    paths.add(report.path);
+    variants.add(report.variantId);
+    const sortKey = [report.variantId, report.apiName, report.path].join('\u0000');
+    if (sortKey.localeCompare(previous) < 0)
+      throw new TypeError('manifest.consentBannerReports must be sorted');
+    previous = sortKey;
+  }
+}
+
+function assertConsentBannerReportIntegrity(manifest: WorkspaceExportManifest): void {
+  const descriptors = manifest.consentBannerReports ?? [];
+  const reportItems = manifest.items.filter(
+    ({ kind }) => kind === 'cms.consent-banner.read-report',
+  );
+  if (descriptors.length !== reportItems.length) {
+    throw new TypeError('manifest Consent Banner descriptors and report items must be bijective');
+  }
+  const entries = new Map(manifest.entries.map((entry) => [entry.file, entry.variantId]));
+  const rawItems = new Set(
+    manifest.items.filter(({ kind }) => kind === 'cms.content').map(({ path }) => path),
+  );
+  const reportPaths = new Set(reportItems.map(({ path }) => path));
+  for (const descriptor of descriptors) {
+    if (!reportPaths.has(descriptor.path))
+      throw new TypeError('manifest Consent Banner report descriptor has no report item');
+    if (
+      entries.get(descriptor.rawItemPath) !== descriptor.variantId ||
+      !rawItems.has(descriptor.rawItemPath)
+    ) {
+      throw new TypeError('manifest Consent Banner report must bind an existing raw CMS item');
+    }
   }
 }
 
@@ -473,6 +909,9 @@ function hasAuthoritativeIncompleteness(manifest: Record<string, unknown>): bool
       (manifest.items as WorkspaceExportManifestItem[]).filter(({ kind }) => kind === 'cms.content')
         .length ||
     warnings.some(({ code }) => code !== 'UNSUPPORTED_WILDCARD') ||
+    ((manifest.preferencePageReports as WorkspaceExportPreferencePageReport[] | undefined) !==
+      undefined &&
+      warnings.some(({ code }) => code === 'REFERENCE_UNRESOLVED')) ||
     externalReferences.some(
       ({ resolution }) => resolution === 'unresolved' || resolution === 'unsupported',
     )

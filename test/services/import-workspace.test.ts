@@ -16,7 +16,10 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { writeEditableRawHtml } from '../../src/services/editable-raw-html-export.js';
+import { exportWorkspace } from '../../src/services/export-workspace.js';
 import type { WorkspaceImportRunReport } from '../../src/services/import-workspace.js';
+import { formDetail, formSource } from '../fixtures/form.js';
+import { formHandlerDetail } from '../fixtures/form-handler.js';
 import { planImportIdentities, safeNativeRawHtml } from '../../src/services/import-identities.js';
 import { inventoryExportReferences } from '../../src/services/export-references.js';
 import {
@@ -152,6 +155,140 @@ async function writeExport(
     `${JSON.stringify(manifest(items, itemBytes, manifestOverrides))}\n`,
   );
   return source;
+}
+
+async function exportFormPackage(root: string): Promise<string> {
+  const destination = path.join(root, 'form-source');
+  const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+    if (method !== 'GET') return failedRequest(405, 'unexpected mutation');
+    if (url.startsWith('/connect/cms/items/search')) {
+      return fakeRequest({
+        items: [
+          {
+            id: 'variant-form-id',
+            managedContentSpaceId: 'source-space',
+            type: 'ManagedContentVariantSearchResultRepresentation',
+          },
+        ],
+        total: 1,
+      });
+    }
+    return fakeRequest(formDetail('variant'));
+  });
+  await exportWorkspace({ request }, 'source-space', destination, {
+    selection: {
+      contentType: 'sfdc_cms__form',
+      apiNames: ['source_form_api'],
+      formReports: true,
+    },
+  });
+  const manifestFile = path.join(destination, 'manifest.json');
+  const strictManifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    warnings: unknown[];
+  };
+  strictManifest.warnings = [];
+  await writeFile(manifestFile, `${JSON.stringify(strictManifest)}\n`);
+  return destination;
+}
+
+async function exportFormHandlerPackage(root: string): Promise<string> {
+  const destination = path.join(root, 'form-handler-source');
+  const request = sinon.stub().callsFake(({ method, url }: { method: string; url: string }) => {
+    if (method !== 'GET') return failedRequest(405, 'unexpected mutation');
+    if (url.startsWith('/connect/cms/items/search')) {
+      return fakeRequest({
+        items: [
+          {
+            id: 'variant-form-handler-id',
+            managedContentSpaceId: 'source-space',
+            type: 'ManagedContentVariantSearchResultRepresentation',
+          },
+        ],
+        total: 1,
+      });
+    }
+    return fakeRequest(formHandlerDetail('variant'));
+  });
+  await exportWorkspace({ request }, 'source-space', destination, {
+    selection: {
+      contentType: 'sfdc_cms__formHandler',
+      apiNames: ['source_form_handler_api'],
+      formHandlerReports: true,
+    },
+  });
+  const manifestFile = path.join(destination, 'manifest.json');
+  const strictManifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    warnings: unknown[];
+  };
+  strictManifest.warnings = [];
+  await writeFile(manifestFile, `${JSON.stringify(strictManifest)}\n`);
+  return destination;
+}
+
+async function addPreferencePageReadReport(source: string): Promise<void> {
+  const manifestFile = path.join(source, 'manifest.json');
+  const value = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    completeness: string;
+    entries: Array<{ file: string; variantId: string }>;
+    items: Array<{ path: string; sha256: string; kind: string; referenceId?: string }>;
+    preferencePageReports?: unknown[];
+    workspaceId: string;
+  };
+  const variantId = value.entries[0].variantId;
+  const reportPath = `reports/preference-pages/${variantId}.json`;
+  const reportBytes = '{"format":"sf-cms-preference-page-read-report@1"}\n';
+  await mkdir(path.join(source, 'reports', 'preference-pages'), { recursive: true });
+  await writeFile(path.join(source, ...reportPath.split('/')), reportBytes);
+  value.completeness = 'partial';
+  value.preferencePageReports = [
+    {
+      path: reportPath,
+      rawItemPath: `items/${variantId}.json`,
+      workspaceId: value.workspaceId,
+      contentType: 'sfdc_cms__preferencePage',
+      variantId,
+      apiName: 'PreferencePage',
+      format: 'sf-cms-preference-page-read-report@1',
+    },
+  ];
+  value.items.push({
+    path: reportPath,
+    sha256: createHash('sha256').update(reportBytes).digest('hex'),
+    kind: 'cms.preference-page.read-report',
+  });
+  await writeFile(manifestFile, `${JSON.stringify(value)}\n`);
+}
+
+async function addBrandReadReport(source: string): Promise<void> {
+  const manifestFile = path.join(source, 'manifest.json');
+  const value = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    entries: Array<{ file: string; variantId: string }>;
+    items: Array<{ path: string; sha256: string; kind: string; referenceId?: string }>;
+    brandReports?: unknown[];
+    workspaceId: string;
+  };
+  const variantId = value.entries[0].variantId;
+  const reportPath = `reports/brands/${variantId}.json`;
+  const reportBytes = '{"format":"sf-cms-brand-read-report@1"}\n';
+  await mkdir(path.join(source, 'reports', 'brands'), { recursive: true });
+  await writeFile(path.join(source, ...reportPath.split('/')), reportBytes);
+  value.brandReports = [
+    {
+      path: reportPath,
+      rawItemPath: `items/${variantId}.json`,
+      workspaceId: value.workspaceId,
+      contentType: 'sfdc_cms__brand',
+      variantId,
+      apiName: 'Brand',
+      format: 'sf-cms-brand-read-report@1',
+    },
+  ];
+  value.items.push({
+    path: reportPath,
+    sha256: createHash('sha256').update(reportBytes).digest('hex'),
+    kind: 'cms.brand.read-report',
+  });
+  await writeFile(manifestFile, `${JSON.stringify(value)}\n`);
 }
 
 function workspace(defaultLanguage = 'en') {
@@ -1416,6 +1553,163 @@ describe('workspace import core', () => {
     });
   });
 
+  it('loads a freshly exported Form package and rejects report identity mismatches', async () => {
+    const source = await exportFormPackage(root);
+    const loaded = await loadWorkspaceExport(source, { profile: 'form' });
+    expect(loaded.items).to.have.length(1);
+    expect(loaded.items[0]).to.include({
+      apiName: 'source_form_api',
+      contentType: 'sfdc_cms__form',
+      id: 'variant-form-id',
+    });
+
+    const manifestFile = path.join(source, 'manifest.json');
+    const reportFile = path.join(source, 'reports', 'forms', 'variant-form-id.json');
+    const originalManifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+      formReports: Array<Record<string, unknown>>;
+      items: Array<{ kind: string; path: string; sha256: string }>;
+    };
+    const originalReport = JSON.parse(await readFile(reportFile, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    for (const [field, mismatched] of [
+      ['workspaceId', 'other-space'],
+      ['apiName', 'other_form_api'],
+      ['variantId', 'other-variant'],
+      ['rawItemPath', 'items/other-variant.json'],
+    ] as const) {
+      const manifestValue = structuredClone(originalManifest);
+      const reportValue = { ...originalReport, [field]: mismatched };
+      const reportBytes = `${JSON.stringify(reportValue)}\n`;
+      await writeFile(reportFile, reportBytes);
+      const reportItem = manifestValue.items.find(({ kind }) => kind === 'cms.form.read-report')!;
+      reportItem.sha256 = createHash('sha256').update(reportBytes).digest('hex');
+      await writeFile(manifestFile, `${JSON.stringify(manifestValue)}\n`);
+      await expectRejected(loadWorkspaceExport(source, { profile: 'form' }));
+    }
+  });
+
+  it('strictly loads Form Handler packages and rejects cross-profile or injected sources', async () => {
+    const sourceDirectory = await exportFormHandlerPackage(root);
+    const loaded = await loadWorkspaceExport(sourceDirectory, { profile: 'form-handler' });
+    expect(loaded.items[0]).to.include({
+      apiName: 'source_form_handler_api',
+      contentType: 'sfdc_cms__formHandler',
+      id: 'variant-form-handler-id',
+    });
+    await expectRejected(loadWorkspaceExport(sourceDirectory, { profile: 'form' }));
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request: sinon.stub() },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        dryRun: true,
+        formHandlerMappings: [
+          {
+            source: {
+              family: 'cms',
+              type: 'formHandler',
+              apiName: 'source_form_handler_api',
+            },
+            target: {
+              apiName: 'target_form_handler_api',
+              title: 'Target form handler',
+              urlName: 'target-form-handler',
+            },
+          },
+        ],
+        loadedSource: structuredClone(loaded),
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+  });
+
+  it('requires strict-load evidence for injected Form sources and rejects post-load mutation', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const strictSource = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const mapping = [
+      {
+        source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+        target: { apiName: 'target_form_api', title: 'Target form', urlName: 'target-form' },
+      },
+    ];
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const result = await executeWorkspaceImport({
+      connection: { request },
+      destinationOrgId: '00D-org-id',
+      destinationWorkspace: workspace('en_US'),
+      dryRun: true,
+      formMappings: mapping,
+      loadedSource: strictSource,
+      sourceDirectory,
+      workspaceId: 'destination-space',
+    });
+    expect(result.diagnostics.map(({ code }) => code)).to.deep.equal([
+      'NAME_AVAILABILITY_UNVERIFIED',
+      'SERVER_CONFLICT_CHECK_UNVERIFIED',
+      'APPLY_READINESS_UNVERIFIED',
+    ]);
+    expect(result.diagnostics[1].message).to.include(
+      'Exact destination Form apiName, title, and urlName absence was proven',
+    );
+    expect(result.diagnostics[1].message).to.include('CREATE omits contentKey');
+    expect(result.diagnostics[1].message).to.include('apply repeats');
+
+    const synthetic = formSource();
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        dryRun: true,
+        formMappings: mapping,
+        loadedSource: synthetic,
+        sourceDirectory: synthetic.sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+    strictSource.manifest.warnings.push({ code: 'UNSUPPORTED_WILDCARD', message: 'mutated' });
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        dryRun: true,
+        formMappings: mapping,
+        loadedSource: strictSource,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+  });
+
+  it('rejects partial Form packages even when allowPartial is true', async () => {
+    const source = await exportFormPackage(root);
+    const manifestFile = path.join(source, 'manifest.json');
+    const manifestValue = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    manifestValue.completeness = 'partial';
+    await writeFile(manifestFile, `${JSON.stringify(manifestValue)}\n`);
+
+    for (const allowPartial of [false, true]) {
+      let failure: unknown;
+      try {
+        await loadWorkspaceExport(source, { allowPartial, profile: 'form' });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(TypeError);
+      expect((failure as Error).message).to.equal(
+        'Form profile requires a complete workspace export',
+      );
+    }
+  });
+
   for (const [name, overrides] of [
     ['failed IDs', { completeness: 'partial', failedVariantIds: ['failed'] }],
     ['rejected IDs', { completeness: 'partial', rejectedVariantIds: ['rejected'] }],
@@ -1568,6 +1862,78 @@ describe('workspace import core', () => {
     ]);
     await expectRejected(loadWorkspaceExport(apiSource));
   });
+
+  for (const allowPartial of [false, true]) {
+    it(`rejects typed Preference Page reports locally before transport or artifacts (allowPartial=${allowPartial})`, async () => {
+      const source = await writeExport(root, [
+        unnamedItem('preference', 'en', 'preference-key', {
+          apiName: 'PreferencePage',
+          contentType: 'sfdc_cms__preferencePage',
+        }),
+      ]);
+      await addPreferencePageReadReport(source);
+      const request = sinon.stub();
+      const reportDirectory = path.join(root, 'report');
+      let failure: unknown;
+
+      try {
+        await executeWorkspaceImport({
+          allowPartial,
+          connection: { request },
+          destinationOrgId: '00D-org-id',
+          destinationWorkspace: workspace(),
+          sourceDirectory: source,
+          workspaceId: 'destination-space',
+          reportDirectory,
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).to.be.instanceOf(TypeError);
+      expect((failure as Error).message).to.equal(
+        'Typed Preference Page reports are export/read evidence only; CREATE/import, publication, default assignment, channel mapping, and consent mutation are unsupported.',
+      );
+      expect(request.notCalled).to.equal(true);
+      expect(await readdir(root)).to.deep.equal(['source']);
+    });
+  }
+
+  for (const allowPartial of [false, true]) {
+    it(`rejects typed Brand reports locally before transport or artifacts (allowPartial=${allowPartial})`, async () => {
+      const source = await writeExport(root, [
+        unnamedItem('brand', 'en', 'brand-key', {
+          apiName: 'Brand',
+          contentType: 'sfdc_cms__brand',
+        }),
+      ]);
+      await addBrandReadReport(source);
+      const request = sinon.stub();
+      const reportDirectory = path.join(root, 'report');
+      let failure: unknown;
+
+      try {
+        await executeWorkspaceImport({
+          allowPartial,
+          connection: { request },
+          destinationOrgId: '00D-org-id',
+          destinationWorkspace: workspace(),
+          sourceDirectory: source,
+          workspaceId: 'destination-space',
+          reportDirectory,
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).to.be.instanceOf(TypeError);
+      expect((failure as Error).message).to.equal(
+        'Typed Brand reports are export/read evidence only; CREATE/import, publication, and workspace-default Brand assignment are unsupported.',
+      );
+      expect(request.notCalled).to.equal(true);
+      expect(await readdir(root)).to.deep.equal(['source']);
+    });
+  }
 
   it('performs all local validation before any remote request', async () => {
     const source = await writeExport(root, [item('primary', 'en', 'key', { contentBody: [] })]);
@@ -2001,6 +2367,308 @@ describe('workspace import core', () => {
       expect(operation.requestIdentity).to.be.a('string').and.not.equal('');
       expect(operation.runId).to.be.a('string').and.not.equal('');
     }
+  });
+
+  it('rejects contradictory destination Form inventory counts before detail lookup or POST', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const request = sinon.stub().returns(
+      fakeRequest({
+        items: [{ id: 'variant', managedContentSpaceId: 'destination-space' }],
+        total: 1,
+        totalCount: 2,
+      }),
+    );
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        dryRun: true,
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: {
+              apiName: 'target_form_api',
+              title: 'Target form',
+              urlName: 'target-form',
+            },
+          },
+        ],
+        loadedSource: source,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(request.callCount).to.equal(1);
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
+  });
+
+  it('rejects duplicate destination Form variants before detail lookup or POST', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const request = sinon.stub().returns(
+      fakeRequest({
+        items: [
+          { id: 'duplicate-variant', managedContentSpaceId: 'destination-space' },
+          { id: 'duplicate-variant', managedContentSpaceId: 'destination-space' },
+        ],
+        total: 2,
+      }),
+    );
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        dryRun: true,
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: {
+              apiName: 'target_form_api',
+              title: 'Target form',
+              urlName: 'target-form',
+            },
+          },
+        ],
+        loadedSource: source,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(request.callCount).to.equal(1);
+    expect(request.firstCall.args[0].url).to.include('/connect/cms/items/search');
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
+  });
+
+  it('repeats Form Handler collision inventory and preserves uncertain ownership after one CREATE', async () => {
+    const sourceDirectory = await exportFormHandlerPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form-handler' });
+    const reportDirectory = path.join(root, 'form-handler-ambiguous-create');
+    const request = sinon.stub().callsFake((request_: { method: string; url: string }) => {
+      if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({ items: [], total: 0 });
+      }
+      if (request_.method === 'POST') return failedRequest(503, 'ambiguous Form Handler transport');
+      return failedRequest(500, 'unexpected request');
+    });
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        formHandlerMappings: [
+          {
+            source: {
+              family: 'cms',
+              type: 'formHandler',
+              apiName: 'source_form_handler_api',
+            },
+            target: {
+              apiName: 'target_form_handler_api',
+              title: 'Target form handler',
+              urlName: 'target-form-handler',
+            },
+          },
+        ],
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(
+      request.getCalls().filter(({ args }) => args[0].url.startsWith('/connect/cms/items/search')),
+    ).to.have.length(2);
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    const durable = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(durable.state).to.equal('ownership-uncertain');
+    expect(durable.operations).to.have.length(1);
+    expect(durable.operations[0]).to.include({
+      error: 'ambiguous Form Handler transport',
+      language: 'en_US',
+      operationKind: 'create-parent',
+      state: 'pending',
+    });
+  });
+
+  it('surfaces definitive Form rejection without retry or ownership uncertainty', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const reportDirectory = path.join(root, 'form-definitive-rejection');
+    const request = sinon.stub().callsFake((request_: { method: string; url: string }) => {
+      if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({ items: [], total: 0 });
+      }
+      if (request_.method === 'POST') {
+        return failedRequest(400, 'INVALID_INPUT: provider binding is not supported');
+      }
+      return failedRequest(500, 'unexpected request');
+    });
+
+    let failure: unknown;
+    try {
+      await executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: {
+              apiName: 'target_form_api',
+              title: 'Target form',
+              urlName: 'target-form',
+            },
+          },
+        ],
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect((failure as Error).message).to.equal('INVALID_INPUT: provider binding is not supported');
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    const durable = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(durable.state).to.equal('failed');
+    expect(durable.operations[0]).to.include({
+      error: 'INVALID_INPUT: provider binding is not supported',
+      state: 'failed',
+    });
+  });
+
+  it('fails durably after successful Form CREATE when readback GET fails', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const reportDirectory = path.join(root, 'form-readback-failure');
+    const request = sinon.stub().callsFake((request_: { method: string; url: string }) => {
+      if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({ items: [], total: 0 });
+      }
+      if (request_.method === 'POST') {
+        return fakeRequest({
+          contentKey: 'generated-form-key',
+          managedContentId: 'generated-form-id',
+          managedContentVariantId: 'generated-form-variant-id',
+        });
+      }
+      return failedRequest(503, 'Form readback failed');
+    });
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: {
+              apiName: 'target_form_api',
+              title: 'Target form',
+              urlName: 'target-form',
+            },
+          },
+        ],
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    const durable = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(durable.state).to.equal('failed');
+    expect(durable.state).not.to.equal('ownership-uncertain');
+    expect(durable.operations).to.have.length(1);
+    expect(durable.operations[0]).to.include({
+      contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      operationKind: 'create-parent',
+      state: 'succeeded',
+    });
+    expect(durable.operations[0].result).to.deep.equal({
+      contentKey: 'generated-form-key',
+      contentId: 'generated-form-id',
+      primaryVariantId: 'generated-form-variant-id',
+    });
+  });
+
+  it('preserves durable Form pending ownership after one ambiguous CREATE', async () => {
+    const sourceDirectory = await exportFormPackage(root);
+    const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+    const reportDirectory = path.join(root, 'form-ambiguous-create');
+    let posted: Record<string, unknown> | undefined;
+    const request = sinon
+      .stub()
+      .callsFake((request_: { body?: string; method: string; url: string }) => {
+        if (request_.method === 'GET' && request_.url.startsWith('/connect/cms/items/search')) {
+          return fakeRequest({ items: [], total: 0 });
+        }
+        if (request_.method === 'POST') {
+          posted = JSON.parse(request_.body ?? '{}') as Record<string, unknown>;
+          return failedRequest(503, 'ambiguous Form transport');
+        }
+        return failedRequest(500, 'unexpected request');
+      });
+
+    await expectRejected(
+      executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: {
+              apiName: 'target_form_api',
+              title: 'Target form',
+              urlName: 'target-form',
+            },
+          },
+        ],
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }),
+    );
+
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    const durable = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(durable.state).to.equal('ownership-uncertain');
+    expect(durable.operations).to.have.length(1);
+    expect(durable.operations[0]).to.include({
+      contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      error: 'ambiguous Form transport',
+      language: 'en_US',
+      operationKind: 'create-parent',
+      state: 'pending',
+    });
+    const identity = `create-parent\u0000MCBBBBBBBBBBBBBBBBBBBBBBBBBB\u0000en_US\u0000${JSON.stringify(posted)}`;
+    expect(durable.operations[0].requestIdentity).to.equal(identity);
+    expect(durable.operations[0].requestSha256).to.equal(
+      createHash('sha256').update(identity).digest('hex'),
+    );
   });
 
   for (const [name, items, failCall, expectedPosts] of [

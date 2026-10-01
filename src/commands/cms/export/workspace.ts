@@ -17,7 +17,11 @@ import {
 } from '../../../services/export-workspace.js';
 import { preflightEditableExport } from '../../../services/editable-raw-html-export.js';
 import { parseLandingPagePairSelectors } from '../../../services/landing-page-pair-export.js';
-import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
+import {
+  assertCanonicalMarketingWorkspace,
+  assertWorkspaceSelector,
+  resolveWorkspace,
+} from '../../../services/resolve-workspace.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 type WorkspaceExportCommandResult = CmsEnvelope<WorkspaceExportSetResult> | ExportWorkspaceResult;
@@ -34,6 +38,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --web-fragment-map ./web-fragments.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-template-map ./landing-page-templates.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-map ./landing-pages.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --preference-page-map ./preference-pages.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --brand-map ./brands.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --form-map ./forms.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --form-handler-map ./form-handlers.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --consent-banner-map ./consent-banners.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-pair-map ./landing-page-pairs.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --experimental-media --json',
     '<%= config.bin %> cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json',
@@ -48,7 +57,20 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       summary: 'Machine contract major version (supported: 1).',
     }),
     all: Flags.boolean({
-      exclusive: ['workspace-id', 'workspace-name'],
+      exclusive: [
+        'workspace-id',
+        'workspace-name',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
       summary: 'Export every CMS workspace after a strict global preflight.',
     }),
     'workspace-id': Flags.string({
@@ -71,6 +93,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'landing-page-pair-map',
       ],
       summary:
@@ -83,6 +110,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'email-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'landing-page-pair-map',
       ],
       summary:
@@ -95,6 +127,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'email-fragment-map',
         'web-fragment-map',
         'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'landing-page-pair-map',
       ],
       summary:
@@ -107,10 +144,100 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'email-fragment-map',
         'web-fragment-map',
         'landing-page-template-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'landing-page-pair-map',
       ],
       summary:
         'JSON array of exact sfdc_cms__landingPage API names to export; every name must resolve exactly once.',
+    }),
+    'preference-page-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact sfdc_cms__preferencePage API names to export with raw items and typed read reports; every name must resolve exactly once.',
+    }),
+    'brand-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact sfdc_cms__brand API names to export with unchanged raw items and typed read reports; every name must resolve exactly once.',
+    }),
+    'form-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact case-sensitive sfdc_cms__form API names to export with unchanged raw items and strict typed read reports.',
+    }),
+    'form-handler-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact case-sensitive sfdc_cms__formHandler API names to export with unchanged raw items and strict typed read reports.',
+    }),
+    'consent-banner-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact case-sensitive sfdc_cms__consentBanner API names to export with unchanged raw items and strict typed read reports.',
     }),
     'landing-page-pair-map': Flags.file({
       exists: true,
@@ -120,6 +247,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
       ],
       summary:
         'JSON pairs of exact landing-page API name and exact source template title; the template API name is optional corroboration.',
@@ -212,7 +344,12 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       flags['email-fragment-map'] ??
       flags['web-fragment-map'] ??
       flags['landing-page-template-map'] ??
-      flags['landing-page-map'];
+      flags['landing-page-map'] ??
+      flags['preference-page-map'] ??
+      flags['brand-map'] ??
+      flags['form-map'] ??
+      flags['form-handler-map'] ??
+      flags['consent-banner-map'];
     const selectedApiNames =
       selectionFile === undefined
         ? undefined
@@ -236,6 +373,15 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     else if (flags['landing-page-template-map'] !== undefined)
       selectedContentType = 'sfdc_cms__landingPageTemplate';
     else if (flags['landing-page-map'] !== undefined) selectedContentType = 'sfdc_cms__landingPage';
+    else if (flags['preference-page-map'] !== undefined)
+      selectedContentType = 'sfdc_cms__preferencePage';
+    else if (flags['brand-map'] !== undefined) selectedContentType = 'sfdc_cms__brand';
+    else if (flags['form-map'] !== undefined) selectedContentType = 'sfdc_cms__form';
+    else if (flags['form-handler-map'] !== undefined) selectedContentType = 'sfdc_cms__formHandler';
+    else if (flags['consent-banner-map'] !== undefined)
+      selectedContentType = 'sfdc_cms__consentBanner';
+    if (flags['form-handler-map'] !== undefined || flags['consent-banner-map'] !== undefined)
+      await assertCanonicalMarketingWorkspace(connection, selected);
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
       ...(selectedApiNames === undefined
@@ -244,6 +390,13 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
             selection: {
               contentType: selectedContentType!,
               apiNames: selectedApiNames,
+              ...(flags['preference-page-map'] === undefined
+                ? {}
+                : { preferencePageReports: true }),
+              ...(flags['brand-map'] === undefined ? {} : { brandReports: true }),
+              ...(flags['form-map'] === undefined ? {} : { formReports: true }),
+              ...(flags['form-handler-map'] === undefined ? {} : { formHandlerReports: true }),
+              ...(flags['consent-banner-map'] === undefined ? {} : { consentBannerReports: true }),
             },
           }),
       ...(landingPagePairs === undefined ? {} : { landingPagePairs }),

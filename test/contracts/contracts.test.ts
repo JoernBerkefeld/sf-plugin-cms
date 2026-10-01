@@ -157,6 +157,295 @@ describe('CMS contract foundation', () => {
     }
   });
 
+  it('strictly validates Preference Page report descriptors and raw/report bindings', () => {
+    const manifest = {
+      schemaVersion: 1,
+      mode: 'experimental-best-effort',
+      workspaceId: 'space',
+      search: {
+        contentSpaceOrFolderIds: ['space'],
+        languages: ['All'],
+        pageSize: 250,
+        queryTerm: '*',
+      },
+      expectedCount: 1,
+      foundCount: 1,
+      exportedCount: 1,
+      pagesRequested: 1,
+      entries: [{ file: 'items/variant.json', variantId: 'variant' }],
+      rejectedVariantIds: [],
+      failedVariantIds: [],
+      warnings: [
+        { code: 'UNSUPPORTED_WILDCARD', message: 'experimental' },
+        {
+          code: 'REFERENCE_UNRESOLVED',
+          message: 'Preference Page references remain unresolved.',
+          variantIds: ['variant'],
+        },
+      ],
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '1.0.0',
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: 'org',
+        sourceWorkspaceId: 'space',
+        pluginVersion: '0.6.1',
+        generatedAt: '2026-09-30T00:00:00.000Z',
+      },
+      completeness: 'partial',
+      dependencies: [],
+      preferencePageReports: [
+        {
+          path: 'reports/preference-pages/variant.json',
+          rawItemPath: 'items/variant.json',
+          workspaceId: 'space',
+          contentType: 'sfdc_cms__preferencePage',
+          variantId: 'variant',
+          apiName: 'PreferencePage',
+          format: 'sf-cms-preference-page-read-report@1',
+        },
+      ],
+      externalReferences: [],
+      items: [
+        { path: 'items/variant.json', sha256: 'a'.repeat(64), kind: 'cms.content' },
+        {
+          path: 'reports/preference-pages/variant.json',
+          sha256: 'b'.repeat(64),
+          kind: 'cms.preference-page.read-report',
+        },
+      ],
+    } as const;
+    expect(() => assertWorkspaceExportManifest(structuredClone(manifest))).not.to.throw();
+    expect(() =>
+      assertWorkspaceExportManifest({ ...structuredClone(manifest), completeness: 'complete' }),
+    ).to.throw('contradicts authoritative incompleteness evidence');
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports[0].path = '../report.json';
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports[0].rawItemPath = 'items/missing.json';
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports[0].variantId = 'other';
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports[0].workspaceId = 'other-space';
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports[0].contentType = 'sfdc_cms__form';
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports.push({ ...reports[0] });
+      },
+      (value) => {
+        const items = value.items as Array<Record<string, unknown>>;
+        items.pop();
+      },
+      (value) => {
+        const reports = value.preferencePageReports as Array<Record<string, unknown>>;
+        reports.pop();
+      },
+      (value) => {
+        const items = value.items as Array<Record<string, unknown>>;
+        items.push({
+          path: 'reports/preference-pages/orphan.json',
+          sha256: 'c'.repeat(64),
+          kind: 'cms.preference-page.read-report',
+        });
+      },
+    ];
+    for (const mutate of mutations) {
+      const malformed = structuredClone(manifest) as unknown as Record<string, unknown>;
+      mutate(malformed);
+      expect(() => assertWorkspaceExportManifest(malformed)).to.throw();
+    }
+  });
+
+  it('strictly validates Brand report descriptors and raw/report bindings', () => {
+    const manifest = {
+      schemaVersion: 1,
+      mode: 'experimental-best-effort',
+      workspaceId: 'space',
+      search: {
+        contentSpaceOrFolderIds: ['space'],
+        languages: ['All'],
+        pageSize: 250,
+        queryTerm: '*',
+      },
+      expectedCount: 1,
+      foundCount: 1,
+      exportedCount: 1,
+      pagesRequested: 1,
+      entries: [{ file: 'items/variant.json', variantId: 'variant' }],
+      rejectedVariantIds: [],
+      failedVariantIds: [],
+      warnings: [{ code: 'UNSUPPORTED_WILDCARD', message: 'experimental' }],
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '1.0.0',
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: 'org',
+        sourceWorkspaceId: 'space',
+        pluginVersion: '0.6.1',
+        generatedAt: '2026-09-30T00:00:00.000Z',
+      },
+      completeness: 'complete',
+      dependencies: [],
+      brandReports: [
+        {
+          path: 'reports/brands/variant.json',
+          rawItemPath: 'items/variant.json',
+          workspaceId: 'space',
+          contentType: 'sfdc_cms__brand',
+          variantId: 'variant',
+          apiName: 'Brand',
+          format: 'sf-cms-brand-read-report@1',
+        },
+      ],
+      externalReferences: [],
+      items: [
+        { path: 'items/variant.json', sha256: 'a'.repeat(64), kind: 'cms.content' },
+        {
+          path: 'reports/brands/variant.json',
+          sha256: 'b'.repeat(64),
+          kind: 'cms.brand.read-report',
+        },
+      ],
+    } as const;
+    expect(() => assertWorkspaceExportManifest(structuredClone(manifest))).not.to.throw();
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports[0].path = '../report.json';
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports[0].rawItemPath = 'items/missing.json';
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports[0].variantId = 'other';
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports[0].workspaceId = 'other-space';
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports[0].contentType = 'sfdc_cms__form';
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports.push({ ...reports[0] });
+      },
+      (value) => {
+        const items = value.items as Array<Record<string, unknown>>;
+        items.pop();
+      },
+      (value) => {
+        const reports = value.brandReports as Array<Record<string, unknown>>;
+        reports.pop();
+      },
+      (value) => {
+        const items = value.items as Array<Record<string, unknown>>;
+        items.push({
+          path: 'reports/brands/orphan.json',
+          sha256: 'c'.repeat(64),
+          kind: 'cms.brand.read-report',
+        });
+      },
+    ];
+    for (const mutate of mutations) {
+      const malformed = structuredClone(manifest) as unknown as Record<string, unknown>;
+      mutate(malformed);
+      expect(() => assertWorkspaceExportManifest(malformed)).to.throw();
+    }
+  });
+
+  it('strictly validates Form Handler report descriptors and raw/report bindings', () => {
+    const manifest = {
+      schemaVersion: 1,
+      mode: 'experimental-best-effort',
+      workspaceId: 'space',
+      search: {
+        contentSpaceOrFolderIds: ['space'],
+        languages: ['All'],
+        pageSize: 250,
+        queryTerm: '*',
+      },
+      expectedCount: 1,
+      foundCount: 1,
+      exportedCount: 1,
+      pagesRequested: 1,
+      entries: [{ file: 'items/variant.json', variantId: 'variant' }],
+      rejectedVariantIds: [],
+      failedVariantIds: [],
+      warnings: [],
+      contract: 'sf-cms-workspace-export',
+      contractVersion: '1.0.0',
+      provenance: {
+        producer: 'sf-plugin-cms',
+        sourceOrgId: 'org',
+        sourceWorkspaceId: 'space',
+        pluginVersion: '0.6.1',
+        generatedAt: '2026-10-01T00:00:00.000Z',
+      },
+      completeness: 'complete',
+      dependencies: [],
+      formHandlerReports: [
+        {
+          path: 'reports/form-handlers/variant.json',
+          rawItemPath: 'items/variant.json',
+          workspaceId: 'space',
+          contentType: 'sfdc_cms__formHandler',
+          variantId: 'variant',
+          apiName: 'Handler',
+          format: 'sf-cms-form-handler-read-report@1',
+        },
+      ],
+      externalReferences: [],
+      items: [
+        { path: 'items/variant.json', sha256: 'a'.repeat(64), kind: 'cms.content' },
+        {
+          path: 'reports/form-handlers/variant.json',
+          sha256: 'b'.repeat(64),
+          kind: 'cms.form-handler.read-report',
+        },
+      ],
+    } as const;
+    expect(() => assertWorkspaceExportManifest(structuredClone(manifest))).not.to.throw();
+    for (const mutate of [
+      (value: Record<string, unknown>) => {
+        (value.formHandlerReports as Array<Record<string, unknown>>)[0].path = '../report.json';
+      },
+      (value: Record<string, unknown>) => {
+        (value.formHandlerReports as Array<Record<string, unknown>>)[0].rawItemPath =
+          'items/missing.json';
+      },
+      (value: Record<string, unknown>) => {
+        (value.formHandlerReports as Array<Record<string, unknown>>)[0].contentType =
+          'sfdc_cms__form';
+      },
+      (value: Record<string, unknown>) => {
+        (value.items as Array<Record<string, unknown>>).pop();
+      },
+      (value: Record<string, unknown>) => {
+        (value.formHandlerReports as Array<Record<string, unknown>>).pop();
+      },
+    ]) {
+      const malformed = structuredClone(manifest) as unknown as Record<string, unknown>;
+      mutate(malformed);
+      expect(() => assertWorkspaceExportManifest(malformed)).to.throw();
+    }
+  });
+
   it('binds aggregate counts and status to authoritative workspace rows', async () => {
     const { value } = await loadFixture<WorkspaceExportSetResult>('partial-export.json');
     const cases = [

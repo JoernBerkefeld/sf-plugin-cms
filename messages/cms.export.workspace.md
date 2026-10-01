@@ -20,6 +20,36 @@ Exports one Marketing Cloud CMS workspace selected by exact ID or case-insensiti
 
   <%= config.bin %> <%= command.id %> --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json
 
+- Export exact Preference Pages as raw items plus typed read reports:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-preference-pages --preference-page-map ./preference-pages.json --json
+
+Preference Page selection is exact and case-sensitive by API name. The read/export-only output retains raw source records and writes typed reports while leaving engagement-channel and communication-subchannel IDs as unresolved source references. Therefore expected runs are partial and exit 2. This profile has no CREATE/import support and performs no publication, default assignment, consent mutation, or other org write.
+
+- Export exact Brands as unchanged raw items plus typed read reports:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brands --brand-map ./brands.json --json
+
+Brand selection is exact and case-sensitive by API name. The read-only output preserves each raw record and adds a strict `sf-cms-brand-read-report@1` report under `reports/brands/`, separating portable Brand semantics from source provenance. Only the retained Draft/unpublished Brand shape is accepted. There is no Brand CREATE/import, publication, workspace-default assignment, or other org write.
+
+- Export exact Forms as unchanged raw items plus strict typed reports:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-forms --form-map ./forms.json --json
+
+Form selection is exact and case-sensitive by API name. Draft/unpublished source identity, workspace binding, and report/raw integrity are validated while the Form body is preserved without a client-side profile allowlist. Reports use `sf-cms-form-read-report@1` under `reports/forms/`. The minimal profile is live-proven; broader bodies can be exported for transport but are not claimed as live-compatible.
+
+- Export exact Form Handlers as unchanged raw items plus strict typed reports:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-form-handlers --form-handler-map ./form-handlers.json --json
+
+Form Handler selection is exact and case-sensitive by API name and requires canonical Marketing-workspace evidence before export requests. The accepted Draft/unpublished body has only the canonical brand source, empty data providers, matching title, and an empty UUID-v4 root block. Reports use `sf-cms-form-handler-read-report@1` under `reports/form-handlers/`; populated bindings, children, and reference-like objects fail closed.
+
+- Export exact Consent Banners as unchanged raw items plus strict typed reports:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-consent-banners --consent-banner-map ./consent-banners.json --json
+
+Consent Banner selection is exact and case-sensitive by API name and requires canonical Marketing-workspace evidence. Reports use `sf-cms-consent-banner-read-report@1` under `reports/consent-banners/`. Only the evidenced dependency-free Draft/unpublished body with empty providers and the exact Reject and Accept actions is accepted; additional actions and site, consent-config, Data 360, CMS, external, source, provider, file, or unknown references fail closed.
+
 - Export an integrity baseline plus an editable HTML companion:
 
   <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json
@@ -71,6 +101,26 @@ JSON file containing a nonempty array of exact `sfdc_cms__landingPageTemplate` A
 # flags.landing-page-map.summary
 
 JSON file containing a nonempty array of exact `sfdc_cms__landingPage` API names. Every name must resolve exactly once.
+
+# flags.preference-page-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__preferencePage` API names. Every name must resolve exactly once. This read/export-only profile retains each raw item and adds a typed `sf-cms-preference-page-read-report@1` report. Engagement-channel and communication-subchannel IDs remain unresolved source references, so expected exports are partial and exit with status 2. There is no Preference Page CREATE/import flag, publication, default assignment, consent mutation, or other org write.
+
+# flags.brand-map.summary
+
+JSON file containing a nonempty array of exact `sfdc_cms__brand` API names. Every name must resolve exactly once. This read-only profile preserves each raw item and adds a strict `sf-cms-brand-read-report@1` report. Typed Brand reports cannot be imported, and the capability performs no CREATE, publication, workspace-default Brand assignment, or other org write.
+
+# flags.form-map.summary
+
+JSON file containing a nonempty array of exact case-sensitive `sfdc_cms__form` API names. Every name must resolve exactly once. The profile preserves unchanged Draft/unpublished raw items and emits strict `sf-cms-form-read-report@1` evidence under `reports/forms/` without imposing a client-side Form body allowlist.
+
+# flags.form-handler-map.summary
+
+JSON file containing a nonempty array of exact case-sensitive `sfdc_cms__formHandler` API names. The profile preserves unchanged raw items and emits strict `sf-cms-form-handler-read-report@1` evidence under `reports/form-handlers/`; only the evidenced dependency-free minimal Draft shape is accepted.
+
+# flags.consent-banner-map.summary
+
+JSON file containing a nonempty array of exact case-sensitive `sfdc_cms__consentBanner` API names. The profile preserves unchanged raw items and emits strict `sf-cms-consent-banner-read-report@1` evidence under `reports/consent-banners/`; only the exact evidenced dependency-free Draft shape and built-in Reject/Accept actions are accepted.
 
 # flags.landing-page-pair-map.summary
 

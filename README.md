@@ -229,14 +229,14 @@ sf cms import workspace --target-org my-org --workspace-name "Destination" --sou
 Required flags:
 
 - `--target-org <username-or-alias>`: explicit destination org; no implicit target is accepted.
-- Exactly one destination selector: `--workspace-id <id>` or exact case-sensitive `--workspace-name <name>`. This identity is the destination and is independent of the source workspace recorded in the export manifest.
+- Exactly one destination selector: `--workspace-id <id>` or exact case-insensitive `--workspace-name <name>`. This identity is the destination and is independent of the source workspace recorded in the export manifest.
 - `--source-dir <path>`: existing source export package containing `manifest.json` and exactly the mapped `items/*.json` files. Its manifest identifies the source workspace only; it does not select the destination.
 
 Safety flags:
 
 - `--apply`: opt in to mutations. Without it, the command only validates and preflights.
 - `--report-dir <path>`: required with `--apply`; the destination must not exist. There is no overwrite mode.
-- `--allow-partial`: accept a package whose manifest records omissions or incomplete coverage. Without this flag, partial exports are rejected.
+- `--allow-partial`: accept a package whose manifest records omissions or incomplete coverage. Without this flag, partial exports are rejected. Form, Form Handler, and Consent Banner imports always require a complete package and ignore this allowance.
 
 A successful default-profile dry-run is a read-only proposal, not a deploy-ready result. It preserves named content and checks destination content-key absence, but reports `SERVER_CONFLICT_CHECK_UNVERIFIED` and `APPLY_READINESS_UNVERIFIED` warnings. Named proposals additionally report `NAME_AVAILABILITY_UNVERIFIED`: destination API-name/URL-name availability is not established, and default-profile named apply remains blocked. Package-wide reference and media checks still apply to default-profile dry-runs; no target mappings are claimed as resolved.
 
@@ -448,6 +448,56 @@ sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --
 ```
 
 Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. The bounded packed installed-host acceptance matrix includes fresh Draft CREATE and independent readback for this exact template profile, with prerequisite revalidation and drift checks.
+
+#### Preference Page read reports (`--preference-page-map`)
+
+Export one or more `sfdc_cms__preferencePage` records by exact, case-sensitive API name. The selection file uses the existing nonempty JSON string-array format, and every requested name must resolve exactly once in the selected workspace and exact content type.
+
+```json
+["GlobalPreferenceCenter", "RegionalPreferenceCenter"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-preference-pages --preference-page-map ./preference-pages.json --json
+```
+
+This read/export-only profile writes both the unchanged raw source item under `items/` and a typed `sf-cms-preference-page-read-report@1` normalization under `reports/preference-pages/`. Engagement-channel and communication-subchannel IDs remain explicit unresolved source references in the typed report; they are not resolved, remapped, defaulted, or mutated. That unresolved evidence intentionally makes the export partial, emits warnings, and sets exit status `2` while preserving the unchanged three-field single-export JSON result: `destination`, `manifest`, and `manifestSha256`.
+
+There is no Preference Page CREATE/import flag or workflow. This capability does not create or update content, publish anything, assign defaults, mutate consent, or perform any other org write.
+
+#### Brand read reports (`--brand-map`)
+
+Export one or more exact, case-sensitive `sfdc_cms__brand` API names from a selected workspace. The JSON selection file must be a nonempty array of strings, and each requested name must resolve exactly once from a complete Brand inventory.
+
+```json
+["Phase_5_Discovery_Brand"]
+```
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brands --brand-map ./brands.json --json
+```
+
+The read-only profile preserves every raw Brand item unchanged under `items/` and writes a strict `sf-cms-brand-read-report@1` report under `reports/brands/`. The typed report separates portable Brand semantics from source content, variant, and workspace provenance. It accepts only the retained Draft/unpublished content and variant envelopes and evidenced typography, color, spacing, button, provider, title, Einstein-brand, and empty variant structures. The retained body contains no external identifiers, so an otherwise complete Brand selection remains complete; unknown fields or shapes fail closed before publication.
+
+Typed Brand reports are not importable, including with `--allow-partial`. There is no Brand CREATE/import, publication, or workspace-default Brand assignment support, and the command performs no org mutation.
+
+#### Evidence-qualified Forms (`--form-map`)
+
+Export selects exact, case-sensitive `sfdc_cms__form` API names from a complete Form inventory. It preserves unchanged raw records and writes strict `sf-cms-form-read-report@1` evidence under `reports/forms/`. Report validation proves exact source identity, Draft/unpublished state, workspace binding, hashes, and raw/report bijection without imposing a client-side Form body allowlist.
+
+Import requires a complete package plus the typed report/raw/descriptor bijection and exact normalization match before authentication; `--allow-partial` does not permit partial Form packages. Mappings select one source API name and provide fresh target `apiName`, `title`, and `urlName`. The destination must have canonical Marketing workspace evidence. Dry-run and immediate pre-POST checks enumerate the complete destination Form inventory and reject exact case-sensitive collisions on all three target names. CREATE omits `contentKey`, regenerates every block UUID v4, otherwise preserves source body semantics without stripping providers, broader blocks, actions, or Flow/Data Graph/Form Handler/source/external references, targets the destination root folder, persists pending intent before mutation, and independently reads the returned content key and variant ID to require exact Draft/unpublished semantics. The minimal one-section/one-column/action-button profile has live proof; broader profiles are accepted for transport but are not yet live-proven, and Salesforce is authoritative at runtime. Definitive server rejection is surfaced; ambiguous mutation ownership is not retried automatically. There is no UPDATE, publish, unpublish, or runtime submit.
+
+#### Evidence-qualified Form Handlers (`--form-handler-map`)
+
+Export selects exact, case-sensitive `sfdc_cms__formHandler` API names only after canonical Marketing-workspace assertion. It preserves unchanged raw records and writes strict `sf-cms-form-handler-read-report@1` evidence under `reports/form-handlers/`. The accepted body is limited to `sfdcBrand`, empty data providers, a title matching the top-level title, and an empty UUID-v4 `sfdc_cms/rootContentBlock`. Populated providers or children and Flow, Data 360/dataGraph, source/external, Form Handler/provider, reference, file, or unknown reference-like objects fail closed recursively.
+
+Import requires a complete package even with `--allow-partial`, one exact report for every raw item, empty dependencies/external references/warnings, and the strict loader marker. Mapping source must be `cms/formHandler` with an exact API name; targets provide fresh `apiName`, title, and `urlName`. The root block receives a fresh UUID v4 and CREATE omits `contentKey`. Canonical Marketing-workspace evidence, complete one-page destination Form Handler inventory, and exact API-name/title/URL collision absence are required during dry-run and repeated immediately before the single POST. A durable pending journal is written first; transport, response, persistence, or readback ambiguity retains known identity and reports `ownership-uncertain` reconciliation semantics without retry. Independent content-key and variant reads must agree exactly as Draft/unpublished. Submission/runtime endpoints, UPDATE, publish/unpublish, populated bindings, and broader lifecycle are excluded.
+
+#### Evidence-qualified Consent Banners (`--consent-banner-map`)
+
+Export selects exact, case-sensitive `sfdc_cms__consentBanner` API names only after canonical Marketing-workspace assertion. It preserves unchanged raw records and writes strict `sf-cms-consent-banner-read-report@1` evidence under `reports/consent-banners/`. The accepted Draft/unpublished body is the exact evidenced three-column layout: one paragraph, one Reject button containing only `sfdc_cms__consentRejectAction`, and one Allow button containing only `sfdc_cms__consentAcceptAction`. Data providers must be empty. Additional or unknown actions and source/org, site, consent-configuration, Data 360/dataGraph, CMS, external, file, provider, and unknown reference-like fields fail closed recursively.
+
+Import requires a complete package even with `--allow-partial`, one exact report for every raw item, empty dependencies/external references/warnings, and the strict loader marker. Mapping source must be `cms/consentBanner` with an exact API name; targets provide fresh `apiName`, title, and `urlName`. Every block receives a fresh UUID v4 and CREATE omits `contentKey`. Canonical Marketing-workspace evidence and complete destination Consent Banner inventory prove exact API-name/title/URL collision absence during dry-run and again immediately before the single POST. Durable pending intent is persisted before mutation; any transport, response, persistence, or readback ambiguity remains `ownership-uncertain` and is never retried. Independent content-key and variant reads must agree exactly as Draft/unpublished. Publication, site association, consent-configuration mutation, runtime action invocation, UPDATE, and broader lifecycle support remain excluded.
 
 #### Paired landing pages and declared templates (`--landing-page-pair-map`)
 

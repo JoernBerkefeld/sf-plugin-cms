@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
+import { brandDetail } from '../fixtures/brand.js';
+import { formHandlerDetail } from '../fixtures/form-handler.js';
 import ExportWorkspace from '../../src/commands/cms/export/workspace.js';
 import type { ExportWorkspaceResult } from '../../src/services/export-workspace.js';
 
@@ -11,7 +13,65 @@ function fakeRequest<T>(value: T): Promise<T> & { stream(): { destroy(): void } 
   return Object.assign(Promise.resolve(value), { stream: () => ({ destroy: () => {} }) });
 }
 
+function preferencePageDetail(id: string, apiName: string): Record<string, unknown> {
+  return {
+    contentType: 'sfdc_cms__preferencePage',
+    managedContentId: `content-${id}`,
+    managedContentVariantId: id,
+    id,
+    apiName,
+    contentSpace: { id: 'space' },
+    contentBody: {
+      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+      'lightning:dataProviders': [],
+      'sfdc_cms:title': `Title ${apiName}`,
+      'sfdc_cms:description': `Description ${apiName}`,
+      'sfdc_cms:block': {
+        id: `root-${id}`,
+        type: 'block',
+        definition: 'sfdc_cms/rootContentBlock',
+        children: [
+          {
+            id: `subscriptions-${id}`,
+            type: 'block',
+            definition: 'sfdc_cms/preferencePageSubscriptionsBlock',
+            attributes: {
+              subscriptionConfig: {
+                engChannelTypeId: `channel-${id}`,
+                commSubChannelTypeIds: [`subchannel-${id}`],
+              },
+            },
+            children: [],
+          },
+          {
+            id: `submit-${id}`,
+            type: 'block',
+            definition: 'sfdc_cms/preferencePageSubmitBlock',
+            attributes: { label: 'Save' },
+            children: [],
+          },
+        ],
+      },
+    },
+  };
+}
+
 describe('CMS export workspace command', () => {
+  it('keeps every typed family selector mutually exclusive', () => {
+    const flags = ExportWorkspace.flags as Record<string, { exclusive?: string[] }>;
+    const familyFlags = [
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
+    ];
+    for (const flag of familyFlags) {
+      for (const other of familyFlags) {
+        if (other !== flag) expect(flags[flag].exclusive).to.include(other);
+      }
+    }
+  });
   const $$ = new TestContext();
   const temporaryDirectories: string[] = [];
 
@@ -38,6 +98,11 @@ describe('CMS export workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'landing-page-pair-map',
       'experimental-media',
       'output-dir',
@@ -49,12 +114,31 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['output-dir'].required).not.to.equal(true);
     expect(ExportWorkspace.flags['contract-version'].default).to.equal(1);
     expect(ExportWorkspace.flags.all.required).not.to.equal(true);
+    expect(ExportWorkspace.flags.all.exclusive).to.deep.equal([
+      'workspace-id',
+      'workspace-name',
+      'email-fragment-map',
+      'web-fragment-map',
+      'landing-page-template-map',
+      'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
+      'landing-page-pair-map',
+    ]);
     expect(ExportWorkspace.flags['workspace-type'].dependsOn).to.deep.equal(['all']);
     expect(ExportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
       'all',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
@@ -62,6 +146,11 @@ describe('CMS export workspace command', () => {
       'email-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
@@ -69,6 +158,11 @@ describe('CMS export workspace command', () => {
       'email-fragment-map',
       'web-fragment-map',
       'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
@@ -76,6 +170,23 @@ describe('CMS export workspace command', () => {
       'email-fragment-map',
       'web-fragment-map',
       'landing-page-template-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
+      'landing-page-pair-map',
+    ]);
+    expect(ExportWorkspace.flags['preference-page-map'].exclusive).to.deep.equal([
+      'all',
+      'email-fragment-map',
+      'web-fragment-map',
+      'landing-page-template-map',
+      'landing-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
       'landing-page-pair-map',
     ]);
     expect(ExportWorkspace.flags['landing-page-pair-map'].exclusive).to.deep.equal([
@@ -84,6 +195,11 @@ describe('CMS export workspace command', () => {
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
     ]);
     expect(ExportWorkspace.flags['email-fragment-map'].summary).to.match(
       /exact sfdc_cms__emailFragment API names/iu,
@@ -94,6 +210,9 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['landing-page-map'].summary).to.match(
       /exact sfdc_cms__landingPage API names/iu,
     );
+    expect(ExportWorkspace.flags['preference-page-map'].summary).to.match(
+      /exact sfdc_cms__preferencePage API names.*raw items.*typed read reports/iu,
+    );
     expect(ExportWorkspace.flags['landing-page-pair-map'].summary).to.match(
       /exact source template title/iu,
     );
@@ -103,6 +222,9 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.description).to.match(
       /experimental.*not a complete or guaranteed backup/iu,
     );
+    expect(
+      Object.keys(ExportWorkspace.flags).some((flag) => /preference.*import/iu.test(flag)),
+    ).to.equal(false);
   });
 
   it('wires the email-fragment JSON selection flag to the exact export type', async () => {
@@ -218,6 +340,265 @@ describe('CMS export workspace command', () => {
     ]);
     expect(result.manifest.expectedCount).to.equal(1);
     expect(result.manifest.exportedCount).to.equal(1);
+  });
+
+  it('wires exact Preference Page selection to raw and typed read-report output', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-preference-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'preference-pages.json');
+    await writeFile(selectionFile, '["PreferenceA"]\n', 'utf8');
+    const destination = path.join(root, 'export');
+    const request = $$.SANDBOX.stub().callsFake(
+      ({ method, url }: { method?: string; url: string }) => {
+        expect(method === undefined || method === 'GET').to.equal(true);
+        if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+        if (url.startsWith('/connect/cms/items/search')) {
+          const query = new URL(url, 'https://example.test').searchParams;
+          expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__preferencePage');
+          expect(query.get('queryTerm')).to.equal('*');
+          return fakeRequest({
+            items: [
+              {
+                id: 'preference',
+                managedContentSpaceId: 'space',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+            total: 1,
+          });
+        }
+        return fakeRequest(preferencePageDetail('preference', 'PreferenceA'));
+      },
+    );
+    const warn = $$.SANDBOX.stub();
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': destination,
+          'preference-page-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn,
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+
+    expect(Object.keys(result)).to.have.members(['destination', 'manifest', 'manifestSha256']);
+    expect(result.manifest.entries).to.deep.equal([
+      { file: 'items/preference.json', variantId: 'preference' },
+    ]);
+    expect(result.manifest.preferencePageReports).to.deep.equal([
+      {
+        path: 'reports/preference-pages/preference.json',
+        rawItemPath: 'items/preference.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__preferencePage',
+        variantId: 'preference',
+        apiName: 'PreferenceA',
+        format: 'sf-cms-preference-page-read-report@1',
+      },
+    ]);
+    expect(result.manifest.completeness).to.equal('partial');
+    expect(result.manifest.warnings.map(({ code }) => code)).to.include('REFERENCE_UNRESOLVED');
+    expect(
+      warn.calledWithMatch(/channel and subchannel references remain source-bound/iu),
+    ).to.equal(true);
+    expect(process.exitCode).to.equal(2);
+    expect(request.getCalls().every(({ args }) => args[0].method !== 'POST')).to.equal(true);
+    await access(path.join(destination, 'items/preference.json'));
+    const report = JSON.parse(
+      await readFile(path.join(destination, 'reports/preference-pages/preference.json'), 'utf8'),
+    ) as { normalization: { unresolvedReferences: Array<{ sourceId: string }> } };
+    expect(report.normalization.unresolvedReferences.map(({ sourceId }) => sourceId)).to.deep.equal(
+      ['channel-preference', 'subchannel-preference'],
+    );
+  });
+
+  it('wires exact Brand selection to raw and typed read-report output', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-brand-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'brands.json');
+    await writeFile(selectionFile, '["BrandA"]\n', 'utf8');
+    const destination = path.join(root, 'export');
+    const request = $$.SANDBOX.stub().callsFake(
+      ({ method, url }: { method?: string; url: string }) => {
+        expect(method === undefined || method === 'GET').to.equal(true);
+        if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+        if (url.startsWith('/connect/cms/items/search')) {
+          const query = new URL(url, 'https://example.test').searchParams;
+          expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__brand');
+          expect(query.get('queryTerm')).to.equal('*');
+          return fakeRequest({
+            items: [
+              {
+                id: 'brand',
+                managedContentSpaceId: 'space',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+            total: 1,
+          });
+        }
+        return fakeRequest(brandDetail('brand', 'BrandA'));
+      },
+    );
+    const warn = $$.SANDBOX.stub();
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': destination,
+          'brand-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn,
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+
+    expect(result.manifest.entries).to.deep.equal([
+      { file: 'items/brand.json', variantId: 'brand' },
+    ]);
+    expect(result.manifest.brandReports).to.deep.equal([
+      {
+        path: 'reports/brands/brand.json',
+        rawItemPath: 'items/brand.json',
+        workspaceId: 'space',
+        contentType: 'sfdc_cms__brand',
+        variantId: 'brand',
+        apiName: 'BrandA',
+        format: 'sf-cms-brand-read-report@1',
+      },
+    ]);
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.warnings.map(({ code }) => code)).not.to.include('REFERENCE_UNRESOLVED');
+    expect(warn.neverCalledWithMatch(/references remain source-bound/iu)).to.equal(true);
+    expect(process.exitCode).to.equal(undefined);
+    expect(request.getCalls().every(({ args }) => args[0].method !== 'POST')).to.equal(true);
+    await access(path.join(destination, 'items/brand.json'));
+    const report = JSON.parse(
+      await readFile(path.join(destination, 'reports/brands/brand.json'), 'utf8'),
+    ) as { normalization: { unresolvedReferences: unknown[] } };
+    expect(report.normalization.unresolvedReferences).to.deep.equal([]);
+  });
+
+  it('rejects malformed Brand selection before export search', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-brand-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'invalid.json');
+    await writeFile(selectionFile, '["BrandA",1]\n', 'utf8');
+    const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': path.join(root, 'export'),
+          'brand-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+    });
+
+    let failure: unknown;
+    try {
+      await command.run();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(TypeError);
+    expect((failure as Error).message).to.include('JSON array of API-name strings');
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0].url).to.equal('/connect/cms/spaces/space');
+  });
+
+  it('rejects malformed Preference Page selection before export search', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-preference-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'invalid.json');
+    await writeFile(selectionFile, '["PreferenceA",1]\n', 'utf8');
+    const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': path.join(root, 'export'),
+          'preference-page-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+    });
+
+    let failure: unknown;
+    try {
+      await command.run();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(TypeError);
+    expect((failure as Error).message).to.include('JSON array of API-name strings');
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0].url).to.equal('/connect/cms/spaces/space');
+  });
+
+  it('requires canonical structured Marketing evidence for Form Handler export', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-form-handler-space-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'form-handlers.json');
+    await writeFile(selectionFile, '["source_form_handler_api"]\n', 'utf8');
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') {
+        return fakeRequest({ id: 'space', spaceType: { apiName: 'marketing' } });
+      }
+      if (url.startsWith('/connect/cms/items/search')) {
+        return fakeRequest({
+          items: [
+            {
+              id: 'variant-form-handler-id',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+          total: 1,
+        });
+      }
+      return fakeRequest(formHandlerDetail('variant'));
+    });
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'target-org': 'source-alias',
+          'api-version': '67.0',
+          'workspace-id': 'space',
+          'output-dir': path.join(root, 'export'),
+          'form-handler-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+
+    let failure: unknown;
+    try {
+      await command.run();
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(Error);
+    expect((failure as Error).message).to.include('not canonically Marketing');
+    expect(request.calledOnce).to.equal(true);
   });
 
   it('wires title-resolved landing-page pairs and records canonical template identity', async () => {

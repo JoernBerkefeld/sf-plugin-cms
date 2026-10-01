@@ -1,5 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import {
   assertWorkspaceImageImportResultV2,
   assertWorkspaceImportResult,
@@ -19,14 +20,22 @@ import {
   loadWorkspaceExport,
   planNativeWorkspaceImport,
   type LoadedWorkspaceExport,
+  WorkspaceImportOwnershipUncertainError,
   type WorkspaceImportExecutionResult,
 } from '../../../services/import-workspace.js';
 import { UnsupportedWorkspacePackageVersionError } from '../../../contracts/workspace-export.js';
-import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
+import {
+  assertCanonicalMarketingWorkspace,
+  assertWorkspaceSelector,
+  resolveWorkspace,
+} from '../../../services/resolve-workspace.js';
 import { planEmailFragmentCopies } from '../../../services/email-fragment.js';
 import { planWebFragmentCopies } from '../../../services/web-fragment.js';
 import { planLandingPageTemplateCopies } from '../../../services/landing-page-template.js';
 import { planLandingPageCopies } from '../../../services/landing-page.js';
+import { planFormCopies } from '../../../services/form.js';
+import { planFormHandlerCopies } from '../../../services/form-handler.js';
+import { planConsentBannerCopies } from '../../../services/consent-banner.js';
 import {
   applyImageImports,
   planImageImports,
@@ -37,6 +46,31 @@ import {
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 type WorkspaceImportCommandResult = WorkspaceImportResult | WorkspaceImageImportResultV2;
+
+async function hasOwnershipUncertainJournal(
+  journalFile: string | undefined,
+  error: unknown,
+): Promise<boolean> {
+  if (journalFile === undefined) return false;
+  try {
+    const report = JSON.parse(await readFile(journalFile, 'utf8')) as {
+      operations?: Array<{ operationId?: unknown; state?: unknown }>;
+      state?: unknown;
+    };
+    if (report.state !== 'ownership-uncertain' || !Array.isArray(report.operations)) return false;
+    const operationId =
+      error instanceof WorkspaceImportOwnershipUncertainError
+        ? error.operation.operationId
+        : undefined;
+    return report.operations.some(
+      (operation) =>
+        operation.state === 'pending' &&
+        (operationId === undefined || operation.operationId === operationId),
+    );
+  } catch {
+    return false;
+  }
+}
 
 export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImportCommandResult>> {
   public static readonly summary =
@@ -52,6 +86,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --web-fragment-map ./web-fragment-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --landing-page-template-map ./landing-page-template-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --landing-page-map ./landing-page-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-forms --form-map ./form-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-form-handlers --form-handler-map ./form-handler-map.json --contract-version 1 --json',
+    '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-consent-banners --consent-banner-map ./consent-banner-map.json --contract-version 1 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-v2 --image-map ./image-map.json --contract-version 2 --json',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0ZuTARGET --source-dir ./cms-v2 --image-map ./image-map.json --contract-version 2 --apply --report-dir ./image-import-report --json',
   ];
@@ -64,7 +101,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       summary: 'Machine contract major version (supported: 1; --image-map requires 2).',
     }),
     'workspace-id': Flags.string({ summary: 'Exact destination CMS workspace ID.' }),
-    'workspace-name': Flags.string({ summary: 'Exact case-sensitive destination workspace name.' }),
+    'workspace-name': Flags.string({
+      summary: 'Exact case-insensitive destination workspace name.',
+    }),
     'source-dir': Flags.directory({
       exists: true,
       required: true,
@@ -83,6 +122,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'image-map',
       ],
       summary:
@@ -96,6 +138,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'landing-page-template-map',
         'landing-page-map',
         'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'image-map',
       ],
       summary:
@@ -109,6 +154,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'landing-page-template-map',
         'landing-page-map',
         'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'image-map',
       ],
       summary:
@@ -122,6 +170,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'web-fragment-map',
         'landing-page-map',
         'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'image-map',
       ],
       summary:
@@ -135,10 +186,61 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'web-fragment-map',
         'landing-page-template-map',
         'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'image-map',
       ],
       summary:
         'JSON array selecting paired cms/landingPage API names, fresh identities, an exact Draft template selector, and image/Data Graph prerequisites.',
+    }),
+    'form-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'editable-dir',
+        'form-handler-map',
+        'consent-banner-map',
+        'image-map',
+      ],
+      summary:
+        'JSON array selecting strict typed cms/form reports by exact API name with fresh apiName, title, and urlName targets.',
+    }),
+    'form-handler-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'editable-dir',
+        'form-map',
+        'consent-banner-map',
+        'image-map',
+      ],
+      summary:
+        'JSON array selecting strict typed cms/formHandler reports by exact API name with fresh apiName, title, and urlName targets.',
+    }),
+    'consent-banner-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'editable-dir',
+        'form-map',
+        'form-handler-map',
+        'image-map',
+      ],
+      summary:
+        'JSON array selecting strict typed cms/consentBanner reports by exact API name with fresh apiName, title, and urlName targets.',
     }),
     'image-map': Flags.file({
       exists: true,
@@ -148,6 +250,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
         'editable-dir',
       ],
       summary:
@@ -160,7 +265,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     }),
     'allow-partial': Flags.boolean({
       default: false,
-      summary: 'Accept an export whose manifest records omissions or incomplete coverage.',
+      summary:
+        'Accept an export whose manifest records omissions or incomplete coverage, except Form, Form Handler, and Consent Banner imports.',
     }),
     'report-dir': Flags.directory({
       dependsOn: ['apply'],
@@ -212,6 +318,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
 
     let source: LoadedWorkspaceExport;
     let emailFragmentMappings: unknown;
+    let formMappings: unknown;
+    let formHandlerMappings: unknown;
+    let consentBannerMappings: unknown;
     let imagePlans: ReturnType<typeof planImageImports> | undefined;
     let landingPageTemplateMappings: unknown;
     let landingPageMappings: unknown;
@@ -220,9 +329,14 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     try {
       if (flags['editable-dir'] !== undefined && flags['native-copy-map'] === undefined)
         throw new TypeError('--editable-dir requires --native-copy-map');
+      let loadProfile: 'consent-banner' | 'form' | 'form-handler' | 'general' | 'image' = 'general';
+      if (imageProfile) loadProfile = 'image';
+      else if (flags['form-map'] !== undefined) loadProfile = 'form';
+      else if (flags['form-handler-map'] !== undefined) loadProfile = 'form-handler';
+      else if (flags['consent-banner-map'] !== undefined) loadProfile = 'consent-banner';
       source = await loadWorkspaceExport(flags['source-dir'], {
         allowPartial: flags['allow-partial'],
-        profile: imageProfile ? 'image' : 'general',
+        profile: loadProfile,
       });
       if (flags['image-map'] !== undefined) {
         const imageMappings = JSON.parse(await readFile(flags['image-map'], 'utf8')) as unknown;
@@ -239,6 +353,22 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
           await readFile(flags['email-fragment-map'], 'utf8'),
         ) as unknown;
         planEmailFragmentCopies(source, emailFragmentMappings);
+      }
+      if (flags['form-map'] !== undefined) {
+        formMappings = JSON.parse(await readFile(flags['form-map'], 'utf8')) as unknown;
+        planFormCopies(source, formMappings);
+      }
+      if (flags['form-handler-map'] !== undefined) {
+        formHandlerMappings = JSON.parse(
+          await readFile(flags['form-handler-map'], 'utf8'),
+        ) as unknown;
+        planFormHandlerCopies(source, formHandlerMappings);
+      }
+      if (flags['consent-banner-map'] !== undefined) {
+        consentBannerMappings = JSON.parse(
+          await readFile(flags['consent-banner-map'], 'utf8'),
+        ) as unknown;
+        planConsentBannerCopies(source, consentBannerMappings);
       }
       if (flags['web-fragment-map'] !== undefined) {
         webFragmentMappings = JSON.parse(
@@ -295,6 +425,12 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],
       });
+      if (
+        formMappings !== undefined ||
+        formHandlerMappings !== undefined ||
+        consentBannerMappings !== undefined
+      )
+        await assertCanonicalMarketingWorkspace(connection, selected);
       if (imagePlans !== undefined) {
         const execution = flags.apply
           ? await applyImageImports({
@@ -333,6 +469,9 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         loadedSource: source,
         editableDirectory: flags['editable-dir'],
         emailFragmentMappings,
+        formMappings,
+        formHandlerMappings,
+        consentBannerMappings,
         landingPageTemplateMappings,
         landingPageMappings,
         nativeCopyMappings,
@@ -356,6 +495,16 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         this.showPlan(execution, result as CmsEnvelope<WorkspaceImportResult>);
       return this.finish(result);
     } catch (error) {
+      const journalFile =
+        flags.apply && flags['report-dir'] !== undefined
+          ? path.join(flags['report-dir'], 'workspace-import-run.json')
+          : undefined;
+      const ownershipUncertain = await hasOwnershipUncertainJournal(journalFile, error);
+      const baseMessage = error instanceof Error ? error.message : String(error);
+      const message = ownershipUncertain
+        ? `${baseMessage} Ownership is uncertain: the CREATE may have succeeded. Reconcile the durable journal at ${journalFile} before any new apply; do not retry until the destination and pending operation are checked.`
+        : baseMessage;
+      if (ownershipUncertain && !this.jsonEnabled()) this.log(message);
       return this.finish(
         envelope(
           'failed',
@@ -366,8 +515,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
           null,
           [
             {
-              code: 'IMPORT_FAILED',
-              message: error instanceof Error ? error.message : String(error),
+              code: ownershipUncertain ? 'IMPORT_OWNERSHIP_UNCERTAIN' : 'IMPORT_FAILED',
+              message,
               retryable: false,
             },
           ],
