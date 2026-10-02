@@ -1,7 +1,7 @@
 {
   "name": "sf-plugin-cms",
-  "version": "0.8.0",
-  "description": "Salesforce CLI plugin for Marketing Cloud CMS workspace export and create-only import",
+  "version": "0.9.0",
+  "description": "Salesforce CLI plugin for bounded Marketing Cloud CMS export, import, and Email lifecycle operations",
   "author": {
     "name": "Jörn Berkefeld",
     "email": "joern.berkefeld@gmail.com"

@@ -382,6 +382,98 @@ describe('workspace export service', () => {
     expect(await readdir(path.join(destination, 'items'))).to.deep.equal(['a.json', 'b.json']);
   });
 
+  it('exports an exact Email Template package without unrelated workspace warnings', async () => {
+    const template = detail('template-en', 'space', {
+      apiName: 'WelcomeTemplate',
+      contentId: 'template-content',
+      contentKey: 'template-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+      language: 'en_US',
+      contentBody: { rawHtml: '<p>Welcome</p>' },
+    });
+    const otherTemplate = detail('template-de', 'space', {
+      apiName: 'OtherTemplate',
+      contentId: 'other-content',
+      contentKey: 'other-key',
+      contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+      language: 'de_DE',
+      contentBody: { rawHtml: '<p>Hallo</p>' },
+    });
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__emailTemplate');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({ items: [row('template-en'), row('template-de')], total: 2 });
+      }
+      return fakeRequest(url.endsWith('template-en') ? template : otherTemplate);
+    });
+
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'templates'), {
+      selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['WelcomeTemplate'] },
+      editableDirectory: path.join(root, 'templates-editable'),
+    });
+
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.expectedCount).to.equal(1);
+    expect(result.manifest.foundCount).to.equal(1);
+    expect(result.manifest.exportedCount).to.equal(1);
+    expect(result.manifest.entries).to.deep.equal([
+      { file: 'items/template-en.json', variantId: 'template-en' },
+    ]);
+    expect(result.manifest.warnings.map(({ code }) => code)).to.deep.equal([
+      'UNSUPPORTED_WILDCARD',
+    ]);
+    expect(result.manifest.externalReferences).to.have.length(1);
+    expect(result.manifest.externalReferences[0]).to.deep.include({
+      kind: 'cms.content',
+      resolution: 'included',
+      source: { workspaceId: 'space', sourceId: 'template-content' },
+    });
+    expect(
+      await readFile(path.join(root, 'templates-editable/items/template-en.html'), 'utf8'),
+    ).to.equal('<p>Welcome</p>');
+  });
+
+  it('proves a multi-page Email Template inventory with page-local counts', async () => {
+    const firstPage = Array.from({ length: 250 }, (_, index) => row(`template-${index}`));
+    const selectedVariantId = 'template-250';
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        const page = Number(query.get('page'));
+        return fakeRequest(
+          page === 0
+            ? { count: firstPage.length, items: firstPage }
+            : { count: 1, items: [row(selectedVariantId)] },
+        );
+      }
+      const variantId = decodeURIComponent(url.split('/').at(-1) ?? '');
+      return fakeRequest(
+        detail(variantId, 'space', {
+          apiName: variantId === selectedVariantId ? 'SelectedTemplate' : `Other${variantId}`,
+          contentId: `content-${variantId}`,
+          contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+          language: 'en_US',
+          contentBody: { rawHtml: `<p>${variantId}</p>` },
+        }),
+      );
+    });
+
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'templates'), {
+      selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['SelectedTemplate'] },
+    });
+
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.pagesRequested).to.equal(2);
+    expect(result.manifest.entries).to.deep.equal([
+      { file: `items/${selectedVariantId}.json`, variantId: selectedVariantId },
+    ]);
+    expect(result.manifest.warnings.map(({ code }) => code)).to.deep.equal([
+      'UNSUPPORTED_WILDCARD',
+    ]);
+  });
+
   it('exports one or many exact web-fragment API names and fails on missing or ambiguous matches', async () => {
     const selectedDetails = {
       one: detail('one', 'space', {

@@ -35,6 +35,7 @@ type LifecycleSelector =
 type LifecycleRequest = LifecycleSelector & {
   contextContentSpaceId?: string;
   description?: string;
+  includeContentReferences?: never;
 };
 
 export type PublishContentInput = LifecycleRequest;

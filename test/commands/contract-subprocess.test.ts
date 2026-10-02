@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -288,6 +288,660 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       ).to.deep.equal(output.manifest);
     });
   }
+
+  it('previews one installed packed Email publish with exact selectors', async function () {
+    this.timeout(300_000);
+    const help = await runSf(['cms', 'publish', 'content', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+    expect(normalizedHelp).to.include('sf cms publish content');
+    expect(normalizedHelp).to.include('--workspace-id');
+    expect(normalizedHelp).to.include('--api-name');
+    expect(normalizedHelp).to.include('--language');
+    expect(normalizedHelp).to.include('--acknowledge-no-send');
+    expect(normalizedHelp).to.include('Dry-run is the default');
+
+    const preview = await runSf(
+      [
+        'cms',
+        'publish',
+        'content',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_email',
+        '--language',
+        'en_US',
+        '--json',
+      ],
+      'email-publish-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const envelope = parseEnvelope(preview);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-publish',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
+    expectPluginVersion(envelope, installedPackageVersion);
+    expect((envelope.provenance as { command: string }).command).to.equal('sf cms publish content');
+    expect(envelope.result).to.deep.include({
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'pilot_email',
+        language: 'en_US',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+      blockers: [],
+    });
+    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.deep.include({
+      selectorScope: 'variant',
+      includeContentReferences: false,
+      noSendAcknowledgementRequired: true,
+    });
+    const events = JSON.parse(
+      await readFile(file('email-publish-preview-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(events.some((event) => event.method !== undefined && event.method !== 'GET')).to.equal(
+      false,
+    );
+  });
+
+  it('applies one installed packed Email publish after durable pending intent', async function () {
+    this.timeout(300_000);
+    const result = await runSf(
+      [
+        'cms',
+        'publish',
+        'content',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_email',
+        '--language',
+        'en_US',
+        '--apply',
+        '--acknowledge-no-send',
+        '--report-dir',
+        'email-publish-apply-report',
+        '--json',
+      ],
+      'email-publish-apply',
+    );
+    expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
+    const envelope = parseEnvelope(result);
+    expect(envelope).to.deep.include({ contract: 'sf-cms-content-publish', status: 'success' });
+    expect(envelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
+    const events = JSON.parse(
+      await readFile(file('email-publish-apply-transport.json'), 'utf8'),
+    ) as Array<{ method?: string; body?: string }>;
+    const posts = events.filter((event) => event.method === 'POST');
+    expect(posts).to.have.length(1);
+    expect(JSON.parse(posts[0].body!)).to.deep.equal({
+      variantIds: ['variant-en'],
+      contextContentSpaceId: 'space',
+      includeContentReferences: false,
+    });
+  });
+
+  it('previews and applies one installed packed Email unpublish', async function () {
+    this.timeout(300_000);
+    const help = await runSf(['cms', 'unpublish', 'content', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+    expect(normalizedHelp).to.include('sf cms unpublish content');
+    expect(normalizedHelp).to.include('--acknowledge-active-use-stops');
+    expect(normalizedHelp).to.include('--report-dir');
+    expect(normalizedHelp).to.include('Dry-run is the default');
+    const preview = await runSf(
+      [
+        'cms',
+        'unpublish',
+        'content',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_email',
+        '--language',
+        'en_US',
+        '--json',
+      ],
+      'email-unpublish-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const envelope = parseEnvelope(preview);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-unpublish',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
+    expect((envelope.provenance as { command: string }).command).to.equal(
+      'sf cms unpublish content',
+    );
+    expect(envelope.result).to.deep.include({
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'pilot_email',
+        language: 'en_US',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+      blockers: [],
+    });
+    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.deep.include({
+      selectorScope: 'parent',
+      includeContentReferencesOmitted: true,
+      activeUseStopsAcknowledgementRequired: true,
+    });
+    const applied = await runSf(
+      [
+        'cms',
+        'unpublish',
+        'content',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_email',
+        '--language',
+        'en_US',
+        '--apply',
+        '--acknowledge-active-use-stops',
+        '--report-dir',
+        'email-unpublish-apply-report',
+        '--json',
+      ],
+      'email-unpublish-apply',
+    );
+    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+    const appliedEnvelope = parseEnvelope(applied);
+    expect(appliedEnvelope).to.deep.include({
+      contract: 'sf-cms-content-unpublish',
+      status: 'success',
+    });
+    expect(appliedEnvelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
+    const events = JSON.parse(
+      await readFile(file('email-unpublish-apply-transport.json'), 'utf8'),
+    ) as Array<{ method?: string; body?: string }>;
+    const posts = events.filter((event) => event.method === 'POST');
+    expect(posts).to.have.length(1);
+    expect(JSON.parse(posts[0].body!)).to.deep.equal({
+      contentIds: ['parent-email'],
+    });
+  });
+
+  it('previews one installed packed bounded Email Template delete v2', async function () {
+    this.timeout(300_000);
+    await writeFile(file('email-template-delete-journal.json'), '{}');
+    const preview = await runSf(
+      [
+        'cms',
+        'delete',
+        'content',
+        '--target-org',
+        'unused',
+        '--contract-version',
+        '2',
+        '--content-type',
+        'sfdc_cms__emailTemplate',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_template',
+        '--language',
+        'en_US',
+        '--ownership-report',
+        'email-template-delete-journal.json',
+        '--json',
+      ],
+      'email-template-delete-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const envelope = parseEnvelope(preview);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-delete',
+      contractVersion: '2.0.0',
+      status: 'success',
+    });
+    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.include({
+      contentType: 'sfdc_cms__emailTemplate',
+    });
+  });
+
+  it('applies one installed packed bounded Email Template delete v2', async function () {
+    this.timeout(300_000);
+    await writeFile(file('email-template-delete-journal.json'), '{}');
+    const applied = await runSf(
+      [
+        'cms',
+        'delete',
+        'content',
+        '--target-org',
+        'unused',
+        '--contract-version',
+        '2',
+        '--content-type',
+        'sfdc_cms__emailTemplate',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_template',
+        '--language',
+        'en_US',
+        '--ownership-report',
+        'email-template-delete-journal.json',
+        '--apply',
+        '--acknowledge-permanent-delete',
+        '--report-dir',
+        'email-template-delete-apply-report',
+        '--json',
+      ],
+      'email-template-delete-apply',
+    );
+    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+    const envelope = parseEnvelope(applied);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-delete',
+      contractVersion: '2.0.0',
+      status: 'success',
+    });
+    expect(envelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
+    const evidence = (envelope.result as { evidence: Record<string, unknown> }).evidence;
+    expect(evidence).to.include({
+      contentType: 'sfdc_cms__emailTemplate',
+      exactVariantAbsent: true,
+      parentBehavior: 'not-found',
+      remainingFamilyVariantCount: 0,
+    });
+    expect(evidence).not.to.have.property('remainingEmailVariantCount');
+    const events = JSON.parse(
+      await readFile(file('email-template-delete-apply-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(events.filter((event) => event.method === 'DELETE')).to.have.length(1);
+  });
+
+  it('previews and applies one installed packed bounded Email delete', async function () {
+    this.timeout(300_000);
+    const help = await runSf(['cms', 'delete', 'content', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+    expect(normalizedHelp).to.include('sf cms delete content');
+    expect(normalizedHelp).to.include('--ownership-report');
+    expect(normalizedHelp).to.include('--acknowledge-permanent-delete');
+    expect(normalizedHelp).to.include('Dry-run is the default');
+
+    await writeFile(file('email-delete-ownership.json'), '{}');
+    const common = [
+      'cms',
+      'delete',
+      'content',
+      '--target-org',
+      'unused',
+      '--workspace-id',
+      'space',
+      '--api-name',
+      'pilot_email',
+      '--language',
+      'en_US',
+      '--ownership-report',
+      'email-delete-ownership.json',
+    ];
+    const preview = await runSf([...common, '--json'], 'email-delete-preview');
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const previewEnvelope = parseEnvelope(preview);
+    expect(previewEnvelope).to.deep.include({
+      contract: 'sf-cms-content-delete',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
+    expect((previewEnvelope.provenance as { command: string }).command).to.equal(
+      'sf cms delete content',
+    );
+    expect(previewEnvelope.result).to.deep.include({
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'pilot_email',
+        language: 'en_US',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+    });
+    const previewEvents = JSON.parse(
+      await readFile(file('email-delete-preview-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(previewEvents.some(({ method }) => method === 'DELETE')).to.equal(false);
+
+    const applied = await runSf(
+      [
+        ...common,
+        '--apply',
+        '--acknowledge-permanent-delete',
+        '--report-dir',
+        'email-delete-apply-report',
+        '--json',
+      ],
+      'email-delete-apply',
+    );
+    const deleteReport = await readFile(
+      file('email-delete-apply-report/content-delete-run.json'),
+      'utf8',
+    );
+    const deleteTransport = await readFile(file('email-delete-apply-transport.json'), 'utf8');
+    expect(
+      applied.exitCode,
+      `${applied.stdout}${applied.stderr}\n${deleteReport}\n${deleteTransport}`,
+    ).to.equal(0);
+    const appliedEnvelope = parseEnvelope(applied);
+    expect(appliedEnvelope).to.deep.include({
+      contract: 'sf-cms-content-delete',
+      status: 'success',
+    });
+    expect(appliedEnvelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
+    const completedReport = JSON.parse(deleteReport) as Record<string, unknown>;
+    expect(completedReport.state).to.equal('completed');
+    expect(completedReport).not.to.have.property('mutationError');
+    expect(
+      (appliedEnvelope.result as { evidence: Record<string, unknown> }).evidence,
+    ).to.deep.include({
+      exactVariantAbsent: true,
+      selectedInventoryMatches: 0,
+      parentBehavior: 'not-found',
+      remainingEmailVariantCount: 1,
+    });
+    const events = JSON.parse(
+      await readFile(file('email-delete-apply-transport.json'), 'utf8'),
+    ) as Array<{ method?: string; url?: string }>;
+    const deletes = events.filter(({ method }) => method === 'DELETE');
+    expect(deletes).to.deep.equal([
+      { method: 'DELETE', url: '/connect/cms/contents/variants/variant-en' },
+    ]);
+    expect(
+      events.filter(
+        ({ method, url }) =>
+          method === 'GET' && url === '/connect/cms/contents/variants/variant-en',
+      ),
+    ).to.have.length(3);
+  });
+
+  it('previews one installed packed Email HTML update from its strict export baseline', async function () {
+    this.timeout(300_000);
+    const help = await runSf(['cms', 'update', 'content', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+    expect(normalizedHelp).to.include('sf cms update content');
+    expect(normalizedHelp).to.include('--workspace-id');
+    expect(normalizedHelp).to.include('--api-name');
+    expect(normalizedHelp).to.include('--language');
+    expect(normalizedHelp).to.include('--source-dir');
+    expect(normalizedHelp).to.include('--editable-dir');
+    expect(normalizedHelp).to.include('Dry-run is the default');
+
+    const exported = await runSf(
+      [
+        'cms',
+        'export',
+        'workspace',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--output-dir',
+        'email-update-baseline',
+        '--editable-dir',
+        'email-update-editable',
+        '--json',
+      ],
+      'email-update-preview',
+    );
+    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exportOutput = JSON.parse(exported.stdout) as {
+      manifest: { completeness: string; provenance: { pluginVersion: string } };
+    };
+    expect(exportOutput.manifest.completeness).to.equal('complete');
+    expect(exportOutput.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
+    expect(await readdir(file('email-update-baseline'))).to.deep.equal(['items', 'manifest.json']);
+    expect(await readdir(file('email-update-editable'))).to.deep.equal(['editable.json', 'items']);
+    expect(await readFile(file('email-update-editable/items/variant-en.html'), 'utf8')).to.equal(
+      '<p>Original</p>',
+    );
+    await writeFile(
+      file('email-update-editable/items/variant-en.html'),
+      '<p>Installed preview edit</p>',
+    );
+
+    const preview = await runSf(
+      [
+        'cms',
+        'update',
+        'content',
+        '--target-org',
+        'unused',
+        '--api-version',
+        '67.0',
+        '--workspace-id',
+        'space',
+        '--api-name',
+        'pilot_email',
+        '--language',
+        'en_US',
+        '--source-dir',
+        'email-update-baseline',
+        '--editable-dir',
+        'email-update-editable',
+        '--json',
+      ],
+      'email-update-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const envelope = parseEnvelope(preview);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-update',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
+    expectPluginVersion(envelope, installedPackageVersion);
+    expect((envelope.provenance as { command: string }).command).to.equal('sf cms update content');
+    expect(envelope.result).to.deep.include({
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'pilot_email',
+        language: 'en_US',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+      blockers: [],
+    });
+    const result = envelope.result as {
+      evidence: { baselineHash: string; changedFields: string[]; payloadHash: string };
+    };
+    expect(result.evidence.changedFields).to.deep.equal(['contentBody.rawHtml']);
+    expect(result.evidence.baselineHash).to.match(/^[a-f\d]{64}$/u);
+    expect(result.evidence.payloadHash).to.match(/^[a-f\d]{64}$/u);
+    expect(result.evidence.payloadHash).not.to.equal(result.evidence.baselineHash);
+    const events = JSON.parse(
+      await readFile(file('email-update-preview-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(events[0]).to.deep.equal({ phase: 'org' });
+    expect(events.slice(1).length).to.be.greaterThan(0);
+    expect(events.slice(1).every(({ method }) => method === 'GET')).to.equal(true);
+    expect(events.some(({ method }) => method === 'PUT')).to.equal(false);
+    expect(await readFile(file('email-update-editable/items/variant-en.html'), 'utf8')).to.equal(
+      '<p>Installed preview edit</p>',
+    );
+
+    await writeFile(file('email-update-editable/editable.json'), '{ malformed');
+    for (const mode of ['dry-run', 'apply'] as const) {
+      const reportDirectory = 'malformed-email-update-report';
+      const blocked = await runSf(
+        [
+          'cms',
+          'update',
+          'content',
+          '--target-org',
+          'unused',
+          '--api-version',
+          '67.0',
+          '--workspace-id',
+          'space',
+          '--api-name',
+          'pilot_email',
+          '--language',
+          'en_US',
+          '--source-dir',
+          'email-update-baseline',
+          '--editable-dir',
+          'email-update-editable',
+          ...(mode === 'apply' ? ['--apply', '--report-dir', reportDirectory] : []),
+          '--json',
+        ],
+        'email-update-preview',
+      );
+      expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+      const blockedEnvelope = parseEnvelope(blocked);
+      expect(blockedEnvelope).to.deep.include({
+        contract: 'sf-cms-content-update',
+        contractVersion: '1.0.0',
+        status: 'blocked',
+      });
+      expect(blockedEnvelope.result).to.deep.equal({
+        mode,
+        outcome: 'blocked',
+        target: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        evidence: { changedFields: [] },
+        blockers: [
+          {
+            code: 'EMAIL_UPDATE_PREFLIGHT_BLOCKED',
+            message: 'Editable descriptor must contain valid JSON',
+          },
+        ],
+      });
+      const blockedEvents = JSON.parse(
+        await readFile(file('email-update-preview-transport.json'), 'utf8'),
+      ) as Array<{ method?: string }>;
+      expect(blockedEvents.some(({ method }) => method === 'PUT')).to.equal(false);
+      expect(await readdir(isolatedDataDirectory)).not.to.include(reportDirectory);
+    }
+  });
+
+  it('previews and applies one installed packed bounded Email Template update v2', async function () {
+    this.timeout(300_000);
+    for (const name of [
+      'email-template-update-preview-source',
+      'email-template-update-preview-editable',
+      'email-template-update-apply-source',
+      'email-template-update-apply-editable',
+    ])
+      await mkdir(file(name));
+    const base = [
+      'cms',
+      'update',
+      'content',
+      '--target-org',
+      'unused',
+      '--api-version',
+      '67.0',
+      '--contract-version',
+      '2',
+      '--content-type',
+      'sfdc_cms__emailTemplate',
+      '--workspace-id',
+      'space',
+      '--api-name',
+      'pilot_template',
+      '--language',
+      'en_US',
+    ];
+    const preview = await runSf(
+      [
+        ...base,
+        '--source-dir',
+        'email-template-update-preview-source',
+        '--editable-dir',
+        'email-template-update-preview-editable',
+        '--json',
+      ],
+      'email-template-update-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const previewEnvelope = parseEnvelope(preview);
+    expect(previewEnvelope).to.deep.include({
+      contract: 'sf-cms-content-update',
+      contractVersion: '2.0.0',
+      status: 'success',
+    });
+    expect(previewEnvelope.result).to.deep.include({
+      contentType: 'sfdc_cms__emailTemplate',
+      mode: 'dry-run',
+      outcome: 'ready',
+    });
+    const previewEvents = JSON.parse(
+      await readFile(file('email-template-update-preview-transport.json'), 'utf8'),
+    );
+    expect(previewEvents.some(({ method }: { method?: string }) => method === 'PUT')).to.equal(
+      false,
+    );
+
+    const applied = await runSf(
+      [
+        ...base,
+        '--source-dir',
+        'email-template-update-apply-source',
+        '--editable-dir',
+        'email-template-update-apply-editable',
+        '--apply',
+        '--report-dir',
+        'email-template-update-apply-report',
+        '--json',
+      ],
+      'email-template-update-apply',
+    );
+    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(1);
+    const applyEnvelope = parseEnvelope(applied);
+    expect(applyEnvelope).to.deep.include({
+      contract: 'sf-cms-content-update',
+      contractVersion: '2.0.0',
+      status: 'failed',
+    });
+    expect(applyEnvelope.result).to.deep.include({
+      contentType: 'sfdc_cms__emailTemplate',
+      mode: 'apply',
+      outcome: 'ownership-uncertain',
+    });
+    const applyEvents = JSON.parse(
+      await readFile(file('email-template-update-apply-transport.json'), 'utf8'),
+    );
+    const variantRequests = applyEvents.filter(({ url }: { url?: string }) =>
+      url?.endsWith('/connect/cms/contents/variants/template-en'),
+    );
+    expect(variantRequests).to.have.length(2);
+    expect(
+      variantRequests.filter(({ method }: { method?: string }) => method === 'GET'),
+    ).to.have.length(2);
+    expect(applyEvents.some(({ method }: { method?: string }) => method === 'PUT')).to.equal(false);
+    const report = JSON.parse(
+      await readFile(file('email-template-update-apply-report/content-update-run.json'), 'utf8'),
+    );
+    expect(report).to.deep.include({
+      contract: 'sf-cms-email-template-update-run',
+      state: 'ownership-uncertain',
+    });
+  });
 
   it('runs installed editable export, literal edits, native CREATE and encoded readback for both types', async function () {
     // Ten sequential CLI starts take over four minutes on this Windows host.

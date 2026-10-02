@@ -33,7 +33,9 @@ for (const [name, version] of Object.entries(expectedRuntimeDependencies)) {
     throw new Error(`unexpected ${name} runtime dependency`);
   }
 }
-if (JSON.stringify(packageJson.optionalDependencies) !== JSON.stringify(expectedOptionalDependencies)) {
+if (
+  JSON.stringify(packageJson.optionalDependencies) !== JSON.stringify(expectedOptionalDependencies)
+) {
   throw new Error('unexpected optional native dependencies');
 }
 if (packageJson.overrides !== undefined) {
@@ -46,6 +48,18 @@ if (packageJson.oclif?.commands !== './lib/commands')
   throw new Error('missing oclif commands root');
 
 const shippedRuntimeFiles = await listFiles(path.join(packageRoot, 'lib'));
+const requiredCommands = [
+  'commands/cms/delete/content.js',
+  'commands/cms/info.js',
+  'commands/cms/publish/content.js',
+  'commands/cms/unpublish/content.js',
+  'commands/cms/update/content.js',
+];
+for (const command of requiredCommands) {
+  if (!shippedRuntimeFiles.some((file) => file.endsWith(command.replaceAll('/', path.sep)))) {
+    throw new Error(`packed command is missing: ${command}`);
+  }
+}
 for (const file of shippedRuntimeFiles) {
   const source = await readFile(file, 'utf8');
   if (source.includes('SF_PLUGIN_CMS_TEST_MODE') || source.includes('SF_PLUGIN_CMS_TEST_FIXTURE')) {

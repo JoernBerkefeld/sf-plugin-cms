@@ -11,6 +11,12 @@ export type CmsCapability = {
     | 'workspace.export.dependency-closure'
     | 'workspace.export.external-reference-correlation'
     | 'workspace.export.experimental-media'
+    | 'content.delete.email'
+    | 'content.delete.email-template'
+    | 'content.publish.email'
+    | 'content.unpublish.email'
+    | 'content.update.email-raw-html'
+    | 'content.update.email-template-raw-html'
     | 'workspace.import.email-fragment-create'
     | 'workspace.import.image-create'
     | 'workspace.import.mapping';
@@ -20,6 +26,12 @@ export type CmsCapability = {
     | 'unavailable'
     | 'sf-cms-workspace-export-set@1'
     | 'sf-cms-workspace-export@2'
+    | 'sf-cms-content-delete@1'
+    | 'sf-cms-content-delete@2'
+    | 'sf-cms-content-publish@1'
+    | 'sf-cms-content-unpublish@1'
+    | 'sf-cms-content-update@1'
+    | 'sf-cms-content-update@2'
     | typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT
     | 'sf-cms-workspace-import@1'
     | 'sf-cms-workspace-import@2';
@@ -37,6 +49,10 @@ export type CmsInfoResult = {
   contracts: {
     commandResults: {
       info: ['1.0.0'];
+      contentDelete: ['1.0.0', '2.0.0'];
+      contentPublish: ['1.0.0'];
+      contentUnpublish: ['1.0.0'];
+      contentUpdate: ['1.0.0', '2.0.0'];
       workspaceExportSet: ['1.0.0'];
       workspaceImport: ['1.0.0', '2.0.0'];
     };
@@ -77,13 +93,27 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
   );
   assertExactKeys(
     value.contracts.commandResults,
-    ['info', 'workspaceExportSet', 'workspaceImport'],
+    [
+      'info',
+      'contentDelete',
+      'contentPublish',
+      'contentUnpublish',
+      'contentUpdate',
+      'workspaceExportSet',
+      'workspaceImport',
+    ],
     'result.contracts.commandResults',
   );
-  for (const key of ['info', 'workspaceExportSet'] as const) {
+  for (const key of ['info', 'contentPublish', 'contentUnpublish', 'workspaceExportSet'] as const) {
     if (!isExactArray(value.contracts.commandResults[key], ['1.0.0'])) {
       throw new TypeError(`result.contracts.commandResults.${key} is invalid`);
     }
+  }
+  if (!isExactArray(value.contracts.commandResults.contentUpdate, ['1.0.0', '2.0.0'])) {
+    throw new TypeError('result.contracts.commandResults.contentUpdate is invalid');
+  }
+  if (!isExactArray(value.contracts.commandResults.contentDelete, ['1.0.0', '2.0.0'])) {
+    throw new TypeError('result.contracts.commandResults.contentDelete is invalid');
   }
   if (!isExactArray(value.contracts.commandResults.workspaceImport, ['1.0.0', '2.0.0'])) {
     throw new TypeError('result.contracts.commandResults.workspaceImport is invalid');
@@ -152,6 +182,12 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
       ['workspace.export.dependency-closure', 'unavailable'],
       ['workspace.export.external-reference-correlation', EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT],
       ['workspace.export.experimental-media', 'sf-cms-workspace-export@2'],
+      ['content.delete.email', 'sf-cms-content-delete@1'],
+      ['content.delete.email-template', 'sf-cms-content-delete@2'],
+      ['content.publish.email', 'sf-cms-content-publish@1'],
+      ['content.unpublish.email', 'sf-cms-content-unpublish@1'],
+      ['content.update.email-raw-html', 'sf-cms-content-update@1'],
+      ['content.update.email-template-raw-html', 'sf-cms-content-update@2'],
       ['workspace.import.email-fragment-create', 'sf-cms-workspace-import@1'],
       ['workspace.import.image-create', 'sf-cms-workspace-import@2'],
       ['workspace.import.mapping', 'sf-cms-workspace-import@1'],

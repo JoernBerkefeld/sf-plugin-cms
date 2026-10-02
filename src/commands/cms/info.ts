@@ -62,6 +62,10 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
       contracts: {
         commandResults: {
           info: ['1.0.0'],
+          contentDelete: ['1.0.0', '2.0.0'],
+          contentPublish: ['1.0.0'],
+          contentUnpublish: ['1.0.0'],
+          contentUpdate: ['1.0.0', '2.0.0'],
           workspaceExportSet: ['1.0.0'],
           workspaceImport: ['1.0.0', '2.0.0'],
         },
@@ -99,6 +103,42 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
           state: 'experimental',
           transport: 'cli-json',
           contract: 'sf-cms-workspace-export@2',
+        },
+        {
+          id: 'content.delete.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-delete@1',
+        },
+        {
+          id: 'content.delete.email-template',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-delete@2',
+        },
+        {
+          id: 'content.publish.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-publish@1',
+        },
+        {
+          id: 'content.unpublish.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-unpublish@1',
+        },
+        {
+          id: 'content.update.email-raw-html',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-update@1',
+        },
+        {
+          id: 'content.update.email-template-raw-html',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-update@2',
         },
         {
           id: 'workspace.import.email-fragment-create',

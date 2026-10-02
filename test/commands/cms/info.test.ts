@@ -69,6 +69,42 @@ describe('cms info', () => {
           contract: 'sf-cms-workspace-export@2',
         },
         {
+          id: 'content.delete.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-delete@1',
+        },
+        {
+          id: 'content.delete.email-template',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-delete@2',
+        },
+        {
+          id: 'content.publish.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-publish@1',
+        },
+        {
+          id: 'content.unpublish.email',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-unpublish@1',
+        },
+        {
+          id: 'content.update.email-raw-html',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-update@1',
+        },
+        {
+          id: 'content.update.email-template-raw-html',
+          state: 'experimental',
+          transport: 'cli-json',
+          contract: 'sf-cms-content-update@2',
+        },
+        {
           id: 'workspace.import.email-fragment-create',
           state: 'experimental',
           transport: 'cli-json',

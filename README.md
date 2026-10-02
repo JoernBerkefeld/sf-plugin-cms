@@ -1,6 +1,6 @@
 # sf-plugin-cms
 
-Salesforce CLI commands for inspecting Marketing Cloud CMS resources, experimentally exporting a workspace, and safely planning or applying a create-only workspace import through Connect REST API calls. The plugin does not update, overwrite, publish, unpublish, or broadly delete existing CMS content.
+Salesforce CLI commands for inspecting Marketing Cloud CMS resources, experimentally exporting a workspace, safely planning or applying a create-only workspace import, and performing narrowly bounded Email UPDATE, PUBLISH, UNPUBLISH, and DELETE lifecycle operations through Connect REST API calls. Email Template UPDATE and DELETE are available only through their stricter version 2 contracts. The plugin does not provide general overwrite, upsert, cross-family lifecycle mutation, or broadly destructive CMS operations.
 
 ## Installation and getting started
 
@@ -69,6 +69,10 @@ Machine consumers should run this command first and select a mutually supported 
 | `sf cms get variant`      | [Get a variant](#sf-cms-get-variant)            |
 | `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace)  |
 | `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace)  |
+| `sf cms publish content`   | [Publish a Draft Email](#sf-cms-publish-content)       |
+| `sf cms unpublish content` | [Unpublish a Published Email](#sf-cms-unpublish-content) |
+| `sf cms update content`    | [Update Draft Email HTML](#sf-cms-update-content)       |
+| `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content) |
 
 All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They use API version `67.0` by default; pass `--api-version <version>` only when you need to override it. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
 
@@ -181,6 +185,7 @@ Runs an experimental, read-only, best-effort export of the variants currently ob
 sf cms export workspace --target-org my-org --workspace-name "Main Site"
 sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --json
 sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --experimental-media --json
+sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./template-baseline --email-template-map ./email-templates.json --editable-dir ./template-editable --json
 sf cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json
 ```
 
@@ -194,6 +199,8 @@ In single mode, `--output-dir <path>` remains the exact new destination. When om
 Bulk mode performs a strict global preflight before the first workspace export. When `--workspace-type` is supplied, workspace enumeration sends the matching `spaceType` filter to Salesforce, so unrelated workspace families such as Enablement cannot enter the Marketing or Content preflight and block the requested export. The command then enumerates until an empty page, canonicalizes every returned workspace by ID, validates IDs and names, resolves recognized canonical `spaceType` values, applies the type check again, sorts by canonical ID, checks the output parent and every destination, and rejects collisions after sanitization, Unicode normalization, and case folding. If a canonical detail response omits `spaceType`, preflight can use the list response's recognized type only for the same exact workspace ID. A present malformed, null, or unsupported canonical type is rejected, while an explicit contradictory type is filtered out. Any preflight failure creates no destinations and makes no export calls.
 
 After preflight, each workspace export remains atomic. Execution continues after individual failures. Manifest warnings count as successful exports. JSON and human modes both return the complete deterministic aggregate with discovered, selected, succeeded, and failed counts plus per-workspace status, manifest, or redacted single-line error. A partial execution sets a nonzero process exit code only after the aggregate is emitted.
+
+For a strict Email Template UPDATE baseline, `--email-template-map <json-file>` selects one or more exact case-sensitive `sfdc_cms__emailTemplate` API names. The command inventories the complete Template family with wildcard search, resolves every requested name exactly once, writes only those Template variants, and can create the matching `--editable-dir` companion. Unrelated Image media and other-family relationship warnings cannot enter this scoped package. The package still preserves strict hashes, exact item ownership, included parent-content reference evidence, and the normal `UNSUPPORTED_WILDCARD` warning; incomplete family inventory, missing or duplicate API names, detail failures, or ownership drift block publication.
 
 This bulk command is also the delegation target for tools such as `sf-plugin-mcnext` that need a complete CMS workspace handoff without duplicating CMS export logic; no `sf-plugin-mcnext` changes are required.
 
@@ -638,6 +645,78 @@ The companion is **not** an `sf-cms-workspace-export` package and must not be su
 
 Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fresh CREATE, readback, and journal evidence for email/template content. **Live installed editable transfer is still unproven:** the 2026-09-16 attempt stopped on Salesforce session-refresh maintenance before export or mutation. Historical native-copy acceptance is separate evidence, not proof of edited HTML transfer.
 
+### `sf cms publish content`
+
+Previews or publishes one exact unpublished Draft `sfdc_cms__email` variant. Selection requires exact `--workspace-id` and `--api-name` values plus exactly one of `--language` or `--default-language`. Dry-run is the default:
+
+```sh
+sf cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --json
+```
+
+Apply requires a new report directory and an explicit acknowledgement that CMS publication changes lifecycle state but does not send the Email:
+
+```sh
+sf cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --apply --acknowledge-no-send --report-dir ./cms-publish-report --json
+```
+
+The command writes `content-publish-run.json` with pending intent before one non-retried, variant-scoped publish request. Content references are excluded. It then performs bounded read-only convergence checks and independently reconciles the parent, selected variant, siblings, and complete workspace Email inventory. Success requires only the selected variant to become `Published` without body changes. Transport, response, persistence, or readback ambiguity is reported as `ownership-uncertain`; never retry until the recorded workspace, content ID, variant ID, and optional deployment ID are reconciled. This command does not start a Flow, transactional send, journey, or campaign. Other content families and parent-scoped publication remain unsupported; bounded Email DELETE is documented separately below.
+
+### `sf cms unpublish content`
+
+`sf cms unpublish content` mirrors the exact Email selector used by publish: `--workspace-id`, `--api-name`, and exactly one of `--language` or `--default-language`. Dry-run is the default. Apply requires a new `--report-dir`, `--apply`, and `--acknowledge-active-use-stops`; the acknowledgement is checked before org access because unpublish removes the content from active use but does not delete it.
+
+The command accepts only an exact `isPublished=true,status=Published` Email and freshly proves that its parent has exactly one variant. Preview explicitly reports `selectorScope: parent`. Apply writes `content-unpublish-run.json` with durable pending intent before one non-retried parent-scoped request containing only `contentIds`; it sends neither `variantIds`, `contextContentSpaceId`, nor the PUBLISH-only `includeContentReferences` field. Up to five readback attempts independently reconcile the parent, exact variant, single-variant sibling scope, and complete Email inventory. Success requires the sole child to transition to `isPublished=false,status=Draft` while preserving body hash, identity, API name, language, parent, and every unrelated inventory row. A definite HTTP 400 `JSON_PARSER_ERROR` rejection is retained separately from ownership-uncertain transport/readback outcomes, with sanitized status, Salesforce error code/message/request ID when available, request selector, and request-body hash.
+
+The earlier retained live fixture attempt used the now-superseded experimental variant selector (`variantIds` with `contextContentSpaceId`) and returned `ownership-uncertain` without a deployment ID. Fresh reads showed that fixture remained Published with unchanged body and identity. It is retained only as ambiguity evidence and must not receive another mutation.
+
+### `sf cms delete content`
+
+Previews or permanently deletes one exact run-owned, unpublished Draft variant from a sealed family policy. `--content-type sfdc_cms__email` remains the exact default and preserves the `sf-cms-content-delete@1` output shape; ownership may come from this plugin's completed CREATE journal (`workspace-import-run.json`) or a strict `sf-cms-email-delete-ownership@1` report. `--content-type sfdc_cms__emailTemplate` requires `--contract-version 2` and accepts only a strict completed CREATE journal.
+
+Dry-run is the default:
+
+```sh
+sf cms delete content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --ownership-report ./create-report/workspace-import-run.json --json
+```
+
+Email Template preview uses the v2 contract and explicit sealed family:
+
+```sh
+sf cms delete content --target-org my-org --contract-version 2 --content-type sfdc_cms__emailTemplate --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --ownership-report ./create-report/workspace-import-run.json --json
+```
+
+Apply additionally requires a new report directory and explicit permanent-delete acknowledgement:
+
+```sh
+sf cms delete content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report --json
+```
+
+Before mutation, the command proves exact org/workspace/family/API-name/language/content/variant/request ownership, one selected variant, a single-variant parent, exact Draft/unpublished lifecycle, and an unchanged canonical semantic/body hash against the accepted CREATE baseline. Email Template v2 additionally reloads the journal's source workspace export with integrity verification and blocks missing or changed artifacts, partial or failed exports, dependencies, unresolved or unsupported external references, warnings other than `UNSUPPORTED_WILDCARD`, unsafe raw HTML, or a CREATE body that differs from the selected safe source body except for fresh destination identity fields. It writes `content-delete-run.json` with durable pending intent before exactly one non-retried `DELETE /connect/cms/contents/variants/{variantId}` request. There is no cascade, name-only authorization, parent DELETE fallback, or published-content deletion. Completion first requires a complete stable Email inventory with zero rows matching the exact API name and language, then an exact variant GET failure with HTTP 404, one error entry, and `VARIANT_NOT_FOUND`. Only after those two proofs may an exact parent GET failure with HTTP 404, one error entry, and `NOT_FOUND` be recorded as empirical `parentBehavior: "not-found"`; a retained, identity-matching parent is recorded as `present`. Generic 404s, wrong codes, multiple entries, and transport failures remain ownership-uncertain. The first controlled live Email DELETE is reconciled with this exact absence shape and is public/live-verified. Never retry an ambiguous DELETE until the recorded IDs are reconciled read-only.
+
+### `sf cms update content`
+
+Previews or applies one exact Email-family `contentBody.rawHtml` edit from an editable companion. Omitted `--content-type` preserves `sfdc_cms__email` contract v1 behavior. Email Template requires explicit `--content-type sfdc_cms__emailTemplate --contract-version 2`. Selection requires an exact `--workspace-id`, exact `--api-name`, and exactly one of `--language` or `--default-language`. Both the unchanged export baseline (`--source-dir`) and its strict editable companion (`--editable-dir`) are required. Template v2 additionally requires a complete integrity-verified package with no rejected or failed items, dependencies, unresolved or unsupported references, or warnings other than `UNSUPPORTED_WILDCARD`.
+
+Dry-run is the default:
+
+```sh
+sf cms update content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --source-dir ./cms-baseline --editable-dir ./cms-editable --json
+```
+
+Template v2 preview is explicit:
+
+```sh
+sf cms update content --target-org my-org --contract-version 2 --content-type sfdc_cms__emailTemplate --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --source-dir ./cms-baseline --editable-dir ./cms-editable --json
+```
+
+Apply requires a new nonexisting report directory:
+
+```sh
+sf cms update content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --source-dir ./cms-baseline --editable-dir ./cms-editable --apply --report-dir ./cms-update-report --json
+```
+
+The command supports only an unpublished Draft Email or the accepted raw-HTML Email Template shape and changes only `rawHtml`. It reloads and reprepares immediately for apply, verifies the independent parent, selected variant, complete sibling inventory, and lifecycle, then atomically persists pending intent before exactly one non-retried variant PUT. Template discovery uses wildcard family search cross-checked against the complete wildcard workspace inventory, with exact per-page count semantics, duplicate rejection, and exact inventory equivalence. Successful apply writes `content-update-run.json` with `completed` evidence (`sf-cms-email-update-run` for Email or `sf-cms-email-template-update-run` for Template). Transport or readback ambiguity writes or retains `ownership-uncertain`/pending evidence with the exact workspace, content ID, variant ID, and payload hash required for read-only reconciliation. Never issue a second PUT until that identity is reconciled. Other families and shapes remain unsupported; there is no upsert or implicit publish/unpublish operation.
+
 #### Run reports and recovery
 
 A successful apply writes:
@@ -688,13 +767,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.5.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.9.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.5.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.5.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.9.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.9.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -707,14 +786,14 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "status": "success",
   "metadata": {
     "operation": "<cms.info|workspace.export.bulk|workspace.import>",
-    "plugin": { "name": "sf-plugin-cms", "version": "0.5.0" },
+    "plugin": { "name": "sf-plugin-cms", "version": "0.9.0" },
     "apiVersion": "67.0"
   },
   "diagnostics": { "warnings": [], "errors": [] },
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "<org-id-or-offline>",
-    "pluginVersion": "0.5.0",
+    "pluginVersion": "0.9.0",
     "command": "sf cms <operation>",
     "generatedAt": "<ISO-8601>"
   },
@@ -731,9 +810,15 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.5.0 does not provide general relationship discovery or traversal.
+- `workspace.export.dependency-closure` — `unavailable`; v0.9.0 does not provide general relationship discovery or traversal.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
+- `content.delete.email` — `experimental`, contract `sf-cms-content-delete@1`; public/live-verified for one exact run-owned single-variant Draft Email.
+- `content.delete.email-template` — `experimental`, contract `sf-cms-content-delete@2`; bounded local/package acceptance is implemented, while a live org mutation remains a future roadmap validation step.
+- `content.publish.email` — `experimental`, contract `sf-cms-content-publish@1`.
+- `content.unpublish.email` — `experimental`, contract `sf-cms-content-unpublish@1`; local code/package qualification and a one-shot live Published-to-Draft parent-scoped transition are complete.
+- `content.update.email-raw-html` — `experimental`, contract `sf-cms-content-update@1`.
+- `content.update.email-template-raw-html` — `experimental`, contract `sf-cms-content-update@2`; live-qualified for one exact retained Draft/unpublished Email Template after a ready public preview and exactly one completed non-retried PUT.
 - `workspace.import.email-fragment-create` — `experimental`, contract `sf-cms-workspace-import@1`.
 - `workspace.import.image-create` — `experimental`, contract `sf-cms-workspace-import@2`.
 - `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.

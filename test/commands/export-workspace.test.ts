@@ -108,6 +108,7 @@ describe('CMS export workspace command', () => {
       'workspace-name',
       'workspace-type',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
@@ -131,6 +132,7 @@ describe('CMS export workspace command', () => {
       'workspace-id',
       'workspace-name',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
@@ -144,6 +146,20 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['workspace-type'].dependsOn).to.deep.equal(['all']);
     expect(ExportWorkspace.flags['email-fragment-map'].exclusive).to.deep.equal([
       'all',
+      'email-template-map',
+      'web-fragment-map',
+      'landing-page-template-map',
+      'landing-page-map',
+      'preference-page-map',
+      'brand-map',
+      'form-map',
+      'form-handler-map',
+      'consent-banner-map',
+      'landing-page-pair-map',
+    ]);
+    expect(ExportWorkspace.flags['email-template-map'].exclusive).to.deep.equal([
+      'all',
+      'email-fragment-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
@@ -157,6 +173,7 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['web-fragment-map'].exclusive).to.deep.equal([
       'all',
       'email-fragment-map',
+      'email-template-map',
       'landing-page-template-map',
       'landing-page-map',
       'preference-page-map',
@@ -169,6 +186,7 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['landing-page-template-map'].exclusive).to.deep.equal([
       'all',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-map',
       'preference-page-map',
@@ -181,6 +199,7 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['landing-page-map'].exclusive).to.deep.equal([
       'all',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-template-map',
       'preference-page-map',
@@ -193,6 +212,7 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['preference-page-map'].exclusive).to.deep.equal([
       'all',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
@@ -205,6 +225,7 @@ describe('CMS export workspace command', () => {
     expect(ExportWorkspace.flags['landing-page-pair-map'].exclusive).to.deep.equal([
       'all',
       'email-fragment-map',
+      'email-template-map',
       'web-fragment-map',
       'landing-page-template-map',
       'landing-page-map',
@@ -216,6 +237,9 @@ describe('CMS export workspace command', () => {
     ]);
     expect(ExportWorkspace.flags['email-fragment-map'].summary).to.match(
       /exact sfdc_cms__emailFragment API names/iu,
+    );
+    expect(ExportWorkspace.flags['email-template-map'].summary).to.match(
+      /exact sfdc_cms__emailTemplate API names/iu,
     );
     expect(ExportWorkspace.flags['landing-page-template-map'].summary).to.match(
       /exact sfdc_cms__landingPageTemplate API names/iu,
@@ -297,6 +321,67 @@ describe('CMS export workspace command', () => {
     expect(result.manifest.entries.map(({ variantId }) => variantId)).to.deep.equal(['a', 'z']);
     expect(result.manifest.expectedCount).to.equal(2);
     expect(result.manifest.exportedCount).to.equal(2);
+  });
+
+  it('wires exact Email Template selection with an editable companion', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-template-selection-command-'));
+    temporaryDirectories.push(root);
+    const selectionFile = path.join(root, 'email-templates.json');
+    await writeFile(selectionFile, '["WelcomeTemplate"]\n', 'utf8');
+    const destination = path.join(root, 'export');
+    const editable = path.join(root, 'editable');
+    const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const query = new URL(url, 'https://example.test').searchParams;
+        expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__emailTemplate');
+        expect(query.get('queryTerm')).to.equal('*');
+        return fakeRequest({
+          items: [
+            {
+              id: 'template',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+          total: 1,
+        });
+      }
+      return fakeRequest({
+        apiName: 'WelcomeTemplate',
+        contentBody: { rawHtml: '<p>Welcome</p>' },
+        contentId: 'content',
+        contentKey: 'key',
+        contentSpace: { id: 'space' },
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+        id: 'template',
+        language: 'en_US',
+      });
+    });
+    const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
+    Object.assign(command, {
+      parse: $$.SANDBOX.stub().resolves({
+        flags: {
+          'workspace-id': 'space',
+          'output-dir': destination,
+          'editable-dir': editable,
+          'email-template-map': selectionFile,
+        },
+      }),
+      getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'source' }),
+      jsonEnabled: $$.SANDBOX.stub().returns(true),
+      warn: $$.SANDBOX.stub(),
+    });
+
+    const result = (await command.run()) as ExportWorkspaceResult;
+
+    expect(result.manifest.completeness).to.equal('complete');
+    expect(result.manifest.entries).to.deep.equal([
+      { file: 'items/template.json', variantId: 'template' },
+    ]);
+    expect(await readFile(path.join(editable, 'items/template.html'), 'utf8')).to.equal(
+      '<p>Welcome</p>',
+    );
   });
 
   it('wires the web-fragment JSON selection flag through wildcard inventory resolution', async () => {

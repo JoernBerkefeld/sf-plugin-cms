@@ -95,7 +95,13 @@ export function assertNativeBody(item: WorkspaceImportItem): void {
     'sfdc_cms:attachments',
     'sfdc_cms:variants',
   ]);
-  for (const required of ['sfdc_cms:title', 'subjectLine', 'messagePurpose', 'rawHtml']) {
+  const requiredFields = [
+    'sfdc_cms:title',
+    ...(item.contentType === 'sfdc_cms__email' ? ['subjectLine'] : []),
+    'messagePurpose',
+    'rawHtml',
+  ];
+  for (const required of requiredFields) {
     if (typeof item.contentBody[required] !== 'string' || !item.contentBody[required])
       throw new TypeError(`Native body requires ${required}`);
   }

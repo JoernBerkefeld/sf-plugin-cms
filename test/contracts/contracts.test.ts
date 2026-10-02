@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertCmsInfoResult, type CmsInfoResult } from '../../src/contracts/info.js';
+import { assertContentDeleteResult } from '../../src/contracts/content-delete.js';
+import { assertContentPublishResult } from '../../src/contracts/content-publish.js';
+import { assertContentUnpublishResult } from '../../src/contracts/content-unpublish.js';
+import { assertContentUpdateResult } from '../../src/contracts/content-update.js';
 import {
   CMS_CONTRACT_VERSION,
   finalizeCmsEnvelope,
@@ -30,6 +34,488 @@ async function loadFixture<T>(name: string): Promise<{ bytes: Buffer; value: Cms
 }
 
 describe('CMS contract foundation', () => {
+  it('validates the versioned bounded content delete result', () => {
+    expect(() =>
+      assertContentDeleteResult(
+        {
+          mode: 'dry-run',
+          outcome: 'ready',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            acknowledgementRequired: true,
+            baselineHash: 'a'.repeat(64),
+            currentHash: 'a'.repeat(64),
+            ownershipReport: 'report/workspace-import-run.json',
+            ownershipRequestSha256: 'b'.repeat(64),
+            inventoryVariantCount: 1,
+            siblingVariantCount: 1,
+          },
+          blockers: [],
+        },
+        undefined,
+        'success',
+      ),
+    ).not.to.throw();
+  });
+
+  it('validates completed delete evidence when Salesforce removes the empty parent', () => {
+    expect(() =>
+      assertContentDeleteResult(
+        {
+          mode: 'apply',
+          outcome: 'completed',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            acknowledgedPermanentDelete: true,
+            baselineHash: 'a'.repeat(64),
+            ownershipReport: 'report/workspace-import-run.json',
+            ownershipRequestSha256: 'b'.repeat(64),
+            selectedInventoryMatches: 0,
+            exactVariantAbsent: true,
+            parentBehavior: 'not-found',
+            remainingEmailVariantCount: 0,
+          },
+          blockers: [],
+          reportFile: 'report/content-delete-run.json',
+        },
+        undefined,
+        'success',
+      ),
+    ).not.to.throw();
+  });
+
+  it('rejects completed delete evidence without exact absence', () => {
+    expect(() =>
+      assertContentDeleteResult(
+        {
+          mode: 'apply',
+          outcome: 'completed',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            acknowledgedPermanentDelete: true,
+            baselineHash: 'a'.repeat(64),
+            ownershipReport: 'report/workspace-import-run.json',
+            ownershipRequestSha256: 'b'.repeat(64),
+            selectedInventoryMatches: 1,
+            exactVariantAbsent: false,
+            parentBehavior: 'present',
+            parentIdentityPreserved: true,
+            remainingEmailVariantCount: 1,
+          },
+          blockers: [],
+          reportFile: 'report/content-delete-run.json',
+        },
+        undefined,
+        'success',
+      ),
+    ).to.throw('completed delete evidence is invalid');
+  });
+
+  it('validates the versioned bounded content publish result', () => {
+    expect(() =>
+      assertContentPublishResult(
+        {
+          mode: 'dry-run',
+          outcome: 'ready',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            selectorScope: 'variant',
+            includeContentReferences: false,
+            noSendAcknowledgementRequired: true,
+            baselineHash: 'a'.repeat(64),
+            inventory: [
+              {
+                contentId: 'content',
+                hash: 'a'.repeat(64),
+                language: 'en_US',
+                isPublished: false,
+                status: 'Draft',
+                variantId: 'variant',
+              },
+            ],
+            siblingInventory: [
+              {
+                hash: 'a'.repeat(64),
+                language: 'en_US',
+                isPublished: false,
+                status: 'Draft',
+                variantId: 'variant',
+              },
+            ],
+          },
+          blockers: [],
+        },
+        undefined,
+        'success',
+      ),
+    ).not.to.throw();
+  });
+
+  it('rejects contradictory bounded content publish evidence', () => {
+    const ready = {
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'Email',
+        language: 'en_US',
+        contentId: 'content',
+        variantId: 'variant',
+      },
+      evidence: {
+        selectorScope: 'variant',
+        includeContentReferences: false,
+        noSendAcknowledgementRequired: true,
+        baselineHash: 'a'.repeat(64),
+        inventory: [
+          {
+            contentId: 'content',
+            hash: 'a'.repeat(64),
+            language: 'en_US',
+            isPublished: false,
+            status: 'Draft',
+            variantId: 'variant',
+          },
+        ],
+        siblingInventory: [
+          {
+            hash: 'b'.repeat(64),
+            language: 'en_US',
+            isPublished: false,
+            status: 'Draft',
+            variantId: 'variant',
+          },
+        ],
+      },
+      blockers: [],
+    };
+    expect(() => assertContentPublishResult(ready, undefined, 'success')).to.throw();
+  });
+
+  it('validates the versioned bounded content unpublish result', () => {
+    expect(() =>
+      assertContentUnpublishResult(
+        {
+          mode: 'dry-run',
+          outcome: 'ready',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            selectorScope: 'parent',
+            includeContentReferencesOmitted: true,
+            activeUseStopsAcknowledgementRequired: true,
+            baselineHash: 'a'.repeat(64),
+            inventory: [
+              {
+                contentId: 'content',
+                hash: 'a'.repeat(64),
+                language: 'en_US',
+                isPublished: true,
+                status: 'Published',
+                variantId: 'variant',
+              },
+            ],
+            siblingInventory: [
+              {
+                hash: 'a'.repeat(64),
+                language: 'en_US',
+                isPublished: true,
+                status: 'Published',
+                variantId: 'variant',
+              },
+            ],
+          },
+          blockers: [],
+        },
+        undefined,
+        'success',
+      ),
+    ).not.to.throw();
+  });
+
+  it('rejects completed unpublish evidence when the body hash changed', () => {
+    const completed = {
+      mode: 'apply',
+      outcome: 'completed',
+      target: {
+        workspaceId: 'space',
+        apiName: 'Email',
+        language: 'en_US',
+        contentId: 'content',
+        variantId: 'variant',
+      },
+      evidence: {
+        selectorScope: 'parent',
+        includeContentReferencesOmitted: true,
+        activeUseStopsAcknowledged: true,
+        baselineHash: 'a'.repeat(64),
+        postUnpublishHash: 'b'.repeat(64),
+        deploymentId: 'deployment',
+        inventory: [
+          {
+            contentId: 'content',
+            hash: 'b'.repeat(64),
+            language: 'en_US',
+            isPublished: false,
+            status: 'Draft',
+            variantId: 'variant',
+          },
+        ],
+        siblingInventory: [
+          {
+            hash: 'b'.repeat(64),
+            language: 'en_US',
+            isPublished: false,
+            status: 'Draft',
+            variantId: 'variant',
+          },
+        ],
+      },
+      blockers: [],
+      reportFile: 'report/content-unpublish-run.json',
+    };
+
+    expect(() => assertContentUnpublishResult(completed, undefined, 'success')).to.throw(
+      'unpublish must preserve the selected Email body hash',
+    );
+  });
+
+  it('validates a definite pre-mutation unpublish rejection', () => {
+    expect(() =>
+      assertContentUnpublishResult(
+        {
+          mode: 'apply',
+          outcome: 'rejected-before-mutation',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            selectorScope: 'parent',
+            includeContentReferencesOmitted: true,
+            mutationError: {
+              classification: 'definite-pre-mutation-rejection',
+              errorCode: 'JSON_PARSER_ERROR',
+              httpStatus: 400,
+              requestBodySha256: 'a'.repeat(64),
+              requestSelector: 'POST /connect/cms/contents/unpublish',
+              salesforceMessage: 'Unrecognized field includeContentReferences',
+            },
+          },
+          blockers: [
+            {
+              code: 'EMAIL_UNPUBLISH_REJECTED_BEFORE_MUTATION',
+              message: 'rejected before mutation',
+            },
+          ],
+          reportFile: 'report/content-unpublish-run.json',
+          reconciliation: {
+            workspaceId: 'space',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+        },
+        undefined,
+        'failed',
+      ),
+    ).not.to.throw();
+  });
+
+  it('rejects contradictory bounded content unpublish evidence', () => {
+    const ready = {
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'Email',
+        language: 'en_US',
+        contentId: 'content',
+        variantId: 'variant',
+      },
+      evidence: {
+        selectorScope: 'parent',
+        includeContentReferencesOmitted: true,
+        activeUseStopsAcknowledgementRequired: true,
+        baselineHash: 'a'.repeat(64),
+        inventory: [
+          {
+            contentId: 'content',
+            hash: 'a'.repeat(64),
+            language: 'en_US',
+            isPublished: true,
+            status: 'Published',
+            variantId: 'variant',
+          },
+        ],
+        siblingInventory: [
+          {
+            hash: 'b'.repeat(64),
+            language: 'en_US',
+            isPublished: true,
+            status: 'Published',
+            variantId: 'variant',
+          },
+        ],
+      },
+      blockers: [],
+    };
+    expect(() => assertContentUnpublishResult(ready, undefined, 'success')).to.throw();
+  });
+
+  it('validates the versioned bounded content update result', () => {
+    expect(() =>
+      assertContentUpdateResult(
+        {
+          mode: 'dry-run',
+          outcome: 'ready',
+          target: {
+            workspaceId: 'space',
+            apiName: 'Email',
+            language: 'en_US',
+            contentId: 'content',
+            variantId: 'variant',
+          },
+          evidence: {
+            baselineHash: 'a'.repeat(64),
+            payloadHash: 'b'.repeat(64),
+            changedFields: ['contentBody.rawHtml'],
+            siblingInventory: [
+              {
+                hash: 'c'.repeat(64),
+                language: 'en_US',
+                lifecycle: { isPublished: false, status: 'Draft' },
+                variantId: 'variant',
+              },
+            ],
+          },
+          blockers: [],
+        },
+        undefined,
+        'success',
+      ),
+    ).not.to.throw();
+  });
+
+  it('rejects outcome-inconsistent content update result shapes', () => {
+    const ready = {
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: {
+        workspaceId: 'space',
+        apiName: 'Email',
+        language: 'en_US',
+        contentId: 'content',
+        variantId: 'variant',
+      },
+      evidence: {
+        baselineHash: 'a'.repeat(64),
+        payloadHash: 'b'.repeat(64),
+        changedFields: ['contentBody.rawHtml'],
+        siblingInventory: [
+          {
+            hash: 'c'.repeat(64),
+            language: 'en_US',
+            lifecycle: { isPublished: false, status: 'Draft' },
+            variantId: 'variant',
+          },
+        ],
+      },
+      blockers: [],
+    };
+    const uncertain = {
+      mode: 'apply',
+      outcome: 'ownership-uncertain',
+      target: ready.target,
+      evidence: { changedFields: ['contentBody.rawHtml'], payloadHash: 'b'.repeat(64) },
+      blockers: [{ code: 'EMAIL_UPDATE_OWNERSHIP_UNCERTAIN', message: 'unknown' }],
+      reportFile: 'report/content-update-run.json',
+      reconciliation: {
+        contentId: 'content',
+        payloadHash: 'b'.repeat(64),
+        variantId: 'variant',
+        workspaceId: 'space',
+      },
+    };
+    const blocked = {
+      mode: 'apply',
+      outcome: 'blocked',
+      target: { workspaceId: 'space', apiName: 'Email', language: 'en_US' },
+      evidence: { changedFields: [] },
+      blockers: [{ code: 'EMAIL_UPDATE_PREFLIGHT_BLOCKED', message: 'blocked' }],
+    };
+    for (const malformed of [
+      { ...ready, mode: 'apply' },
+      { ...ready, evidence: { ...ready.evidence, changedFields: [] } },
+      {
+        ...ready,
+        evidence: {
+          ...ready.evidence,
+          siblingInventory: [{ ...ready.evidence.siblingInventory[0], hash: 'bad' }],
+        },
+      },
+      {
+        ...ready,
+        evidence: {
+          ...ready.evidence,
+          siblingInventory: [
+            {
+              ...ready.evidence.siblingInventory[0],
+              lifecycle: { isPublished: true, status: 'Draft' },
+            },
+          ],
+        },
+      },
+      { ...ready, outcome: 'completed', mode: 'apply', reportFile: 'report.json' },
+      { ...uncertain, reconciliation: { ...uncertain.reconciliation, variantId: 'other' } },
+      { ...uncertain, blockers: [] },
+      {
+        ...uncertain,
+        blockers: [{ code: 'EMAIL_UPDATE_PREFLIGHT_BLOCKED', message: 'wrong outcome code' }],
+      },
+      { ...blocked, target: { ...blocked.target, variantId: 'variant' } },
+      { ...blocked, reportFile: 'must-not-exist' },
+      { ...blocked, evidence: { changedFields: ['contentBody.rawHtml'] } },
+      {
+        ...blocked,
+        blockers: [{ code: 'EMAIL_UPDATE_OWNERSHIP_UNCERTAIN', message: 'wrong outcome code' }],
+      },
+    ]) {
+      expect(() => assertContentUpdateResult(malformed)).to.throw();
+    }
+  });
+
   for (const [name, validator] of [
     ['success-info.json', assertCmsInfoResult],
     ['partial-export.json', assertWorkspaceExportSetResult],
@@ -749,6 +1235,42 @@ describe('CMS contract foundation', () => {
         state: 'experimental',
         transport: 'cli-json',
         contract: 'sf-cms-workspace-export@2',
+      },
+      {
+        id: 'content.delete.email',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@1',
+      },
+      {
+        id: 'content.delete.email-template',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@2',
+      },
+      {
+        id: 'content.publish.email',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-publish@1',
+      },
+      {
+        id: 'content.unpublish.email',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-unpublish@1',
+      },
+      {
+        id: 'content.update.email-raw-html',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-update@1',
+      },
+      {
+        id: 'content.update.email-template-raw-html',
+        state: 'experimental',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-update@2',
       },
       {
         id: 'workspace.import.email-fragment-create',

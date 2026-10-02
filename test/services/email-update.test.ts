@@ -1,6 +1,16 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import crypto from 'node:crypto';
-import { lstat, mkdtemp, readFile, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -8,7 +18,9 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { exportWorkspace } from '../../src/services/export-workspace.js';
 import {
+  applyDraftEmailUpdateWithReport,
   EmailUpdateOutcomeUnknownError,
+  EmailUpdatePreflightBlockedError,
   previewDraftEmailUpdateFromEditableHtml,
   updateDraftEmailFromEditableHtml,
 } from '../../src/services/email-update.js';
@@ -45,6 +57,31 @@ function email(id: string, language: string, apiName = 'pilot_email'): Record<st
       subjectLine: 'Pilot subject',
       messagePurpose: 'Transactional',
       rawHtml: '&lt;p&gt;Original&lt;/p&gt;',
+      'lightning:dataProviders': [],
+      'lightning:expressions': [],
+      'sfdc_cms:attachments': [],
+      'sfdc_cms:variants': [],
+    },
+  };
+}
+
+function template(
+  id: string,
+  language: string,
+  apiName = 'pilot_template',
+): Record<string, unknown> {
+  return {
+    ...email(id, language, apiName),
+    managedContentId: 'parent-template',
+    contentKey: 'template-key',
+    title: 'Pilot template',
+    urlName: undefined,
+    contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate', name: 'Email Template' },
+    contentBody: {
+      'sfdc_cms:title': 'Pilot template',
+      subjectLine: 'Pilot subject',
+      messagePurpose: 'Transactional',
+      rawHtml: '&lt;p&gt;Original template&lt;/p&gt;',
       'lightning:dataProviders': [],
       'lightning:expressions': [],
       'sfdc_cms:attachments': [],
@@ -127,6 +164,234 @@ describe('bounded Draft Email update pilot', () => {
     await removeOwnedFixture(root, editableDirectory);
     await unlink(path.join(root, '.owner'));
     await rmdir(root);
+  });
+
+  it('accepts the observed Draft Email Template body without subjectLine', async () => {
+    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-no-subject-'));
+    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateSource = path.join(templateRoot, 'source');
+    const templateEditable = path.join(templateRoot, 'editable');
+    const observed = template('template-en', 'en_US');
+    const observedBody = observed.contentBody as Record<string, unknown>;
+    delete observedBody.subjectLine;
+    const current: State = {
+      parent: {
+        managedContentId: 'parent-template',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+        contentSpace: { id: 'space' },
+      },
+      variants: { 'template-en': observed },
+    };
+    const caller = connection(current);
+    caller.request.callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search')) {
+        const item = {
+          id: 'template-en',
+          managedContentSpaceId: 'space',
+          contentType: { developerName: 'sfdc_cms__emailTemplate' },
+          type: 'ManagedContentVariantSearchResultRepresentation',
+        };
+        return fakeRequest({ count: 1, items: [item] });
+      }
+      if (url.includes('/connect/cms/contents/variants/'))
+        return fakeRequest(structuredClone(current.variants['template-en']));
+      if (url.includes('/connect/cms/contents/parent-template'))
+        return fakeRequest(structuredClone(current.parent));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    try {
+      await exportWorkspace(caller, 'space', templateSource, {
+        editableDirectory: templateEditable,
+        selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['pilot_template'] },
+      });
+      await writeFile(
+        path.join(templateEditable, 'items/template-en.html'),
+        '<p>Updated template</p>',
+      );
+      const preview = await previewDraftEmailUpdateFromEditableHtml(caller, {
+        contentType: 'sfdc_cms__emailTemplate',
+        sourceDirectory: templateSource,
+        editableDirectory: templateEditable,
+        selector: { workspaceId: 'space', apiName: 'pilot_template', language: 'en_US' },
+      });
+      expect(preview.status).to.equal('ready');
+    } finally {
+      await removeOwnedFixture(templateRoot, templateSource);
+      await removeOwnedFixture(templateRoot, templateEditable);
+      await unlink(path.join(templateRoot, '.owner'));
+      await rmdir(templateRoot);
+    }
+  });
+
+  it('previews and applies one exact Draft Email Template with dual inventory and one PUT', async () => {
+    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-'));
+    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateSource = path.join(templateRoot, 'source');
+    const templateEditable = path.join(templateRoot, 'editable');
+    const current: State = {
+      parent: {
+        managedContentId: 'parent-template',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+        contentSpace: { id: 'space' },
+      },
+      variants: { 'template-en': template('template-en', 'en_US') },
+    };
+    const caller = connection(current);
+    caller.request.callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space')
+        return fakeRequest({ id: 'space', defaultLanguage: 'en_US' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const familyScoped = url.includes('contentTypeFQN=');
+        const templateItem = {
+          id: 'template-en',
+          managedContentSpaceId: 'space',
+          contentType: { developerName: 'sfdc_cms__emailTemplate' },
+          type: 'ManagedContentVariantSearchResultRepresentation',
+        };
+        const items = familyScoped
+          ? [templateItem]
+          : [
+              templateItem,
+              {
+                id: 'other-image',
+                managedContentSpaceId: 'space',
+                contentType: { developerName: 'sfdc_cms__image' },
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ];
+        return fakeRequest({ count: items.length, items });
+      }
+      if (url.includes('/connect/cms/contents/variants/'))
+        return fakeRequest(structuredClone(current.variants['template-en']));
+      if (url.includes('/connect/cms/contents/parent-template'))
+        return fakeRequest(structuredClone(current.parent));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    await exportWorkspace(caller, 'space', templateSource, {
+      editableDirectory: templateEditable,
+      selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['pilot_template'] },
+    });
+    await writeFile(
+      path.join(templateEditable, 'items/template-en.html'),
+      '<p>Updated template</p>',
+    );
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
+      const body = JSON.parse((request as { body: string }).body) as Record<string, unknown>;
+      current.variants['template-en'] = {
+        ...current.variants['template-en'],
+        ...body,
+        contentBody: {
+          ...(body.contentBody as Record<string, unknown>),
+          rawHtml: '&lt;p&gt;Updated template&lt;/p&gt;',
+        },
+      };
+      return fakeRequest(structuredClone(current.variants['template-en']));
+    });
+    try {
+      const input = {
+        contentType: 'sfdc_cms__emailTemplate' as const,
+        sourceDirectory: templateSource,
+        editableDirectory: templateEditable,
+        selector: { workspaceId: 'space', apiName: 'pilot_template', language: 'en_US' },
+      };
+      const preview = await previewDraftEmailUpdateFromEditableHtml(caller, input);
+      expect(preview.status).to.equal('ready');
+      if (preview.status !== 'ready') throw new Error('Expected ready Template preview');
+      expect(preview.evidence.contentType).to.equal('sfdc_cms__emailTemplate');
+      const result = await updateDraftEmailFromEditableHtml(caller, input);
+      expect(result.contentType).to.equal('sfdc_cms__emailTemplate');
+      expect(result.changedFields).to.deep.equal(['contentBody.rawHtml']);
+      expect(result.lifecycle).to.deep.equal({ isPublished: false, status: 'Draft' });
+      expect(mutation.calledOnce).to.equal(true);
+      const submitted = JSON.parse((mutation.firstCall.args[0] as { body: string }).body) as {
+        contentBody: Record<string, unknown>;
+      };
+      expect(submitted.contentBody.rawHtml).to.equal('<p>Updated template</p>');
+      expect(submitted.contentBody.subjectLine).to.equal('Pilot subject');
+    } finally {
+      mutation.restore();
+      await removeOwnedFixture(templateRoot, templateSource);
+      await removeOwnedFixture(templateRoot, templateEditable);
+      await unlink(path.join(templateRoot, '.owner'));
+      await rmdir(templateRoot);
+    }
+  });
+
+  it('blocks Template update when dual inventories disagree without PUT', async () => {
+    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-mismatch-'));
+    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateSource = path.join(templateRoot, 'source');
+    const templateEditable = path.join(templateRoot, 'editable');
+    const current: State = {
+      parent: {
+        managedContentId: 'parent-template',
+        contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
+        contentSpace: { id: 'space' },
+      },
+      variants: { 'template-en': template('template-en', 'en_US') },
+    };
+    const exportCaller = connection(current);
+    exportCaller.request.callsFake(({ url }: { url: string }) => {
+      if (url.startsWith('/connect/cms/items/search'))
+        return fakeRequest({
+          count: 1,
+          items: [
+            {
+              id: 'template-en',
+              managedContentSpaceId: 'space',
+              contentType: { developerName: 'sfdc_cms__emailTemplate' },
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+        });
+      if (url.endsWith('/template-en')) return fakeRequest(current.variants['template-en']);
+      throw new Error(`Unexpected export request ${url}`);
+    });
+    await exportWorkspace(exportCaller, 'space', templateSource, {
+      editableDirectory: templateEditable,
+      selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['pilot_template'] },
+    });
+    await writeFile(path.join(templateEditable, 'items/template-en.html'), '<p>Updated</p>');
+    const caller = connection(current);
+    caller.request.callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space')
+        return fakeRequest({ id: 'space', defaultLanguage: 'en_US' });
+      if (url.startsWith('/connect/cms/items/search')) {
+        const familyScoped = url.includes('contentTypeFQN=');
+        const items = familyScoped
+          ? [
+              {
+                id: 'template-en',
+                managedContentSpaceId: 'space',
+                contentType: { developerName: 'sfdc_cms__emailTemplate' },
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ]
+          : [];
+        return fakeRequest({ count: items.length, items });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request');
+    try {
+      const result = await previewDraftEmailUpdateFromEditableHtml(caller, {
+        contentType: 'sfdc_cms__emailTemplate',
+        sourceDirectory: templateSource,
+        editableDirectory: templateEditable,
+        selector: { workspaceId: 'space', apiName: 'pilot_template', language: 'en_US' },
+      });
+      expect(result.status).to.equal('blocked');
+      expect(result.status === 'blocked' && result.blockers[0].message).to.equal(
+        'Email Template family search disagrees with complete workspace inventory',
+      );
+      expect(mutation.notCalled).to.equal(true);
+    } finally {
+      mutation.restore();
+      await removeOwnedFixture(templateRoot, templateSource);
+      await removeOwnedFixture(templateRoot, templateEditable);
+      await unlink(path.join(templateRoot, '.owner'));
+      await rmdir(templateRoot);
+    }
   });
 
   it('previews exact evidence without invoking any mutation transport', async () => {
@@ -229,6 +494,48 @@ describe('bounded Draft Email update pilot', () => {
       status: 'blocked',
     });
     expect(mutation.notCalled).to.equal(true);
+  });
+
+  it('normalizes malformed editable descriptor JSON as blocked preview and apply preflight', async () => {
+    await writeFile(path.join(editableDirectory, 'editable.json'), '{ malformed');
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request');
+
+    const preview = await previewDraftEmailUpdateFromEditableHtml(connection(state()), {
+      sourceDirectory,
+      editableDirectory,
+      selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+    });
+
+    expect(preview).to.deep.equal({
+      blockers: [
+        {
+          code: 'EMAIL_UPDATE_PREFLIGHT_BLOCKED',
+          message: 'Editable descriptor must contain valid JSON',
+        },
+      ],
+      status: 'blocked',
+    });
+
+    const reportDirectory = path.join(root, 'malformed-descriptor-report');
+    let failure: unknown;
+    try {
+      await applyDraftEmailUpdateWithReport(
+        connection(state()),
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        reportDirectory,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(EmailUpdatePreflightBlockedError);
+    expect((failure as Error).message).to.equal('Editable descriptor must contain valid JSON');
+    expect(mutation.notCalled).to.equal(true);
+    await expectMissing(reportDirectory);
   });
 
   it('reprepares after preview and blocks apply when the destination drifted', async () => {
@@ -428,6 +735,198 @@ describe('bounded Draft Email update pilot', () => {
     expect(staleMutation.notCalled).to.equal(true);
   });
 
+  it('blocks a partial workspace baseline before creating a report or issuing PUT', async () => {
+    const manifestFile = path.join(sourceDirectory, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
+    manifest.completeness = 'partial';
+    await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    const reportDirectory = path.join(root, 'partial-baseline-report');
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request');
+
+    let failure: unknown;
+    try {
+      await applyDraftEmailUpdateWithReport(
+        connection(state()),
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        reportDirectory,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(EmailUpdatePreflightBlockedError);
+    expect((failure as Error).message).to.match(/workspace export is partial/iu);
+    expect(mutation.notCalled).to.equal(true);
+    await expectMissing(reportDirectory);
+  });
+
+  it('blocks stale apply preflight and existing report directories without mutation or ownership claim', async () => {
+    const stale = state();
+    (stale.variants['variant-en'].contentBody as Record<string, unknown>).rawHtml =
+      '&lt;p&gt;Newer destination&lt;/p&gt;';
+    const staleReport = path.join(root, 'stale-report');
+    const staleMutation = sinon.stub(JsforceConnection.prototype, 'request');
+    let staleFailure: unknown;
+    try {
+      await applyDraftEmailUpdateWithReport(
+        connection(stale),
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        staleReport,
+      );
+    } catch (error) {
+      staleFailure = error;
+    }
+    expect(staleFailure).to.be.instanceOf(EmailUpdatePreflightBlockedError);
+    expect((staleFailure as Error).message).to.match(/baseline does not match/u);
+    expect(staleMutation.notCalled).to.equal(true);
+    await expectMissing(staleReport);
+    staleMutation.restore();
+
+    const existingReport = path.join(root, 'existing-report');
+    await mkdir(existingReport);
+    const existingMutation = sinon.stub(JsforceConnection.prototype, 'request');
+    let existingFailure: unknown;
+    try {
+      await applyDraftEmailUpdateWithReport(
+        connection(state()),
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        existingReport,
+      );
+    } catch (error) {
+      existingFailure = error;
+    }
+    expect(existingFailure).to.be.instanceOf(EmailUpdatePreflightBlockedError);
+    expect((existingFailure as Error).message).to.match(/already exists/u);
+    expect(existingMutation.notCalled).to.equal(true);
+    await expectMissing(path.join(existingReport, 'content-update-run.json'));
+    existingMutation.restore();
+    await rmdir(existingReport);
+  });
+
+  it('persists pending intent before one PUT and completes the durable report', async () => {
+    const current = state();
+    const caller = connection(current);
+    const reportDirectory = path.join(root, 'report');
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
+      const body = JSON.parse((request as { body: string }).body) as Record<string, unknown>;
+      current.variants['variant-en'] = {
+        ...current.variants['variant-en'],
+        ...body,
+        contentBody: {
+          ...(body.contentBody as Record<string, unknown>),
+          rawHtml: '&lt;p&gt;Updated&lt;/p&gt;',
+        },
+      };
+      return fakeRequest(structuredClone(current.variants['variant-en']));
+    });
+
+    const applied = await applyDraftEmailUpdateWithReport(
+      caller,
+      {
+        sourceDirectory,
+        editableDirectory,
+        selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+      },
+      reportDirectory,
+    );
+    const report = JSON.parse(await readFile(applied.reportFile, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(report).to.deep.include({
+      contract: 'sf-cms-email-update-run',
+      contractVersion: '1.0.0',
+      state: 'completed',
+    });
+    expect(mutation.calledOnce).to.equal(true);
+    await removeOwnedFixture(root, reportDirectory);
+  });
+
+  it('treats completed-report persistence failure as ownership uncertain without another PUT', async () => {
+    const current = state();
+    const caller = connection(current);
+    const reportDirectory = path.join(root, 'report-persist-failure');
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
+      const body = JSON.parse((request as { body: string }).body) as Record<string, unknown>;
+      current.variants['variant-en'] = {
+        ...current.variants['variant-en'],
+        ...body,
+        contentBody: {
+          ...(body.contentBody as Record<string, unknown>),
+          rawHtml: '&lt;p&gt;Updated&lt;/p&gt;',
+        },
+      };
+      return fakeRequest(structuredClone(current.variants['variant-en']));
+    });
+    const reportFile = path.join(reportDirectory, 'content-update-run.json');
+    let rewrites = 0;
+    const { rewriteAtomic } = await import('../../src/services/import-workspace.js');
+    const rewriteReport = async (file: string, value: unknown): Promise<void> => {
+      rewrites += 1;
+      if (rewrites === 2) throw new Error('report unavailable');
+      await rewriteAtomic(file, value);
+    };
+
+    await expectOutcomeUnknown(
+      applyDraftEmailUpdateWithReport(
+        caller,
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        reportDirectory,
+        { rewriteReport },
+      ),
+    );
+    expect(mutation.calledOnce).to.equal(true);
+    expect((JSON.parse(await readFile(reportFile, 'utf8')) as { state: string }).state).to.equal(
+      'ownership-uncertain',
+    );
+    await removeOwnedFixture(root, reportDirectory);
+  });
+
+  it('retains ownership-uncertain reconciliation identity without retrying', async () => {
+    const reportDirectory = path.join(root, 'uncertain-report');
+    const mutation = sinon
+      .stub(JsforceConnection.prototype, 'request')
+      .returns(
+        Object.assign(Promise.reject(new Error('timeout')), { stream: () => new PassThrough() }),
+      );
+
+    await expectOutcomeUnknown(
+      applyDraftEmailUpdateWithReport(
+        connection(state()),
+        {
+          sourceDirectory,
+          editableDirectory,
+          selector: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
+        },
+        reportDirectory,
+      ),
+    );
+    const report = JSON.parse(
+      await readFile(path.join(reportDirectory, 'content-update-run.json'), 'utf8'),
+    ) as { state: string; reconciliation: { variantId: string; payloadHash: string } };
+    expect(report.state).to.equal('ownership-uncertain');
+    expect(report.reconciliation.variantId).to.equal('variant-en');
+    expect(report.reconciliation.payloadHash).to.match(/^[a-f\d]{64}$/u);
+    expect(mutation.calledOnce).to.equal(true);
+    await removeOwnedFixture(root, reportDirectory);
+  });
+
   it('reports an ambiguous mutation outcome without retrying', async () => {
     const mutation = sinon
       .stub(JsforceConnection.prototype, 'request')
@@ -501,6 +1000,16 @@ async function removeOwnedFixture(runRoot: string, target: string): Promise<void
   const information = await lstat(target);
   if (information.isSymbolicLink()) throw new Error('Refusing fixture cleanup through a symlink');
   await rm(target, { recursive: true });
+}
+
+async function expectMissing(target: string): Promise<void> {
+  let failure: unknown;
+  try {
+    await stat(target);
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).to.have.property('code', 'ENOENT');
 }
 
 async function expectOutcomeUnknown(promise: Promise<unknown>): Promise<void> {

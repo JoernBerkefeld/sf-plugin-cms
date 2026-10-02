@@ -196,10 +196,14 @@ describe('JSON mutation transport', () => {
     expect(destroy.calledOnce).to.equal(true);
   });
 
-  it('redacts and normalizes status-bearing errors without retrying', async () => {
+  it('preserves sanitized Salesforce mutation evidence without retrying', async () => {
     const failure = Object.assign(
       new Error('Authorization: Bearer secret-token ?access_token=also-secret'),
-      { statusCode: 503 },
+      {
+        data: [{ errorCode: 'CMS_OPERATION_FAILED', message: 'Cookie: session-secret rejected' }],
+        requestId: 'request-id-123',
+        statusCode: 503,
+      },
     );
     const request = sinon.stub().returns(failedRequest(failure));
 
@@ -219,11 +223,42 @@ describe('JSON mutation transport', () => {
     } catch (error) {
       expect(error).to.be.instanceOf(CmsRequestError);
       expect((error as CmsRequestError).status).to.equal(503);
+      expect((error as CmsRequestError).requestSelector).to.equal(
+        'POST /connect/cms/contents/variants',
+      );
+      expect((error as CmsRequestError).requestBodySha256).to.match(/^[a-f\d]{64}$/u);
+      expect((error as CmsRequestError).requestId).to.equal('request-id-123');
+      expect((error as CmsRequestError).errorCode).to.equal('CMS_OPERATION_FAILED');
+      expect((error as CmsRequestError).responseMessage).to.equal('Cookie: [REDACTED]');
       expect((error as Error).message).to.equal(
         'Authorization: [REDACTED] ?access_token=[REDACTED]',
       );
     }
     expect(request.calledOnce).to.equal(true);
     expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
+  });
+
+  it('preserves HTTP status exposed on the response object', async () => {
+    const failure = Object.assign(new Error('request rejected'), {
+      data: [{ errorCode: 'JSON_PARSER_ERROR', message: 'Unrecognized field' }],
+      response: { status: 400, headers: { 'sforce-request-id': 'request-id-response' } },
+    });
+    const request = sinon.stub().returns(failedRequest(failure));
+
+    try {
+      await requestJsonMutation(
+        { request },
+        getSelectedOperation('content.unpublish'),
+        { contentIds: ['parent-email'] },
+        {},
+        { allowCallerConnection: true },
+      );
+      expect.fail('expected API error');
+    } catch (error) {
+      expect(error).to.be.instanceOf(CmsRequestError);
+      expect((error as CmsRequestError).status).to.equal(400);
+      expect((error as CmsRequestError).requestId).to.equal('request-id-response');
+      expect((error as CmsRequestError).errorCode).to.equal('JSON_PARSER_ERROR');
+    }
   });
 });

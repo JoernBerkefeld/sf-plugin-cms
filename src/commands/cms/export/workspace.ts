@@ -35,6 +35,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-name "Main Site"',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --email-fragment-map ./email-fragments.json --json',
+    '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --email-template-map ./email-templates.json --editable-dir ./cms-editable --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --web-fragment-map ./web-fragments.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-template-map ./landing-page-templates.json --json',
     '<%= config.bin %> cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./cms-export --landing-page-map ./landing-pages.json --json',
@@ -61,6 +62,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         'workspace-id',
         'workspace-name',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -90,6 +92,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exists: true,
       exclusive: [
         'all',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -103,11 +106,30 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       summary:
         'JSON array of exact sfdc_cms__emailFragment API names to export; every name must resolve exactly once.',
     }),
+    'email-template-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'all',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'brand-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      summary:
+        'JSON array of exact sfdc_cms__emailTemplate API names to export; every name must resolve exactly once.',
+    }),
     'web-fragment-map': Flags.file({
       exists: true,
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'landing-page-template-map',
         'landing-page-map',
         'preference-page-map',
@@ -125,6 +147,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-map',
         'preference-page-map',
@@ -142,6 +165,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'preference-page-map',
@@ -159,6 +183,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -176,6 +201,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -193,6 +219,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -210,6 +237,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -227,6 +255,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -244,6 +273,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       exclusive: [
         'all',
         'email-fragment-map',
+        'email-template-map',
         'web-fragment-map',
         'landing-page-template-map',
         'landing-page-map',
@@ -342,6 +372,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
     const pairSelectionFile = flags['landing-page-pair-map'];
     const selectionFile =
       flags['email-fragment-map'] ??
+      flags['email-template-map'] ??
       flags['web-fragment-map'] ??
       flags['landing-page-template-map'] ??
       flags['landing-page-map'] ??
@@ -369,6 +400,8 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
           );
     let selectedContentType: string | undefined;
     if (flags['email-fragment-map'] !== undefined) selectedContentType = 'sfdc_cms__emailFragment';
+    else if (flags['email-template-map'] !== undefined)
+      selectedContentType = 'sfdc_cms__emailTemplate';
     else if (flags['web-fragment-map'] !== undefined) selectedContentType = 'sfdc_cms__webFragment';
     else if (flags['landing-page-template-map'] !== undefined)
       selectedContentType = 'sfdc_cms__landingPageTemplate';

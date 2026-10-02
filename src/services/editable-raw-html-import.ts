@@ -43,6 +43,15 @@ function utf8(bytes: Buffer, label: string): string {
   }
 }
 
+function parseJson(bytes: Buffer, label: string): unknown {
+  try {
+    return JSON.parse(utf8(bytes, label)) as unknown;
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+    throw new TypeError(`${label} must contain valid JSON`, { cause: error });
+  }
+}
+
 /**
  * Reverify the complete original export and reconstruct only declared literal HTML sidecars.
  * Metadata and descriptor expectations always come from original raw JSON, not editable hashes.
@@ -97,7 +106,7 @@ export async function loadEditableRawHtml(
     path.join(directory, 'editable.json'),
     'Editable descriptor',
   );
-  const descriptor: unknown = JSON.parse(utf8(descriptorBytes, 'Editable descriptor'));
+  const descriptor = parseJson(descriptorBytes, 'Editable descriptor');
   if (!isDeepStrictEqual(descriptor, projection.descriptor)) {
     throw new TypeError('Editable descriptor does not match the verified original baseline');
   }

@@ -83,6 +83,7 @@ const FORM_HANDLER_TYPE = 'sfdc_cms__formHandler';
 const CONSENT_BANNER_TYPE = 'sfdc_cms__consentBanner';
 const INVENTORY_EXACT_API_NAME_TYPES = new Set([
   'sfdc_cms__emailFragment',
+  'sfdc_cms__emailTemplate',
   'sfdc_cms__webFragment',
   PREFERENCE_PAGE_TYPE,
   BRAND_TYPE,
@@ -469,9 +470,10 @@ export async function exportWorkspace(
       : [LANDING_PAGE_TYPE, LANDING_PAGE_TEMPLATE_TYPE];
 
   for (const searchType of searchTypes) {
+    const pageLocalCount = searchType === 'sfdc_cms__emailTemplate';
     let searchExpectedCount = 0;
     let page = 0;
-    let pageLimit = 1;
+    let pageLimit = pageLocalCount ? ABSOLUTE_PAGE_CAP : 1;
     let searchCandidateCount = 0;
     while (page < pageLimit) {
       const response = await requestJson<unknown>(
@@ -494,8 +496,15 @@ export async function exportWorkspace(
       );
       pagesRequested += 1;
       const items = responseItems(response.data);
-      if (page === 0) {
-        searchExpectedCount = responseCount(response.data);
+      const advertisedCount = responseCount(response.data);
+      if (pageLocalCount) {
+        if (advertisedCount !== items.length) {
+          throw new TypeError(
+            `Email Template search page ${page} advertised ${advertisedCount} items but returned ${items.length}.`,
+          );
+        }
+      } else if (page === 0) {
+        searchExpectedCount = advertisedCount;
         expectedCount += searchExpectedCount;
         inventoryExceedsPageCapacity ||= searchExpectedCount > ABSOLUTE_PAGE_CAP * PAGE_SIZE;
         pageLimit = Math.min(
@@ -522,17 +531,34 @@ export async function exportWorkspace(
         }
       }
 
-      if (searchCandidateCount >= searchExpectedCount) break;
-      if (items.length === 0) {
-        if (searchCandidateCount < searchExpectedCount) {
-          warnings.push({
-            code: 'PREMATURE_EMPTY_PAGE',
-            message: `Search returned an empty page before the advertised count was satisfied.`,
-          });
+      if (pageLocalCount) {
+        if (duplicateIds.size > 0) {
+          throw new TypeError(
+            'Email Template inventory contains duplicate variant IDs across search pages.',
+          );
         }
-        break;
+        if (items.length < PAGE_SIZE) {
+          searchExpectedCount = searchCandidateCount;
+          expectedCount += searchExpectedCount;
+          break;
+        }
+        if (page + 1 >= ABSOLUTE_PAGE_CAP) {
+          inventoryExceedsPageCapacity = true;
+          break;
+        }
+      } else {
+        if (searchCandidateCount >= searchExpectedCount) break;
+        if (items.length === 0) {
+          if (searchCandidateCount < searchExpectedCount) {
+            warnings.push({
+              code: 'PREMATURE_EMPTY_PAGE',
+              message: `Search returned an empty page before the advertised count was satisfied.`,
+            });
+          }
+          break;
+        }
+        if (additions === 0) break;
       }
-      if (additions === 0) break;
       page += 1;
     }
     if (pairSelection !== undefined && searchCandidateCount !== searchExpectedCount) {

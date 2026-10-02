@@ -5,7 +5,15 @@ export const CMS_CONTRACT_VERSION = '1.0.0' as const;
 export const CMS_CONTRACT_VERSIONS = ['1.0.0', '2.0.0'] as const;
 export const CMS_PLUGIN_NAME = 'sf-plugin-cms' as const;
 export const CMS_STATUSES = ['success', 'partial', 'failed', 'blocked'] as const;
-export const CMS_OPERATIONS = ['cms.info', 'workspace.export.bulk', 'workspace.import'] as const;
+export const CMS_OPERATIONS = [
+  'cms.info',
+  'content.delete',
+  'content.publish',
+  'content.unpublish',
+  'content.update',
+  'workspace.export.bulk',
+  'workspace.import',
+] as const;
 export const CMS_REFERENCE_RESOLUTIONS = [
   'included',
   'unresolved',
@@ -239,11 +247,22 @@ export function assertCmsEnvelope<T>(
   if (!CMS_STATUSES.includes(value.status as CmsStatus))
     throw new TypeError('envelope.status is invalid');
   assertMetadata(value.metadata);
-  if (value.contractVersion === '2.0.0' && value.metadata.operation !== 'workspace.import') {
-    throw new TypeError('envelope.contractVersion 2.0.0 is supported only for workspace.import');
+  if (
+    value.contractVersion === '2.0.0' &&
+    value.metadata.operation !== 'workspace.import' &&
+    value.metadata.operation !== 'content.delete' &&
+    value.metadata.operation !== 'content.update'
+  ) {
+    throw new TypeError(
+      'envelope.contractVersion 2.0.0 is supported only for workspace.import, content.delete, or content.update',
+    );
   }
   const expectedContract = new Map<CmsOperation, string>([
     ['cms.info', 'sf-cms-info'],
+    ['content.delete', 'sf-cms-content-delete'],
+    ['content.publish', 'sf-cms-content-publish'],
+    ['content.unpublish', 'sf-cms-content-unpublish'],
+    ['content.update', 'sf-cms-content-update'],
     ['workspace.export.bulk', 'sf-cms-workspace-export-set'],
     ['workspace.import', 'sf-cms-workspace-import'],
   ]);

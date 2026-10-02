@@ -129,7 +129,38 @@ describe('CMS JSON request transport', () => {
     }
   });
 
-  it('maps jsforce NOT_FOUND errors to a proven 404 status', async () => {
+  it('preserves a structured variant 404 from the response object', async () => {
+    const request = sinon.stub().returns(
+      fakeRequest(
+        Promise.reject(
+          Object.assign(new Error('variant read failed'), {
+            response: {
+              data: [{ errorCode: 'VARIANT_NOT_FOUND', message: 'Variant not found' }],
+              status: 404,
+            },
+          }),
+        ),
+      ),
+    );
+
+    try {
+      await requestJson({ request }, getSelectedOperation('variant.get'), {
+        path: { variantId: 'missing-variant' },
+      });
+      expect.fail('expected request to fail');
+    } catch (error) {
+      expect(error).to.be.instanceOf(CmsRequestError);
+      expect(error).to.include({
+        errorCode: 'VARIANT_NOT_FOUND',
+        errorEntryCount: 1,
+        operationKey: 'variant.get',
+        responseMessage: 'Variant not found',
+        status: 404,
+      });
+    }
+  });
+
+  it('does not synthesize HTTP 404 from a NOT_FOUND code without an observed status', async () => {
     const request = sinon.stub().returns(
       fakeRequest(
         Promise.reject(
@@ -155,6 +186,7 @@ describe('CMS JSON request transport', () => {
         operationKey: 'content.get',
         responseMessage: 'Managed content not found.',
         status: 404,
+        statusObserved: false,
       });
       expect((error as Error).message).to.equal('Managed content not found.');
     }

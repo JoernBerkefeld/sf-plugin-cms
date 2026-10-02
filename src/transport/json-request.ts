@@ -41,8 +41,12 @@ export class CmsRequestError extends Error {
   public readonly errorCode?: string;
   public readonly errorEntryCount: number;
   public readonly operationKey: SelectedOperation['localKey'];
+  public readonly requestBodySha256?: string;
+  public readonly requestId?: string;
+  public readonly requestSelector?: string;
   public readonly responseMessage?: string;
   public readonly status?: number;
+  public readonly statusObserved: boolean;
 
   public constructor(
     operationKey: SelectedOperation['localKey'],
@@ -56,11 +60,15 @@ export class CmsRequestError extends Error {
     this.errorCode = normalizedEvidence.errorCode;
     this.errorEntryCount = normalizedEvidence.errorEntryCount ?? 0;
     this.operationKey = operationKey;
+    this.requestBodySha256 = normalizedEvidence.requestBodySha256;
+    this.requestId = normalizedEvidence.requestId;
+    this.requestSelector = normalizedEvidence.requestSelector;
     this.responseMessage =
       normalizedEvidence.responseMessage === undefined
         ? undefined
         : redactSecrets(normalizedEvidence.responseMessage);
     this.status = status;
+    this.statusObserved = normalizedEvidence.statusObserved ?? status !== undefined;
   }
 }
 
@@ -74,20 +82,32 @@ function errorStatus(error: unknown): number | undefined {
     const value = error[key];
     if (typeof value === 'number' && Number.isInteger(value)) return value;
   }
+  if (isRecord(error.response)) {
+    for (const key of ['statusCode', 'status']) {
+      const value = error.response[key];
+      if (typeof value === 'number' && Number.isInteger(value)) return value;
+    }
+  }
   if (error.errorCode === 'NOT_FOUND' || error.name === 'NOT_FOUND') return 404;
   if (isRecord(error.data) && error.data.errorCode === 'NOT_FOUND') return 404;
   return undefined;
 }
 
-type ErrorEvidence = {
+export type ErrorEvidence = {
   errorCode?: string;
   errorEntryCount?: number;
+  requestBodySha256?: string;
+  requestId?: string;
+  requestSelector?: string;
   responseMessage?: string;
+  statusObserved?: boolean;
 };
 
 function errorEvidence(error: unknown): ErrorEvidence {
   if (!isRecord(error)) return { errorEntryCount: 0 };
-  const data = error.data;
+  const data =
+    error.data ??
+    (isRecord(error.response) && 'data' in error.response ? error.response.data : undefined);
   const entries = Array.isArray(data) ? data : [data];
   if (entries.length !== 1 || !isRecord(entries[0])) {
     return { errorEntryCount: Array.isArray(data) ? data.length : 0 };
@@ -229,12 +249,17 @@ export async function requestJson<T>(
   } catch (error) {
     if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
-    throw new CmsRequestError(
-      operation.localKey,
-      message,
-      errorStatus(error),
-      errorEvidence(error),
-    );
+    const status = errorStatus(error);
+    throw new CmsRequestError(operation.localKey, message, status, {
+      ...errorEvidence(error),
+      statusObserved:
+        isRecord(error) &&
+        (typeof error.statusCode === 'number' ||
+          typeof error.status === 'number' ||
+          (isRecord(error.response) &&
+            (typeof error.response.statusCode === 'number' ||
+              typeof error.response.status === 'number'))),
+    });
   } finally {
     options.signal?.removeEventListener('abort', cancel);
   }

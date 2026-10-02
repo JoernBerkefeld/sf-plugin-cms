@@ -118,7 +118,7 @@ describe('CMS lifecycle transport foundation', () => {
       );
     const connection = lifecycleConnection();
 
-    const result = await unpublishContent(connection, { variantIds: ['variant-id'] });
+    const result = await unpublishContent(connection, { contentIds: ['content-id'] });
 
     expect(result).to.deep.equal({
       deploymentId: 'deployment-id',
@@ -126,7 +126,9 @@ describe('CMS lifecycle transport foundation', () => {
     });
     expect(connection.request.notCalled).to.equal(true);
     const unpublishRequest = request.firstCall.args[0] as { body: string };
-    expect(JSON.parse(unpublishRequest.body)).to.deep.equal({ variantIds: ['variant-id'] });
+    expect(JSON.parse(unpublishRequest.body)).to.deep.equal({
+      contentIds: ['content-id'],
+    });
     expect(request.calledOnce).to.equal(true);
   });
 
@@ -147,6 +149,13 @@ describe('CMS lifecycle transport foundation', () => {
     );
     await expectRejected(
       publishContent(connection, {
+        contentIds: ['content-id'],
+        includeContentReferences: true,
+      } as never),
+      'Unknown request field: includeContentReferences',
+    );
+    await expectRejected(
+      unpublishContent(connection, {
         contentIds: ['content-id'],
         includeContentReferences: true,
       } as never),

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
@@ -44,7 +45,80 @@ function errorStatus(error: unknown): number | undefined {
     const value = error[key];
     if (typeof value === 'number' && Number.isInteger(value)) return value;
   }
+  if (isRecord(error.response)) {
+    for (const key of ['statusCode', 'status']) {
+      const value = error.response[key];
+      if (typeof value === 'number' && Number.isInteger(value)) return value;
+    }
+  }
   return undefined;
+}
+
+function responseErrorEvidence(error: unknown): {
+  errorCode?: string;
+  errorEntryCount: number;
+  requestId?: string;
+  responseMessage?: string;
+} {
+  if (!isRecord(error)) return { errorEntryCount: 0 };
+  const data = error.data;
+  const entries = Array.isArray(data) ? data : [data];
+  const entry = entries.length === 1 && isRecord(entries[0]) ? entries[0] : undefined;
+  let headers: Record<string, unknown> | undefined;
+  if (isRecord(error.response) && isRecord(error.response.headers)) {
+    headers = error.response.headers;
+  } else if (isRecord(error.headers)) {
+    headers = error.headers;
+  }
+  const requestIdCandidates = [
+    error.requestId,
+    entry?.requestId,
+    headers?.['sforce-request-id'],
+    headers?.['x-request-id'],
+  ];
+  const requestId = requestIdCandidates.find(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+  let errorEntryCount = 0;
+  if (Array.isArray(data)) errorEntryCount = data.length;
+  else if (entry !== undefined) errorEntryCount = 1;
+  return {
+    ...(typeof entry?.errorCode === 'string' ? { errorCode: entry.errorCode } : {}),
+    errorEntryCount,
+    ...(requestId === undefined ? {} : { requestId: redactSecrets(requestId) }),
+    ...(typeof entry?.message === 'string'
+      ? { responseMessage: redactSecrets(entry.message) }
+      : {}),
+  };
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => canonical(item));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .toSorted()
+      .map((key) => [key, canonical(value[key])]),
+  );
+}
+
+function bodySha256(body: JsonMutationBody | undefined): string | undefined {
+  if (body === undefined) return undefined;
+  return createHash('sha256')
+    .update(JSON.stringify(canonical(body)))
+    .digest('hex');
+}
+
+function requestSelector(operation: SelectedOperation, values: JsonRequestValues): string {
+  const path = values.path ?? {};
+  const query = values.query ?? {};
+  const selectors = {
+    ...(Object.keys(path).length === 0 ? {} : { path }),
+    ...(Object.keys(query).length === 0 ? {} : { query }),
+  };
+  return redactSecrets(
+    `${operation.method} ${operation.path}${Object.keys(selectors).length === 0 ? '' : ` ${JSON.stringify(canonical(selectors))}`}`,
+  );
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -139,7 +213,11 @@ async function sendMutation<T>(
     return await request;
   } catch (error) {
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
-    throw new CmsRequestError(operation.localKey, message, errorStatus(error));
+    throw new CmsRequestError(operation.localKey, message, errorStatus(error), {
+      ...responseErrorEvidence(error),
+      ...(bodySha256(body) === undefined ? {} : { requestBodySha256: bodySha256(body) }),
+      requestSelector: requestSelector(operation, values),
+    });
   } finally {
     options.signal?.removeEventListener('abort', cancel);
   }
