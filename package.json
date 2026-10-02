@@ -80,7 +80,7 @@
     "@types/mocha": "10.0.10",
     "@types/node": "24.10.1",
     "@types/sinon": "17.0.4",
-    "chai": "4.5.0",
+    "chai": "6.2.2",
     "eslint": "9.39.4",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-jsdoc": "54.7.0",
