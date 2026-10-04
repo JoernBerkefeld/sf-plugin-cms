@@ -54,6 +54,7 @@ const requiredCommands = [
   'commands/cms/publish/content.js',
   'commands/cms/unpublish/content.js',
   'commands/cms/update/content.js',
+  'commands/cms/upload/images.js',
 ];
 for (const command of requiredCommands) {
   if (!shippedRuntimeFiles.some((file) => file.endsWith(command.replaceAll('/', path.sep)))) {

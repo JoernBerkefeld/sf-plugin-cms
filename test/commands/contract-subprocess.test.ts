@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -50,6 +50,7 @@ async function runSf(arguments_: string[], contractCase?: string): Promise<Proce
         ...process.env,
         NO_COLOR: '1',
         SF_DATA_DIR: isolatedDataDirectory,
+        SF_CONFIG_DIR: isolatedDataDirectory,
         ...(contractCase === undefined
           ? {}
           : {
@@ -128,7 +129,7 @@ function parseEnvelope(result: ProcessResult): Record<string, unknown> {
 
 async function installPackedPlugin(dataDirectory: string): Promise<string> {
   const temporaryPackDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-pack-'));
-  try {
+  {
     if (npmCli === undefined) throw new Error('npm executable path is unavailable');
     const pending = execFileAsync(executable, [
       npmCli,
@@ -143,16 +144,29 @@ async function installPackedPlugin(dataDirectory: string): Promise<string> {
     const specification = `${packageName}@file:${path.join(temporaryPackDirectory, filename).replaceAll('\\', '/')}`;
     await runInstall(specification, dataDirectory);
     return path.join(dataDirectory, 'node_modules', packageName);
-  } finally {
-    await rm(temporaryPackDirectory, { force: true, recursive: true });
   }
+  // Isolated packaging output is retained; no recursive cleanup of unregistered roots.
 }
 
 async function runInstall(specification: string, dataDirectory: string): Promise<void> {
+  // Approved narrow exception: CLI 2.140.0 checks this exact run-owned tarball spec
+  // as a repository URL. Trust only it and the required package in fresh isolated state.
+  const allowlist = ['sf-plugin-cms', specification];
+  const allowlistPath = path.join(dataDirectory, 'unsignedPluginAllowList.json');
+  await writeFile(allowlistPath, JSON.stringify(allowlist), 'utf8');
+  expect(JSON.parse(await readFile(allowlistPath, 'utf8'))).to.deep.equal([
+    'sf-plugin-cms',
+    specification,
+  ]);
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, [...sfPrefix, 'plugins', 'install', specification], {
       cwd: process.cwd(),
-      env: { ...process.env, NO_COLOR: '1', SF_DATA_DIR: dataDirectory },
+      env: {
+        ...process.env,
+        NO_COLOR: '1',
+        SF_DATA_DIR: dataDirectory,
+        SF_CONFIG_DIR: dataDirectory,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -160,7 +174,7 @@ async function runInstall(specification: string, dataDirectory: string): Promise
     let stdout = '';
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
-    child.stdin.end('y\n');
+    child.stdin.end();
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve();
@@ -182,21 +196,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ).version;
   });
 
-  after(async () => {
-    for (const delay of [0, 25, 50, 100]) {
-      try {
-        await rm(isolatedDataDirectory, { force: true, recursive: true });
-        return;
-      } catch (error) {
-        const code =
-          typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-        if (process.platform !== 'win32' || code !== 'ENOTEMPTY' || delay === 100) throw error;
-        await new Promise((resolve) => {
-          setTimeout(resolve, delay);
-        });
-      }
-    }
-  });
+  // Retain this run's isolated CLI state; never recursively delete an unregistered root.
 
   for (const [title, command, contractCase, expectedStatus, expectedExit] of [
     ['success', ['cms', 'info', '--json'], undefined, 'success', 0],
@@ -246,6 +246,59 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(result.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
     });
   }
+
+  it('loads packed image upload help, ordered repeated files, and offline invalid arguments', async function () {
+    this.timeout(300_000);
+    const help = await runSf(['cms', 'upload', 'images', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    expect(help.stdout.replaceAll(/\s+/gu, ' ')).to.include('Dry-run is the default');
+    expect(help.stdout).to.include('--file');
+    const names = ['Banner with spaces.PNG', 'Logo.png'];
+    for (const name of names)
+      await writeFile(file(name), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]));
+    const common = ['cms', 'upload', 'images', '--target-org', 'unused', '--workspace-id', 'space'];
+    const preview = await runSf(
+      [...common, ...names.flatMap((name) => ['--file', name]), '--json'],
+      'image-upload-preview',
+    );
+    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+    const envelope = parseEnvelope(preview);
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-images-upload',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
+    expectPluginVersion(envelope, installedPackageVersion);
+    const result = envelope.result as {
+      mode: string;
+      intents: Array<{ filename: string }>;
+      target: { rootFolderId: string };
+      reportFile: unknown;
+    };
+    expect(result.mode).to.equal('dry-run');
+    expect(result.intents.map(({ filename }) => filename)).to.deep.equal(names);
+    expect(result.target.rootFolderId).to.equal('root');
+    expect(result.reportFile).to.equal(null);
+    expect(JSON.stringify(envelope)).not.to.include('bytes');
+    const events = JSON.parse(
+      await readFile(file('image-upload-preview-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(events.slice(1).every(({ method }) => method === 'GET')).to.equal(true);
+    const human = await runSf([...common, '--file', names[0]], 'image-upload-preview');
+    expect(human.exitCode, human.stdout + human.stderr).to.equal(0);
+    expect(human.stdout).to.include('Destination root folder: root');
+    expect(human.stdout).to.include('Banner with spaces.PNG: 9 bytes');
+    for (const args of [
+      ['--file', names[0], '--apply'],
+      ['--file', 'missing.png'],
+      ['--file', names[0], '--contract-version', '2'],
+    ]) {
+      const blocked = await runSf([...common, ...args, '--json'], 'image-upload-local');
+      expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+      expect(parseEnvelope(blocked).status).to.equal('blocked');
+      expect(blocked.stdout + blocked.stderr).not.to.include('Unexpected org access');
+    }
+  });
 
   for (const completeness of ['complete', 'partial'] as const) {
     it(`executes a real single-workspace ${completeness} export with actual provenance`, async () => {

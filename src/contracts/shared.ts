@@ -11,6 +11,7 @@ export const CMS_OPERATIONS = [
   'content.publish',
   'content.unpublish',
   'content.update',
+  'images.upload',
   'workspace.export.bulk',
   'workspace.import',
 ] as const;
@@ -263,6 +264,7 @@ export function assertCmsEnvelope<T>(
     ['content.publish', 'sf-cms-content-publish'],
     ['content.unpublish', 'sf-cms-content-unpublish'],
     ['content.update', 'sf-cms-content-update'],
+    ['images.upload', 'sf-cms-images-upload'],
     ['workspace.export.bulk', 'sf-cms-workspace-export-set'],
     ['workspace.import', 'sf-cms-workspace-import'],
   ]);

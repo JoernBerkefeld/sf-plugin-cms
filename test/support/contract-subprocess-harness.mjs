@@ -34,7 +34,31 @@ if (contractCase !== undefined) {
       validatorName: 'assertWorkspaceImportResult',
     },
   };
-  if (
+  if (contractCase === 'image-upload-preview' || contractCase === 'image-upload-local') {
+    const { default: Command } = await import(
+      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/upload/images.js'))
+    );
+    Command.prototype.getOrgContext = async function () {
+      if (contractCase === 'image-upload-local') throw new Error('Unexpected org access');
+      const events = [{ phase: 'org' }];
+      const evidenceFile = path.resolve('image-upload-preview-transport.json');
+      await writeFile(evidenceFile, JSON.stringify(events));
+      return {
+        orgId: '00DControlledSource',
+        connection: {
+          request: async ({ method, url }) => {
+            events.push({ method, url });
+            await writeFile(evidenceFile, JSON.stringify(events));
+            if (method !== 'GET') throw new Error('Unexpected image mutation');
+            if (url === '/connect/cms/spaces/space')
+              return { id: 'space', rootFolderId: 'root', isEnhancedSpace: true };
+            if (url.startsWith('/connect/cms/items/search')) return { items: [], count: 0 };
+            throw new Error('Unexpected image read');
+          },
+        },
+      };
+    };
+  } else if (
     contractCase === 'email-update-preview' ||
     contractCase === 'email-template-update-preview' ||
     contractCase === 'email-template-update-apply' ||

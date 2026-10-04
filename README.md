@@ -69,12 +69,32 @@ Machine consumers should run this command first and select a mutually supported 
 | `sf cms get variant`      | [Get a variant](#sf-cms-get-variant)            |
 | `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace)  |
 | `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace)  |
+| `sf cms upload images` | [Upload local images](#sf-cms-upload-images) |
 | `sf cms publish content`   | [Publish a Draft Email](#sf-cms-publish-content)       |
 | `sf cms unpublish content` | [Unpublish a Published Email](#sf-cms-unpublish-content) |
 | `sf cms update content`    | [Update Draft Email HTML](#sf-cms-update-content)       |
 | `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content) |
 
 All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They use API version `67.0` by default; pass `--api-version <version>` only when you need to override it. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
+
+### `sf cms upload images`
+
+Upload explicit local images directly, without an export package or JSON input map. Repeat `--file` once per image in upload order; quote paths containing spaces. Select exactly one workspace by ID or exact case-insensitive name. Dry-run is the default and performs local validation plus read-only root/collision preflight; it does not create anything.
+
+```sh
+sf cms upload images --target-org my-org --workspace-name "Main Site" --file "./Banner with spaces.PNG" --file ./Logo.jpg
+sf cms upload images --target-org my-org --workspace-id 0ZuTARGET --file ./Logo.jpg --apply --report-dir ./image-upload-report --json
+```
+
+- Only a proven enhanced workspace with a distinct root folder is eligible. The CREATE target is its exact `rootFolderId`, never its workspace ID or a guessed folder.
+- The title is the **full filename including extension**. Lowercase API and URL names use that same full filename: separator runs become underscores or hyphens respectively (`Banner with spaces.PNG` → `banner_with_spaces_png` / `banner-with-spaces-png`). No truncation, suffixing, or collision renaming occurs.
+- Explicit regular, nonempty PNG, JPEG (`.jpg` or `.jpeg`), GIF, and WebP files up to **10 MiB each** are supported. Signatures must match extensions; extensions are case-insensitive. Filenames may contain only ASCII letters, digits, spaces, periods, underscores, and hyphens, must start with a letter after derivation, and cannot contain consecutive periods or reserved Windows device basenames. Unsafe names, symlinks/junctions, redirected paths, duplicate paths/file identities, and batch naming collisions fail closed. There is no client-side name-length cap, truncation, decoder-level image validity, or malware guarantee; filesystem and Salesforce name limits remain authoritative and can reject a file or CREATE.
+- Exact title/API-name/URL-name destination collisions, compared case-insensitively across all workspace content families, fail the complete batch preflight. Complete workspace collision inventory is bounded to 1,000 pages of 250 records; inability to prove completeness blocks upload. No overwrite or updates are supported.
+- `--apply` requires a **new** `--report-dir`. Every intent is durably recorded before sequential CREATEs, with local identity/hash and root/collision revalidation. Apply stops at the first failure without retries, rollback, or resume. It creates Drafts only; no publication or activation occurs.
+- The seven-key `sf-cms-images-upload` envelope uses contract version `1.0.0` (`--contract-version 1`). Results contain `mode`, `outcome`, distinct `target`, ordered immutable `intents` (names, media type, size, SHA-256; never bytes), `byteProof: "unavailable"`, and `reportFile`. Outcomes are `ready`, `completed`, `blocked`, `failed`, or `ownership-uncertain`; blocked/failed exit `1`, success exits `0`. Invalid local inputs are rejected before authentication where possible. Resolving a workspace and proving destination collisions requires authenticated reads even in dry-run.
+- Apply reports live at `image-upload-run.json`; a fallback failure journal may be used if the normal journal cannot persist. Failure output retains the durable report path. `ownership-uncertain` means CREATE may have succeeded: inspect that report and reconcile destination ownership before any new apply. The CLI does not expose arbitrary transport error bodies. Metadata readback is **not binary-byte proof**; downloaded bytes are not verified.
+
+This independent local feature has controlled-transport service/command tests and packed CLI dry-run qualification, but **no live image upload has been performed**. It is not asserted to be included in the currently released `0.9.0` package. A successful dry-run does not prove that Salesforce will accept a later CREATE.
 
 ### `sf cms info`
 
