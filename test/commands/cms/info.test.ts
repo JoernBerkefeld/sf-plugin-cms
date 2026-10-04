@@ -2,6 +2,7 @@ import { TestContext } from '@salesforce/core/testSetup';
 import { stubSfCommandUx } from '@salesforce/sf-plugins-core';
 import { expect } from 'chai';
 import packageJson from '../../../package.json' with { type: 'json' };
+import { METADATA_CAPABILITY_FIXTURE_SHA256 } from '../../../src/contracts/capability-registry.js';
 import Info from '../../../src/commands/cms/info.js';
 
 describe('cms info', () => {
@@ -127,10 +128,54 @@ describe('cms info', () => {
     });
   }
 
-  it('blocks an unsupported contract version offline', async () => {
+  it('reports the strict CMS-only registry for contract major 2', async () => {
     const command = Object.create(Info.prototype) as Info;
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({ flags: { 'contract-version': 2 } }),
+      jsonEnabled: context.SANDBOX.stub().returns(true),
+    });
+    const result = await command.run();
+
+    expect(result.contractVersion).to.equal('2.0.0');
+    expect(result.status).to.equal('success');
+    const registry = (
+      result.result as {
+        registry: {
+          contract: string;
+          version: string;
+          fixtureSha256: string;
+          declarations: Array<{ identity: { provider: string; family: string; type: string } }>;
+        };
+      }
+    ).registry;
+    expect(registry).to.deep.include({
+      contract: 'sf-metadata-capability-v1',
+      version: '1.0.0',
+      fixtureSha256: METADATA_CAPABILITY_FIXTURE_SHA256,
+    });
+    expect(registry.declarations.map((entry) => entry.identity.type)).to.deep.equal([
+      'Brand',
+      'Consent Banner',
+      'Email',
+      'Email Fragment',
+      'Email Template',
+      'Form Handler',
+      'Landing Page',
+      'Landing Page Template',
+      'Preference Page',
+      'Web Fragment',
+    ]);
+    expect(
+      registry.declarations.every(
+        (entry) => entry.identity.provider === 'sf-plugin-cms' && entry.identity.family === 'cms',
+      ),
+    ).to.equal(true);
+  });
+
+  it('blocks an unsupported contract version offline', async () => {
+    const command = Object.create(Info.prototype) as Info;
+    Object.assign(command, {
+      parse: context.SANDBOX.stub().resolves({ flags: { 'contract-version': 3 } }),
       jsonEnabled: context.SANDBOX.stub().returns(true),
     });
     const result = await command.run();
@@ -144,7 +189,7 @@ describe('cms info', () => {
     expect(result.diagnostics.errors).to.deep.equal([
       {
         code: 'UNSUPPORTED_CONTRACT_VERSION',
-        message: 'Contract major 2 is unsupported; supported major is 1.',
+        message: 'Contract major 3 is unsupported; supported majors are 1 and 2.',
         retryable: false,
       },
     ]);

@@ -127,6 +127,12 @@ function parseEnvelope(result: ProcessResult): Record<string, unknown> {
   return envelope;
 }
 
+function compare(left: string, right: string): number {
+  const a = left.split('.').map(Number),
+    b = right.split('.').map(Number);
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
 async function installPackedPlugin(dataDirectory: string): Promise<string> {
   const temporaryPackDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-pack-'));
   {
@@ -298,6 +304,32 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(parseEnvelope(blocked).status).to.equal('blocked');
       expect(blocked.stdout + blocked.stderr).not.to.include('Unexpected org access');
     }
+  });
+
+  it('negotiates the installed candidate registry using real package provenance without changing v1', async () => {
+    const response = await runSf(['cms', 'info', '--contract-version', '2', '--json']);
+    expect(response.exitCode).to.equal(0);
+    const envelope = parseEnvelope(response);
+    expectPluginVersion(envelope, installedPackageVersion);
+    expect(envelope.contractVersion).to.equal('2.0.0');
+    const result = envelope.result as {
+      registry: {
+        version: string;
+        declarations: Array<{ providerContract: { minVersion: string; maxVersion: string } }>;
+      };
+    };
+    expect(result.registry.version).to.equal('1.0.0');
+    for (const declaration of result.registry.declarations) {
+      expect(
+        compare(installedPackageVersion, declaration.providerContract.minVersion),
+      ).to.be.at.least(0);
+      expect(
+        compare(installedPackageVersion, declaration.providerContract.maxVersion),
+      ).to.be.at.most(0);
+    }
+    const legacy = parseEnvelope(await runSf(['cms', 'info', '--contract-version', '1', '--json']));
+    expect(legacy.contractVersion).to.equal('1.0.0');
+    expect(legacy.result).not.to.have.property('registry');
   });
 
   for (const completeness of ['complete', 'partial'] as const) {
@@ -1237,7 +1269,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   it('emits the exact blocked info envelope and exits 1', async () => {
-    const result = await runSf(['cms', 'info', '--contract-version', '2', '--json']);
+    const result = await runSf(['cms', 'info', '--contract-version', '3', '--json']);
     const envelope = parseEnvelope(result);
 
     expect(result.exitCode).to.equal(1);

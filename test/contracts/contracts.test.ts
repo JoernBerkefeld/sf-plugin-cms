@@ -1,8 +1,13 @@
+import { METADATA_CAPABILITY_FIXTURE_SHA256 } from '../../src/contracts/capability-registry.js';
 import { expect } from 'chai';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertCmsInfoResult, type CmsInfoResult } from '../../src/contracts/info.js';
+import {
+  assertCmsInfoResult,
+  assertCmsInfoResultV2,
+  type CmsInfoResult,
+} from '../../src/contracts/info.js';
 import { assertContentDeleteResult } from '../../src/contracts/content-delete.js';
 import { assertContentPublishResult } from '../../src/contracts/content-publish.js';
 import { assertContentUnpublishResult } from '../../src/contracts/content-unpublish.js';
@@ -1204,6 +1209,61 @@ describe('CMS contract foundation', () => {
     expect(() => assertWorkspaceImportResult(result)).to.throw('duplicate');
     result.mappings = [mapping, { ...mapping, referenceId: `ref:${'b'.repeat(64)}` }];
     expect(() => assertWorkspaceImportResult(result)).to.throw('conflicting target');
+  });
+
+  it('keeps v1 strict against v2-only registry data', async () => {
+    const { value } = await loadFixture<CmsInfoResult>('success-info.json');
+    expect(() => assertCmsInfoResult({ ...value.result!, registry: {} })).to.throw('exactly');
+  });
+
+  it('validates strict v2 registry keys and CMS provenance', async () => {
+    const { value } = await loadFixture<CmsInfoResult>('success-info.json');
+    const declaration = {
+      dependencyExtractorVersion: 'cms-email-dependencies@1',
+      identity: {
+        provider: 'sf-plugin-cms',
+        family: 'cms',
+        type: 'Email',
+        profile: 'dependency-free',
+      },
+      nativeScope: { kind: 'marketing-workspace', root: 'email' },
+      operations: ['retrieve'],
+      preflight: {
+        completionProof: 'exact workspace, API-name, and language match',
+        hardBounds: { maxCalls: 5, maxItems: 1, maxPages: 1 },
+        strategy: 'targeted',
+      },
+      providerContract: { maxVersion: '1.999.999', minVersion: '1.0.0', name: 'sf-plugin-cms' },
+      retrieval: {
+        completionProof: 'complete bounded family inventory',
+        hardBounds: { maxCalls: 20, maxItems: 500, maxPages: 10 },
+        strategy: 'filtered',
+      },
+    } as const;
+    const v2 = {
+      ...value.result!,
+      registry: {
+        contract: 'sf-metadata-capability-v1',
+        version: '1.0.0',
+        fixtureSha256: METADATA_CAPABILITY_FIXTURE_SHA256,
+        declarations: [declaration],
+      },
+    };
+    expect(() => assertCmsInfoResultV2(v2)).not.to.throw();
+    expect(() =>
+      assertCmsInfoResultV2({ ...v2, registry: { ...v2.registry, extra: true } }),
+    ).to.throw('exactly');
+    expect(() =>
+      assertCmsInfoResultV2({
+        ...v2,
+        registry: {
+          ...v2.registry,
+          declarations: [
+            { ...declaration, identity: { ...declaration.identity, provider: 'sf-plugin-mcnext' } },
+          ],
+        },
+      }),
+    ).to.throw('provenance');
   });
 
   it('freezes the exact info result contract', async () => {

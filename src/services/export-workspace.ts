@@ -73,6 +73,11 @@ import {
   LANDING_PAGE_TYPE,
   type LandingPagePairSelector,
 } from './landing-page-pair-export.js';
+import {
+  buildPortableExportMetadata,
+  serializePortableExportMetadata,
+  type PortableExportMetadataOptions,
+} from './portable-export-metadata.js';
 
 const PAGE_SIZE = 250;
 const ABSOLUTE_PAGE_CAP = 1000;
@@ -124,6 +129,7 @@ export type ExportWorkspaceResult = {
   destination: string;
   manifest: WorkspaceExportManifest;
   manifestSha256: string;
+  phase5Report?: import('./phase5-results.js').CmsPhase5Result;
 };
 
 export type ExportWorkspaceOptions = JsonRequestOptions & {
@@ -142,6 +148,7 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
     readonly consentBannerReports?: boolean;
   };
   landingPagePairs?: readonly LandingPagePairSelector[];
+  portableMetadata?: PortableExportMetadataOptions;
   atomicPublish?: DirectoryPublishOptions &
     CleanupOptions & {
       readonly makeTemporaryDirectory?: typeof mkdtemp;
@@ -1011,6 +1018,33 @@ export async function exportWorkspace(
     externalReferences: referenceInventory.externalReferences,
     items: manifestItems,
   };
+  const portableMetadata =
+    options.portableMetadata === undefined || selection === undefined || completeness !== 'complete'
+      ? undefined
+      : await buildPortableExportMetadata({
+          workspaceId,
+          details,
+          contentType: selection.contentType,
+          apiNames: selection.apiNames,
+          pagesRequested,
+          options: options.portableMetadata,
+          ...(landingPageTemplatePairs === undefined
+            ? {}
+            : { landingPagePairs: landingPageTemplatePairs }),
+        }).catch(() => {});
+  let phase5Report: import('./phase5-results.js').CmsPhase5Result | undefined;
+  const portableMetadataPath = 'phase5/portable-metadata.v1.json';
+  const portableMetadataBytes =
+    portableMetadata === undefined
+      ? undefined
+      : serializePortableExportMetadata(portableMetadata.metadata);
+  if (portableMetadataBytes !== undefined) {
+    manifest.items.push({
+      path: portableMetadataPath,
+      sha256: sha256(portableMetadataBytes),
+      kind: 'cms.portable-metadata',
+    });
+  }
   if (mediaCandidates.length > 0 && options.experimentalMedia === undefined) {
     warnings.push({
       code: 'MEDIA_EXPORT_FAILED',
@@ -1140,9 +1174,19 @@ export async function exportWorkspace(
       }
     }
     assertWorkspaceExportManifest(manifest);
+    if (portableMetadataBytes !== undefined) {
+      await mkdir(path.join(temporary, 'phase5'));
+      const handle = await open(path.join(temporary, portableMetadataPath), 'wx');
+      try {
+        await handle.writeFile(portableMetadataBytes, 'utf8');
+      } finally {
+        await handle.close();
+      }
+    }
     await assertRegularPackageFiles(temporary, new Set(manifest.items.map(({ path }) => path)));
     await writeExclusive(path.join(temporary, 'manifest.json'), manifest);
     await publishDirectoryNoClobber(temporary, destination, options.atomicPublish);
+    phase5Report = await portableMetadata?.refreshCache();
   } catch (error) {
     await cleanupOwnedPath(temporary, error, options.atomicPublish);
   }
@@ -1176,5 +1220,10 @@ export async function exportWorkspace(
       );
     }
   }
-  return { destination, manifest, manifestSha256 };
+  return {
+    destination,
+    manifest,
+    manifestSha256,
+    ...(phase5Report === undefined ? {} : { phase5Report }),
+  };
 }

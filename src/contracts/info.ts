@@ -1,3 +1,10 @@
+import {
+  assertCapabilityRegistryFixture,
+  METADATA_CAPABILITY_CONTRACT,
+  METADATA_CAPABILITY_FIXTURE_SHA256,
+  METADATA_CAPABILITY_VERSION,
+  type CapabilityRegistryFixture,
+} from './capability-registry.js';
 import { assertExactKeys, assertIdentifier, assertNonemptyString } from './shared.js';
 import { EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT } from './workspace-export.js';
 
@@ -35,6 +42,13 @@ export type CmsCapability = {
     | typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT
     | 'sf-cms-workspace-import@1'
     | 'sf-cms-workspace-import@2';
+};
+
+export type CmsCapabilityRegistryResult = {
+  contract: typeof METADATA_CAPABILITY_CONTRACT;
+  version: typeof METADATA_CAPABILITY_VERSION;
+  fixtureSha256: typeof METADATA_CAPABILITY_FIXTURE_SHA256;
+  declarations: CapabilityRegistryFixture['declarations'];
 };
 
 export type CmsInfoResult = {
@@ -75,6 +89,10 @@ export type CmsInfoResult = {
     };
   };
   capabilities: CmsCapability[];
+};
+
+export type CmsInfoResultV2 = CmsInfoResult & {
+  registry: CmsCapabilityRegistryResult;
 };
 
 export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoResult {
@@ -195,6 +213,43 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
     if (capability.contract !== expectedContracts.get(capability.id)) {
       throw new TypeError(`${label}.contract does not match its capability ID`);
     }
+  }
+}
+
+export function assertCmsInfoResultV2(value: unknown): asserts value is CmsInfoResultV2 {
+  assertExactKeys(value, ['plugin', 'api', 'contracts', 'capabilities', 'registry'], 'result');
+  const base = value as Record<string, unknown>;
+  assertCmsInfoResult({
+    plugin: base.plugin,
+    api: base.api,
+    contracts: base.contracts,
+    capabilities: base.capabilities,
+  });
+  assertExactKeys(
+    base.registry,
+    ['contract', 'version', 'fixtureSha256', 'declarations'],
+    'result.registry',
+  );
+  if (base.registry.contract !== METADATA_CAPABILITY_CONTRACT)
+    throw new TypeError('result.registry.contract is invalid');
+  if (base.registry.version !== METADATA_CAPABILITY_VERSION)
+    throw new TypeError('result.registry.version is invalid');
+  if (base.registry.fixtureSha256 !== METADATA_CAPABILITY_FIXTURE_SHA256)
+    throw new TypeError('result.registry.fixtureSha256 is invalid');
+  assertCapabilityRegistryFixture({
+    contract: base.registry.contract,
+    version: base.registry.version,
+    declarations: base.registry.declarations,
+  });
+  if (
+    (base.registry.declarations as CapabilityRegistryFixture['declarations']).some(
+      (declaration) =>
+        declaration.identity.provider !== 'sf-plugin-cms' ||
+        declaration.providerContract.name !== 'sf-plugin-cms' ||
+        declaration.identity.family !== 'cms',
+    )
+  ) {
+    throw new TypeError('result.registry provider provenance is invalid');
   }
 }
 

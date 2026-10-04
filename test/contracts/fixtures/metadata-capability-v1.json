@@ -1,0 +1,318 @@
+{
+  "contract": "sf-metadata-capability-v1",
+  "declarations": [
+    {
+      "dependencyExtractorVersion": "cms-brand-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "dependency-free",
+        "provider": "sf-plugin-cms",
+        "type": "Brand"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "brand" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace and API-name match",
+        "hardBounds": { "maxCalls": 4, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-consent-banner-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "dependency-free",
+        "provider": "sf-plugin-cms",
+        "type": "Consent Banner"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "consent-banner" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace and API-name match",
+        "hardBounds": { "maxCalls": 4, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-email-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "dependency-free",
+        "provider": "sf-plugin-cms",
+        "type": "Email"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "email" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace, API-name, and language match",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-email-fragment-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "dependency-free",
+        "provider": "sf-plugin-cms",
+        "type": "Email Fragment"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "email-fragment" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace, API-name, and language match",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-email-template-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "dependency-free",
+        "provider": "sf-plugin-cms",
+        "type": "Email Template"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "email-template" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace, API-name, and language match",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-form-handler-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "strict-empty-root",
+        "provider": "sf-plugin-cms",
+        "type": "Form Handler"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "form-handler" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact workspace, API-name, and language match",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded family inventory",
+        "hardBounds": { "maxCalls": 20, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-landing-page-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "strict-paired-template",
+        "provider": "sf-plugin-cms",
+        "type": "Landing Page"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "landing-page" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact page and paired-template resolution",
+        "hardBounds": { "maxCalls": 12, "maxItems": 4, "maxPages": 2 },
+        "strategy": "batched"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded page and dependency inventory",
+        "hardBounds": { "maxCalls": 30, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-landing-page-template-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "strict-image-data-graph",
+        "provider": "sf-plugin-cms",
+        "type": "Landing Page Template"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "landing-page-template" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact template, image, and Data Graph resolution",
+        "hardBounds": { "maxCalls": 16, "maxItems": 20, "maxPages": 2 },
+        "strategy": "batched"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded template and dependency inventory",
+        "hardBounds": { "maxCalls": 30, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-preference-page-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "strict-channel-subchannel-optional-brand",
+        "provider": "sf-plugin-cms",
+        "type": "Preference Page"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "preference-page" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact channel, subchannel, and optional Brand resolution",
+        "hardBounds": { "maxCalls": 12, "maxItems": 10, "maxPages": 2 },
+        "strategy": "batched"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded preference-page inventory",
+        "hardBounds": { "maxCalls": 30, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "cms-web-fragment-dependencies@1",
+      "identity": {
+        "family": "cms",
+        "profile": "strict-data-graph",
+        "provider": "sf-plugin-cms",
+        "type": "Web Fragment"
+      },
+      "nativeScope": { "kind": "marketing-workspace", "root": "web-fragment" },
+      "operations": ["retrieve"],
+      "preflight": {
+        "completionProof": "exact fragment and Data Graph resolution",
+        "hardBounds": { "maxCalls": 10, "maxItems": 10, "maxPages": 2 },
+        "strategy": "batched"
+      },
+      "providerContract": {
+        "maxVersion": "0.9.999",
+        "minVersion": "0.9.0",
+        "name": "sf-plugin-cms"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded fragment inventory",
+        "hardBounds": { "maxCalls": 30, "maxItems": 500, "maxPages": 10 },
+        "strategy": "filtered"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "mcnext-campaign-scalar@1",
+      "identity": {
+        "family": "mcnext",
+        "profile": "relationship-free-scalar-resolver",
+        "provider": "sf-plugin-mcnext",
+        "type": "Campaign"
+      },
+      "nativeScope": { "kind": "salesforce-org", "root": "Campaign" },
+      "operations": ["retrieve", "resolve"],
+      "preflight": {
+        "completionProof": "exact API-name resolution with no relationship transport",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.8.999",
+        "minVersion": "0.8.0",
+        "name": "sf-plugin-mcnext"
+      },
+      "retrieval": {
+        "completionProof": "exact scalar record match",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      }
+    },
+    {
+      "dependencyExtractorVersion": "mcnext-data-space-scalar@1",
+      "identity": {
+        "family": "mcnext",
+        "profile": "scope-identity-resolver",
+        "provider": "sf-plugin-mcnext",
+        "type": "Data Space"
+      },
+      "nativeScope": { "kind": "salesforce-org", "root": "DataSpace" },
+      "operations": ["retrieve", "resolve"],
+      "preflight": {
+        "completionProof": "exact API-name scope resolution",
+        "hardBounds": { "maxCalls": 5, "maxItems": 1, "maxPages": 1 },
+        "strategy": "targeted"
+      },
+      "providerContract": {
+        "maxVersion": "0.8.999",
+        "minVersion": "0.8.0",
+        "name": "sf-plugin-mcnext"
+      },
+      "retrieval": {
+        "completionProof": "complete bounded Data Space inventory",
+        "hardBounds": { "maxCalls": 10, "maxItems": 100, "maxPages": 5 },
+        "strategy": "retrieve-all"
+      }
+    }
+  ],
+  "version": "1.0.0"
+}

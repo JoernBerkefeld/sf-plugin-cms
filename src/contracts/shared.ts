@@ -250,12 +250,13 @@ export function assertCmsEnvelope<T>(
   assertMetadata(value.metadata);
   if (
     value.contractVersion === '2.0.0' &&
+    value.metadata.operation !== 'cms.info' &&
     value.metadata.operation !== 'workspace.import' &&
     value.metadata.operation !== 'content.delete' &&
     value.metadata.operation !== 'content.update'
   ) {
     throw new TypeError(
-      'envelope.contractVersion 2.0.0 is supported only for workspace.import, content.delete, or content.update',
+      'envelope.contractVersion 2.0.0 is supported only for cms.info, workspace.import, content.delete, or content.update',
     );
   }
   const expectedContract = new Map<CmsOperation, string>([

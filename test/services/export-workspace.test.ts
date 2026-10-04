@@ -18,6 +18,11 @@ import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/
 import { bindLandingPageTemplatePairs } from '../../src/services/landing-page-pair-export.js';
 import type { CmsRecord } from '../../src/services/read.js';
 import { brandDetail } from '../fixtures/brand.js';
+import {
+  METADATA_CAPABILITY_FIXTURE_SHA256,
+  type ServerIdentity,
+} from '../../src/contracts/capability-registry.js';
+import type { CmsResolutionCacheFile } from '../../src/contracts/resolution-cache.js';
 import { formHandlerDetail } from '../fixtures/form-handler.js';
 import {
   defaultWorkspaceDestination,
@@ -143,6 +148,135 @@ describe('workspace export service', () => {
 
   afterEach(async () => {
     await rm(root, { force: true, recursive: true });
+  });
+
+  it('publishes deterministic portable metadata after exact resolution without changing root placement', async () => {
+    const raw = {
+      ...brandDetail('brand-variant', 'main_brand'),
+      contentSpace: { id: 'space', resourceUrl: '/connect/cms/spaces/space' },
+      folder: null,
+    };
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? { items: [row('brand-variant')], total: 1 }
+            : raw,
+        ),
+      );
+    const sourceOrg: ServerIdentity = { kind: 'exact-scope', value: 'source.example' };
+    const targetOrg: ServerIdentity = { kind: 'exact-scope', value: 'target.example' };
+    const cacheRoot = path.join(root, 'cache');
+    const options = {
+      selection: {
+        contentType: 'sfdc_cms__brand',
+        apiNames: ['main_brand'],
+        brandReports: true as const,
+      },
+      portableMetadata: {
+        workspaceApiName: 'marketing',
+        cache: {
+          root: cacheRoot,
+          sourceOrg,
+          targetOrg,
+          apiVersion: '67.0',
+          observedAt: '2026-10-02T12:00:00.000Z',
+        },
+      },
+      generatedAt: '2026-10-02T12:00:00.000Z',
+    };
+    const first = await exportWorkspace(
+      { request },
+      'space',
+      path.join(root, 'portable-a'),
+      options,
+    );
+    const second = await exportWorkspace(
+      { request },
+      'space',
+      path.join(root, 'portable-b'),
+      options,
+    );
+    const sidecarPath = 'phase5/portable-metadata.v1.json';
+    const firstBytes = await readFile(path.join(first.destination, sidecarPath), 'utf8');
+    const secondBytes = await readFile(path.join(second.destination, sidecarPath), 'utf8');
+    expect(firstBytes).to.equal(secondBytes);
+    expect(first.phase5Report?.metrics).to.deep.include({
+      cacheHits: 0,
+      cacheMisses: 1,
+      cacheRefreshes: 1,
+    });
+    expect(second.phase5Report?.metrics).to.deep.include({
+      cacheHits: 1,
+      cacheMisses: 0,
+      cacheRefreshes: 0,
+    });
+    expect(first.phase5Report?.resultHash).to.equal(second.phase5Report?.resultHash);
+    expect(JSON.parse(firstBytes)).to.deep.include({
+      contract: 'sf-cms-portable-export-metadata-v1',
+      version: '1.0.0',
+    });
+    expect(firstBytes).not.to.match(
+      /20Y[A-Za-z0-9]{12,15}|brand-variant|content-brand-variant|"content-key"/u,
+    );
+    expect(first.manifest.items.some(({ path: itemPath }) => itemPath === sidecarPath)).to.equal(
+      true,
+    );
+    expect(await readdir(first.destination)).to.deep.equal([
+      'items',
+      'manifest.json',
+      'phase5',
+      'reports',
+    ]);
+    const cacheFiles = await readdir(cacheRoot);
+    expect(cacheFiles).to.have.length(1);
+    const cache = JSON.parse(
+      await readFile(path.join(cacheRoot, cacheFiles[0]), 'utf8'),
+    ) as CmsResolutionCacheFile;
+    expect(cache.scope.capabilityFixtureSha256).to.equal(METADATA_CAPABILITY_FIXTURE_SHA256);
+  });
+
+  it('blocks optional portable metadata and cache writes on partial evidence', async () => {
+    const raw = {
+      ...brandDetail('brand-variant', 'main_brand'),
+      contentSpace: { id: 'space', resourceUrl: '/connect/cms/spaces/space' },
+      folder: null,
+    };
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? { items: [row('brand-variant')], total: 2 }
+            : raw,
+        ),
+      );
+    const cacheRoot = path.join(root, 'partial-cache');
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'partial-portable'), {
+        selection: {
+          contentType: 'sfdc_cms__brand',
+          apiNames: ['main_brand'],
+          brandReports: true,
+        },
+        portableMetadata: {
+          workspaceApiName: 'marketing',
+          cache: {
+            root: cacheRoot,
+            sourceOrg: { kind: 'exact-scope', value: 'source.example' },
+            targetOrg: { kind: 'exact-scope', value: 'target.example' },
+            apiVersion: '67.0',
+          },
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(TypeError);
+    expect(await readdir(root)).not.to.include('partial-cache');
+    expect(await readdir(root)).not.to.include('partial-portable');
   });
 
   it('preserves a synthetic email fragment body exactly and excludes it from editable HTML output', async () => {

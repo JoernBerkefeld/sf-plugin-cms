@@ -1,14 +1,22 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import {
+  CMS_CAPABILITY_DECLARATIONS,
+  METADATA_CAPABILITY_CONTRACT,
+  METADATA_CAPABILITY_FIXTURE_SHA256,
+  METADATA_CAPABILITY_VERSION,
+} from '../../contracts/capability-registry.js';
+import {
   assertCmsInfoResult,
+  assertCmsInfoResultV2,
   CMS_INFO_CONTRACT,
   type CmsInfoResult,
+  type CmsInfoResultV2,
 } from '../../contracts/info.js';
 import type { CmsEnvelope } from '../../contracts/shared.js';
 import { CmsCommand } from '../../command-base.js';
 
 /** Reports the offline CMS CLI contract and capability envelope. */
-export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult>> {
+export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult | CmsInfoResultV2>> {
   public static readonly summary = 'Show offline CMS contract and capability information.';
   public static readonly description =
     'Reports the versioned CLI JSON contracts, package compatibility, tested API baseline, and truthfully evidenced CMS capabilities without contacting an org.';
@@ -16,25 +24,28 @@ export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult>> {
     '<%= config.bin %> cms info',
     '<%= config.bin %> cms info --json',
     '<%= config.bin %> cms info --contract-version 1 --json',
+    '<%= config.bin %> cms info --contract-version 2 --json',
   ];
   public static readonly flags = {
     'contract-version': Flags.integer({
       default: 1,
       min: 1,
-      summary: 'Machine contract major version (supported: 1).',
+      summary: 'Machine contract major version (supported: 1, 2).',
     }),
   };
 
-  public async run(): Promise<CmsEnvelope<CmsInfoResult>> {
+  public async run(): Promise<CmsEnvelope<CmsInfoResult | CmsInfoResultV2>> {
     const { flags } = await this.parse(Info);
     const requestedVersion = flags['contract-version'] ?? 1;
-    const result =
-      requestedVersion === 1
-        ? successEnvelope(this.pluginVersion)
-        : blockedEnvelope(requestedVersion, this.pluginVersion);
+    let result: CmsEnvelope<CmsInfoResult | CmsInfoResultV2>;
+    if (requestedVersion === 1) result = successEnvelope(this.pluginVersion);
+    else if (requestedVersion === 2) result = successEnvelopeV2(this.pluginVersion);
+    else result = blockedEnvelope(requestedVersion, this.pluginVersion);
 
     if (!this.jsonEnabled()) this.styledJSON(result);
-    return this.finishEnvelope(result, assertCmsInfoResult);
+    return requestedVersion === 2
+      ? this.finishEnvelope(result as CmsEnvelope<CmsInfoResultV2>, assertCmsInfoResultV2)
+      : this.finishEnvelope(result as CmsEnvelope<CmsInfoResult>, assertCmsInfoResult);
   }
 }
 
@@ -163,6 +174,23 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
   };
 }
 
+function successEnvelopeV2(pluginVersion: string): CmsEnvelope<CmsInfoResultV2> {
+  const v1 = successEnvelope(pluginVersion);
+  return {
+    ...v1,
+    contractVersion: '2.0.0',
+    result: {
+      ...v1.result!,
+      registry: {
+        contract: METADATA_CAPABILITY_CONTRACT,
+        version: METADATA_CAPABILITY_VERSION,
+        fixtureSha256: METADATA_CAPABILITY_FIXTURE_SHA256,
+        declarations: structuredClone(CMS_CAPABILITY_DECLARATIONS),
+      },
+    },
+  };
+}
+
 function blockedEnvelope(
   requestedVersion: number,
   pluginVersion: string,
@@ -181,7 +209,7 @@ function blockedEnvelope(
       errors: [
         {
           code: 'UNSUPPORTED_CONTRACT_VERSION',
-          message: `Contract major ${requestedVersion} is unsupported; supported major is 1.`,
+          message: `Contract major ${requestedVersion} is unsupported; supported majors are 1 and 2.`,
           retryable: false,
         },
       ],

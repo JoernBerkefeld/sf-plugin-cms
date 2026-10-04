@@ -1,5 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import {
   assertWorkspaceExportSetResult,
   type WorkspaceExportSetResult,
@@ -435,6 +436,19 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       ...(landingPagePairs === undefined ? {} : { landingPagePairs }),
       pluginVersion: this.pluginVersion,
       sourceOrgId: orgId,
+      ...(selectedApiNames === undefined || typeof selected.workspace.name !== 'string'
+        ? {}
+        : {
+            portableMetadata: {
+              workspaceApiName: selected.workspace.name,
+              cache: {
+                root: path.join(path.dirname(destination), '.sf-cms-resolution-cache'),
+                sourceOrg: { kind: 'exact-scope', value: orgId },
+                targetOrg: { kind: 'exact-scope', value: orgId },
+                apiVersion: flags['api-version'] ?? '67.0',
+              },
+            },
+          }),
       ...(experimentalMedia === undefined ? {} : { experimentalMedia }),
     });
     for (const warning of result.manifest.warnings) this.warn(formatWarning(warning));
