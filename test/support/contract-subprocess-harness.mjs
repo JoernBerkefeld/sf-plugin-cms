@@ -435,6 +435,23 @@ if (contractCase !== undefined) {
               if (
                 command === 'import' &&
                 workspaceReads === 2 &&
+                contractCase === 'source-a-json-drift'
+              ) {
+                const report = JSON.parse(
+                  await readFile('source-a-json-drift-report/workspace-import-run.json', 'utf8'),
+                );
+                const definitionDirectory = 'source-a-email-definitions';
+                const definitionFile = path.join(
+                  definitionDirectory,
+                  report.sourceDefinitions.edits.entries[0].definitionPath,
+                );
+                const candidate = JSON.parse(await readFile(definitionFile, 'utf8'));
+                candidate.contentBody.textContent = 'Safe acquisition drift';
+                await writeFile(definitionFile, JSON.stringify(candidate));
+              }
+              if (
+                command === 'import' &&
+                workspaceReads === 2 &&
                 contractCase === 'source-a-drift'
               ) {
                 const html = 'source-a-email-definitions';
@@ -498,6 +515,14 @@ if (contractCase !== undefined) {
                   managedContentVariantId: 'destination-existing',
                   managedContentId: 'destination-existing-parent',
                   apiName: 'unrelated_destination_image',
+                  title:
+                    contractCase === 'source-a-title-collision'
+                      ? 'Edited Welcome'
+                      : 'Unrelated destination image',
+                  urlName:
+                    contractCase === 'source-a-url-collision'
+                      ? 'fresh'
+                      : 'unrelated-destination-image',
                   contentSpace: { id: 'space' },
                   contentType: { fullyQualifiedName: 'sfdc_cms__image' },
                 };

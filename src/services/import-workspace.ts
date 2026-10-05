@@ -1375,16 +1375,42 @@ function consistentInventoryCount(value: Record<string, unknown>, label: string)
 
 // Source identities are workspace-wide, including families other than the selected family.
 // Unfiltered workspace search uses total-count completion (not Template page-local counts).
-async function assertNoSourceApiNameCollisions(
+function sourceTargetNames(item: {
+  apiName?: unknown;
+  title?: unknown;
+  urlName?: unknown;
+  contentBody?: unknown;
+}): readonly string[] {
+  const body = isRecord(item.contentBody) ? item.contentBody : {};
+  const names = [
+    [item.apiName],
+    [item.title, body['sfdc_cms:title']],
+    [item.urlName, body['sfdc_cms:urlName']],
+  ];
+  return names.map((values) => {
+    const present = values.filter((value) => value !== undefined);
+    if (
+      present.length === 0 ||
+      present.some((value) => !nonemptyString(value)) ||
+      new Set(present).size !== 1
+    )
+      throw new TypeError('Source destination API/title/URL evidence is missing or ambiguous');
+    return present[0] as string;
+  });
+}
+
+async function assertNoSourceNameCollisions(
   connection: RequestConnection,
   workspaceId: string,
-  apiNames: readonly string[],
+  items: readonly WorkspaceImportItem[],
   requestOptions: JsonRequestOptions,
   createdParents: ReadonlyMap<string, string> = new Map(),
 ): Promise<void> {
-  const targets = new Set(apiNames);
-  if (targets.size !== apiNames.length || apiNames.some((name) => !nonemptyString(name)))
-    throw new TypeError('Source target API names must be nonempty and workspace-wide unique');
+  const targets = items.map((item) => sourceTargetNames(item));
+  for (let dimension = 0; dimension < 3; dimension += 1) {
+    if (new Set(targets.map((names) => names[dimension])).size !== targets.length)
+      throw new TypeError('Source target API/title/URL names must be workspace-wide unique');
+  }
   const ids = new Set<string>();
   let expected: number | undefined;
   for (let page = 0; page < 1000; page += 1) {
@@ -1435,7 +1461,7 @@ async function assertNoSourceApiNameCollisions(
   if (expected === undefined || ids.size !== expected)
     throw new TypeError('Source destination inventory is incomplete');
   const parents = new Map<string, string>();
-  const names = new Map<string, string>();
+  const dimensions = Array.from({ length: 3 }, () => new Map<string, string>());
   for (const id of ids) {
     const detail = await getVariant(connection, id, requestOptions);
     const parent = requiredContentIdentifier(detail, 'Source destination');
@@ -1449,17 +1475,31 @@ async function assertNoSourceApiNameCollisions(
       !nonemptyString(detail.apiName)
     )
       throw new TypeError('Source destination detail identity or workspace is ambiguous');
+    const names = sourceTargetNames(detail);
+    if (parents.has(parent) && parents.get(parent) !== names[0])
+      throw new TypeError('Source destination parent name identity is ambiguous');
+    parents.set(parent, names[0]);
     if (
-      (parents.has(parent) && parents.get(parent) !== detail.apiName) ||
-      (names.has(detail.apiName) && names.get(detail.apiName) !== parent)
+      createdParents.get(names[0]) === parent &&
+      !targets.some((target) => isDeepStrictEqual(target, names))
     )
-      throw new TypeError('Source destination API-name identity is ambiguous');
-    parents.set(parent, detail.apiName);
-    names.set(detail.apiName, parent);
+      throw new TypeError('Source run-owned parent name collision or drift');
+    for (const [dimension, name] of names.entries()) {
+      const existing = dimensions[dimension].get(name);
+      if (existing !== undefined && existing !== parent)
+        throw new TypeError('Source destination name identity is ambiguous');
+      dimensions[dimension].set(name, parent);
+    }
   }
-  for (const name of targets) {
-    if (names.has(name) && createdParents.get(name) !== names.get(name))
-      throw new TypeError(`Source destination API-name collision: ${name}`);
+  for (const names of targets) {
+    for (const [dimension, name] of names.entries()) {
+      const parent = dimensions[dimension].get(name);
+      if (
+        parent !== undefined &&
+        (createdParents.get(names[0]) !== parent || parents.get(parent) !== names[0])
+      )
+        throw new TypeError(`Source destination API/title/URL collision: ${name}`);
+    }
   }
 }
 
@@ -2247,8 +2287,27 @@ export async function planSourceWorkspaceImport(
         if (!isRecord(body) || typeof body.rawHtml !== 'string')
           throw new TypeError('Original native HTML evidence is missing');
         assertSourceNativeHtml(original.contentType, body, decodeNativeHtml(body.rawHtml));
-        assertSourceNativeHtml(original.contentType, body, edit.literalHtml);
-        return { ...item, contentBody: { ...item.contentBody, rawHtml: edit.literalHtml } };
+        const candidate = edit.candidateDefinition;
+        // The explicit native-copy row owns destination API/URL identity. Changed source URLs
+        // are admitted only when they agree with that row, never silently overwritten.
+        for (const [current, previous] of [
+          [candidate.urlName, original.raw.urlName],
+          [candidate.contentBody['sfdc_cms:urlName'], body['sfdc_cms:urlName']],
+        ]) {
+          if (current !== previous && current !== item.urlName)
+            throw new TypeError('Changed source URL must equal explicit native-copy target URL');
+        }
+        const contentBody = {
+          ...structuredClone(candidate.contentBody),
+          rawHtml: edit.literalHtml,
+          ...(item.contentType === 'sfdc_cms__email' ? { 'sfdc_cms:urlName': item.urlName } : {}),
+        };
+        assertSourceNativeHtml(original.contentType, contentBody, edit.literalHtml);
+        return {
+          ...item,
+          ...(candidate.title === undefined ? {} : { title: candidate.title }),
+          contentBody,
+        };
       }),
     };
     preflightReferences(
@@ -2277,6 +2336,11 @@ export async function planSourceWorkspaceImport(
       item.language !== destination.defaultLanguage
     )
       throw new TypeError('Source language must exactly match destination defaultLanguage');
+  }
+  const targetNames = proposal.items.map((item) => sourceTargetNames(item));
+  for (let dimension = 0; dimension < 3; dimension += 1) {
+    if (new Set(targetNames.map((names) => names[dimension])).size !== targetNames.length)
+      throw new TypeError('Source target API/title/URL names must be workspace-wide unique');
   }
   const intent = structuredClone({
     source,
@@ -2455,7 +2519,7 @@ export async function executeWorkspaceImport(
     editableDiagnostics.push({
       code: 'SOURCE_DEFINITION_INPUT',
       message:
-        'Source definitions carry detached original/current HTML evidence. Package integrity applies only to the original baseline; edits are separately qualified safe literal HTML with exact root/default-language placement.',
+        'Source definitions carry detached candidate JSON and exact original/current JSON/HTML evidence. Package integrity applies only to the original baseline; approved existing string edits and safe literal HTML are separately qualified with explicit target identity and exact root/default-language placement.',
       retryable: false,
     });
   const selectedSource =
@@ -2513,10 +2577,10 @@ export async function executeWorkspaceImport(
     throw new TypeError('Preference Page child variants are unsupported');
   const requestOptions = options.requestOptions ?? {};
   if (sourceIntent !== undefined)
-    await assertNoSourceApiNameCollisions(
+    await assertNoSourceNameCollisions(
       options.connection,
       plan.destinationWorkspaceId,
-      proposal!.items.map((item) => item.apiName!),
+      proposal!.items,
       requestOptions,
     );
   if (brand)
@@ -2635,7 +2699,7 @@ export async function executeWorkspaceImport(
       'Content-key absence was checked, but complete server conflict validation is unverified; this is a read-only proposal.';
     if (sourceIntent !== undefined) {
       conflictMessage =
-        'Exact destination API-name absence was proven from complete workspace-wide search/detail inventory across all families. Apply repeats this inventory immediately before each sequential CREATE; other server conflict behavior remains unverified.';
+        'Exact destination API-name, title, and URL-name absence was proven from complete workspace-wide search/detail inventory across all families. Apply repeats this inventory immediately before each sequential CREATE; other server conflict behavior remains unverified.';
     } else if (native) {
       conflictMessage =
         'Native copy omits contentKey. API-name conflicts can reject; duplicate URLs can create distinct objects. Destination name availability is not prevalidated.';
@@ -3037,10 +3101,10 @@ export async function executeWorkspaceImport(
           if (completed?.result?.contentId !== undefined)
             createdApiNames.set(candidate.primary.apiName!, completed.result.contentId);
         }
-        await assertNoSourceApiNameCollisions(
+        await assertNoSourceNameCollisions(
           options.connection,
           plan.destinationWorkspaceId,
-          plan.groups.map((candidate) => candidate.primary.apiName!),
+          plan.groups.map((candidate) => candidate.primary),
           requestOptions,
           createdApiNames,
         );

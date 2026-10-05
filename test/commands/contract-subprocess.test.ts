@@ -1293,9 +1293,18 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     );
   });
 
-  it('runs packed source A Email/Template export, literal edits, dry-plan and journal-bound root CREATE', async function () {
+  it('runs packed source B Email/Template JSON and HTML edits, dry-plan and journal-bound root CREATE', async function () {
     this.timeout(900_000);
     const hash = sourceAcceptanceHash;
+    const help = await runSf(['cms', 'import', 'workspace', '--help']);
+    expect(help.exitCode, help.stderr).to.equal(0);
+    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+    expect(normalizedHelp).to.include('bounded existing JSON string-leaf edits');
+    expect(normalizedHelp).to.include('immutable identity/structure');
+    expect(normalizedHelp).to.include('complete workspace API/title/URL collision proof');
+    expect(normalizedHelp).to.include(
+      'Changed source URL must equal the explicit mapped target URL',
+    );
     for (const family of ['email', 'emailTemplate']) {
       const prefix = `source-a-${family}`;
       const raw = {
@@ -1308,8 +1317,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         language: 'en_US',
         folder: null,
         title: 'Welcome',
+        urlName: 'welcome',
         contentBody: {
           'sfdc_cms:title': 'Welcome',
+          ...(family === 'email' ? { 'sfdc_cms:urlName': 'welcome' } : {}),
+          textContent: 'Original text',
           subjectLine: 'Hello',
           messagePurpose: 'Transactional',
           rawHtml: '&lt;p&gt;Original &amp;amp; café&lt;/p&gt;',
@@ -1352,10 +1364,19 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           `${prefix}-base/${relative}`,
           await readFile(file(`${prefix}-base/${relative}`)),
         );
-      preserved.set(
-        `${prefix}-definitions/${definitionPath}`,
-        await readFile(file(`${prefix}-definitions/${definitionPath}`)),
-      );
+      const candidateFile = `${prefix}-definitions/${definitionPath}`;
+      const originalDefinition = await readFile(file(candidateFile));
+      const candidate = JSON.parse(originalDefinition.toString('utf8'));
+      candidate.title = 'Edited Welcome';
+      candidate.urlName = 'fresh';
+      candidate.contentBody['sfdc_cms:title'] = 'Edited Welcome';
+      candidate.contentBody.textContent = 'Edited text 世界';
+      if (family === 'email') {
+        candidate.contentBody.subjectLine = 'Edited subject';
+        candidate.contentBody['sfdc_cms:urlName'] = 'fresh';
+      }
+      const candidateBytes = `${JSON.stringify(candidate, null, 2)}\n`;
+      await writeFile(file(candidateFile), candidateBytes);
       expect(hash(preserved.get(`${prefix}-base/manifest.json`)!)).to.equal(output.manifestSha256);
       expect(await readFile(file(`${prefix}-definitions/${htmlPath}`), 'utf8')).to.equal(
         '<p>Original &amp; café</p>',
@@ -1421,7 +1442,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         urlName: 'fresh',
       });
       expect(post.body).not.to.have.any.keys('contentKey', 'id', 'externalId', 'externalSource');
-      expect(post.body.contentBody.rawHtml).to.equal(literal);
+      expect(post.body.title).to.equal(candidate.title);
+      expect(post.body.contentBody).to.deep.equal({ ...candidate.contentBody, rawHtml: literal });
       expect(post.initialReport.operations).to.have.length(1);
       expect(post.initialReport.operations[0].state).to.equal('pending');
       expect(post.initialReport.operations[0].requestSha256).to.equal(
@@ -1433,6 +1455,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(post.initialReport.sourceDefinitions.edits.entries[0]).to.include({
         changed: true,
         literalHtml: literal,
+        originalDefinitionSha256: hash(originalDefinition),
+        currentDefinitionSha256: hash(candidateBytes),
         originalHtmlSha256: hash('<p>Original &amp; café</p>'),
         currentHtmlSha256: hash(literal),
       });
@@ -1448,6 +1472,10 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(report.operations[0].requestSha256).to.equal(
         post.initialReport.operations[0].requestSha256,
       );
+      expect(
+        post.initialReport.sourceDefinitions.edits.entries[0].candidateDefinition,
+      ).to.deep.equal(candidate);
+      expect(await readFile(file(candidateFile), 'utf8')).to.equal(candidateBytes);
       for (const [relative, bytes] of preserved)
         expect(await readFile(file(relative))).to.deep.equal(bytes);
       // Keep successful journals rather than overwrite them between family runs.
@@ -1456,9 +1484,34 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       const editsPath = `${prefix}-definitions/${htmlPath}`;
       const invalid = [
         {
-          relative: `${prefix}-definitions/${definitionPath}`,
+          relative: candidateFile,
           bytes: '{}',
           message: /reprojection/iu,
+        },
+        {
+          relative: candidateFile,
+          bytes: JSON.stringify({
+            ...candidate,
+            identity: { ...candidate.identity, apiName: 'Hijacked' },
+          }),
+          message: /reprojection/iu,
+        },
+        {
+          relative: candidateFile,
+          bytes: JSON.stringify({
+            ...candidate,
+            contentBody: { ...candidate.contentBody, 'lightning:expressions': [{}] },
+          }),
+          message: /reprojection|Unsupported/iu,
+        },
+        {
+          relative: candidateFile,
+          bytes: JSON.stringify({
+            ...candidate,
+            urlName: 'conflict',
+            contentBody: { ...candidate.contentBody, 'sfdc_cms:urlName': 'conflict' },
+          }),
+          message: /explicit native-copy target URL/iu,
         },
         { relative: editsPath, bytes: '<p>{{user}}</p>', message: /Unsupported/iu },
         {
@@ -1486,6 +1539,37 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-invalid-report');
         } finally {
           await writeFile(file(scenario.relative), before);
+        }
+      }
+      for (const scenario of ['title-collision', 'url-collision', 'json-drift']) {
+        const reportDirectory = `source-a-${scenario}-report`;
+        try {
+          const blocked = await runSf(
+            [...args, '--apply', '--report-dir', reportDirectory],
+            `source-a-${scenario}`,
+          );
+          expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+          expect(blocked.stdout + blocked.stderr, blocked.stdout + blocked.stderr).to.match(
+            scenario === 'json-drift' ? /changed after planning/iu : /collision/iu,
+          );
+          const events = JSON.parse(
+            await readFile(file(`source-a-${scenario}-transport.json`), 'utf8'),
+          );
+          expect(events.some((event: { method?: string }) => event.method === 'POST')).to.equal(
+            false,
+          );
+          if (scenario === 'json-drift') {
+            const journal = JSON.parse(
+              await readFile(file(`${reportDirectory}/workspace-import-run.json`), 'utf8'),
+            );
+            expect(journal.state).to.equal('failed');
+            expect(journal.createdParents).to.have.length(0);
+            expect(journal.sourceDefinitions.edits.entries[0].currentDefinitionSha256).to.equal(
+              hash(candidateBytes),
+            );
+          }
+        } finally {
+          await writeFile(file(candidateFile), candidateBytes);
         }
       }
       const manifestPath = `${prefix}-base/manifest.json`;

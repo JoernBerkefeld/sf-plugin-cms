@@ -459,7 +459,15 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.description).to.include(
       'strict original and edited dependency-free HTML admission for Email/Email Template',
     );
-    expect(ImportWorkspace.description).to.include('immutable JSON, proven root placement');
+    expect(ImportWorkspace.description).to.include('bounded existing JSON string-leaf edits');
+    expect(ImportWorkspace.description).to.include('immutable identity/structure');
+    expect(ImportWorkspace.description).to.include(
+      'complete workspace API/title/URL collision proof',
+    );
+    expect(ImportWorkspace.description).to.include('proven root placement');
+    expect(ImportWorkspace.flags['definition-dir'].summary).to.include(
+      'JSON string-leaf and literal HTML edits',
+    );
     expect(ImportWorkspace.description).to.include('exact destination-default language');
     expect(ImportWorkspace.description).to.include(
       'variants/translations/personalization are deferred',

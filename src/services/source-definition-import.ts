@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { assertSourceDefinition, type SourceDefinition } from '../contracts/source-definition.js';
 import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { replaySourceAdmissionEvidence } from './source-admission-evidence.js';
 import {
@@ -37,6 +38,9 @@ export type SourceDefinitionEditEvidence = {
     readonly definitionPath: string;
     readonly variantId: string;
     readonly contentId: string;
+    readonly originalDefinitionSha256: string;
+    readonly currentDefinitionSha256: string;
+    readonly candidateDefinition: SourceDefinition;
     readonly originalHtmlSha256?: string;
     readonly currentHtmlSha256?: string;
     readonly changed: boolean;
@@ -45,13 +49,61 @@ export type SourceDefinitionEditEvidence = {
 };
 
 /**
+ * Admit existing string-leaf edits without changing the original schema or identity.
+ * @param {SourceDefinition} original - Deterministic historically admitted projection.
+ * @param {SourceDefinition} candidate - Strictly parsed edited definition.
+ */
+function assertCandidateEdits(original: SourceDefinition, candidate: SourceDefinition): void {
+  const invariant = structuredClone(candidate);
+  const mutableBody = [
+    'sfdc_cms:title',
+    'sfdc_cms:description',
+    'preheader',
+    'textContent',
+    'backgroundColor',
+    ...(original.contentType === 'sfdc_cms__email' ? ['subjectLine', 'sfdc_cms:urlName'] : []),
+  ];
+  // Brand remains unchanged: its structured inline profile is not an editable Email body.
+  if (original.contentType !== 'sfdc_cms__brand') {
+    for (const key of mutableBody) {
+      if (
+        Object.hasOwn(original.contentBody, key) &&
+        Object.hasOwn(candidate.contentBody, key) &&
+        typeof original.contentBody[key] === 'string' &&
+        typeof candidate.contentBody[key] === 'string'
+      )
+        invariant.contentBody[key] = original.contentBody[key];
+    }
+    for (const key of ['title', 'urlName'] as const) {
+      if (Object.hasOwn(original, key) && Object.hasOwn(candidate, key))
+        invariant[key] = original[key];
+    }
+    if (
+      (candidate.title !== original.title ||
+        candidate.contentBody['sfdc_cms:title'] !== original.contentBody['sfdc_cms:title']) &&
+      Object.hasOwn(original, 'title') &&
+      candidate.title !== candidate.contentBody['sfdc_cms:title']
+    )
+      throw new TypeError('Edited source title must agree with the native body title');
+    for (const url of [candidate.urlName, candidate.contentBody['sfdc_cms:urlName']]) {
+      if (url !== undefined && (typeof url !== 'string' || !/^[a-z0-9-]+$/u.test(url)))
+        throw new TypeError('Source URL name must use lowercase letters, digits or hyphens');
+    }
+  }
+  if (!isDeepStrictEqual(invariant, original))
+    throw new TypeError(
+      'Source JSON differs from original reprojection outside allowed string edits',
+    );
+}
+
+/**
  * Validate files and edits against original acquired evidence, not baseline admission.
  * This checkpoint cannot establish historical workspace, parent or sibling completeness.
  * It returns detached edit evidence only, never integrity-labelled import payloads.
  * @param {readonly SourceDefinitionInputItem[]} original - Original acquired projection inputs.
  * @param {string} baselineDirectory - Disjoint immutable baseline route.
  * @param {string} definitionDirectory - Existing source tree to inspect.
- * @returns {Promise<SourceDefinitionEditEvidence>} Detached literal HTML and original/current hashes.
+ * @returns {Promise<SourceDefinitionEditEvidence>} Detached candidate metadata, literal HTML and exact byte hashes.
  */
 export async function validateSourceDefinitionFiles(
   original: readonly SourceDefinitionInputItem[],
@@ -91,14 +143,27 @@ export async function validateSourceDefinitionFiles(
       path.join(directory, item.definitionPath),
       'Source definition',
     );
-    if (!bytes.equals(item.definitionBytes))
+    const candidate = strictJson(bytes, 'Source JSON');
+    try {
+      assertSourceDefinition(candidate);
+    } catch (error) {
       throw new TypeError(
-        'Source JSON differs from deterministic original reprojection; only HTML edits are supported',
+        `Source JSON cannot match original reprojection: ${(error as Error).message}`,
+        { cause: error },
       );
+    }
+    assertCandidateEdits(item.definition, candidate);
     observed.set(item.definitionPath, bytes);
-    const evidence = projection.evidence[index];
+    const evidence = {
+      ...projection.evidence[index],
+      originalDefinitionSha256: createHash('sha256').update(item.definitionBytes).digest('hex'),
+      currentDefinitionSha256: createHash('sha256').update(bytes).digest('hex'),
+      candidateDefinition: structuredClone(candidate),
+    };
+    const definitionChanged =
+      evidence.originalDefinitionSha256 !== evidence.currentDefinitionSha256;
     if (item.htmlPath === undefined) {
-      entries.push({ ...evidence, changed: false });
+      entries.push({ ...evidence, changed: definitionChanged });
       continue;
     }
     const htmlBytes = await readStableRegularFile(
@@ -112,12 +177,12 @@ export async function validateSourceDefinitionFiles(
     } catch (error) {
       throw new TypeError('Source HTML must contain valid UTF-8', { cause: error });
     }
-    assertSourceNativeHtml(item.definition.contentType, item.definition.contentBody, literalHtml);
+    assertSourceNativeHtml(candidate.contentType, candidate.contentBody, literalHtml);
     const currentHtmlSha256 = createHash('sha256').update(htmlBytes).digest('hex');
     entries.push({
       ...evidence,
       currentHtmlSha256,
-      changed: currentHtmlSha256 !== evidence.originalHtmlSha256,
+      changed: definitionChanged || currentHtmlSha256 !== evidence.originalHtmlSha256,
       literalHtml,
     });
   }
