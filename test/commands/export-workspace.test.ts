@@ -121,6 +121,7 @@ describe('CMS export workspace command', () => {
       'experimental-media',
       'output-dir',
       'editable-dir',
+      'definition-dir',
     ]);
     expect(ExportWorkspace.flags['target-org'].required).to.equal(true);
     expect(ExportWorkspace.flags['workspace-id'].required).not.to.equal(true);
@@ -848,7 +849,17 @@ describe('CMS export workspace command', () => {
       expect(await readdir(root)).to.deep.equal([]);
     }
     expect(ExportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['output-dir']);
-    expect(ExportWorkspace.flags['editable-dir'].exclusive).to.deep.equal(['all']);
+    expect(ExportWorkspace.flags['editable-dir'].exclusive).to.deep.equal([
+      'all',
+      'definition-dir',
+    ]);
+    expect(ExportWorkspace.flags['definition-dir'].dependsOn).to.deep.equal(['output-dir']);
+    expect(ExportWorkspace.flags['definition-dir'].exclusive).to.include.members([
+      'editable-dir',
+      'all',
+      'experimental-media',
+      'landing-page-pair-map',
+    ]);
   });
 
   it('publishes the editable subset while retaining partial exit and machine result shape', async () => {

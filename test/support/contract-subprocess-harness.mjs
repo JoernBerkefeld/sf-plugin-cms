@@ -405,6 +405,196 @@ if (contractCase !== undefined) {
         },
       };
     };
+  } else if (contractCase.startsWith('source-a-')) {
+    // Only org acquisition is replaced; packed flags, source services and journals stay real.
+    const command = process.argv.includes('export') ? 'export' : 'import';
+    const { default: Command } = await import(
+      new URL(`lib/commands/cms/${command}/workspace.js`, pathToFileURL(`${pluginRoot}${path.sep}`))
+    );
+    Command.prototype.getOrgContext = async function () {
+      if (contractCase === 'source-a-local') throw new Error('Unexpected org access');
+      const raw = JSON.parse(await readFile('source-a-fixture.json', 'utf8'));
+      const events = [{ phase: 'org' }];
+      const evidenceFile = path.resolve(`${contractCase}-transport.json`);
+      await writeFile(evidenceFile, JSON.stringify(events));
+      let workspaceReads = 0;
+      let payload;
+      return {
+        orgId: '00DControlledSource',
+        connection: {
+          request: async ({ url, method, body }) => {
+            const event = {
+              url,
+              method,
+              ...(body === undefined ? {} : { body: JSON.parse(body) }),
+            };
+            events.push(event);
+            await writeFile(evidenceFile, JSON.stringify(events));
+            if (url === '/connect/cms/spaces/space') {
+              workspaceReads += 1;
+              if (
+                command === 'import' &&
+                workspaceReads === 2 &&
+                contractCase === 'source-a-drift'
+              ) {
+                const html = 'source-a-email-definitions';
+                const report = JSON.parse(
+                  await readFile('source-a-drift-report/workspace-import-run.json', 'utf8'),
+                );
+                await writeFile(
+                  path.join(
+                    html,
+                    report.sourceDefinitions.edits.entries[0].definitionPath.replace(
+                      /\.json$/u,
+                      '.html',
+                    ),
+                  ),
+                  '<p>Drift</p>',
+                );
+              }
+              return {
+                id: 'space',
+                name: 'Controlled',
+                defaultLanguage: 'en_US',
+                rootFolderId: 'distinct-root',
+              };
+            }
+            if (command === 'export') {
+              if (url.startsWith('/connect/cms/items/search?'))
+                return {
+                  count: 1,
+                  items: [
+                    {
+                      id: 'email',
+                      managedContentSpaceId: 'space',
+                      type: 'ManagedContentVariantSearchResultRepresentation',
+                    },
+                  ],
+                };
+              if (url.endsWith('/variants/email')) return raw;
+              if (url.endsWith('/contents/parent'))
+                return raw.contentType.fullyQualifiedName === 'sfdc_cms__brand'
+                  ? raw
+                  : {
+                      managedContentId: 'parent',
+                      contentType: raw.contentType,
+                      contentSpace: raw.contentSpace,
+                      folder: null,
+                    };
+            } else {
+              if (url.startsWith('/connect/cms/items/search?'))
+                return {
+                  count: 1,
+                  items: [
+                    {
+                      id: 'destination-existing',
+                      managedContentSpaceId: 'space',
+                      type: 'ManagedContentVariantSearchResultRepresentation',
+                    },
+                  ],
+                };
+              if (url.endsWith('/variants/destination-existing'))
+                return {
+                  managedContentVariantId: 'destination-existing',
+                  managedContentId: 'destination-existing-parent',
+                  apiName: 'unrelated_destination_image',
+                  contentSpace: { id: 'space' },
+                  contentType: { fullyQualifiedName: 'sfdc_cms__image' },
+                };
+              if (method === 'POST' && url === '/connect/cms/contents') {
+                payload = JSON.parse(body);
+                event.initialReport = JSON.parse(
+                  await readFile('source-a-report/workspace-import-run.json', 'utf8'),
+                );
+                await writeFile(evidenceFile, JSON.stringify(events));
+                return {
+                  contentKey: 'created',
+                  managedContentId: 'created-parent',
+                  managedContentVariantId: 'created-variant',
+                };
+              }
+              if (method === 'GET' && url.endsWith('/contents/created') && payload !== undefined) {
+                event.readback = {
+                  ...payload,
+                  contentKey: 'created',
+                  managedContentId: 'created-parent',
+                  contentSpace: { id: 'space' },
+                  folder: { id: 'distinct-root' },
+                  language: 'en_US',
+                  isPublished: false,
+                  status: { status: 'Draft' },
+                  contentBody: {
+                    ...payload.contentBody,
+                    rawHtml: payload.contentBody.rawHtml
+                      .replaceAll('&', '&amp;')
+                      .replaceAll('<', '&lt;')
+                      .replaceAll('>', '&gt;'),
+                  },
+                };
+                await writeFile(evidenceFile, JSON.stringify(events));
+                return event.readback;
+              }
+            }
+            throw new Error(`Unexpected source acceptance request: ${method} ${url}`);
+          },
+        },
+      };
+    };
+  } else if (contractCase.startsWith('definition-')) {
+    const { default: Command } = await import(
+      new URL('lib/commands/cms/export/workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
+    );
+    Command.prototype.getOrgContext = async function () {
+      if (contractCase === 'definition-local') throw new Error('Unexpected org access');
+      const raw = {
+        managedContentVariantId: 'email',
+        managedContentId: 'parent',
+        contentKey: 'key',
+        apiName: 'Welcome',
+        contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+        contentSpace: { id: 'space' },
+        language: 'en_US',
+        folder: null,
+        title: 'Welcome',
+        contentBody: {
+          'sfdc_cms:title': 'Welcome',
+          subjectLine: 'Hello',
+          messagePurpose: 'Transactional',
+          rawHtml: '&lt;p&gt;Hello&lt;/p&gt;',
+          'lightning:expressions': [],
+          'sfdc_cms:variants': [],
+        },
+      };
+      return {
+        orgId: '00DControlledSource',
+        connection: {
+          request: async ({ url, method }) => {
+            if (method !== 'GET') throw new Error('Unexpected mutation');
+            if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
+            if (url.startsWith('/connect/cms/items/search?'))
+              return {
+                count: 1,
+                items: [
+                  {
+                    id: 'email',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+              };
+            if (url.endsWith('/variants/email')) return raw;
+            if (url.endsWith('/contents/parent'))
+              return {
+                managedContentId: 'parent',
+                contentType: raw.contentType,
+                contentSpace: raw.contentSpace,
+                folder: null,
+              };
+            throw new Error(`Unexpected source read: ${url}`);
+          },
+        },
+      };
+    };
   } else if (contractCase.startsWith('editable-')) {
     // Replace only org acquisition: installed parsing, export/import services and transport run normally.
     const command = process.argv.includes('export') ? 'export' : 'import';

@@ -17,6 +17,7 @@ import {
   type WorkspaceExportWarning,
 } from '../../../services/export-workspace.js';
 import { preflightEditableExport } from '../../../services/editable-raw-html-export.js';
+import { preflightSourceDefinitionExport } from '../../../services/source-definition-export.js';
 import { parseLandingPagePairSelectors } from '../../../services/landing-page-pair-export.js';
 import {
   assertCanonicalMarketingWorkspace,
@@ -292,9 +293,29 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       summary:
         'Single-workspace only: opt into undocumented image binary transport and strict v2 media output.',
     }),
+    'definition-dir': Flags.directory({
+      exists: false,
+      exclusive: [
+        'all',
+        'editable-dir',
+        'experimental-media',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'preference-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'landing-page-pair-map',
+      ],
+      dependsOn: ['output-dir'],
+      summary:
+        'New flat source directory for qualified single-family Email, Email Template or Brand originals; requires explicit --output-dir. Image is unsupported: lossless native-media binding is unqualified. Baseline is retained on source publication failure; owned staging may remain.',
+    }),
     'editable-dir': Flags.directory({
       exists: false,
-      exclusive: ['all'],
+      exclusive: ['all', 'definition-dir'],
       dependsOn: ['output-dir'],
       summary:
         'New companion directory for the native raw-email/template HTML subset; requires explicit --output-dir.',
@@ -309,6 +330,11 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
   public async run(): Promise<WorkspaceExportCommandResult> {
     const { flags } = await this.parse(ExportWorkspace);
     const isBulk = flags.all === true;
+    if (flags['definition-dir'] !== undefined) {
+      if (flags['output-dir'] === undefined)
+        throw new Error('--definition-dir requires explicit --output-dir.');
+      await preflightSourceDefinitionExport(flags['output-dir'], flags['definition-dir']);
+    }
     if (flags['editable-dir'] !== undefined) {
       if (isBulk) throw new Error('--editable-dir is incompatible with --all.');
       if (flags['output-dir'] === undefined)
@@ -418,6 +444,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       await assertCanonicalMarketingWorkspace(connection, selected);
     const result = await exportWorkspace(connection, selected.id, destination, {
       editableDirectory: flags['editable-dir'],
+      definitionDirectory: flags['definition-dir'],
       ...(selectedApiNames === undefined
         ? {}
         : {

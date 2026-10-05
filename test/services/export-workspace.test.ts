@@ -17,6 +17,10 @@ import sinon from 'sinon';
 import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/atomic-publish.js';
 import { bindLandingPageTemplatePairs } from '../../src/services/landing-page-pair-export.js';
 import type { CmsRecord } from '../../src/services/read.js';
+import {
+  replaySourceAdmissionEvidence,
+  serializeSourceAdmissionEvidence,
+} from '../../src/services/source-admission-evidence.js';
 import { brandDetail } from '../fixtures/brand.js';
 import {
   METADATA_CAPABILITY_FIXTURE_SHA256,
@@ -131,8 +135,330 @@ function preferencePageDetail(id: string, apiName: string, workspaceId = 'space'
   };
 }
 
+function sourceFixture(contentType = 'sfdc_cms__email') {
+  const raw = {
+    managedContentVariantId: 'source-variant',
+    managedContentId: 'source-parent',
+    contentKey: 'key',
+    contentSpace: { id: 'space' },
+    apiName: 'Welcome',
+    contentType: { fullyQualifiedName: contentType },
+    language: 'en_US',
+    title: 'Welcome',
+    folder: null,
+    contentBody: {
+      'sfdc_cms:title': 'Welcome',
+      subjectLine: 'Hello',
+      messagePurpose: 'Transactional',
+      rawHtml: '&lt;p&gt;Hello &amp;amp; café&lt;/p&gt;',
+      'lightning:expressions': [],
+      'sfdc_cms:variants': [],
+    },
+  };
+  const parent = {
+    managedContentId: 'source-parent',
+    contentType: raw.contentType,
+    contentSpace: raw.contentSpace,
+    folder: null,
+  };
+  const request = sinon.stub().callsFake((input: { url: string }) => {
+    if (input.url.includes('/items/search'))
+      return fakeRequest({ count: 1, items: [row('source-variant')] });
+    if (input.url.includes('/variants/source-variant')) return fakeRequest(raw);
+    if (input.url.includes('/contents/source-parent')) return fakeRequest(parent);
+    if (input.url.includes('/spaces/space'))
+      return fakeRequest({ id: 'space', name: 'Demo_Workspace' });
+    throw new Error(`Unexpected source request: ${input.url}`);
+  });
+  return { raw, parent, request };
+}
+
 describe('workspace export service', () => {
   let root: string;
+
+  it('publishes flat qualified Email and Template sources without changing baseline or result contracts', async () => {
+    for (const contentType of ['sfdc_cms__email', 'sfdc_cms__emailTemplate']) {
+      const fixture = sourceFixture(contentType);
+      const baseline = path.join(root, `${contentType}-baseline`);
+      const definitions = path.join(root, `${contentType}-source`);
+      const options = {
+        generatedAt: '2026-10-05T00:00:00.000Z',
+        selection: { contentType, apiNames: ['Welcome'] },
+      };
+      const result = await exportWorkspace({ request: fixture.request }, 'space', baseline, {
+        ...options,
+        definitionDirectory: definitions,
+      });
+      const unchanged = await exportWorkspace(
+        { request: fixture.request },
+        'space',
+        path.join(root, `${contentType}-old`),
+        options,
+      );
+      expect(result).to.have.all.keys('destination', 'manifest', 'manifestSha256');
+      const evidenceItem = result.manifest.items.at(-1)!;
+      const evidenceBytes = await readFile(path.join(baseline, evidenceItem.path));
+      expect(evidenceItem).to.deep.equal({
+        path: 'evidence/source-admission.v1.json',
+        kind: 'cms.source-admission',
+        sha256: createHash('sha256').update(evidenceBytes).digest('hex'),
+      });
+      const evidence = JSON.parse(evidenceBytes.toString('utf8'));
+      expect(evidenceBytes.toString('utf8')).to.equal(serializeSourceAdmissionEvidence(evidence));
+      expect(evidence.workspace).to.deep.equal({ id: 'space', name: 'Demo_Workspace' });
+      expect(evidence.inventory).to.deep.equal({
+        contentType,
+        pages: [{ page: 0, response: { count: 1, items: [row('source-variant')] } }],
+        variants: [fixture.raw],
+      });
+      expect(evidence.selections).to.deep.equal([
+        {
+          rawItemPath: 'items/source-variant.json',
+          variantId: 'source-variant',
+          parent: fixture.parent,
+        },
+      ]);
+      expect(
+        replaySourceAdmissionEvidence(
+          evidence,
+          result.manifest,
+          new Map([['items/source-variant.json', fixture.raw]]),
+        )[0].raw,
+      ).to.deep.equal(fixture.raw);
+      expect({ ...result.manifest, items: result.manifest.items.slice(0, -1) }).to.deep.equal(
+        unchanged.manifest,
+      );
+      expect(result.manifestSha256).not.to.equal(unchanged.manifestSha256);
+      expect(fixture.request.callCount).to.equal(6); // Four source GET/search calls, two legacy calls.
+      expect(await readdir(unchanged.destination)).not.to.include('evidence');
+      expect(await readFile(path.join(baseline, 'items/source-variant.json'))).to.deep.equal(
+        await readFile(path.join(unchanged.destination, 'items/source-variant.json')),
+      );
+      const directory = contentType.endsWith('emailTemplate') ? 'emailTemplate' : 'email';
+      const token = directory === 'email' ? 'email' : 'email-template';
+      const family = path.join(definitions, 'cms/Demo_Workspace', directory);
+      const files = await readdir(family);
+      expect(files.toSorted()).to.deep.equal([
+        `Welcome.cms-${token}.html`,
+        `Welcome.cms-${token}.json`,
+      ]);
+      expect(await readFile(path.join(family, `Welcome.cms-${token}.html`), 'utf8')).to.equal(
+        '<p>Hello &amp; café</p>',
+      );
+      const definition = JSON.parse(
+        await readFile(path.join(family, `Welcome.cms-${token}.json`), 'utf8'),
+      );
+      expect(definition.folderPath).to.deep.equal([]);
+      expect(definition.contentBody).not.to.have.property('rawHtml');
+    }
+  });
+
+  it('persists actual exact-family acquisition after discovery and rejects drift before publication', async () => {
+    for (const mode of ['success', 'drift', 'incomplete', 'failure']) {
+      const fixture = sourceFixture();
+      let scoped = false;
+      fixture.request.callsFake(({ url }: { url: string }) => {
+        if (url.includes('/items/search')) {
+          const query = new URL(url, 'https://example.test').searchParams;
+          scoped = query.has('contentTypeFQN');
+          if (scoped) {
+            expect(query.get('contentTypeFQN')).to.equal('sfdc_cms__email');
+            expect(query.get('queryTerm')).to.equal('*');
+            if (mode === 'failure') return failedRequest('inventory failed');
+            if (mode === 'incomplete')
+              return fakeRequest({
+                count: 2,
+                items: pageNumber(url) === 0 ? [row('source-variant')] : [],
+              });
+          }
+          return fakeRequest({
+            count: 1,
+            items: [row('source-variant')],
+            scope: scoped ? 'exact' : 'discovery',
+          });
+        }
+        if (url.includes('/variants/'))
+          return fakeRequest(
+            scoped && mode === 'drift' ? { ...fixture.raw, title: 'changed' } : fixture.raw,
+          );
+        if (url.includes('/contents/')) return fakeRequest(fixture.parent);
+        return fakeRequest({ id: 'space', name: 'Demo_Workspace' });
+      });
+      const baseline = path.join(root, `base-${mode}`);
+      try {
+        const result = await exportWorkspace({ request: fixture.request }, 'space', baseline, {
+          definitionDirectory: path.join(root, `source-${mode}`),
+        });
+        expect(mode).to.equal('success');
+        const evidence = JSON.parse(
+          await readFile(path.join(baseline, 'evidence/source-admission.v1.json'), 'utf8'),
+        );
+        expect(evidence.inventory.pages[0].response.scope).to.equal('exact');
+        expect(result.manifest.pagesRequested).to.equal(1);
+        expect(fixture.request.callCount).to.equal(6);
+      } catch (error) {
+        if (mode === 'success') throw error;
+        expect(String(error)).to.match(/drift|complete|inventory failed/u);
+        expect(await readdir(root)).not.to.include(`base-${mode}`);
+        expect(await readdir(root)).not.to.include(`source-${mode}`);
+      }
+    }
+  });
+
+  it('persists full pre-selection inventory and page responses without requerying explicit families', async () => {
+    const fixture = sourceFixture();
+    const other = {
+      ...fixture.raw,
+      managedContentVariantId: 'unselected',
+      managedContentId: 'other-parent',
+      apiName: 'Other',
+    };
+    fixture.request.callsFake(({ url }: { url: string }) => {
+      if (url.includes('/items/search'))
+        return fakeRequest({
+          total: 2,
+          items: [row(pageNumber(url) === 0 ? 'source-variant' : 'unselected')],
+        });
+      if (url.includes('/variants/'))
+        return fakeRequest(url.endsWith('/unselected') ? other : fixture.raw);
+      if (url.includes('/contents/')) return fakeRequest(fixture.parent);
+      return fakeRequest({ id: 'space', name: 'Demo_Workspace' });
+    });
+    const result = await exportWorkspace(
+      { request: fixture.request },
+      'space',
+      path.join(root, 'subset'),
+      {
+        definitionDirectory: path.join(root, 'sources'),
+        selection: { contentType: 'sfdc_cms__email', apiNames: ['Welcome'] },
+      },
+    );
+    const evidence = JSON.parse(
+      await readFile(path.join(result.destination, 'evidence/source-admission.v1.json'), 'utf8'),
+    );
+    expect(evidence.inventory.variants).to.deep.equal([fixture.raw, other]);
+    expect(evidence.inventory.pages.map(({ page }: { page: number }) => page)).to.deep.equal([
+      0, 1,
+    ]);
+    expect(evidence.selections).to.have.length(1);
+    expect(fixture.request.callCount).to.equal(6);
+    expect(result.manifest.entries).to.have.length(1);
+    expect(
+      replaySourceAdmissionEvidence(
+        evidence,
+        result.manifest,
+        new Map([['items/source-variant.json', fixture.raw]]),
+      ),
+    ).to.have.length(1);
+  });
+
+  it('publishes qualified inline Brand with original root evidence and no companions', async () => {
+    const raw = { ...brandDetail('brand', 'Brand', 'space'), folder: null };
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url.includes('/items/search')) return fakeRequest({ count: 1, items: [row('brand')] });
+      if (url.includes('/spaces/')) return fakeRequest({ id: 'space', name: 'Demo' });
+      return fakeRequest(raw);
+    });
+    await exportWorkspace({ request }, 'space', path.join(root, 'base'), {
+      definitionDirectory: path.join(root, 'source'),
+      selection: { contentType: 'sfdc_cms__brand', apiNames: ['Brand'], brandReports: true },
+    });
+    expect(await readdir(path.join(root, 'source/cms/Demo/brand'))).to.deep.equal([
+      'Brand.cms-brand.json',
+    ]);
+  });
+
+  it('rejects incompatible definition modes before requests or artifacts', async () => {
+    for (const options of [
+      { editableDirectory: path.join(root, 'editable') },
+      { selection: { contentType: 'sfdc_cms__image', apiNames: ['Image'] } },
+      { selection: { contentType: 'sfdc_cms__webFragment', apiNames: ['Page'] } },
+    ]) {
+      const request = sinon.stub();
+      try {
+        await exportWorkspace({ request }, 'space', path.join(root, 'base'), {
+          ...options,
+          definitionDirectory: path.join(root, 'definitions'),
+        });
+        expect.fail('must reject');
+      } catch (error) {
+        expect(String(error)).to.match(/mutually exclusive|Unsupported selected source family/u);
+      }
+      expect(request.called).to.equal(false);
+      expect(await readdir(root)).to.deep.equal([]);
+    }
+  });
+
+  it('fails qualification before baseline publication for unsafe HTML, unknown placement and siblings', async () => {
+    for (const mode of ['html', 'folder', 'siblings', 'partial']) {
+      const fixture = sourceFixture();
+      if (mode === 'html') fixture.raw.contentBody.rawHtml = '<p>%%FirstName%%</p>';
+      if (mode === 'folder') Object.assign(fixture.raw, { folder: { id: 'unknown' } });
+      if (mode === 'siblings')
+        fixture.request.callsFake((input: { url: string }) => {
+          if (input.url.includes('/items/search'))
+            return fakeRequest({ count: 2, items: [row('source-variant'), row('sibling')] });
+          if (input.url.includes('/variants/'))
+            return fakeRequest(
+              input.url.endsWith('/sibling')
+                ? { ...fixture.raw, managedContentVariantId: 'sibling', apiName: 'Other' }
+                : fixture.raw,
+            );
+          if (input.url.includes('/contents/')) return fakeRequest(fixture.parent);
+          return fakeRequest({ id: 'space', name: 'Demo_Workspace' });
+        });
+      if (mode === 'partial')
+        fixture.request.callsFake((input: { url: string }) =>
+          input.url.includes('/search')
+            ? fakeRequest({ count: 2, items: [row('source-variant')] })
+            : fakeRequest(fixture.raw),
+        );
+      try {
+        await exportWorkspace({ request: fixture.request }, 'space', path.join(root, 'base'), {
+          definitionDirectory: path.join(root, 'definitions'),
+          selection: { contentType: 'sfdc_cms__email', apiNames: ['Welcome'] },
+        });
+        expect.fail('must reject');
+      } catch (error) {
+        expect(String(error)).to.match(/rawHtml|ancestry|sibling|complete/u);
+      }
+      expect(await readdir(root)).to.deep.equal([]);
+    }
+  });
+
+  it('retains a verified baseline on source publication failure and rejects baseline drift', async () => {
+    for (const drift of [false, true]) {
+      const fixture = sourceFixture();
+      const baseline = path.join(root, `base-${drift}`);
+      const definitions = path.join(root, `definitions-${drift}`);
+      try {
+        await exportWorkspace({ request: fixture.request }, 'space', baseline, {
+          definitionDirectory: definitions,
+          ...(drift
+            ? {
+                atomicPublish: {
+                  publishPath: async (from: string, to: string) => {
+                    await rename(from, to);
+                    await writeFile(path.join(to, 'items/source-variant.json'), '{}');
+                  },
+                },
+              }
+            : {
+                definitionPublish: {
+                  publishPath: async () => {
+                    throw new Error('source publication blocked');
+                  },
+                },
+              }),
+        });
+        expect.fail('must reject');
+      } catch (error) {
+        expect(String(error)).to.match(/Baseline export retained.*(changed|publication blocked)/u);
+      }
+      expect(await readdir(baseline)).to.include('manifest.json');
+      expect(await readdir(root)).not.to.include(path.basename(definitions));
+    }
+  });
 
   it('sanitizes default workspace directory names portably', () => {
     expect(safeWorkspaceDirectoryName('Café / Launch:*? ')).to.equal('Café _ Launch___');

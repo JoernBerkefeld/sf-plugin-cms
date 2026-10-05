@@ -394,6 +394,7 @@ describe('CMS import workspace command', () => {
       'workspace-id',
       'workspace-name',
       'source-dir',
+      'definition-dir',
       'native-copy-map',
       'email-fragment-map',
       'web-fragment-map',
@@ -417,6 +418,9 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.flags.apply.default).to.equal(false);
     expect(ImportWorkspace.flags['report-dir'].dependsOn).to.deep.equal(['apply']);
     expect(ImportWorkspace.flags['editable-dir'].dependsOn).to.deep.equal(['native-copy-map']);
+    expect(ImportWorkspace.flags['definition-dir'].exclusive).to.include('editable-dir');
+    expect(ImportWorkspace.flags['definition-dir'].exclusive).to.include('image-map');
+    expect(ImportWorkspace.flags['definition-dir'].exclusive).not.to.include('brand-map');
     const familyFlags = [
       'native-copy-map',
       'email-fragment-map',
@@ -447,6 +451,159 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.summary).to.match(/create-only/iu);
     expect(ImportWorkspace.description).to.match(/destination-default-language Drafts/iu);
   });
+
+  it('distinguishes strict source admission from legacy opaque HTML in help', () => {
+    expect(ImportWorkspace.description).to.include(
+      'Legacy native-copy/editable HTML without --definition-dir',
+    );
+    expect(ImportWorkspace.description).to.include(
+      'strict original and edited dependency-free HTML admission for Email/Email Template',
+    );
+    expect(ImportWorkspace.description).to.include('immutable JSON, proven root placement');
+    expect(ImportWorkspace.description).to.include('exact destination-default language');
+    expect(ImportWorkspace.description).to.include(
+      'variants/translations/personalization are deferred',
+    );
+    for (const help of [
+      ImportWorkspace.description,
+      ImportWorkspace.flags['definition-dir'].summary,
+    ]) {
+      expect(help).to.match(/Brand source import (?:remains |is )blocked/iu);
+      expect(help).to.match(/typed-report\/warning policy/iu);
+      expect(help).to.match(/Image(?: source definitions are| is) unsupported/iu);
+    }
+    expect(ImportWorkspace.flags['definition-dir'].summary).to.include('--native-copy-map');
+    expect(ImportWorkspace.flags['definition-dir'].summary).not.to.include(
+      'admitted typed brand-map',
+    );
+  });
+
+  for (const mode of ['plan', 'apply', 'simultaneous-editable', 'missing-map']) {
+    it(`runs additive definition-dir through the public command: ${mode}`, async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'cms-command-source-'));
+      // Source fixtures are retained rather than extending recursive cleanup scope.
+      const source = path.join(root, 'baseline');
+      const definitions = path.join(root, 'definitions');
+      const raw = {
+        managedContentVariantId: 'variant',
+        managedContentId: 'parent',
+        contentKey: 'key',
+        contentSpace: { id: 'source' },
+        apiName: 'Welcome',
+        language: 'en',
+        title: 'Welcome',
+        folder: null,
+        contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+        contentBody: {
+          'sfdc_cms:title': 'Welcome',
+          messagePurpose: 'Transactional',
+          subjectLine: 'Hello',
+          rawHtml: '&lt;p&gt;Original&lt;/p&gt;',
+          'lightning:expressions': [],
+          'sfdc_cms:variants': [],
+        },
+      };
+      const acquisition = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url.includes('/items/search'))
+          return fakeRequest({
+            count: 1,
+            items: [
+              {
+                id: 'variant',
+                managedContentSpaceId: 'source',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+          });
+        if (url.includes('/spaces/')) return fakeRequest({ id: 'source', name: 'Demo' });
+        if (url.includes('/variants/')) return fakeRequest(raw);
+        return fakeRequest({
+          managedContentId: 'parent',
+          contentType: raw.contentType,
+          contentSpace: raw.contentSpace,
+          folder: null,
+        });
+      });
+      await exportWorkspace({ request: acquisition }, 'source', source, {
+        definitionDirectory: definitions,
+        selection: { contentType: 'sfdc_cms__email', apiNames: ['Welcome'] },
+      });
+      const literal = '<p>Edited &lt;literal&gt;</p>';
+      await writeFile(path.join(definitions, 'cms/Demo/email/Welcome.cms-email.html'), literal);
+      const mapFile = path.join(root, 'map.json');
+      await writeFile(
+        mapFile,
+        JSON.stringify([
+          { sourceContentKey: 'key', language: 'en', apiName: 'Copy', urlName: 'copy' },
+        ]),
+      );
+      let posted: Record<string, unknown> = {};
+      const request = $$.SANDBOX.stub().callsFake(
+        ({ method, url, body }: { method: string; url: string; body?: string }) => {
+          if (url.includes('/items/search')) return fakeRequest({ count: 0, items: [] });
+          if (url.includes('/spaces/target'))
+            return fakeRequest({
+              id: 'target',
+              rootFolderId: 'distinct-root',
+              defaultLanguage: 'en',
+            });
+          if (method === 'POST') {
+            posted = JSON.parse(body!);
+            return fakeRequest({
+              contentKey: 'generated',
+              managedContentId: 'new-parent',
+              managedContentVariantId: 'new-variant',
+            });
+          }
+          return fakeRequest({
+            ...posted,
+            contentKey: 'generated',
+            managedContentId: 'new-parent',
+            language: 'en',
+            contentSpace: { id: 'target' },
+            folder: { id: 'distinct-root' },
+            isPublished: false,
+            status: { status: 'Draft' },
+          });
+        },
+      );
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      const orgContext = $$.SANDBOX.stub().resolves({ connection: { request }, orgId: 'org' });
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'api-version': '66.0',
+            'source-dir': source,
+            'definition-dir': definitions,
+            'workspace-id': 'target',
+            ...(mode === 'missing-map' ? {} : { 'native-copy-map': mapFile }),
+            ...(mode === 'simultaneous-editable' ? { 'editable-dir': definitions } : {}),
+            ...(mode === 'apply' ? { apply: true, 'report-dir': path.join(root, 'report') } : {}),
+          },
+        }),
+        getOrgContext: orgContext,
+        jsonEnabled: $$.SANDBOX.stub().returns(true),
+      });
+      const result = await command.run();
+      if (mode === 'missing-map' || mode === 'simultaneous-editable') {
+        expect(result.status).to.equal('blocked');
+        expect(orgContext.called).to.equal(false);
+      } else {
+        expect(result.status).to.equal('success');
+        expect(result.contractVersion).to.equal('1.0.0');
+        expect(
+          result.diagnostics.warnings.some(({ code }) => code === 'SOURCE_DEFINITION_INPUT'),
+        ).to.equal(true);
+      }
+      expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(
+        mode === 'apply' ? 1 : 0,
+      );
+      if (mode === 'apply') {
+        expect(posted.contentSpaceOrFolderId).to.equal('distinct-root');
+        expect(posted.contentBody).to.have.property('rawHtml', literal);
+      }
+    });
+  }
 
   it('executes the explicit native-copy-map file through the public command', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'cms-command-native-'));

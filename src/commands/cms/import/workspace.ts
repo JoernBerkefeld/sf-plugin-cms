@@ -78,7 +78,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Native and edited HTML is not resolved, rewritten, sanitized, or scanned through Phase 7. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Legacy native-copy/editable HTML without --definition-dir is not resolved, rewritten, sanitized, or scanned through Phase 7. --definition-dir requires strict original and edited dependency-free HTML admission for Email/Email Template, immutable JSON, proven root placement, and exact destination-default language; Brand source import remains blocked by strict typed-report/warning policy, Image source definitions are unsupported, and variants/translations/personalization are deferred. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
@@ -112,6 +112,23 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       exists: true,
       required: true,
       summary: 'Source workspace export containing manifest.json and items/.',
+    }),
+    'definition-dir': Flags.directory({
+      exists: true,
+      exclusive: [
+        'editable-dir',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'preference-page-map',
+        'image-map',
+      ],
+      summary:
+        'Baseline-bound Email/Email Template source definitions with strict HTML-only edits via --native-copy-map; root/default-language only. Brand source import is blocked by typed-report/warning policy; Image is unsupported.',
     }),
     'editable-dir': Flags.directory({
       exists: true,
@@ -387,6 +404,12 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     let nativeCopyMappings: unknown;
     let webFragmentMappings: unknown;
     try {
+      if (flags['definition-dir'] !== undefined) {
+        if (flags['editable-dir'] !== undefined)
+          throw new TypeError('--definition-dir and --editable-dir are mutually exclusive');
+        if (flags['native-copy-map'] === undefined && flags['brand-map'] === undefined)
+          throw new TypeError('--definition-dir requires --native-copy-map or --brand-map');
+      }
       if (flags['editable-dir'] !== undefined && flags['native-copy-map'] === undefined)
         throw new TypeError('--editable-dir requires --native-copy-map');
       let loadProfile:
@@ -549,6 +572,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         dryRun: !flags.apply,
         loadedSource: source,
         editableDirectory: flags['editable-dir'],
+        definitionDirectory: flags['definition-dir'],
         emailFragmentMappings,
         brandMappings,
         formMappings,

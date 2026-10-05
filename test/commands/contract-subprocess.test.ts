@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { brandDetail } from '../fixtures/brand.js';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -126,6 +127,9 @@ function parseEnvelope(result: ProcessResult): Record<string, unknown> {
   }
   return envelope;
 }
+
+const sourceAcceptanceHash = (bytes: string | Buffer) =>
+  createHash('sha256').update(bytes).digest('hex');
 
 function compare(left: string, right: string): number {
   const a = left.split('.').map(Number),
@@ -1232,6 +1236,380 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         if (scenario.file !== undefined) await writeFile(file(scenario.file), before!);
       }
     }
+  });
+
+  it('runs installed flat definition export and rejects incompatible flags before org access', async function () {
+    this.timeout(300_000);
+    const args = [
+      'cms',
+      'export',
+      'workspace',
+      '--target-org',
+      'unused',
+      '--workspace-id',
+      'space',
+      '--definition-dir',
+      'definition-source',
+      '--json',
+    ];
+    for (const extra of [
+      [],
+      ['--output-dir', 'definition-source/inside'],
+      ['--output-dir', 'definition-base', '--editable-dir', 'other'],
+      ['--output-dir', 'definition-base', '--experimental-media'],
+      ['--output-dir', 'definition-base', '--all'],
+    ]) {
+      const rejected = await runSf([...args, ...extra], 'definition-local');
+      expect(rejected.exitCode).not.to.equal(0);
+      expect(rejected.stdout + rejected.stderr).not.to.include('Unexpected org access');
+      expect(await readdir(isolatedDataDirectory)).not.to.include('definition-source');
+    }
+    const exported = await runSf([...args, '--output-dir', 'definition-base'], 'definition-export');
+    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const output = JSON.parse(exported.stdout);
+    expect(output).to.have.all.keys('destination', 'manifest', 'manifestSha256');
+    expect(output.manifest.completeness).to.equal('complete');
+    const evidencePath = 'evidence/source-admission.v1.json';
+    const evidenceBytes = await readFile(file(`definition-base/${evidencePath}`));
+    expect(
+      output.manifest.items.find((item: { path: string }) => item.path === evidencePath),
+    ).to.deep.equal({
+      path: evidencePath,
+      kind: 'cms.source-admission',
+      sha256: createHash('sha256').update(evidenceBytes).digest('hex'),
+    });
+    const evidence = JSON.parse(evidenceBytes.toString('utf8'));
+    expect(evidence.inventory.contentType).to.equal('sfdc_cms__email');
+    expect(evidence.inventory.pages).to.have.length(1);
+    expect(evidence.inventory.variants).to.have.length(1);
+    expect(evidence.selections[0].rawItemPath).to.equal(output.manifest.entries[0].file);
+    const family = file('definition-source/cms/Controlled/email');
+    expect(await readdir(family)).to.deep.equal([
+      'Welcome.cms-email.html',
+      'Welcome.cms-email.json',
+    ]);
+    expect(await readFile(path.join(family, 'Welcome.cms-email.html'), 'utf8')).to.equal(
+      '<p>Hello</p>',
+    );
+  });
+
+  it('runs packed source A Email/Template export, literal edits, dry-plan and journal-bound root CREATE', async function () {
+    this.timeout(900_000);
+    const hash = sourceAcceptanceHash;
+    for (const family of ['email', 'emailTemplate']) {
+      const prefix = `source-a-${family}`;
+      const raw = {
+        managedContentVariantId: 'email',
+        managedContentId: 'parent',
+        contentKey: 'key',
+        apiName: 'Welcome',
+        contentType: { fullyQualifiedName: `sfdc_cms__${family}` },
+        contentSpace: { id: 'space' },
+        language: 'en_US',
+        folder: null,
+        title: 'Welcome',
+        contentBody: {
+          'sfdc_cms:title': 'Welcome',
+          subjectLine: 'Hello',
+          messagePurpose: 'Transactional',
+          rawHtml: '&lt;p&gt;Original &amp;amp; café&lt;/p&gt;',
+          'lightning:expressions': [],
+          'sfdc_cms:variants': [],
+        },
+      };
+      await writeFile(file('source-a-fixture.json'), JSON.stringify(raw));
+      const exported = await runSf(
+        [
+          'cms',
+          'export',
+          'workspace',
+          '--target-org',
+          'unused',
+          '--workspace-id',
+          'space',
+          '--output-dir',
+          `${prefix}-base`,
+          '--definition-dir',
+          `${prefix}-definitions`,
+          '--json',
+        ],
+        'source-a-export',
+      );
+      expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+      const output = JSON.parse(exported.stdout);
+      expect(output.manifest.completeness).to.equal('complete');
+      expect(output.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
+      const token = family === 'email' ? 'email' : 'email-template';
+      const definitionPath = `cms/Controlled/${family}/Welcome.cms-${token}.json`;
+      const htmlPath = definitionPath.replace(/\.json$/u, '.html');
+      const baselineFiles = [
+        'manifest.json',
+        ...output.manifest.items.map((item: { path: string }) => item.path),
+      ];
+      const preserved = new Map<string, Buffer>();
+      for (const relative of baselineFiles)
+        preserved.set(
+          `${prefix}-base/${relative}`,
+          await readFile(file(`${prefix}-base/${relative}`)),
+        );
+      preserved.set(
+        `${prefix}-definitions/${definitionPath}`,
+        await readFile(file(`${prefix}-definitions/${definitionPath}`)),
+      );
+      expect(hash(preserved.get(`${prefix}-base/manifest.json`)!)).to.equal(output.manifestSha256);
+      expect(await readFile(file(`${prefix}-definitions/${htmlPath}`), 'utf8')).to.equal(
+        '<p>Original &amp; café</p>',
+      );
+      const literal = '<p>Edited &lt;literal&gt; 世界</p>\r\n';
+      await writeFile(file(`${prefix}-definitions/${htmlPath}`), literal);
+      await writeFile(
+        file('source-a-copies.json'),
+        JSON.stringify([
+          { sourceContentKey: 'key', language: 'en_US', apiName: 'Fresh', urlName: 'fresh' },
+        ]),
+      );
+      const args = [
+        'cms',
+        'import',
+        'workspace',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--source-dir',
+        `${prefix}-base`,
+        '--definition-dir',
+        `${prefix}-definitions`,
+        '--native-copy-map',
+        'source-a-copies.json',
+        '--json',
+      ];
+      const dry = await runSf(args, 'source-a-import');
+      expect(dry.exitCode, dry.stdout + dry.stderr).to.equal(0);
+      const preview = parseEnvelope(dry);
+      expect(preview).to.deep.include({
+        contract: 'sf-cms-workspace-import',
+        contractVersion: '1.0.0',
+        status: 'success',
+      });
+      expectPluginVersion(preview, installedPackageVersion);
+      const dryEvents = JSON.parse(await readFile(file('source-a-import-transport.json'), 'utf8'));
+      expect(
+        dryEvents
+          .filter((event: { method?: string }) => event.method !== undefined)
+          .every((event: { method: string }) => event.method === 'GET'),
+      ).to.equal(true);
+      const applied = await runSf(
+        [...args, '--apply', '--report-dir', 'source-a-report'],
+        'source-a-import',
+      );
+      expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+      const envelope = parseEnvelope(applied);
+      expect(envelope).to.deep.include({
+        contract: 'sf-cms-workspace-import',
+        contractVersion: '1.0.0',
+        status: 'success',
+      });
+      const events = JSON.parse(await readFile(file('source-a-import-transport.json'), 'utf8'));
+      const posts = events.filter((event: { method?: string }) => event.method === 'POST');
+      expect(posts).to.have.length(1);
+      const post = posts[0];
+      expect(post.body).to.include({
+        contentSpaceOrFolderId: 'distinct-root',
+        contentType: `sfdc_cms__${family}`,
+        apiName: 'Fresh',
+        urlName: 'fresh',
+      });
+      expect(post.body).not.to.have.any.keys('contentKey', 'id', 'externalId', 'externalSource');
+      expect(post.body.contentBody.rawHtml).to.equal(literal);
+      expect(post.initialReport.operations).to.have.length(1);
+      expect(post.initialReport.operations[0].state).to.equal('pending');
+      expect(post.initialReport.operations[0].requestSha256).to.equal(
+        hash(`create-parent\u0000key\u0000en_US\u0000${JSON.stringify(post.body)}`),
+      );
+      expect(post.initialReport.sourceManifestSha256).to.equal(output.manifestSha256);
+      expect(post.initialReport.sourceDestination.rootFolderId).to.equal('distinct-root');
+      expect(post.initialReport.sourceDefinitions.originals[0].raw).to.deep.equal(raw);
+      expect(post.initialReport.sourceDefinitions.edits.entries[0]).to.include({
+        changed: true,
+        literalHtml: literal,
+        originalHtmlSha256: hash('<p>Original &amp; café</p>'),
+        currentHtmlSha256: hash(literal),
+      });
+      expect(
+        events.filter((event: { url?: string }) => event.url === '/connect/cms/spaces/space'),
+      ).to.have.length(2);
+      expect(events.at(-1).readback.contentBody.rawHtml).to.include('&amp;lt;literal&amp;gt;');
+      const report = JSON.parse(
+        await readFile(file('source-a-report/workspace-import-run.json'), 'utf8'),
+      );
+      expect(report.state).to.equal('completed');
+      expect(report.sourceDefinitions).to.deep.equal(post.initialReport.sourceDefinitions);
+      expect(report.operations[0].requestSha256).to.equal(
+        post.initialReport.operations[0].requestSha256,
+      );
+      for (const [relative, bytes] of preserved)
+        expect(await readFile(file(relative))).to.deep.equal(bytes);
+      // Keep successful journals rather than overwrite them between family runs.
+      await rename(file('source-a-report'), file(`${prefix}-report`));
+      if (family !== 'email') continue;
+      const editsPath = `${prefix}-definitions/${htmlPath}`;
+      const invalid = [
+        {
+          relative: `${prefix}-definitions/${definitionPath}`,
+          bytes: '{}',
+          message: /reprojection/iu,
+        },
+        { relative: editsPath, bytes: '<p>{{user}}</p>', message: /Unsupported/iu },
+        {
+          relative: `${prefix}-base/evidence/source-admission.v1.json`,
+          bytes: '{}',
+          message: /SHA-256/iu,
+        },
+      ];
+      for (const scenario of invalid) {
+        const before = await readFile(file(scenario.relative));
+        try {
+          await writeFile(file(scenario.relative), scenario.bytes);
+          const blocked = await runSf(
+            [...args, '--apply', '--report-dir', 'source-a-invalid-report'],
+            'source-a-import',
+          );
+          expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+          expect(blocked.stdout + blocked.stderr).to.match(scenario.message);
+          const rejectedEvents = JSON.parse(
+            await readFile(file('source-a-import-transport.json'), 'utf8'),
+          );
+          expect(
+            rejectedEvents.some((event: { method?: string }) => event.method === 'POST'),
+          ).to.equal(false);
+          expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-invalid-report');
+        } finally {
+          await writeFile(file(scenario.relative), before);
+        }
+      }
+      const manifestPath = `${prefix}-base/manifest.json`;
+      const manifestBytes = await readFile(file(manifestPath));
+      const evidencePath = `${prefix}-base/evidence/source-admission.v1.json`;
+      try {
+        await writeFile(
+          file(manifestPath),
+          JSON.stringify({
+            ...output.manifest,
+            items: output.manifest.items.filter(
+              (item: { kind: string }) => item.kind !== 'cms.source-admission',
+            ),
+          }),
+        );
+        await rename(file(evidencePath), file('source-a-saved-evidence.json'));
+        const old = await runSf(args, 'source-a-import');
+        expect(old.exitCode, old.stdout + old.stderr).to.equal(1);
+        expect(old.stdout + old.stderr).to.match(/re-export.*--definition-dir/iu);
+        expect(
+          JSON.parse(await readFile(file('source-a-import-transport.json'), 'utf8')).some(
+            (event: { method?: string }) => event.method === 'POST',
+          ),
+        ).to.equal(false);
+      } finally {
+        await writeFile(file(manifestPath), manifestBytes);
+        await rename(file('source-a-saved-evidence.json'), file(evidencePath));
+      }
+      const excluded = await runSf(
+        [...args, '--editable-dir', `${prefix}-definitions`],
+        'source-a-local',
+      );
+      expect(excluded.exitCode).not.to.equal(0);
+      expect(excluded.stdout + excluded.stderr).not.to.include('Unexpected org access');
+      expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-local-transport.json');
+      const drift = await runSf(
+        [...args, '--apply', '--report-dir', 'source-a-drift-report'],
+        'source-a-drift',
+      );
+      expect(drift.exitCode, drift.stdout + drift.stderr).to.equal(1);
+      expect(drift.stdout + drift.stderr, drift.stdout + drift.stderr).to.match(
+        /changed after planning/iu,
+      );
+      expect(
+        JSON.parse(await readFile(file('source-a-drift-transport.json'), 'utf8')).some(
+          (event: { method?: string }) => event.method === 'POST',
+        ),
+      ).to.equal(false);
+      const driftReport = JSON.parse(
+        await readFile(file('source-a-drift-report/workspace-import-run.json'), 'utf8'),
+      );
+      expect(driftReport.state).to.equal('failed');
+      expect(driftReport.createdParents).to.have.length(0);
+      await writeFile(file(editsPath), literal);
+    }
+  });
+
+  it('keeps packed source Brand export honest and Image import blocked', async function () {
+    this.timeout(300_000);
+    const brand = {
+      ...brandDetail('email', 'Welcome', 'space'),
+      managedContentId: 'parent',
+      folder: null,
+    };
+    await writeFile(file('source-a-fixture.json'), JSON.stringify(brand));
+    const exported = await runSf(
+      [
+        'cms',
+        'export',
+        'workspace',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--output-dir',
+        'source-a-brand-base',
+        '--definition-dir',
+        'source-a-brand-definitions',
+        '--json',
+      ],
+      'source-a-export',
+    );
+    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    expect(await readdir(file('source-a-brand-definitions/cms/Controlled/brand'))).to.deep.equal([
+      'Welcome.cms-brand.json',
+    ]);
+    await writeFile(
+      file('source-a-brand-map.json'),
+      JSON.stringify([
+        {
+          source: { family: 'cms', type: 'brand', apiName: 'Welcome' },
+          target: { apiName: 'Fresh', title: 'Fresh', urlName: 'fresh' },
+        },
+      ]),
+    );
+    const args = [
+      'cms',
+      'import',
+      'workspace',
+      '--target-org',
+      'unused',
+      '--workspace-id',
+      'space',
+      '--source-dir',
+      'source-a-brand-base',
+      '--definition-dir',
+      'source-a-brand-definitions',
+      '--json',
+    ];
+    const blocked = await runSf(
+      [...args, '--brand-map', 'source-a-brand-map.json'],
+      'source-a-local',
+    );
+    expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+    expect(blocked.stdout + blocked.stderr).to.match(/Brand profile/iu);
+    expect(blocked.stdout + blocked.stderr).not.to.include('Unexpected org access');
+    await writeFile(file('source-a-image-map.json'), '[]');
+    const image = await runSf(
+      [...args, '--image-map', 'source-a-image-map.json', '--contract-version', '2'],
+      'source-a-local',
+    );
+    expect(image.exitCode).not.to.equal(0);
+    expect(image.stdout + image.stderr).not.to.include('Unexpected org access');
+    expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-local-transport.json');
   });
 
   it('rejects installed editable export flag and overlap boundaries before org access', async () => {

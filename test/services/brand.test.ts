@@ -1,5 +1,11 @@
 import { expect } from 'chai';
 import {
+  projectSourceDefinitions,
+  type SourceDefinitionInputItem,
+} from '../../src/services/source-definition.js';
+import { assertSourceDefinition } from '../../src/contracts/source-definition.js';
+import { bindSourcePublication } from '../../src/services/source-definition-export.js';
+import {
   BRAND_READ_REPORT_FORMAT,
   buildBrandReadReport,
   normalizeBrand,
@@ -151,7 +157,71 @@ function variant(): Record<string, unknown> {
   };
 }
 
+const source = (raw = variant()): SourceDefinitionInputItem => ({
+  workspaceApiName: 'Demo_Workspace',
+  workspaceId: 'space-source-id',
+  apiName: 'Phase_5_Discovery_Brand',
+  contentType: 'sfdc_cms__brand',
+  folderPath: [],
+  variantId: 'variant-source-id',
+  raw,
+  parent: { ...raw, contentVersion: 1, variantVersion: '1.1' },
+  siblings: { complete: true, variants: [raw] },
+});
+
 describe('Brand semantic normalization', () => {
+  it('projects the known Brand as one immutable inline file without losing body semantics', () => {
+    const original = source();
+    const before = JSON.stringify(original);
+    const projection = projectSourceDefinitions([original]);
+    const output = projection.items[0];
+    expect(output.definitionPath).to.equal(
+      'cms/Demo_Workspace/brand/Phase_5_Discovery_Brand.cms-brand.json',
+    );
+    expect(output.definition.contentBody).to.deep.equal(body());
+    expect(output.definition.companions).to.deep.equal({});
+    expect(output).not.to.have.property('htmlPath');
+    expect(projection.evidence[0]).not.to.have.property('originalHtmlSha256');
+    expect(output.definition.language).to.equal('en_US');
+    expect(output.definition.folderPath).to.deep.equal([]);
+    expect(output.definitionBytes.toString()).not.to.match(
+      /source-id|content-key|resourceUrl|body\.json/u,
+    );
+    expect(bindSourcePublication([original], projection)).to.have.length(1);
+    expect(JSON.stringify(original)).to.equal(before);
+    expect(() =>
+      assertSourceDefinition({ ...output.definition, companions: { rawHtml: 'extra.html' } }),
+    ).to.throw();
+  });
+
+  it('rejects Brand providers, variants, unknown body/envelope and conflicting parent semantics', () => {
+    for (const patch of [
+      { 'lightning:dataProviders': [{}] },
+      { 'sfdc_cms:variants': [{}] },
+      { sourceRef: 'source-id' },
+      { rawHtml: '<p>unsupported</p>' },
+    ]) {
+      const raw = { ...variant(), contentBody: { ...body(), ...patch } };
+      expect(() => projectSourceDefinitions([source(raw)])).to.throw();
+    }
+    for (const patch of [{ externalId: 'external' }, { personalization: {} }])
+      expect(() => projectSourceDefinitions([source({ ...variant(), ...patch })])).to.throw();
+    const original = source();
+    for (const patch of [
+      { language: 'de_DE' },
+      { externalId: 'external' },
+      { managedContentVariantId: 'other-variant' },
+      { contentKey: 'other-key' },
+    ])
+      expect(() =>
+        projectSourceDefinitions([{ ...original, parent: { ...original.parent, ...patch } }]),
+      ).to.throw('disagreement');
+    expect(() =>
+      projectSourceDefinitions([
+        { ...original, siblings: { complete: true, variants: [original.raw, original.raw] } },
+      ]),
+    ).to.throw('sibling');
+  });
   it('normalizes the retained content and variant envelopes identically', () => {
     const variantValue = variant();
     const contentValue = {

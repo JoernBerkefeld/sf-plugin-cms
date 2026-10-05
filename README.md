@@ -669,6 +669,50 @@ The companion is **not** an `sf-cms-workspace-export` package and must not be su
 
 Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fresh CREATE, readback, and journal evidence for email/template content. **Live installed editable transfer is still unproven:** the 2026-09-16 attempt stopped on Salesforce session-refresh maintenance before export or mutation. Historical native-copy acceptance is separate evidence, not proof of edited HTML transfer.
 
+#### Flat portable source definitions (`--definition-dir`)
+
+This additive **local, unreleased A mode** uses an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, live-org qualification, or a release. The working-tree package version remains `0.9.0`; that version alone does not establish that an installed published package contains this mode.
+
+Email and Email Template support qualified export, HTML editing, dry-run planning, and create-only apply. Brand supports inline definition export and baseline-bound loading, but import remains blocked by the existing strict typed-report/warning policy; export or loader success is not Brand apply readiness. Image source definitions remain unsupported because lossless native-media binding is unqualified. The separately committed `sf cms upload images` command and existing image-package mode do not qualify Image source definitions. Other families are unsupported in this mode.
+
+Export requires explicit `--output-dir` for the immutable baseline and a new, disjoint `--definition-dir`; neither directory may contain the other. Definition mode is single-workspace/single-family and mutually exclusive with `--editable-dir`, bulk export, and experimental media. For a selected Email Template baseline, use the existing exact API-name string-array selection file:
+
+```sh
+sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-template-baseline --email-template-map ./email-templates.json --definition-dir ./cms-source --json
+```
+
+The definition directory is the source-tree root. Example files beneath it are:
+
+```text
+cms-source/
+└── Demo_Workspace/
+    ├── email/
+    │   ├── Welcome_Email.cms-email.json
+    │   └── Welcome_Email.cms-email.html
+    ├── emailTemplate/
+    │   ├── Welcome_Template.cms-email-template.json
+    │   └── Welcome_Template.cms-email-template.html
+    └── brand/
+        └── Cloud_Kicks.cms-brand.json
+```
+
+These illustrate separate single-family exports, not a combined-family import. There are no per-API-name, physical-folder, language, or variant directories and no separate `body.json`. The `sf-cms-source-definition@1` primary JSON contains portable workspace/type/API-name identity and inline structured body; only admitted `rawHtml` becomes a same-stem HTML companion. Exact language and root `folderPath: []` are metadata, not identity/path discriminators. Source org/workspace/content/variant/folder IDs, content keys, and source download URLs are forbidden in portable definitions and remain in separate baseline/report evidence.
+
+Edit only the declared `.html` files as literal UTF-8 without a BOM. Primary JSON metadata is immutable, including inline body fields: import requires its exact deterministic reprojection from the baseline. Do not rename, add, remove, or modify metadata files. Export decodes GET HTML once; edited HTML is not decoded again. Both original and edited HTML must pass strict native-body and dependency-free HTML admission; this is **not** the legacy native-copy/editable mode's opaque-HTML bypass. Multi-variant, translated, personalized, dynamic, dependency-bearing, and builder/block profiles fail closed rather than being flattened or discarded.
+
+For Email/Template, save the existing four-field native-copy mapping outside both directories. Select the original baseline content key and exact language and provide fresh target API/URL names. `--source-dir` always points to the unchanged baseline; `--definition-dir` points to the separate source tree, never replaces the baseline, and cannot be combined with `--editable-dir`.
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --contract-version 1 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-source-create-report --contract-version 1 --json
+```
+
+Dry-run is the default. Import requires proven root placement and the exact source language equal to the destination workspace's default language; it does not resolve non-root folders or substitute languages. It verifies the complete baseline and exact definition file set, performs complete destination collision preflight, and repeats input, destination, and collision validation immediately before mutation. Apply uses a new report directory, durably records ordered intents before CREATE, stops on final drift, never retries, and requires independent Draft/unpublished readback. Ambiguous mutation ownership remains `ownership-uncertain`: preserve the journal and reconcile exact recorded identities read-only before any new apply. There is no UPDATE, overwrite, publish, rollback, or resume.
+
+Definition-mode baselines include manifest-hashed `evidence/source-admission.v1.json` (`cms.source-admission`) containing detached original workspace, complete exact-family search/variant inventory, and selected parent evidence. This separate artifact allows offline replay of original root/sibling/identity admission; portable JSON is not the trust source. All original baseline hashes and manifest evidence continue to describe the original package only. Detached original/current HTML hashes and request hashes bind edited payloads separately; edits do not manufacture integrity-verified original records. Trust is the existing unsigned package/manifest integrity model, **not** cryptographic Salesforce authorship. Old baselines lacking original admission evidence must be re-exported with `--definition-dir`; projections cannot upgrade them.
+
+Projection or source publication failure does not erase a successfully published baseline. Preserve it and any reported owned staging evidence; do not infer that both directories were published atomically. Existing workspace-package v1/v2, editable-v1, lifecycle defaults, and public result majors remain unchanged. MCNext does not acquire source-mode support automatically. Editable metadata/media, folder placement, and broader language deployment belong to separately planned B work, which is unimplemented.
+
 ### `sf cms publish content`
 
 Previews or publishes one exact unpublished Draft `sfdc_cms__email` variant. Selection requires exact `--workspace-id` and `--api-name` values plus exactly one of `--language` or `--default-language`. Dry-run is the default:

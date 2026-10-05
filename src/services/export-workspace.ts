@@ -2,6 +2,12 @@ import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  replaySourceAdmissionEvidence,
+  serializeSourceAdmissionEvidence,
+  type SourceAdmissionEvidence,
+} from './source-admission-evidence.js';
 import {
   assertWorkspaceExportManifest,
   WORKSPACE_EXPORT_MANIFEST_CONTRACT,
@@ -26,7 +32,13 @@ import {
   writeEditableRawHtml,
   type EditablePublishOptions,
 } from './editable-raw-html-export.js';
-import { getVariant, type CmsRecord } from './read.js';
+import { getContent, getVariant, getWorkspace, type CmsRecord } from './read.js';
+import { requiredContentIdentifier } from './variant-identity.js';
+import { projectSourceDefinitions } from './source-definition.js';
+import {
+  preflightSourceDefinitionExport,
+  writeSourceDefinitions,
+} from './source-definition-export.js';
 import {
   buildPreferencePageReadReport,
   normalizePreferencePage,
@@ -136,6 +148,8 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   sourceOrgId?: string;
   pluginVersion?: string;
   generatedAt?: string;
+  definitionDirectory?: string;
+  definitionPublish?: DirectoryPublishOptions;
   editableDirectory?: string;
   editablePublish?: EditablePublishOptions;
   selection?: {
@@ -361,6 +375,70 @@ async function assertRegularPackageFiles(
   }
 }
 
+// Unscoped discovery is not historical exact-family evidence: acquire the actual scoped pass.
+async function acquireSourceInventory(
+  connection: RequestConnection,
+  workspaceId: string,
+  contentType: SourceAdmissionEvidence['inventory']['contentType'],
+  options: ExportWorkspaceOptions,
+): Promise<SourceAdmissionEvidence['inventory']> {
+  const pages: SourceAdmissionEvidence['inventory']['pages'][number][] = [];
+  const ids = new Set<string>();
+  const template = contentType === 'sfdc_cms__emailTemplate';
+  let expected = 0;
+  let pageLimit = template ? ABSOLUTE_PAGE_CAP : 1;
+  let complete = false;
+  for (let page = 0; page < pageLimit; page += 1) {
+    const response = await requestJson<unknown>(
+      connection,
+      getSelectedOperation('workspace.variant.search'),
+      {
+        query: {
+          contentSpaceOrFolderIds: [workspaceId],
+          contentTypeFQN: contentType,
+          languages: ['All'],
+          page,
+          pageSize: PAGE_SIZE,
+          queryTerm: '*',
+        },
+      },
+      options,
+    );
+    const body = structuredClone(response.data);
+    const items = responseItems(body);
+    const count = responseCount(body);
+    pages.push({ page, response: body as CmsRecord });
+    if (template && count !== items.length)
+      throw new TypeError('Source inventory page-local count disagreement');
+    if (!template && page === 0) {
+      expected = count;
+      if (expected > ABSOLUTE_PAGE_CAP * PAGE_SIZE)
+        throw new TypeError('Source inventory exceeds page capacity');
+      pageLimit = Math.min(ABSOLUTE_PAGE_CAP, Math.max(1, Math.ceil(expected / PAGE_SIZE) + 2));
+    }
+    let additions = 0;
+    for (const item of items) {
+      const row = searchRow(item);
+      if (!row || row.managedContentSpaceId !== workspaceId || ids.has(row.id))
+        throw new TypeError(
+          'Source inventory search representation/ownership/duplicate disagreement',
+        );
+      ids.add(row.id);
+      additions += 1;
+    }
+    complete = template ? items.length < PAGE_SIZE : ids.size >= expected;
+    if (complete) break;
+    if (items.length === 0 || additions === 0) break;
+  }
+  if (!complete)
+    throw new TypeError('Source definitions require a complete exact-family inventory');
+  const variants = [];
+  for (const id of [...ids].toSorted()) {
+    variants.push(structuredClone(await getVariant(connection, id, options)));
+  }
+  return { contentType, pages, variants };
+}
+
 export async function exportWorkspace(
   connection: RequestConnection,
   workspaceId: string,
@@ -369,6 +447,24 @@ export async function exportWorkspace(
 ): Promise<ExportWorkspaceResult> {
   if (!nonemptyString(workspaceId)) throw new TypeError('workspaceId must be a nonempty string');
   if (!nonemptyString(destination)) throw new TypeError('destination must be a nonempty string');
+  if (options.definitionDirectory !== undefined) {
+    if (options.editableDirectory !== undefined)
+      throw new TypeError('Definition and editable directories are mutually exclusive');
+    if (options.experimentalMedia !== undefined || options.landingPagePairs !== undefined)
+      throw new TypeError(
+        'Source definitions do not support media or landing-page pair modes; Image lossless native-media binding is unqualified',
+      );
+    if (
+      options.selection !== undefined &&
+      !['sfdc_cms__email', 'sfdc_cms__emailTemplate', BRAND_TYPE].includes(
+        options.selection.contentType,
+      )
+    )
+      throw new TypeError(
+        `Unsupported selected source family: ${options.selection.contentType}; Image lossless native-media binding is unqualified`,
+      );
+    await preflightSourceDefinitionExport(destination, options.definitionDirectory);
+  }
   const mediaCaps =
     options.experimentalMedia === undefined
       ? undefined
@@ -467,6 +563,7 @@ export async function exportWorkspace(
   const candidates = new Map<string, SearchRow>();
   let expectedCount = 0;
   let pagesRequested = 0;
+  const sourcePages: SourceAdmissionEvidence['inventory']['pages'][number][] = [];
   const pairSelection = options.landingPagePairs;
   const inventoryExactApiNames =
     selection !== undefined && INVENTORY_EXACT_API_NAME_TYPES.has(selection.contentType);
@@ -494,7 +591,10 @@ export async function exportWorkspace(
             page,
             pageSize: PAGE_SIZE,
             queryTerm:
-              pairSelection !== undefined || selection === undefined || inventoryExactApiNames
+              options.definitionDirectory !== undefined ||
+              pairSelection !== undefined ||
+              selection === undefined ||
+              inventoryExactApiNames
                 ? '*'
                 : selection.apiNames.join(' '),
           },
@@ -502,6 +602,8 @@ export async function exportWorkspace(
         options,
       );
       pagesRequested += 1;
+      if (options.definitionDirectory !== undefined)
+        sourcePages.push({ page, response: structuredClone(response.data) as CmsRecord });
       const items = responseItems(response.data);
       const advertisedCount = responseCount(response.data);
       if (pageLocalCount) {
@@ -523,6 +625,8 @@ export async function exportWorkspace(
       let additions = 0;
       for (const item of items) {
         const row = searchRow(item);
+        if (!row && options.definitionDirectory !== undefined)
+          throw new TypeError('Source inventory contains an unsupported search row');
         if (!row) continue;
         if (row.managedContentSpaceId !== workspaceId) {
           rejected.add(row.id);
@@ -595,7 +699,10 @@ export async function exportWorkspace(
     try {
       const detail = await getVariant(connection, variantId, options);
       if (detailWorkspaceId(detail) === workspaceId) {
-        details.set(variantId, detail);
+        details.set(
+          variantId,
+          options.definitionDirectory === undefined ? detail : structuredClone(detail),
+        );
       } else {
         rejected.add(variantId);
         ownershipMismatchIds.add(variantId);
@@ -638,6 +745,7 @@ export async function exportWorkspace(
     }
   }
 
+  const sourceInventory = options.definitionDirectory === undefined ? undefined : new Map(details);
   const landingPageTemplatePairs =
     pairSelection === undefined ? undefined : bindLandingPageTemplatePairs(pairSelection, details);
   if (landingPageTemplatePairs !== undefined) {
@@ -1055,6 +1163,77 @@ export async function exportWorkspace(
     manifest.completeness = 'partial';
   }
 
+  const sourceEvidencePath = 'evidence/source-admission.v1.json';
+  let sourceEvidenceBytes: string | undefined;
+  if (options.definitionDirectory !== undefined) {
+    if (
+      manifest.completeness !== 'complete' ||
+      inventoryExceedsPageCapacity ||
+      duplicateIds.size > 0 ||
+      candidates.size !== expectedCount ||
+      sourceInventory?.size !== expectedCount
+    )
+      throw new TypeError('Source definitions require a complete original baseline inventory');
+    const families = new Set(
+      [...details.values()].map((raw) =>
+        isRecord(raw.contentType) ? raw.contentType.fullyQualifiedName : raw.contentType,
+      ),
+    );
+    if (families.size !== 1)
+      throw new TypeError(
+        'Source definitions require a single selected family; selected unsupported items cannot be omitted',
+      );
+    const family = [...families][0];
+    if (!['sfdc_cms__email', 'sfdc_cms__emailTemplate', BRAND_TYPE].includes(family as string))
+      throw new TypeError(
+        `Unsupported selected source family: ${String(family)}; Image lossless native-media binding is unqualified`,
+      );
+    const contentType = family as SourceAdmissionEvidence['inventory']['contentType'];
+    const inventory =
+      selection === undefined
+        ? await acquireSourceInventory(connection, workspaceId, contentType, options)
+        : { contentType, pages: sourcePages, variants: [...sourceInventory!.values()] };
+    if (selection === undefined) {
+      for (const [variantId, raw] of details) {
+        const original = inventory.variants.find(
+          (variant) => variant.id === variantId || variant.managedContentVariantId === variantId,
+        );
+        if (!isDeepStrictEqual(raw, original))
+          throw new TypeError('Source discovery/exact-family inventory drift');
+      }
+    }
+    const workspace = structuredClone(await getWorkspace(connection, workspaceId, options));
+    const selections: SourceAdmissionEvidence['selections'][number][] = [];
+    for (const entry of entries) {
+      const raw = details.get(entry.variantId)!;
+      selections.push({
+        rawItemPath: entry.file,
+        variantId: entry.variantId,
+        parent: structuredClone(
+          await getContent(connection, requiredContentIdentifier(raw), {}, options),
+        ),
+      });
+    }
+    sourceEvidenceBytes = serializeSourceAdmissionEvidence({
+      contract: 'sf-cms-source-admission',
+      contractVersion: '1.0.0',
+      workspace,
+      inventory,
+      selections,
+    });
+    manifest.items.push({
+      path: sourceEvidencePath,
+      sha256: sha256(sourceEvidenceBytes),
+      kind: 'cms.source-admission',
+    });
+    // Replay the exact serialized historical records before any baseline or source publication.
+    replaySourceAdmissionEvidence(
+      JSON.parse(sourceEvidenceBytes),
+      manifest,
+      new Map(entries.map((entry) => [entry.file, details.get(entry.variantId)!])),
+    );
+    await preflightSourceDefinitionExport(destination, options.definitionDirectory);
+  }
   if (options.editableDirectory !== undefined) {
     await preflightEditableExport(destination, options.editableDirectory);
   }
@@ -1174,6 +1353,15 @@ export async function exportWorkspace(
       }
     }
     assertWorkspaceExportManifest(manifest);
+    if (sourceEvidenceBytes !== undefined) {
+      await mkdir(path.join(temporary, 'evidence'));
+      const handle = await open(path.join(temporary, sourceEvidencePath), 'wx');
+      try {
+        await handle.writeFile(sourceEvidenceBytes, 'utf8');
+      } finally {
+        await handle.close();
+      }
+    }
     if (portableMetadataBytes !== undefined) {
       await mkdir(path.join(temporary, 'phase5'));
       const handle = await open(path.join(temporary, portableMetadataPath), 'wx');
@@ -1216,6 +1404,43 @@ export async function exportWorkspace(
     } catch (error) {
       throw new Error(
         `Baseline export retained at ${destination}; editable output unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  if (options.definitionDirectory !== undefined) {
+    try {
+      await assertRegularPackageFiles(destination, new Set(manifest.items.map(({ path }) => path)));
+      if (manifestSha256 !== sha256(jsonBytes(manifest)))
+        throw new Error('Published manifest changed');
+      const verifiedBytes = new Map<string, Buffer>();
+      for (const item of manifest.items) {
+        const bytes = await readFile(path.join(destination, item.path));
+        if (sha256(bytes) !== item.sha256)
+          throw new Error(`Published baseline file changed: ${item.path}`);
+        verifiedBytes.set(item.path, bytes);
+      }
+      const rawItems = new Map(
+        entries.map((entry) => [
+          entry.file,
+          JSON.parse(verifiedBytes.get(entry.file)!.toString('utf8')) as CmsRecord,
+        ]),
+      );
+      const verifiedOriginals = replaySourceAdmissionEvidence(
+        JSON.parse(verifiedBytes.get(sourceEvidencePath)!.toString('utf8')),
+        manifest,
+        rawItems,
+      );
+      await writeSourceDefinitions(
+        verifiedOriginals,
+        projectSourceDefinitions(verifiedOriginals),
+        destination,
+        options.definitionDirectory,
+        options.definitionPublish,
+      );
+    } catch (error) {
+      throw new Error(
+        `Baseline export retained at ${destination}; source definitions unavailable (owned staging may remain): ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
       );
     }

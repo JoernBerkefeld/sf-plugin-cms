@@ -259,7 +259,12 @@ function buttonStyle(value: unknown, tertiary: boolean): boolean {
   return exactKeys(colors, keys) && keys.every((key) => expression(colors[key]));
 }
 
-function validBrandBody(value: unknown): value is JsonRecord {
+/**
+ * Check the exact dependency-free inline body qualified by retained Brand fixtures.
+ * @param {unknown} value - Candidate native Brand body.
+ * @returns {boolean} Whether the known strict body profile matches.
+ */
+export function validBrandBody(value: unknown): value is JsonRecord {
   if (!record(value) || !exactKeys(value, BODY_KEYS)) return false;
   if (
     !expression(value.baseFontFamily) ||
