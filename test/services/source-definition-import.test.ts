@@ -728,9 +728,7 @@ describe('strict source definition import checkpoints', () => {
           if (scenario === 'duplicate') items = [inventoryRow(), inventoryRow()];
           if (scenario === 'ambiguous-name') items = [inventoryRow(), inventoryRow('existing2')];
           return {
-            count: ['incomplete', 'count-drift', 'duplicate', 'ambiguous-name'].includes(scenario)
-              ? 2
-              : 1,
+            count: ['incomplete', 'count-drift'].includes(scenario) ? 2 : items.length,
             ...(scenario === 'count-conflict' ? { total: 2 } : {}),
             items,
           };
@@ -770,6 +768,84 @@ describe('strict source definition import checkpoints', () => {
     });
   }
 
+  for (const dimension of ['title', 'apiName', 'urlName'] as const) {
+    it(`preserves historical duplicate ${dimension} policy independently of candidate names`, async () => {
+      const { source, target } = await admitted();
+      let posts = 0;
+      let details = 0;
+      const request = (async ({ method, url }: { method: string; url: string }) => {
+        if (method === 'POST') {
+          posts += 1;
+          throw new Error('Unexpected POST');
+        }
+        if (url.includes('/items/search'))
+          return { count: 2, items: [inventoryRow('historical1'), inventoryRow('historical2')] };
+        details += 1;
+        const id = url.split('/').at(-1)!;
+        const detail = inventoryDetail(`Other-${id}`, id);
+        detail[dimension] = 'Shared historical name';
+        return detail;
+      }) as unknown as Parameters<typeof executeWorkspaceImport>[0]['connection']['request'];
+      const operation = executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: 'org',
+        destinationWorkspace: destination,
+        workspaceId: 'target',
+        sourceDirectory: source.sourceDirectory,
+        loadedSource: source,
+        definitionDirectory: target,
+        nativeCopyMappings,
+        dryRun: true,
+      });
+      if (dimension === 'title') {
+        const result = await operation;
+        expect(result.plan.groups).to.have.length(1);
+      } else await failure(operation, /name identity is ambiguous/u);
+      expect(details).to.equal(2);
+      expect(posts).to.equal(0);
+    });
+  }
+
+  for (const checkpoint of ['initial', 'final'] as const) {
+    it(`blocks all outsider owners of a candidate title at ${checkpoint} inventory with zero POST`, async () => {
+      const { source, target } = await admitted();
+      let searches = 0;
+      let posts = 0;
+      let details = 0;
+      const request = (async ({ method, url }: { method: string; url: string }) => {
+        if (method === 'POST') {
+          posts += 1;
+          throw new Error('Unexpected POST');
+        }
+        if (url.includes('/items/search')) {
+          searches += 1;
+          if (checkpoint === 'final' && searches === 1) return { count: 0, items: [] };
+          return { count: 2, items: [inventoryRow('outsider1'), inventoryRow('outsider2')] };
+        }
+        details += 1;
+        const id = url.split('/').at(-1)!;
+        return { ...inventoryDetail(`Other-${id}`, id), title: 'Welcome' };
+      }) as unknown as Parameters<typeof executeWorkspaceImport>[0]['connection']['request'];
+      await failure(
+        executeWorkspaceImport({
+          connection: { request },
+          destinationOrgId: 'org',
+          destinationWorkspace: destination,
+          workspaceId: 'target',
+          sourceDirectory: source.sourceDirectory,
+          loadedSource: source,
+          definitionDirectory: target,
+          nativeCopyMappings,
+          reportDirectory: path.join(root, 'outsider-title-report'),
+        }),
+        /API\/title\/URL collision: Welcome/u,
+      );
+      expect(searches).to.equal(checkpoint === 'initial' ? 1 : 2);
+      expect(details).to.equal(2);
+      expect(posts).to.equal(0);
+    });
+  }
+
   it('proves dry-run API-name absence with complete multi-page cross-family detail inventory', async () => {
     const { source, target } = await admitted();
     let searches = 0;
@@ -778,10 +854,16 @@ describe('strict source definition import checkpoints', () => {
       expect(method).not.to.equal('POST');
       if (url.includes('/items/search')) {
         searches += 1;
-        return { count: 2, items: [inventoryRow(`existing${searches}`)] };
+        const page = Number(new URL(url, 'https://cms.test').searchParams.get('page'));
+        const items =
+          page === 0
+            ? Array.from({ length: 250 }, (_, index) => inventoryRow(`existing${index}`))
+            : [inventoryRow('existing250')];
+        return { count: items.length, items };
       }
       details += 1;
-      return inventoryDetail(`Other${details}`, `existing${details}`);
+      const id = url.split('/').at(-1)!;
+      return inventoryDetail(`Other-${id}`, id);
     }) as unknown as Parameters<typeof executeWorkspaceImport>[0]['connection']['request'];
     const result = await executeWorkspaceImport({
       connection: { request },
@@ -795,13 +877,57 @@ describe('strict source definition import checkpoints', () => {
       dryRun: true,
     });
     expect(searches).to.equal(2);
-    expect(details).to.equal(2);
+    expect(details).to.equal(251);
     expect(
       result.diagnostics.find(({ code }) => code === 'SERVER_CONFLICT_CHECK_UNVERIFIED')!.message,
     )
       .to.include('complete workspace-wide')
       .and.not.to.include('not prevalidated');
   });
+
+  for (const dimension of ['apiName', 'title', 'urlName'] as const) {
+    it(`blocks later-page cross-family ${dimension} collision with zero POST`, async () => {
+      const { source, target } = await admitted();
+      let posts = 0;
+      const pages: number[] = [];
+      const request = (async ({ method, url }: { method: string; url: string }) => {
+        if (method === 'POST') {
+          posts += 1;
+          throw new Error('Unexpected POST');
+        }
+        if (url.includes('/items/search')) {
+          const page = Number(new URL(url, 'https://cms.test').searchParams.get('page'));
+          pages.push(page);
+          const items =
+            page === 0
+              ? Array.from({ length: 250 }, (_, index) => inventoryRow(`unrelated${index}`))
+              : [inventoryRow('late')];
+          return { count: items.length, items };
+        }
+        const id = url.split('/').at(-1)!;
+        const detail = inventoryDetail(`Other-${id}`, id);
+        if (id === 'late')
+          detail[dimension] = { apiName: 'Copy', title: 'Welcome', urlName: 'copy' }[dimension];
+        return detail;
+      }) as unknown as Parameters<typeof executeWorkspaceImport>[0]['connection']['request'];
+      await failure(
+        executeWorkspaceImport({
+          connection: { request },
+          destinationOrgId: 'org',
+          destinationWorkspace: destination,
+          workspaceId: 'target',
+          sourceDirectory: source.sourceDirectory,
+          loadedSource: source,
+          definitionDirectory: target,
+          nativeCopyMappings,
+          reportDirectory: path.join(root, 'late-collision-report'),
+        }),
+        /collision/u,
+      );
+      expect(pages).to.deep.equal([0, 1]);
+      expect(posts).to.equal(0);
+    });
+  }
 
   it('accepts canonical inline names and distinct languages of the same proven parent', async () => {
     const { source, target } = await admitted();
@@ -865,6 +991,8 @@ describe('strict source definition import checkpoints', () => {
     'multiple-success',
     'owned-name-drift',
     'outsider-title',
+    'outsider-owned-title-first',
+    'outsider-owned-title-last',
   ]) {
     it(`rechecks remaining identities before each CREATE: ${scenario}`, async () => {
       const multiple = scenario !== 'single-collision';
@@ -887,15 +1015,17 @@ describe('strict source definition import checkpoints', () => {
           if (searches === 1 || (multiple && searches === 2)) return { count: 0, items: [] };
           if (success || scenario === 'owned-name-drift')
             return { count: 1, items: [inventoryRow('created')] };
-          return {
-            count: multiple ? 2 : 1,
-            items: multiple ? [inventoryRow(), inventoryRow('created')] : [inventoryRow()],
-          };
+          const items = multiple ? [inventoryRow(), inventoryRow('created')] : [inventoryRow()];
+          if (scenario === 'outsider-owned-title-last') items.reverse();
+          return { count: items.length, items };
         }
         if (url.includes('/spaces/')) return destination;
         if (url.endsWith('/variants/existing'))
-          return scenario === 'outsider-title'
-            ? { ...inventoryDetail('Outsider'), title: 'Welcome2' }
+          return scenario.startsWith('outsider-')
+            ? {
+                ...inventoryDetail('Outsider'),
+                title: scenario === 'outsider-title' ? 'Welcome2' : 'Welcome',
+              }
             : inventoryDetail(multiple ? 'Copy2' : 'Copy');
         if (url.endsWith('/variants/created'))
           return {
@@ -1145,6 +1275,57 @@ describe('strict source definition import checkpoints', () => {
     expect(source.items[0].apiName).to.equal('Welcome');
   });
 
+  it('reprojects native Brand folder URL aliases when validating source files', async () => {
+    const raw = brandDetail('variant', 'Welcome', 'space');
+    raw.folder = {
+      id: '9Puaj000007smuyCAA',
+      resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuy',
+    };
+    const input: SourceDefinitionInputItem = {
+      workspaceApiName: 'Demo',
+      workspaceId: 'space',
+      apiName: 'Welcome',
+      contentType: 'sfdc_cms__brand',
+      folderPath: [],
+      variantId: 'variant',
+      raw,
+      parent: {
+        ...structuredClone(raw),
+        folder: {
+          id: '9Puaj000007smuyCAA',
+          resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA',
+        },
+      },
+      siblings: { complete: true, variants: [raw] },
+    };
+    const before = JSON.stringify(input);
+    const projected = projectSourceDefinitions([input]).items[0];
+    const brandDefinitions = path.join(root, 'brand-definitions');
+    const filename = path.join(brandDefinitions, projected.definitionPath);
+    await mkdir(path.dirname(filename), { recursive: true });
+    await writeFile(filename, projected.definitionBytes);
+    await validateSourceDefinitionFiles([input], baseline, brandDefinitions);
+    expect(JSON.stringify(input)).to.equal(before);
+    (input.parent.folder as Record<string, unknown>).resourceUrl =
+      '/services/data/v66.0/connect/cms/folders/9Puaj000007smuyCAA';
+    await failure(validateSourceDefinitionFiles([input], baseline, brandDefinitions), /Brand/u);
+  });
+
+  it('rejects source authentication options outside Brand definition mode', async () => {
+    const { source, target } = await admitted('sfdc_cms__emailTemplate');
+    await failure(
+      planSourceWorkspaceImport({
+        source,
+        definitionDirectory: target,
+        destinationWorkspace: destination,
+        workspaceId: 'target',
+        nativeCopyMappings,
+        sourceOrgId: 'source-org',
+      }),
+      /only for Brand/u,
+    );
+  });
+
   it('preserves typed Brand admission restrictions for a raw-only source baseline', async () => {
     const { source, target } = await admitted('sfdc_cms__brand');
     await failure(
@@ -1160,7 +1341,7 @@ describe('strict source definition import checkpoints', () => {
           },
         ],
       }),
-      /Brand profile/u,
+      /explicit brand-source/u,
     );
     const loaded = await loadSourceDefinitions(source, target);
     expect(loaded.originals[0].contentType).to.equal('sfdc_cms__brand');

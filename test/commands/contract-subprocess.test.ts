@@ -1627,6 +1627,309 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
+  it('runs installed packed typed Brand SOURCE proof, independent authentication and final CREATE gate', async function () {
+    this.timeout(900_000);
+    const raw = {
+      ...brandDetail('9Psaj00000IF7YHCA1', 'Phase_5_Discovery_Brand', '0Zuaj000007dgL8CAI'),
+      managedContentId: '20Yaj00000EpKvtEAF',
+      apiName: 'Phase_5_Discovery_Brand',
+      contentSpace: {
+        id: '0Zuaj000007dgL8CAI',
+        resourceUrl: '/connect/cms/spaces/0Zuaj000007dgL8CAI',
+      },
+      contentBody: brandDetail().contentBody as Record<string, unknown>,
+      folder: null,
+    };
+    await writeFile(file('brand-source-fixture.json'), JSON.stringify(raw));
+    await writeFile(file('brand-source-export-map.json'), JSON.stringify([raw.apiName]));
+    await writeFile(
+      file('brand-source-copy-map.json'),
+      JSON.stringify([
+        {
+          source: { family: 'cms', type: 'brand', apiName: raw.apiName },
+          target: { apiName: 'Fresh_Brand', title: 'Fresh Brand', urlName: 'fresh-brand' },
+        },
+      ]),
+    );
+    const exported = await runSf(
+      [
+        'cms',
+        'export',
+        'workspace',
+        '--target-org',
+        'brand-source-alias',
+        '--api-version',
+        '67.0',
+        '--workspace-id',
+        raw.contentSpace.id,
+        '--brand-map',
+        'brand-source-export-map.json',
+        '--output-dir',
+        'brand-source-base',
+        '--definition-dir',
+        'brand-source-definitions',
+        '--json',
+      ],
+      'brand-source-export',
+    );
+    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const output = JSON.parse(exported.stdout);
+    expect(output.manifest.completeness).to.equal('complete');
+    expect(output.manifest.warnings.map(({ code }: { code: string }) => code)).to.deep.equal([
+      'UNSUPPORTED_WILDCARD',
+    ]);
+    expect(output.manifest.provenance).to.include({
+      sourceOrgId: '00Daj00000bRQabEAG',
+      pluginVersion: installedPackageVersion,
+    });
+    const proofItem = output.manifest.items.find(
+      ({ kind }: { kind: string }) => kind === 'cms.brand-source-inventory',
+    );
+    const proofBytes = await readFile(file(`brand-source-base/${proofItem.path}`));
+    const proof = JSON.parse(proofBytes.toString('utf8'));
+    expect(sourceAcceptanceHash(proofBytes)).to.equal(proofItem.sha256);
+    expect(proof.source).to.include({ orgId: '00Daj00000bRQabEAG', apiVersion: '67.0' });
+    expect(proof.workspace).to.include({
+      name: 'Content Workspace for Marketing Cloud',
+      apiName: 'Default_Content_Workspace',
+    });
+    expect(
+      proof.selections[0].inventory.pages.map(
+        ({ response }: { response: { records: unknown[] } }) => response.records.length,
+      ),
+    ).to.deep.equal([1, 0]);
+    expect(proof.selections[0].inventory.recheck.pages).to.deep.equal(
+      proof.selections[0].inventory.pages,
+    );
+    const definitionFile =
+      'brand-source-definitions/cms/Default_Content_Workspace/brand/Phase_5_Discovery_Brand.cms-brand.json';
+    const definitionBytes = await readFile(file(definitionFile));
+    expect(JSON.parse(definitionBytes.toString('utf8')).contentBody).to.deep.equal(raw.contentBody);
+    const preserved = new Map<string, Buffer>();
+    for (const relative of [
+      'manifest.json',
+      ...output.manifest.items.map(({ path: itemPath }: { path: string }) => itemPath),
+    ])
+      preserved.set(relative, await readFile(file(`brand-source-base/${relative}`)));
+    const args = [
+      'cms',
+      'import',
+      'workspace',
+      '--target-org',
+      'brand-target-alias',
+      '--source-org',
+      'brand-source-alias',
+      '--api-version',
+      '67.0',
+      '--workspace-id',
+      '0Zufj000006rx4wCAA',
+      '--source-dir',
+      'brand-source-base',
+      '--definition-dir',
+      'brand-source-definitions',
+      '--brand-map',
+      'brand-source-copy-map.json',
+      '--json',
+    ];
+    const eventsFor = async (scenario: string) =>
+      JSON.parse(await readFile(file(`${scenario}-transport.json`), 'utf8'));
+    const dry = await runSf(args, 'brand-source-preview');
+    expect(dry.exitCode, dry.stdout + dry.stderr).to.equal(0);
+    expect(parseEnvelope(dry).status).to.equal('success');
+    const previewEvents = await eventsFor('brand-source-preview');
+    expect(
+      previewEvents
+        .filter(({ phase }: { phase?: string }) => phase === 'org')
+        .map(({ alias }: { alias: string }) => alias),
+    ).to.deep.equal(['brand-target-alias', 'brand-source-alias']);
+    expect(
+      previewEvents
+        .filter(({ method }: { method?: string }) => method !== undefined)
+        .every(({ method }: { method: string }) => method === 'GET'),
+    ).to.equal(true);
+    const applied = await runSf(
+      [...args, '--apply', '--report-dir', 'brand-source-apply-report'],
+      'brand-source-apply',
+    );
+    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+    const envelope = parseEnvelope(applied);
+    expect(envelope.status).to.equal('success');
+    expectPluginVersion(envelope, installedPackageVersion);
+    const events = await eventsFor('brand-source-apply');
+    const posts = events.filter(({ method }: { method?: string }) => method === 'POST');
+    expect(posts).to.have.length(1);
+    const post = posts[0];
+    expect(post.alias).to.equal('brand-target-alias');
+    expect(post.body).to.deep.equal({
+      apiName: 'Fresh_Brand',
+      title: 'Fresh Brand',
+      urlName: 'fresh-brand',
+      contentSpaceOrFolderId: '9Pufj000006rx4wCAA',
+      contentType: 'sfdc_cms__brand',
+      contentBody: { ...raw.contentBody, 'sfdc_cms:title': 'Fresh Brand' },
+    });
+    expect(post.initialReport.operations[0].state).to.equal('pending');
+    expect(post.initialReport.operations[0].requestSha256).to.equal(
+      sourceAcceptanceHash(
+        `create-parent\u0000content-key\u0000en_US\u0000${JSON.stringify(post.body)}`,
+      ),
+    );
+    expect(post.initialReport.sourceManifestSha256).to.equal(output.manifestSha256);
+    expect(post.initialReport.destinationOrgId).to.equal('00Dfj00000bRQabEAG');
+    expect(post.initialReport.sourceDestination.rootFolderId).to.equal('9Pufj000006rx4wCAA');
+    expect(post.initialReport.sourceDefinitions.edits.entries[0]).to.include({
+      changed: false,
+      originalDefinitionSha256: sourceAcceptanceHash(definitionBytes),
+      currentDefinitionSha256: sourceAcceptanceHash(definitionBytes),
+    });
+    expect(post.initialReport.brandSource).to.include({
+      sourceOrgId: '00Daj00000bRQabEAG',
+      sourceWorkspaceId: raw.contentSpace.id,
+      sourceApiVersion: '67.0',
+      historicalArtifactSha256: proofItem.sha256,
+      sourceManifestSha256: output.manifestSha256,
+    });
+    const refreshedProof = structuredClone(proof);
+    refreshedProof.source.acquiredAt = post.initialReport.brandSource.acquiredAt;
+    const canonicalProof = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map((item) => canonicalProof(item));
+      if (value === null || typeof value !== 'object') return value;
+      const record = value as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.keys(record)
+          .toSorted()
+          .map((key) => [key, canonicalProof(record[key])]),
+      );
+    };
+    expect(post.initialReport.brandSource.refreshedArtifactSha256).to.equal(
+      sourceAcceptanceHash(`${JSON.stringify(canonicalProof(refreshedProof), null, 2)}\n`),
+    );
+    const sourceQueries = events.filter(({ query }: { query?: string }) => query !== undefined);
+    expect(sourceQueries).to.have.length(12);
+    expect(
+      sourceQueries.every(
+        ({ alias, options }: { alias: string; options: { retry: { maxRetries: number } } }) =>
+          alias === 'brand-source-alias' && options.retry.maxRetries === 0,
+      ),
+    ).to.equal(true);
+    expect(
+      events.slice(events.indexOf(post) + 1).map(({ url }: { url: string }) => url),
+    ).to.deep.equal([
+      '/connect/cms/contents/fresh-brand-key',
+      '/connect/cms/contents/variants/fresh-brand-variant',
+    ]);
+    for (const event of events.filter(
+      ({ readback }: { readback?: unknown }) => readback !== undefined,
+    )) {
+      expect(event.readback.folder.id).to.equal(post.body.contentSpaceOrFolderId);
+      expect(event.readback.contentBody).to.deep.equal(post.body.contentBody);
+    }
+    const report = JSON.parse(
+      await readFile(file('brand-source-apply-report/workspace-import-run.json'), 'utf8'),
+    );
+    expect(report.state).to.equal('completed');
+    expect(report.brandSource).to.deep.equal(post.initialReport.brandSource);
+    expect(report.operations[0].requestSha256).to.equal(
+      post.initialReport.operations[0].requestSha256,
+    );
+    for (const scenario of [
+      'wrong-org',
+      'body-drift',
+      'sibling-drift',
+      'file-drift',
+      'journal-drift',
+    ]) {
+      try {
+        const name = `brand-source-${scenario}`;
+        const blocked = await runSf([...args, '--apply', '--report-dir', `${name}-report`], name);
+        expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
+        expect(parseEnvelope(blocked).status).to.equal('failed');
+        const blockedEvents = await eventsFor(name);
+        expect(blockedEvents.some(({ method }: { method?: string }) => method === 'POST')).to.equal(
+          false,
+        );
+      } finally {
+        await writeFile(file(definitionFile), definitionBytes);
+      }
+    }
+    try {
+      const edited = JSON.parse(definitionBytes.toString('utf8'));
+      edited.contentBody.baseFontFamily = 'Not immutable';
+      await writeFile(file(definitionFile), JSON.stringify(edited));
+      const immutable = await runSf(args, 'brand-source-immutable');
+      expect(immutable.exitCode, immutable.stdout + immutable.stderr).to.equal(1);
+      expect(immutable.stdout + immutable.stderr).to.match(/Brand|reprojection/iu);
+      const immutableEvents = await eventsFor('brand-source-immutable');
+      expect(immutableEvents.some(({ method }: { method?: string }) => method === 'POST')).to.equal(
+        false,
+      );
+    } finally {
+      await writeFile(file(definitionFile), definitionBytes);
+    }
+    const manifestFile = file('brand-source-base/manifest.json');
+    try {
+      await writeFile(
+        manifestFile,
+        JSON.stringify({
+          ...output.manifest,
+          items: output.manifest.items.filter(
+            ({ kind }: { kind: string }) => kind !== 'cms.brand-source-inventory',
+          ),
+        }),
+      );
+      await rename(
+        file(`brand-source-base/${proofItem.path}`),
+        file('brand-source-saved-proof.json'),
+      );
+      const missing = await runSf(args, 'brand-source-missing-proof');
+      expect(missing.exitCode, missing.stdout + missing.stderr).to.equal(1);
+      expect(missing.stdout + missing.stderr).to.match(
+        /inventory evidence unavailable.*re-export/iu,
+      );
+      expect(await readdir(isolatedDataDirectory)).not.to.include(
+        'brand-source-missing-proof-transport.json',
+      );
+    } finally {
+      await writeFile(manifestFile, preserved.get('manifest.json')!);
+      await rename(
+        file('brand-source-saved-proof.json'),
+        file(`brand-source-base/${proofItem.path}`),
+      );
+    }
+    // The generic Brand profile still rejects warning-bearing exports; SOURCE is not a global waiver.
+    const generic = await runSf(
+      args.filter(
+        (value) =>
+          ![
+            '--source-org',
+            'brand-source-alias',
+            '--definition-dir',
+            'brand-source-definitions',
+          ].includes(value),
+      ),
+      'brand-source-local',
+    );
+    expect(generic.exitCode, generic.stdout + generic.stderr).to.equal(1);
+    expect(generic.stdout + generic.stderr).to.match(/no warnings/iu);
+    for (const omitted of [
+      ['--brand-map', 'brand-source-copy-map.json'],
+      ['--definition-dir', 'brand-source-definitions'],
+    ]) {
+      const misuse = await runSf(
+        args.filter((value) => !omitted.includes(value)),
+        'brand-source-local',
+      );
+      expect(misuse.exitCode).not.to.equal(0);
+      expect(misuse.stdout + misuse.stderr).not.to.include('Unexpected org access');
+    }
+    expect(await readdir(isolatedDataDirectory)).not.to.include(
+      'brand-source-local-transport.json',
+    );
+    expect(await readFile(file(definitionFile))).to.deep.equal(definitionBytes);
+    for (const [relative, bytes] of preserved)
+      expect(await readFile(file(`brand-source-base/${relative}`))).to.deep.equal(bytes);
+  });
+
   it('keeps packed source Brand export honest and Image import blocked', async function () {
     this.timeout(300_000);
     const brand = {
@@ -1684,7 +1987,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       'source-a-local',
     );
     expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
-    expect(blocked.stdout + blocked.stderr).to.match(/Brand profile/iu);
+    expect(blocked.stdout + blocked.stderr).to.include('--source-org is required');
     expect(blocked.stdout + blocked.stderr).not.to.include('Unexpected org access');
     await writeFile(file('source-a-image-map.json'), '[]');
     const image = await runSf(

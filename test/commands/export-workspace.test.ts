@@ -657,7 +657,7 @@ describe('CMS export workspace command', () => {
     await writeFile(selectionFile, '["source_form_handler_api"]\n', 'utf8');
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
       if (url === '/connect/cms/spaces/space') {
-        return fakeRequest({ id: 'space', spaceType: { apiName: 'marketing' } });
+        return fakeRequest({ id: 'space', spaceType: { apiName: 'MARKETING' } });
       }
       if (url.startsWith('/connect/cms/items/search')) {
         return fakeRequest({

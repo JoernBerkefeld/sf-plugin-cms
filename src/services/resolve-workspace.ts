@@ -50,8 +50,8 @@ function listedWorkspaceTypeEvidence(value: unknown): ListedWorkspaceTypeEvidenc
 function canonicalWorkspaceTypeEvidence(value: unknown): ListedWorkspaceTypeEvidence {
   if (value === undefined) return 'missing';
   if (!isRecord(value) || Object.keys(value).length !== 1) return 'invalid';
-  if (value.apiName === 'Marketing') return 'Marketing';
-  if (value.apiName === 'Content') return 'Content';
+  if (value.apiName === 'Marketing' || value.apiName === 'marketing') return 'Marketing';
+  if (value.apiName === 'Content' || value.apiName === 'content') return 'Content';
   return 'invalid';
 }
 

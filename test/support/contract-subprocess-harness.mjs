@@ -405,6 +405,206 @@ if (contractCase !== undefined) {
         },
       };
     };
+  } else if (contractCase.startsWith('brand-source-')) {
+    // Only authentication/transport are controlled; installed commands and proof services stay real.
+    const command = process.argv.includes('export') ? 'export' : 'import';
+    const { default: Command } = await import(
+      new URL(`lib/commands/cms/${command}/workspace.js`, pathToFileURL(`${pluginRoot}${path.sep}`))
+    );
+    const raw = JSON.parse(await readFile('brand-source-fixture.json', 'utf8'));
+    const sourceOrgId = '00Daj00000bRQabEAG';
+    const targetOrgId = '00Dfj00000bRQabEAG';
+    const sourceWorkspace = raw.contentSpace.id;
+    const targetWorkspace = '0Zufj000006rx4wCAA';
+    const rootFolderId = '9Pufj000006rx4wCAA';
+    const events = [];
+    const evidenceFile = path.resolve(`${contractCase}-transport.json`);
+    const persist = () => writeFile(evidenceFile, JSON.stringify(events));
+    let sourceQueries = 0;
+    let payload;
+    // Tamper after the final refresh checkpoint has actually been persisted, not earlier.
+    if (contractCase === 'brand-source-journal-drift') {
+      const { promises } = await import('node:fs');
+      const { syncBuiltinESMExports } = await import('node:module');
+      const originalRename = promises.rename;
+      promises.rename = async function (temporary, filename) {
+        await originalRename(temporary, filename);
+        if (String(filename).endsWith('workspace-import-run.json') && sourceQueries === 12) {
+          const journal = JSON.parse(await readFile(filename, 'utf8'));
+          journal.sourceDestination.rootFolderId = 'tampered-root';
+          await writeFile(filename, JSON.stringify(journal));
+        }
+      };
+      syncBuiltinESMExports();
+    }
+    Command.prototype.getOrgContext = async function (alias, apiVersion) {
+      if (contractCase === 'brand-source-local') throw new Error('Unexpected org access');
+      if (!['brand-source-alias', 'brand-target-alias'].includes(alias))
+        throw new Error(`Unexpected Brand org alias: ${alias}`);
+      const source = alias === 'brand-source-alias';
+      const orgId = source && contractCase !== 'brand-source-wrong-org' ? sourceOrgId : targetOrgId;
+      events.push({ phase: 'org', alias, orgId, apiVersion });
+      await persist();
+      return {
+        orgId,
+        connection: {
+          getApiVersion: () => '67.0',
+          getAuthInfoFields: () => ({ orgId }),
+          request: async ({ method, url, body }, options) => {
+            const event = {
+              alias,
+              method,
+              url,
+              options,
+              ...(body === undefined ? {} : { body: JSON.parse(body) }),
+            };
+            events.push(event);
+            await persist();
+            if (source) {
+              if (method !== 'GET') throw new Error('Source mutation forbidden');
+              if (url === `/connect/cms/spaces/${sourceWorkspace}`)
+                return {
+                  id: sourceWorkspace,
+                  name: 'Content Workspace for Marketing Cloud',
+                  apiName: 'Default_Content_Workspace',
+                };
+              if (url.startsWith('/services/data/v67.0/query?q=')) {
+                sourceQueries += 1;
+                const query = decodeURIComponent(url.split('?q=')[1]);
+                event.query = query;
+                await persist();
+                if (
+                  !query.includes(
+                    `ManagedContentId = '${raw.managedContentId}' AND ManagedContent.AuthoredManagedContentSpaceId = '${sourceWorkspace}'`,
+                  )
+                )
+                  throw new Error('Unbound canonical Brand query');
+                if (/(?:Language|IsPublished|ManagedContentVariantStatus) =/u.test(query))
+                  throw new Error('Filtered Brand sibling query');
+                if (contractCase === 'brand-source-file-drift' && sourceQueries === 12)
+                  await writeFile(
+                    'brand-source-definitions/cms/Default_Content_Workspace/brand/Phase_5_Discovery_Brand.cms-brand.json',
+                    '{}',
+                  );
+                if (query.includes('COUNT(Id)'))
+                  return {
+                    totalSize: 1,
+                    done: true,
+                    records: [
+                      {
+                        attributes: { type: 'AggregateResult' },
+                        ManagedContentId: raw.managedContentId,
+                        siblingCount: 1,
+                      },
+                    ],
+                  };
+                if (query.includes(' AND Id > ')) {
+                  if (!query.includes(` AND Id > '${raw.managedContentVariantId}' ORDER BY Id`))
+                    throw new Error('Wrong canonical cursor');
+                  return { totalSize: 0, done: true, records: [] };
+                }
+                const row = {
+                  attributes: {
+                    type: 'ManagedContentVariant',
+                    url: `/services/data/v67.0/sobjects/ManagedContentVariant/${raw.managedContentVariantId}`,
+                  },
+                  Id: raw.managedContentVariantId,
+                  ManagedContentId: raw.managedContentId,
+                  Language: raw.language,
+                  IsPublished: false,
+                  ManagedContentVariantStatus: 'Draft',
+                  IsPrimary: true,
+                  Name: raw.title,
+                  UrlName: raw.urlName,
+                  ManagedContentKey: raw.contentKey,
+                  ManagedContent: {
+                    attributes: {
+                      type: 'ManagedContent',
+                      url: `/services/data/v67.0/sobjects/ManagedContent/${raw.managedContentId}`,
+                    },
+                    AuthoredManagedContentSpaceId: sourceWorkspace,
+                    ApiName: raw.apiName,
+                  },
+                };
+                return contractCase === 'brand-source-sibling-drift' && sourceQueries > 6
+                  ? {
+                      totalSize: 2,
+                      done: true,
+                      records: [row, { ...row, Id: '9Psaj00000IF7YICA1', Language: 'fr' }],
+                    }
+                  : { totalSize: 1, done: true, records: [row] };
+              }
+              if (url.startsWith('/connect/cms/items/search?'))
+                return {
+                  total: 1,
+                  items: [
+                    {
+                      type: 'ManagedContentVariantSearchResultRepresentation',
+                      id: raw.managedContentVariantId,
+                      managedContentSpaceId: sourceWorkspace,
+                    },
+                  ],
+                };
+              if (url === `/connect/cms/contents/${raw.managedContentId}`)
+                return { ...raw, contentVersion: 1, variantVersion: '1.1' };
+              if (url === `/connect/cms/contents/variants/${raw.managedContentVariantId}`)
+                return contractCase === 'brand-source-body-drift' && sourceQueries > 6
+                  ? { ...raw, contentBody: { ...raw.contentBody, baseFontFamily: 'Drift' } }
+                  : raw;
+            } else {
+              if (url === `/connect/cms/spaces/${targetWorkspace}`)
+                return {
+                  id: targetWorkspace,
+                  name: 'Destination',
+                  rootFolderId,
+                  defaultLanguage: 'en_US',
+                  spaceType: { apiName: 'Marketing' },
+                };
+              if (url.startsWith('/connect/cms/items/search?'))
+                return { count: 0, total: 0, items: [] };
+              if (method === 'POST' && url === '/connect/cms/contents') {
+                payload = JSON.parse(body);
+                const reportDirectory = `${contractCase}-report`;
+                event.initialReport = JSON.parse(
+                  await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+                );
+                await persist();
+                return {
+                  contentKey: 'fresh-brand-key',
+                  managedContentId: 'fresh-brand-parent',
+                  managedContentVariantId: 'fresh-brand-variant',
+                };
+              }
+              if (
+                method === 'GET' &&
+                [
+                  '/connect/cms/contents/fresh-brand-key',
+                  '/connect/cms/contents/variants/fresh-brand-variant',
+                ].includes(url) &&
+                payload
+              ) {
+                // Readbacks use an independent fixture, never echo the submitted body.
+                event.readback = {
+                  ...raw,
+                  apiName: 'Fresh_Brand',
+                  title: 'Fresh Brand',
+                  urlName: 'fresh-brand',
+                  contentBody: { ...raw.contentBody, 'sfdc_cms:title': 'Fresh Brand' },
+                  contentKey: 'fresh-brand-key',
+                  managedContentId: 'fresh-brand-parent',
+                  managedContentVariantId: 'fresh-brand-variant',
+                  contentSpace: { id: targetWorkspace },
+                  folder: { id: rootFolderId },
+                };
+                await persist();
+                return event.readback;
+              }
+            }
+            throw new Error(`Unexpected Brand acceptance request: ${alias} ${method} ${url}`);
+          },
+        },
+      };
+    };
   } else if (contractCase.startsWith('source-a-')) {
     // Only org acquisition is replaced; packed flags, source services and journals stay real.
     const command = process.argv.includes('export') ? 'export' : 'import';

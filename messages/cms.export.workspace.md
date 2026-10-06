@@ -56,6 +56,12 @@ Consent Banner selection is exact and case-sensitive by API name and requires ca
 
 `--editable-dir` is single-workspace only, cannot be combined with `--all`, and requires explicit `--output-dir`. Both paths must be new, disjoint directories; neither may contain the other, and unsafe or symlink/junction routes are rejected before org access. The baseline is published first and retained if companion creation fails. The companion contains only eligible `sfdc_cms__email` and `sfdc_cms__emailTemplate` variants with string `rawHtml` and no block body. Keep the unchanged baseline for import integrity; the companion permits HTML-only edits and is not a workspace export package. Embedded dependencies and dynamic syntax remain opaque and are not resolved, rewritten, sanitized, or scanned through Phase 7.
 
+- Export immutable Brand source definitions plus the unchanged canonical admission baseline:
+
+  <%= config.bin %> <%= command.id %> --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brand-baseline --brand-map ./brands.json --definition-dir ./cms-brand-source --json
+
+Brand source mode preserves manifest-hashed `evidence/brand-source-inventory.v1.json` (`cms.brand-source-inventory`) with independent all-language canonical sibling rows, grouped counts, terminal empty keyset page, native parent/workspace binding, raw/report hashes and matching recheck. The sole exact `UNSUPPORTED_WILDCARD` warning stays unchanged. Import requires --definition-dir, --brand-map and explicit independently authenticated --source-org matching original org/API evidence; generic Brand warning rejection is unchanged. Definitions cannot be semantically edited. Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE, with independent Draft/unpublished readback, completed source-refresh journal and unchanged source/baseline/definitions. This is bounded fresh packed-candidate proof, not published-package or full B qualification. Image replacement, folder hierarchy, non-default language and full B remain open.
+
 Bulk JSON uses `sf-cms-workspace-export-set@1`. Exit 0 means success, 2 means partial with a usable aggregate, and 1 means failed or blocked. Unsupported contract majors block before org access.
 
 # flags.target-org.summary
@@ -129,6 +135,10 @@ JSON file containing one or more explicit page/template pairs. Each page is sele
 # flags.editable-dir.summary
 
 New single-workspace companion directory for eligible native email/template HTML. Requires explicit --output-dir; paths must be new and disjoint.
+
+# flags.definition-dir.summary
+
+New flat source tree beside an explicit unchanged --output-dir baseline; single workspace/family only, disjoint from baseline, exclusive with --editable-dir, --all and experimental media. Email/Template support bounded JSON string-leaf plus strict HTML edits; Brand is immutable and retains manifest-hashed canonical ManagedContentVariant sibling/count/recheck evidence plus the original UNSUPPORTED_WILDCARD warning. Image source definitions unsupported; local/package qualification is not live source proof.
 
 # flags.output-dir.summary
 

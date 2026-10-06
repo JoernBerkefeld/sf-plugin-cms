@@ -35,6 +35,13 @@ import {
 import { getContent, getVariant, getWorkspace, type CmsRecord } from './read.js';
 import { requiredContentIdentifier } from './variant-identity.js';
 import { projectSourceDefinitions } from './source-definition.js';
+import { acquireBrandSourceInventoryEvidence } from './brand-source-inventory-acquire.js';
+import {
+  BRAND_SOURCE_INVENTORY_KIND,
+  BRAND_SOURCE_INVENTORY_PATH,
+  replayBrandSourceInventoryEvidence,
+  serializeBrandSourceInventoryEvidence,
+} from './brand-source-inventory-evidence.js';
 import {
   preflightSourceDefinitionExport,
   writeSourceDefinitions,
@@ -1165,6 +1172,7 @@ export async function exportWorkspace(
 
   const sourceEvidencePath = 'evidence/source-admission.v1.json';
   let sourceEvidenceBytes: string | undefined;
+  let brandSourceEvidenceBytes: string | undefined;
   if (options.definitionDirectory !== undefined) {
     if (
       manifest.completeness !== 'complete' ||
@@ -1189,11 +1197,48 @@ export async function exportWorkspace(
         `Unsupported selected source family: ${String(family)}; Image lossless native-media binding is unqualified`,
       );
     const contentType = family as SourceAdmissionEvidence['inventory']['contentType'];
+    // Bind the exact original JSON bytes used by the baseline writer, never candidate definitions.
+    const rawItems = new Map(
+      entries.map((entry) => {
+        const bytes = jsonBytes(details.get(entry.variantId));
+        if (manifest.items.find((item) => item.path === entry.file)?.sha256 !== sha256(bytes))
+          throw new Error('Original Brand/raw byte binding changed');
+        return [entry.file, JSON.parse(bytes) as CmsRecord] as const;
+      }),
+    );
+    const acquiredBrand =
+      family === BRAND_TYPE && selection?.brandReports === true
+        ? await acquireBrandSourceInventoryEvidence(
+            connection as Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>,
+            manifest,
+            rawItems,
+            new Map(
+              [...brandReports].map(([id, report]) => {
+                const reportPath = `reports/brands/${id}.json`;
+                const bytes = jsonBytes(report);
+                if (
+                  manifest.items.find((item) => item.path === reportPath)?.sha256 !== sha256(bytes)
+                )
+                  throw new Error('Original Brand report byte binding changed');
+                return [reportPath, JSON.parse(bytes) as CmsRecord] as const;
+              }),
+            ),
+            options,
+          )
+        : undefined;
+    if (acquiredBrand !== undefined) {
+      brandSourceEvidenceBytes = acquiredBrand.bytes;
+      manifest.items.push({
+        path: BRAND_SOURCE_INVENTORY_PATH,
+        sha256: sha256(brandSourceEvidenceBytes),
+        kind: BRAND_SOURCE_INVENTORY_KIND,
+      });
+    }
     const inventory =
-      selection === undefined
+      selection === undefined && acquiredBrand === undefined
         ? await acquireSourceInventory(connection, workspaceId, contentType, options)
         : { contentType, pages: sourcePages, variants: [...sourceInventory!.values()] };
-    if (selection === undefined) {
+    if (selection === undefined && acquiredBrand === undefined) {
       for (const [variantId, raw] of details) {
         const original = inventory.variants.find(
           (variant) => variant.id === variantId || variant.managedContentVariantId === variantId,
@@ -1202,16 +1247,20 @@ export async function exportWorkspace(
           throw new TypeError('Source discovery/exact-family inventory drift');
       }
     }
-    const workspace = structuredClone(await getWorkspace(connection, workspaceId, options));
+    const workspace =
+      acquiredBrand?.evidence.workspace ??
+      structuredClone(await getWorkspace(connection, workspaceId, options));
     const selections: SourceAdmissionEvidence['selections'][number][] = [];
     for (const entry of entries) {
       const raw = details.get(entry.variantId)!;
       selections.push({
         rawItemPath: entry.file,
         variantId: entry.variantId,
-        parent: structuredClone(
-          await getContent(connection, requiredContentIdentifier(raw), {}, options),
-        ),
+        parent:
+          acquiredBrand?.items.find((item) => item.variantId === entry.variantId)?.parent ??
+          structuredClone(
+            await getContent(connection, requiredContentIdentifier(raw), {}, options),
+          ),
       });
     }
     sourceEvidenceBytes = serializeSourceAdmissionEvidence({
@@ -1227,11 +1276,12 @@ export async function exportWorkspace(
       kind: 'cms.source-admission',
     });
     // Replay the exact serialized historical records before any baseline or source publication.
-    replaySourceAdmissionEvidence(
-      JSON.parse(sourceEvidenceBytes),
-      manifest,
-      new Map(entries.map((entry) => [entry.file, details.get(entry.variantId)!])),
-    );
+    if (acquiredBrand === undefined) {
+      replaySourceAdmissionEvidence(JSON.parse(sourceEvidenceBytes), manifest, rawItems);
+    } else {
+      // Canonical acquisition, not wildcard counts, qualifies Brand projection inputs.
+      projectSourceDefinitions(acquiredBrand.items);
+    }
     await preflightSourceDefinitionExport(destination, options.definitionDirectory);
   }
   if (options.editableDirectory !== undefined) {
@@ -1362,6 +1412,14 @@ export async function exportWorkspace(
         await handle.close();
       }
     }
+    if (brandSourceEvidenceBytes !== undefined) {
+      const handle = await open(path.join(temporary, BRAND_SOURCE_INVENTORY_PATH), 'wx');
+      try {
+        await handle.writeFile(brandSourceEvidenceBytes, 'utf8');
+      } finally {
+        await handle.close();
+      }
+    }
     if (portableMetadataBytes !== undefined) {
       await mkdir(path.join(temporary, 'phase5'));
       const handle = await open(path.join(temporary, portableMetadataPath), 'wx');
@@ -1426,11 +1484,37 @@ export async function exportWorkspace(
           JSON.parse(verifiedBytes.get(entry.file)!.toString('utf8')) as CmsRecord,
         ]),
       );
-      const verifiedOriginals = replaySourceAdmissionEvidence(
-        JSON.parse(verifiedBytes.get(sourceEvidencePath)!.toString('utf8')),
-        manifest,
-        rawItems,
-      );
+      const verifiedBrandBytes = verifiedBytes.get(BRAND_SOURCE_INVENTORY_PATH);
+      const verifiedBrandEvidence =
+        verifiedBrandBytes === undefined
+          ? undefined
+          : (JSON.parse(verifiedBrandBytes.toString('utf8')) as Parameters<
+              typeof serializeBrandSourceInventoryEvidence
+            >[0]);
+      if (
+        verifiedBrandEvidence !== undefined &&
+        serializeBrandSourceInventoryEvidence(verifiedBrandEvidence) !==
+          verifiedBrandBytes!.toString('utf8')
+      )
+        throw new Error('Published Brand evidence is not canonical');
+      const verifiedOriginals =
+        verifiedBrandEvidence === undefined
+          ? replaySourceAdmissionEvidence(
+              JSON.parse(verifiedBytes.get(sourceEvidencePath)!.toString('utf8')),
+              manifest,
+              rawItems,
+            )
+          : replayBrandSourceInventoryEvidence(
+              verifiedBrandEvidence,
+              manifest,
+              rawItems,
+              new Map(
+                (manifest.brandReports ?? []).map((report) => [
+                  report.path,
+                  JSON.parse(verifiedBytes.get(report.path)!.toString('utf8')) as CmsRecord,
+                ]),
+              ),
+            );
       await writeSourceDefinitions(
         verifiedOriginals,
         projectSourceDefinitions(verifiedOriginals),

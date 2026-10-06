@@ -389,6 +389,7 @@ describe('CMS import workspace command', () => {
   it('defines the requested create-only safety flags', () => {
     expect(Object.keys(ImportWorkspace.flags)).to.have.members([
       'target-org',
+      'source-org',
       'api-version',
       'contract-version',
       'workspace-id',
@@ -452,6 +453,32 @@ describe('CMS import workspace command', () => {
     expect(ImportWorkspace.description).to.match(/destination-default-language Drafts/iu);
   });
 
+  it('documents the bounded live-qualified immutable Brand source boundary', async () => {
+    const readme = await readFile('README.md', 'utf8');
+    const importHelp = await readFile('messages/cms.import.workspace.md', 'utf8');
+    const exportHelp = await readFile('messages/cms.export.workspace.md', 'utf8');
+    for (const documentation of [readme, importHelp, exportHelp]) {
+      expect(documentation).to.include('--definition-dir');
+      expect(documentation).to.include('--brand-map');
+      expect(documentation).to.include('--source-org');
+      expect(documentation).to.include('evidence/brand-source-inventory.v1.json');
+      expect(documentation).to.include('ManagedContentVariant');
+      expect(documentation).to.include('UNSUPPORTED_WILDCARD');
+      expect(documentation).to.include('live-qualified for one root/default-language Draft CREATE');
+      expect(documentation).not.to.include('live Brand source qualification is NOT YET complete');
+      expect(documentation).not.to.include('Live Brand source qualification is NOT YET complete');
+    }
+    expect(readme).not.to.include(
+      'Brand supports inline definition export and baseline-bound loading, but import remains blocked',
+    );
+    expect(readme).not.to.include(
+      'the new Brand source path still requires separate live qualification',
+    );
+    expect(readme).to.include('Brand source JSON is semantically immutable');
+    expect(importHelp).to.include('page-local count');
+    expect(importHelp).to.include('Never defaults to --target-org');
+  });
+
   it('distinguishes strict source admission from legacy opaque HTML in help', () => {
     expect(ImportWorkspace.description).to.include(
       'Legacy native-copy/editable HTML without --definition-dir',
@@ -476,8 +503,9 @@ describe('CMS import workspace command', () => {
       ImportWorkspace.description,
       ImportWorkspace.flags['definition-dir'].summary,
     ]) {
-      expect(help).to.match(/Brand source import (?:remains |is )blocked/iu);
-      expect(help).to.match(/typed-report\/warning policy/iu);
+      expect(help).to.include('Brand source import requires --brand-map');
+      expect(help).to.include('--source-org');
+      expect(help).to.include('live refresh');
       expect(help).to.match(/Image(?: source definitions are| is) unsupported/iu);
     }
     expect(ImportWorkspace.flags['definition-dir'].summary).to.include('--native-copy-map');
@@ -610,6 +638,29 @@ describe('CMS import workspace command', () => {
         expect(posted.contentSpaceOrFolderId).to.equal('distinct-root');
         expect(posted.contentBody).to.have.property('rawHtml', literal);
       }
+    });
+  }
+
+  for (const flags of [
+    { 'brand-map': 'map', 'definition-dir': 'definitions' },
+    { 'source-org': 'source' },
+    { 'source-org': 'source', 'brand-map': 'map' },
+    { 'source-org': 'source', 'definition-dir': 'definitions', 'native-copy-map': 'map' },
+  ]) {
+    it(`rejects missing or misplaced independent source org before acquisition: ${JSON.stringify(flags)}`, async () => {
+      const context = $$.SANDBOX.stub();
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: { ...flags, 'source-dir': 'missing', 'api-version': '67.0' },
+        }),
+        getOrgContext: context,
+        jsonEnabled: () => true,
+      });
+      const result = await command.run();
+      expect(result.status).to.equal('blocked');
+      expect(result.diagnostics.errors[0].message).to.include('--source-org');
+      expect(context.called).to.equal(false);
     });
   }
 
@@ -1240,6 +1291,82 @@ describe('CMS import workspace command', () => {
       expect(result.diagnostics.errors[0].message).to.include('not canonically Marketing');
       expect(request.calledOnce).to.equal(true);
     });
+  }
+
+  for (const profile of ['form', 'form-handler'] as const) {
+    for (const fallback of [false, true]) {
+      it(`dry-runs strict ${profile} with native lowercase Marketing ${fallback ? 'listing' : 'detail'} evidence`, async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'cms-command-native-type-'));
+        // Retain new fixtures rather than extending recursive cleanup scope.
+        const { mapFile, source } =
+          profile === 'form'
+            ? await writeFormCommandSource(root)
+            : await writeFormHandlerCommandSource(root);
+        if (profile === 'form') {
+          const manifestFile = path.join(source, 'manifest.json');
+          const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<
+            string,
+            unknown
+          >;
+          manifest.completeness = 'complete';
+          await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+        }
+        const request = $$.SANDBOX.stub().callsFake(
+          ({ method, url }: { method: string; url: string }) => {
+            if (method !== 'GET') throw new Error(`Unexpected mutation: ${method} ${url}`);
+            if (url === '/connect/cms/spaces/space') {
+              return fakeRequest({
+                defaultLanguage: 'en_US',
+                id: 'space',
+                rootFolderId: 'root',
+                ...(fallback ? {} : { spaceType: { apiName: 'marketing' } }),
+              });
+            }
+            if (url.startsWith('/connect/cms/spaces?')) {
+              const page = Number(new URL(url, 'https://example.test').searchParams.get('page'));
+              return fakeRequest({
+                spaces:
+                  page === 0
+                    ? [
+                        { id: 'other', spaceType: { apiName: 'content' } },
+                        { id: 'space', spaceType: { apiName: 'marketing' } },
+                      ]
+                    : [],
+              });
+            }
+            if (url.startsWith('/connect/cms/items/search'))
+              return fakeRequest({ count: 0, items: [], total: 0, totalCount: 0 });
+            return missingRequest();
+          },
+        );
+        const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+        Object.assign(command, {
+          parse: $$.SANDBOX.stub().resolves({
+            flags: {
+              'allow-partial': false,
+              apply: false,
+              'api-version': '67.0',
+              [profile === 'form' ? 'form-map' : 'form-handler-map']: mapFile,
+              'source-dir': source,
+              'target-org': 'mcnext-sdo',
+              'workspace-id': 'space',
+            },
+          }),
+          getOrgContext: $$.SANDBOX.stub().resolves({ connection: { request }, orgId: '00D-org' }),
+          jsonEnabled: $$.SANDBOX.stub().returns(true),
+        });
+
+        const result = await command.run();
+
+        expect(result.status, JSON.stringify(result.diagnostics)).to.equal('success');
+        expect(result.result).not.to.equal(null);
+        expect(result.diagnostics.errors).to.deep.equal([]);
+        expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
+        expect(
+          request.getCalls().some(({ args }) => args[0].url.includes('/items/search')),
+        ).to.equal(true);
+      });
+    }
   }
 
   it('keeps a pre-mutation Form workspace failure definitive without claiming a journal', async () => {

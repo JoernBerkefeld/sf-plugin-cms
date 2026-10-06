@@ -49,6 +49,87 @@ function item(contentType = 'sfdc_cms__email', apiName = 'Welcome'): SourceDefin
   };
 }
 
+function brandItem(): SourceDefinitionInputItem {
+  const raw = brandDetail('variant-source-id', 'Simple_Brand', 'space');
+  raw.folder = {
+    id: '9Puaj000007smuyCAA',
+    resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuy',
+  };
+  return {
+    workspaceApiName: 'Demo',
+    workspaceId: 'space',
+    apiName: 'Simple_Brand',
+    contentType: 'sfdc_cms__brand',
+    folderPath: [],
+    variantId: 'variant-source-id',
+    raw,
+    parent: {
+      ...structuredClone(raw),
+      folder: {
+        id: '9Puaj000007smuyCAA',
+        resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA',
+      },
+    },
+    siblings: { complete: true, variants: [raw] },
+  };
+}
+
+describe('Brand source folder representation', () => {
+  it('projects the captured native 15/18 URL alias without rewriting evidence', () => {
+    const input = brandItem();
+    const before = JSON.stringify(input);
+    const projected = projectSourceDefinitions([input]);
+    expect(projected.items[0].definition.contentBody).to.deep.equal(input.raw.contentBody);
+    expect(projected.items[0].definitionBytes.toString()).not.to.match(/9Pu|resourceUrl/u);
+    expect(JSON.stringify(input)).to.equal(before);
+  });
+
+  for (const [label, patch] of Object.entries({
+    'distinct folder ID': { id: '9Puaj000007smuzCAA' },
+    'invalid folder ID shape': { id: 'folder-source-id' },
+    'unrelated suffix': { resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuz' },
+    'case drift': { resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuY' },
+    'version drift': { resourceUrl: '/services/data/v66.0/connect/cms/folders/9Puaj000007smuyCAA' },
+    'host prefix': {
+      resourceUrl: 'https://example.com/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA',
+    },
+    'path drift': { resourceUrl: '/services/data/v67.0/connect/cms/contents/9Puaj000007smuyCAA' },
+    'extra path': {
+      resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA/child',
+    },
+    query: { resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA?x=1' },
+    hash: { resourceUrl: '/services/data/v67.0/connect/cms/folders/9Puaj000007smuyCAA#x' },
+    encoding: { resourceUrl: '/services/data/v67.0/connect/cms/folders/%39Puaj000007smuyCAA' },
+    'extra object field': { extra: true },
+  })) {
+    it(`rejects ${label}`, () => {
+      const input = brandItem();
+      Object.assign(input.parent, {
+        folder: { ...(input.parent.folder as Record<string, unknown>), ...patch },
+      });
+      expect(() => projectSourceDefinitions([input])).to.throw(/Brand/u);
+    });
+  }
+
+  for (const [label, patch] of Object.entries({
+    'body drift': {
+      contentBody: {
+        ...(brandDetail().contentBody as Record<string, unknown>),
+        baseFontFamily: '{!$brand.fontFamily.verdana}',
+      },
+    },
+    'locale drift': { language: 'de_DE' },
+    'provenance drift': { managedContentVariantId: 'different-variant' },
+    'source ID object shape': { managedContentVariantId: { id: 'variant-source-id' } },
+  })) {
+    it(`retains rejection of ${label}`, () => {
+      const input = brandItem();
+      Object.assign(input.parent, patch);
+      expect(() => projectSourceDefinitions([input])).to.throw(/Brand/u);
+    });
+  }
+});
+
 async function rejected(operation: Promise<unknown>): Promise<Error> {
   try {
     await operation;

@@ -78,7 +78,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Legacy native-copy/editable HTML without --definition-dir is not resolved, rewritten, sanitized, or scanned through Phase 7. --definition-dir requires strict original and edited dependency-free HTML admission for Email/Email Template, bounded existing JSON string-leaf edits with immutable identity/structure, complete workspace API/title/URL collision proof, proven root placement, and exact destination-default language; Brand source import remains blocked by strict typed-report/warning policy, Image source definitions are unsupported, and variants/translations/personalization are deferred. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Legacy native-copy/editable HTML without --definition-dir is not resolved, rewritten, sanitized, or scanned through Phase 7. --definition-dir requires strict original and edited dependency-free HTML admission for Email/Email Template, bounded existing JSON string-leaf edits with immutable identity/structure, complete workspace API/title/URL collision proof, proven root placement, and exact destination-default language; Brand source import requires --brand-map and independent --source-org authentication with pinned canonical inventory and live refresh, Image source definitions are unsupported, and variants/translations/personalization are deferred. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
@@ -98,6 +98,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
+    'source-org': Flags.string({
+      dependsOn: ['brand-map', 'definition-dir'],
+      summary:
+        'Independent original source org alias or username; required only for Brand source definitions. Never defaults to the target org.',
+    }),
     'api-version': apiVersionFlag,
     'contract-version': Flags.integer({
       default: 1,
@@ -128,7 +133,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'image-map',
       ],
       summary:
-        'Baseline-bound Email/Email Template source definitions with bounded existing JSON string-leaf and literal HTML edits via --native-copy-map; immutable identity/structure, root/default-language only. Changed source URL must equal the explicit mapped target URL. Brand source import is blocked by typed-report/warning policy; Image is unsupported.',
+        'Baseline-bound Email/Email Template source definitions with bounded existing JSON string-leaf and literal HTML edits via --native-copy-map; immutable identity/structure, root/default-language only. Changed source URL must equal the explicit mapped target URL. Brand source import requires --brand-map and --source-org with canonical original inventory and live refresh; Image is unsupported.',
     }),
     'editable-dir': Flags.directory({
       exists: true,
@@ -404,6 +409,11 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     let nativeCopyMappings: unknown;
     let webFragmentMappings: unknown;
     try {
+      const brandSource = flags['brand-map'] !== undefined && flags['definition-dir'] !== undefined;
+      if (brandSource && !flags['source-org'])
+        throw new TypeError('--source-org is required for Brand --definition-dir mode');
+      if (flags['source-org'] !== undefined && !brandSource)
+        throw new TypeError('--source-org requires --brand-map and --definition-dir');
       if (flags['definition-dir'] !== undefined) {
         if (flags['editable-dir'] !== undefined)
           throw new TypeError('--definition-dir and --editable-dir are mutually exclusive');
@@ -414,6 +424,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         throw new TypeError('--editable-dir requires --native-copy-map');
       let loadProfile:
         | 'brand'
+        | 'brand-source'
         | 'consent-banner'
         | 'form'
         | 'form-handler'
@@ -421,7 +432,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         | 'image'
         | 'preference-page' = 'general';
       if (imageProfile) loadProfile = 'image';
-      else if (flags['brand-map'] !== undefined) loadProfile = 'brand';
+      else if (flags['brand-map'] !== undefined)
+        loadProfile = brandSource ? 'brand-source' : 'brand';
       else if (flags['form-map'] !== undefined) loadProfile = 'form';
       else if (flags['form-handler-map'] !== undefined) loadProfile = 'form-handler';
       else if (flags['consent-banner-map'] !== undefined) loadProfile = 'consent-banner';
@@ -448,7 +460,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       }
       if (flags['brand-map'] !== undefined) {
         brandMappings = JSON.parse(await readFile(flags['brand-map'], 'utf8')) as unknown;
-        planBrandCopies(source, brandMappings);
+        if (flags['definition-dir'] === undefined) planBrandCopies(source, brandMappings);
       }
       if (flags['form-map'] !== undefined) {
         formMappings = JSON.parse(await readFile(flags['form-map'], 'utf8')) as unknown;
@@ -523,6 +535,10 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       flags['api-version'],
     );
     try {
+      const sourceContext =
+        flags['source-org'] === undefined
+          ? undefined
+          : await this.getOrgContext(flags['source-org'], flags['api-version']);
       const selected = await resolveWorkspace(connection, {
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],
@@ -573,6 +589,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         loadedSource: source,
         editableDirectory: flags['editable-dir'],
         definitionDirectory: flags['definition-dir'],
+        sourceConnection: sourceContext?.connection,
+        sourceOrgId: sourceContext?.orgId,
         emailFragmentMappings,
         brandMappings,
         formMappings,

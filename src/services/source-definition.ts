@@ -51,6 +51,32 @@ export type SourceDefinitionProjection = {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+function sameBrandFolder(left: unknown, right: unknown): boolean {
+  if (isDeepStrictEqual(left, right)) return true;
+  if (!record(left) || !record(right)) return false;
+  if (
+    Object.keys(left).length !== 2 ||
+    Object.keys(right).length !== 2 ||
+    !Object.keys(left).every((key) => key === 'id' || key === 'resourceUrl') ||
+    !Object.keys(right).every((key) => key === 'id' || key === 'resourceUrl') ||
+    typeof left.id !== 'string' ||
+    !/^9Pu[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(left.id) ||
+    right.id !== left.id ||
+    typeof left.resourceUrl !== 'string' ||
+    typeof right.resourceUrl !== 'string'
+  )
+    return false;
+  const pattern = /^(\/services\/data\/v\d+\.\d+\/connect\/cms\/folders\/)([A-Za-z0-9]+)$/u;
+  const leftUrl = pattern.exec(left.resourceUrl);
+  const rightUrl = pattern.exec(right.resourceUrl);
+  return (
+    leftUrl !== null &&
+    rightUrl !== null &&
+    leftUrl[1] === rightUrl[1] &&
+    [left.id, left.id.slice(0, 15)].includes(leftUrl[2]) &&
+    [left.id, left.id.slice(0, 15)].includes(rightUrl[2])
+  );
+}
 function nativeType(raw: Readonly<Record<string, unknown>>): unknown {
   return record(raw.contentType) ? raw.contentType.fullyQualifiedName : raw.contentType;
 }
@@ -194,7 +220,7 @@ export function projectSourceDefinitions(
           normalizeBrand(selected.parent)?.provenance,
         ) ||
         raw.contentKey !== selected.parent.contentKey ||
-        !isDeepStrictEqual(raw.folder, selected.parent.folder)
+        !sameBrandFolder(raw.folder, selected.parent.folder)
       )
         throw new TypeError('Source Brand parent semantic/placement disagreement');
     } else {

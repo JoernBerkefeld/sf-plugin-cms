@@ -6,7 +6,14 @@ import { assertSourceDefinition, type SourceDefinition } from '../contracts/sour
 import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { replaySourceAdmissionEvidence } from './source-admission-evidence.js';
 import {
+  BRAND_SOURCE_INVENTORY_KIND,
+  BRAND_SOURCE_INVENTORY_PATH,
+  replayBrandSourceInventoryEvidence,
+  type BrandSourceInventoryEvidence,
+} from './brand-source-inventory-evidence.js';
+import {
   enumeratePackageFiles,
+  getLoadedBrandSourceInventory,
   loadWorkspaceExport,
   readStableRegularFile,
   type LoadedWorkspaceExport,
@@ -143,7 +150,7 @@ export async function validateSourceDefinitionFiles(
       path.join(directory, item.definitionPath),
       'Source definition',
     );
-    const candidate = strictJson(bytes, 'Source JSON');
+    const candidate = strictSourceJson(bytes, 'Source JSON');
     try {
       assertSourceDefinition(candidate);
     } catch (error) {
@@ -195,14 +202,91 @@ export async function validateSourceDefinitionFiles(
   return { entries };
 }
 
+export type LoadedBrandSourceInventory = {
+  readonly sourceManifestSha256: string;
+  readonly artifactSha256: string;
+  readonly evidence: BrandSourceInventoryEvidence;
+  readonly originals: readonly SourceDefinitionInputItem[];
+};
+
 export type LoadedSourceDefinitions = {
   readonly sourceManifestSha256: string;
   readonly originals: readonly SourceDefinitionInputItem[];
   readonly edits: SourceDefinitionEditEvidence;
+  readonly brandSourceInventory?: LoadedBrandSourceInventory;
 };
 
+/**
+ * Replay unsigned historical Brand proof from original byte-verified records.
+ * This does not authenticate Salesforce or replace future live source revalidation.
+ * @param {LoadedWorkspaceExport} baseline - Integrity-loaded original baseline.
+ * @returns {Promise<LoadedBrandSourceInventory>} Detached fingerprint-bound historical originals.
+ */
+export async function loadBrandSourceInventory(
+  baseline: LoadedWorkspaceExport,
+): Promise<LoadedBrandSourceInventory> {
+  const candidates = baseline.manifest.items.filter(
+    (item) =>
+      item.kind === BRAND_SOURCE_INVENTORY_KIND || item.path === BRAND_SOURCE_INVENTORY_PATH,
+  );
+  if (candidates.length === 0)
+    throw new TypeError(
+      'Brand source inventory evidence unavailable; re-export with --definition-dir (source definitions are not proof)',
+    );
+  const artifact = candidates[0];
+  if (
+    candidates.length !== 1 ||
+    artifact.path !== BRAND_SOURCE_INVENTORY_PATH ||
+    artifact.kind !== BRAND_SOURCE_INVENTORY_KIND ||
+    artifact.referenceId !== undefined
+  )
+    throw new TypeError(
+      'Brand source requires exactly one canonical inventory artifact without referenceId',
+    );
+  const read = async (file: string): Promise<unknown> => {
+    const descriptor = baseline.manifest.items.find((item) => item.path === file);
+    if (!descriptor) throw new TypeError('Brand source original descriptor is missing');
+    const bytes = await readStableRegularFile(
+      path.join(baseline.sourceDirectory, file),
+      'Brand source original bytes',
+    );
+    if (createHash('sha256').update(bytes).digest('hex') !== descriptor.sha256)
+      throw new TypeError(`Brand source original ${file} failed SHA-256 verification`);
+    return strictSourceJson(bytes, 'Brand source original JSON');
+  };
+  const evidence = await read(artifact.path);
+  const readRecords = async (
+    files: readonly string[],
+  ): Promise<Map<string, Readonly<Record<string, unknown>>>> => {
+    const records = new Map<string, Readonly<Record<string, unknown>>>();
+    for (const file of files) {
+      const value = await read(file);
+      if (value === null || typeof value !== 'object' || Array.isArray(value))
+        throw new TypeError('Brand source originals must be JSON objects');
+      records.set(file, value as Readonly<Record<string, unknown>>);
+    }
+    return records;
+  };
+  const rawItems = await readRecords(baseline.manifest.entries.map((entry) => entry.file));
+  const reports = await readRecords(
+    (baseline.manifest.brandReports ?? []).map((report) => report.path),
+  );
+  const originals = replayBrandSourceInventoryEvidence(
+    evidence,
+    baseline.manifest,
+    rawItems,
+    reports,
+  );
+  return structuredClone({
+    sourceManifestSha256: baseline.manifestSha256,
+    artifactSha256: artifact.sha256,
+    evidence: evidence as BrandSourceInventoryEvidence,
+    originals,
+  });
+}
+
 // JSON.parse validates syntax; the token pass additionally rejects ambiguous duplicate keys.
-function strictJson(bytes: Buffer, label: string): unknown {
+export function strictSourceJson(bytes: Buffer, label: string): unknown {
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
@@ -263,7 +347,7 @@ export async function loadSourceDefinitions(
   // Pin caller binding before the first asynchronous operation; never use caller item payloads.
   const sourceDirectory = source.sourceDirectory;
   const sourceManifestSha256 = source.manifestSha256;
-  const profile = source.manifest.brandReports?.length ? 'brand' : 'general';
+  const profile = source.manifest.brandReports?.length ? 'brand-source' : 'general';
   const verifyBaseline = async (): Promise<LoadedWorkspaceExport> => {
     await validateRoutes(sourceDirectory, definitionDirectory);
     const baseline = await loadWorkspaceExport(sourceDirectory, { profile });
@@ -277,49 +361,56 @@ export async function loadSourceDefinitions(
     return baseline;
   };
   const baseline = await verifyBaseline();
-  const evidencePath = 'evidence/source-admission.v1.json';
-  const candidates = baseline.manifest.items.filter(
-    (item) => item.kind === 'cms.source-admission' || item.path === evidencePath,
-  );
-  if (candidates.length === 0)
-    throw new TypeError(
-      'Source admission evidence unavailable: original workspace API name, parent GET records and complete sibling inventory cannot be reconstructed; re-export with --definition-dir (source definitions are not proof)',
+  const brandSourceInventory =
+    profile === 'brand-source' ? getLoadedBrandSourceInventory(baseline) : undefined;
+  let originals: readonly SourceDefinitionInputItem[];
+  if (brandSourceInventory) {
+    originals = brandSourceInventory.originals;
+  } else {
+    const evidencePath = 'evidence/source-admission.v1.json';
+    const candidates = baseline.manifest.items.filter(
+      (item) => item.kind === 'cms.source-admission' || item.path === evidencePath,
     );
-  const artifact = candidates[0];
-  if (
-    candidates.length !== 1 ||
-    artifact.path !== evidencePath ||
-    artifact.kind !== 'cms.source-admission' ||
-    artifact.referenceId !== undefined
-  )
-    throw new TypeError(
-      'Source admission requires exactly one canonical evidence artifact without referenceId',
+    if (candidates.length === 0)
+      throw new TypeError(
+        'Source admission evidence unavailable: original workspace API name, parent GET records and complete sibling inventory cannot be reconstructed; re-export with --definition-dir (source definitions are not proof)',
+      );
+    const artifact = candidates[0];
+    if (
+      candidates.length !== 1 ||
+      artifact.path !== evidencePath ||
+      artifact.kind !== 'cms.source-admission' ||
+      artifact.referenceId !== undefined
+    )
+      throw new TypeError(
+        'Source admission requires exactly one canonical evidence artifact without referenceId',
+      );
+    const readOriginal = async (file: string, sha256: string): Promise<Buffer> => {
+      const bytes = await readStableRegularFile(
+        path.join(baseline.sourceDirectory, file),
+        'Original source bytes',
+      );
+      if (createHash('sha256').update(bytes).digest('hex') !== sha256)
+        throw new TypeError(`Original source ${file} failed SHA-256 verification`);
+      return bytes;
+    };
+    const evidence = strictSourceJson(
+      await readOriginal(artifact.path, artifact.sha256),
+      'Source admission evidence',
     );
-  const readOriginal = async (file: string, sha256: string): Promise<Buffer> => {
-    const bytes = await readStableRegularFile(
-      path.join(baseline.sourceDirectory, file),
-      'Original source bytes',
-    );
-    if (createHash('sha256').update(bytes).digest('hex') !== sha256)
-      throw new TypeError(`Original source ${file} failed SHA-256 verification`);
-    return bytes;
-  };
-  const evidence = strictJson(
-    await readOriginal(artifact.path, artifact.sha256),
-    'Source admission evidence',
-  );
-  const rawItems = new Map<string, Readonly<Record<string, unknown>>>();
-  for (const entry of baseline.manifest.entries) {
-    const declared = baseline.manifest.items.find((item) => item.path === entry.file)!;
-    const raw = strictJson(
-      await readOriginal(entry.file, declared.sha256),
-      'Original source entry',
-    );
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
-      throw new TypeError('Original source entry must be a JSON object');
-    rawItems.set(entry.file, raw as Readonly<Record<string, unknown>>);
+    const rawItems = new Map<string, Readonly<Record<string, unknown>>>();
+    for (const entry of baseline.manifest.entries) {
+      const declared = baseline.manifest.items.find((item) => item.path === entry.file)!;
+      const raw = strictSourceJson(
+        await readOriginal(entry.file, declared.sha256),
+        'Original source entry',
+      );
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw))
+        throw new TypeError('Original source entry must be a JSON object');
+      rawItems.set(entry.file, raw as Readonly<Record<string, unknown>>);
+    }
+    originals = replaySourceAdmissionEvidence(evidence, baseline.manifest, rawItems);
   }
-  const originals = replaySourceAdmissionEvidence(evidence, baseline.manifest, rawItems);
   const edits = await validateSourceDefinitionFiles(
     originals,
     sourceDirectory,
@@ -333,5 +424,10 @@ export async function loadSourceDefinitions(
   );
   if (!isDeepStrictEqual(edits, current))
     throw new TypeError('Source files changed during admission');
-  return structuredClone({ sourceManifestSha256, originals, edits });
+  return structuredClone({
+    sourceManifestSha256,
+    originals,
+    edits,
+    ...(brandSourceInventory ? { brandSourceInventory } : {}),
+  });
 }

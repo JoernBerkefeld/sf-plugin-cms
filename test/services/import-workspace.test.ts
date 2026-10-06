@@ -2628,7 +2628,16 @@ describe('workspace import core', () => {
         return fakeRequest(
           inventoryCalls === 1
             ? { items: [], total: 0 }
-            : { items: [{ id: 'drifted-brand' }], total: 1 },
+            : {
+                items: [
+                  {
+                    id: 'drifted-brand',
+                    managedContentSpaceId: 'destination-space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                count: 1,
+              },
         );
       }
       if (request_.method === 'GET' && request_.url.includes('/variants/drifted-brand')) {
@@ -2636,7 +2645,8 @@ describe('workspace import core', () => {
           apiName: 'target_brand_api',
           contentSpace: { id: 'destination-space' },
           contentType: { fullyQualifiedName: 'sfdc_cms__brand' },
-          id: 'drifted-brand',
+          managedContentVariantId: 'drifted-brand',
+          managedContentId: 'drifted-brand-parent',
           title: 'Other Brand',
           urlName: 'other-brand',
         });

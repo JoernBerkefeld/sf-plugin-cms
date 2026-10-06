@@ -42,6 +42,20 @@ Validates the complete source workspace export locally before any org request, s
 
 JSON uses `sf-cms-workspace-import@1`. Package integrity and the independently declared manifest major are validated before org access. Exit 0 means success, 2 means partial with a usable result, and 1 means failed or blocked.
 
+- Preview immutable Brand source definitions with independently authenticated original source and destination orgs:
+
+  <%= config.bin %> <%= command.id %> --target-org target-org --source-org source-org --workspace-id 0ZuTARGET --source-dir ./cms-brand-baseline --definition-dir ./cms-brand-source --brand-map ./brand-import-map.json --contract-version 1 --json
+
+`--definition-dir` admits bounded existing JSON string-leaf and strict dependency-free literal HTML edits only for Email/Email Template with `--native-copy-map`. Brand uses immutable definitions plus `--brand-map` and required `--source-org`; destination identity belongs to the map, not edited definitions. The original manifest-hashed `evidence/brand-source-inventory.v1.json` binds canonical all-language ManagedContentVariant sibling/count/recheck evidence, workspace, parent, raw/report hashes, source org and API version. It retains the sole exact `UNSUPPORTED_WILDCARD` warning; only qualified Brand source mode admits it, while generic Brand import still rejects warnings. Source auth never defaults to target auth, and both connections use the selected `--api-version`, which must match original source evidence. Planning and final pre-CREATE refresh reject source identity/body/sibling/count drift and local baseline/candidate/journal/request drift. Root/default-language Draft CREATE only; exhaustive cross-family target collision inventory validates page-local count, duplicates and bounded termination, then repeats immediately before CREATE. No UPDATE, publication, default assignment, rollback or retry. Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE, with independent Draft/unpublished readback, completed source-refresh journal and unchanged source/baseline/definitions. This is bounded fresh packed-candidate proof, not published-package or full B qualification; Image replacement, folder hierarchy, non-default language and full B remain open.
+
+# flags.source-org.summary
+
+Independent original source org alias or username; required only with --brand-map and --definition-dir. Never defaults to --target-org; org ID and selected API version must match original evidence.
+
+# flags.definition-dir.summary
+
+Baseline-bound source tree: bounded existing JSON string-leaf and strict literal HTML edits for Email/Email Template via --native-copy-map; immutable Brand via --brand-map and --source-org with canonical evidence and live refresh. Root/default-language Draft CREATE only; Image source definitions unsupported.
+
 # flags.target-org.summary
 
 Username or alias of the target Salesforce org.

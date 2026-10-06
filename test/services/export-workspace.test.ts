@@ -352,20 +352,25 @@ describe('workspace export service', () => {
     ).to.have.length(1);
   });
 
-  it('publishes qualified inline Brand with original root evidence and no companions', async () => {
+  it('rejects typed Brand source export without authenticated canonical inventory methods', async () => {
     const raw = { ...brandDetail('brand', 'Brand', 'space'), folder: null };
     const request = sinon.stub().callsFake(({ url }: { url: string }) => {
       if (url.includes('/items/search')) return fakeRequest({ count: 1, items: [row('brand')] });
       if (url.includes('/spaces/')) return fakeRequest({ id: 'space', name: 'Demo' });
       return fakeRequest(raw);
     });
-    await exportWorkspace({ request }, 'space', path.join(root, 'base'), {
-      definitionDirectory: path.join(root, 'source'),
-      selection: { contentType: 'sfdc_cms__brand', apiNames: ['Brand'], brandReports: true },
-    });
-    expect(await readdir(path.join(root, 'source/cms/Demo/brand'))).to.deep.equal([
-      'Brand.cms-brand.json',
-    ]);
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', path.join(root, 'base'), {
+        definitionDirectory: path.join(root, 'source'),
+        selection: { contentType: 'sfdc_cms__brand', apiNames: ['Brand'], brandReports: true },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(TypeError);
+    expect(await readdir(root)).not.to.include('base');
+    expect(await readdir(root)).not.to.include('source');
   });
 
   it('rejects incompatible definition modes before requests or artifacts', async () => {

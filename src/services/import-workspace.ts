@@ -52,8 +52,20 @@ import {
   type LandingPageResolvedTemplateIdentity,
 } from './landing-page.js';
 import { loadEditableRawHtml, type EditableHtmlEvidence } from './editable-raw-html-import.js';
-import { loadSourceDefinitions, type LoadedSourceDefinitions } from './source-definition-import.js';
+import {
+  loadSourceDefinitions,
+  loadBrandSourceInventory,
+  strictSourceJson,
+  type LoadedSourceDefinitions,
+  type LoadedBrandSourceInventory,
+} from './source-definition-import.js';
 import { assertSourceNativeHtml } from './source-definition.js';
+import {
+  refreshBrandSourceInventory,
+  assertBrandSourceRefreshProof,
+  type BrandSourceRefreshOptions,
+  type BrandSourceRefreshProof,
+} from './brand-source-inventory-refresh.js';
 import { decodeNativeHtml } from './import-identities.js';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -140,9 +152,34 @@ export type LoadedWorkspaceExport = {
 };
 
 export type WorkspaceExportLoadProfile =
-  'general' | 'image' | 'brand' | 'form' | 'form-handler' | 'consent-banner' | 'preference-page';
+  | 'general'
+  | 'image'
+  | 'brand'
+  | 'brand-source'
+  | 'form'
+  | 'form-handler'
+  | 'consent-banner'
+  | 'preference-page';
 
 const strictlyLoadedBrandSources = new WeakMap<LoadedWorkspaceExport, string>();
+const loadedBrandSourceInventories = new WeakMap<
+  LoadedWorkspaceExport,
+  { readonly fingerprint: string; readonly proof: LoadedBrandSourceInventory }
+>();
+
+/**
+ * Return detached historical proof only for unchanged explicit Brand source loads.
+ * @param {LoadedWorkspaceExport} source - Explicitly qualified baseline object.
+ * @returns {LoadedBrandSourceInventory} Unsigned proof; future live admission must authenticate the source.
+ */
+export function getLoadedBrandSourceInventory(
+  source: LoadedWorkspaceExport,
+): LoadedBrandSourceInventory {
+  const binding = loadedBrandSourceInventories.get(source);
+  if (!binding || binding.fingerprint !== loadedSourceFingerprint(source))
+    throw new TypeError('Brand source must be produced unchanged by explicit brand-source loading');
+  return structuredClone(binding.proof);
+}
 const strictlyLoadedFormSources = new WeakMap<LoadedWorkspaceExport, string>();
 const strictlyLoadedFormHandlerSources = new WeakMap<LoadedWorkspaceExport, string>();
 const strictlyLoadedConsentBannerSources = new WeakMap<LoadedWorkspaceExport, string>();
@@ -415,6 +452,7 @@ export type LandingPagePrerequisitePhaseEvidence = {
 };
 
 export type WorkspaceImportRunReport = {
+  readonly brandSource?: BrandSourceRefreshProof;
   readonly sourceDefinitions?: LoadedSourceDefinitions;
   readonly sourceDestination?: DestinationWorkspace;
   readonly editableSource?: EditableHtmlEvidence;
@@ -450,6 +488,8 @@ export type WorkspaceImportReportPersistence = {
 };
 
 export type ExecuteWorkspaceImportOptions = {
+  readonly sourceConnection?: BrandSourceRefreshOptions['sourceConnection'];
+  readonly sourceOrgId?: string;
   readonly allowPartial?: boolean;
   readonly connection: RequestConnection;
   readonly destinationOrgId: string;
@@ -710,7 +750,10 @@ export async function loadWorkspaceExport(
   const canonicalSource = await realpath(sourceDirectory);
   const manifestFile = path.join(canonicalSource, 'manifest.json');
   const manifestBytes = await readStableRegularFile(manifestFile, 'manifest.json');
-  const manifestValue = parseJson(manifestBytes, 'manifest.json');
+  const manifestValue =
+    options.profile === 'brand-source'
+      ? strictSourceJson(manifestBytes, 'manifest.json')
+      : parseJson(manifestBytes, 'manifest.json');
   assertWorkspaceExportManifest(manifestValue);
   const manifest = manifestValue;
   if (
@@ -723,6 +766,7 @@ export async function loadWorkspaceExport(
   }
   if (
     options.profile !== 'brand' &&
+    options.profile !== 'brand-source' &&
     manifest.items.some(({ kind }) => kind === 'cms.brand.read-report')
   ) {
     throw new TypeError('Typed Brand reports require the explicit Brand import profile.');
@@ -814,7 +858,7 @@ export async function loadWorkspaceExport(
   }
   validateRelationships(items);
   const isPartial = partialFromManifest(manifest);
-  if (options.profile === 'brand' && isPartial) {
+  if ((options.profile === 'brand' || options.profile === 'brand-source') && isPartial) {
     throw new TypeError('Brand profile requires a complete workspace export');
   }
   if (options.profile === 'form' && isPartial) {
@@ -1088,6 +1132,13 @@ export async function loadWorkspaceExport(
     manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
     sourceDirectory: canonicalSource,
   };
+  if (options.profile === 'brand-source') {
+    const proof = await loadBrandSourceInventory(loaded);
+    loadedBrandSourceInventories.set(loaded, {
+      fingerprint: loadedSourceFingerprint(loaded),
+      proof,
+    });
+  }
   if (options.profile === 'brand')
     strictlyLoadedBrandSources.set(loaded, loadedSourceFingerprint(loaded));
   if (options.profile === 'form')
@@ -1373,8 +1424,60 @@ function consistentInventoryCount(value: Record<string, unknown>, label: string)
   return counts[0];
 }
 
+// CMS search counts are page-local; only an exhausted bounded inventory proves absence.
+async function destinationInventoryIds(
+  connection: RequestConnection,
+  workspaceId: string,
+  requestOptions: JsonRequestOptions,
+  label: string,
+  contentTypeFQN?: string,
+): Promise<ReadonlySet<string>> {
+  const ids = new Set<string>();
+  for (let page = 0; page < 1000; page += 1) {
+    const response = await requestJson<unknown>(
+      connection,
+      getSelectedOperation('workspace.variant.search'),
+      {
+        query: {
+          contentSpaceOrFolderIds: [workspaceId],
+          ...(contentTypeFQN === undefined ? {} : { contentTypeFQN }),
+          languages: ['All'],
+          page,
+          pageSize: 250,
+          queryTerm: '*',
+        },
+      },
+      requestOptions,
+    );
+    if (!isRecord(response.data) || !Array.isArray(response.data.items))
+      throw new TypeError(`${label} inventory response is malformed`);
+    if (
+      [response.data.total, response.data.totalCount, response.data.count].some(
+        (value) =>
+          value !== undefined &&
+          (typeof value !== 'number' || !Number.isInteger(value) || value < 0),
+      ) ||
+      consistentInventoryCount(response.data, label) !== response.data.items.length ||
+      response.data.items.length > 250
+    )
+      throw new TypeError(`${label} inventory page-local count disagreement`);
+    for (const row of response.data.items) {
+      if (
+        !isRecord(row) ||
+        row.type !== 'ManagedContentVariantSearchResultRepresentation' ||
+        !nonemptyString(row.id) ||
+        row.managedContentSpaceId !== workspaceId ||
+        ids.has(row.id)
+      )
+        throw new TypeError(`${label} inventory has ambiguous identity or workspace`);
+      ids.add(row.id);
+    }
+    if (response.data.items.length < 250) return ids;
+  }
+  throw new TypeError(`${label} inventory is incomplete at the bounded page cap`);
+}
+
 // Source identities are workspace-wide, including families other than the selected family.
-// Unfiltered workspace search uses total-count completion (not Template page-local counts).
 function sourceTargetNames(item: {
   apiName?: unknown;
   title?: unknown;
@@ -1411,57 +1514,14 @@ async function assertNoSourceNameCollisions(
     if (new Set(targets.map((names) => names[dimension])).size !== targets.length)
       throw new TypeError('Source target API/title/URL names must be workspace-wide unique');
   }
-  const ids = new Set<string>();
-  let expected: number | undefined;
-  for (let page = 0; page < 1000; page += 1) {
-    const response = await requestJson<unknown>(
-      connection,
-      getSelectedOperation('workspace.variant.search'),
-      {
-        query: {
-          contentSpaceOrFolderIds: [workspaceId],
-          languages: ['All'],
-          page,
-          pageSize: 250,
-          queryTerm: '*',
-        },
-      },
-      requestOptions,
-    );
-    if (!isRecord(response.data) || !Array.isArray(response.data.items))
-      throw new TypeError('Source destination inventory response is malformed');
-    if (
-      [response.data.total, response.data.totalCount, response.data.count].some(
-        (value) =>
-          value !== undefined &&
-          (typeof value !== 'number' || !Number.isInteger(value) || value < 0),
-      )
-    )
-      throw new TypeError('Source destination inventory count is malformed');
-    const count = consistentInventoryCount(response.data, 'Source destination');
-    if (expected === undefined) expected = count;
-    if (count !== expected || count > 250_000 || response.data.items.length > 250)
-      throw new TypeError('Source destination inventory count changed or exceeds capacity');
-    for (const row of response.data.items) {
-      if (
-        !isRecord(row) ||
-        row.type !== 'ManagedContentVariantSearchResultRepresentation' ||
-        !nonemptyString(row.id) ||
-        row.managedContentSpaceId !== workspaceId ||
-        ids.has(row.id)
-      )
-        throw new TypeError('Source destination inventory has ambiguous identity or workspace');
-      ids.add(row.id);
-    }
-    if (ids.size > expected) throw new TypeError('Source destination inventory count disagreement');
-    if (ids.size === expected) break;
-    if (response.data.items.length === 0 || page === 999)
-      throw new TypeError('Source destination inventory is incomplete');
-  }
-  if (expected === undefined || ids.size !== expected)
-    throw new TypeError('Source destination inventory is incomplete');
+  const ids = await destinationInventoryIds(
+    connection,
+    workspaceId,
+    requestOptions,
+    'Source destination',
+  );
   const parents = new Map<string, string>();
-  const dimensions = Array.from({ length: 3 }, () => new Map<string, string>());
+  const dimensions = Array.from({ length: 3 }, () => new Map<string, Set<string>>());
   for (const id of ids) {
     const detail = await getVariant(connection, id, requestOptions);
     const parent = requiredContentIdentifier(detail, 'Source destination');
@@ -1485,18 +1545,21 @@ async function assertNoSourceNameCollisions(
     )
       throw new TypeError('Source run-owned parent name collision or drift');
     for (const [dimension, name] of names.entries()) {
-      const existing = dimensions[dimension].get(name);
-      if (existing !== undefined && existing !== parent)
+      const owners = dimensions[dimension].get(name) ?? new Set<string>();
+      if (dimension !== 1 && owners.size > 0 && !owners.has(parent))
         throw new TypeError('Source destination name identity is ambiguous');
-      dimensions[dimension].set(name, parent);
+      owners.add(parent);
+      dimensions[dimension].set(name, owners);
     }
   }
   for (const names of targets) {
     for (const [dimension, name] of names.entries()) {
-      const parent = dimensions[dimension].get(name);
+      const owners = dimensions[dimension].get(name);
       if (
-        parent !== undefined &&
-        (createdParents.get(names[0]) !== parent || parents.get(parent) !== names[0])
+        owners !== undefined &&
+        [...owners].some(
+          (parent) => createdParents.get(names[0]) !== parent || parents.get(parent) !== names[0],
+        )
       )
         throw new TypeError(`Source destination API/title/URL collision: ${name}`);
     }
@@ -1653,31 +1716,15 @@ async function assertNoBrandCollisions(
   targets: PlannedBrandCopies['targets'],
   requestOptions: JsonRequestOptions,
 ): Promise<void> {
-  const response = await requestJson<unknown>(
+  const ids = await destinationInventoryIds(
     connection,
-    getSelectedOperation('workspace.variant.search'),
-    {
-      query: {
-        contentSpaceOrFolderIds: [workspaceId],
-        contentTypeFQN: 'sfdc_cms__brand',
-        languages: ['All'],
-        page: 0,
-        pageSize: 250,
-        queryTerm: '*',
-      },
-    },
+    workspaceId,
     requestOptions,
+    'Destination Brand',
+    'sfdc_cms__brand',
   );
-  if (!isRecord(response.data) || !Array.isArray(response.data.items))
-    throw new TypeError('Destination Brand inventory response is malformed');
-  const count = consistentInventoryCount(response.data, 'Destination Brand');
-  const ids = response.data.items.map((row) =>
-    isRecord(row) && nonemptyString(row.id) ? row.id : undefined,
-  );
-  if (count > 250 || ids.includes(undefined) || new Set(ids).size !== count)
-    throw new TypeError('Destination Brand inventory completeness cannot be proven');
   const details: CmsRecord[] = [];
-  for (const id of ids as string[]) {
+  for (const id of ids) {
     const detail = await getVariant(connection, id, requestOptions);
     const type = isRecord(detail.contentType)
       ? detail.contentType.fullyQualifiedName
@@ -1685,6 +1732,8 @@ async function assertNoBrandCollisions(
     if (
       !isRecord(detail.contentSpace) ||
       detail.contentSpace.id !== workspaceId ||
+      requiredVariantIdentifier(detail, 'Destination Brand') !== id ||
+      requiredContentIdentifier(detail, 'Destination Brand') === id ||
       type !== 'sfdc_cms__brand'
     )
       throw new TypeError('Destination Brand detail changed exact scope');
@@ -2233,7 +2282,9 @@ export async function planNativeWorkspaceImport(
   return { proposal, editableSource: editable.editableSource };
 }
 
-export type SourceWorkspaceImportOptions = {
+export type SourceWorkspaceImportOptions = JsonRequestOptions & {
+  readonly sourceConnection?: BrandSourceRefreshOptions['sourceConnection'];
+  readonly sourceOrgId?: string;
   readonly source: LoadedWorkspaceExport;
   readonly definitionDirectory: string;
   readonly destinationWorkspace: unknown;
@@ -2251,7 +2302,12 @@ export type SourceWorkspaceImportIntent = {
 
 const sourceImportIntents = new WeakMap<
   SourceWorkspaceImportIntent,
-  { options: SourceWorkspaceImportOptions; fingerprint: string }
+  {
+    options: SourceWorkspaceImportOptions;
+    fingerprint: string;
+    brandRefresh?: BrandSourceRefreshProof;
+    generatedBrandIds: readonly string[];
+  }
 >();
 
 /**
@@ -2262,13 +2318,54 @@ const sourceImportIntents = new WeakMap<
 export async function planSourceWorkspaceImport(
   options: SourceWorkspaceImportOptions,
 ): Promise<SourceWorkspaceImportIntent> {
+  return planSourceWorkspaceImportCheckpoint(options);
+}
+
+async function planSourceWorkspaceImportCheckpoint(
+  options: SourceWorkspaceImportOptions,
+  pinnedBrandIds?: readonly string[],
+): Promise<SourceWorkspaceImportIntent> {
+  const {
+    source: suppliedSource,
+    sourceConnection: suppliedConnection,
+    signal: suppliedSignal,
+    ...inputs
+  } = options;
+  options = {
+    ...structuredClone(inputs),
+    source: suppliedSource,
+    sourceConnection: suppliedConnection,
+    signal: suppliedSignal,
+  };
   if ((options.nativeCopyMappings !== undefined) === (options.brandMappings !== undefined))
     throw new TypeError('Source planning requires exactly one native or Brand mapping mode');
+  const isBrandSource = options.brandMappings !== undefined;
+  // The supplied object must itself carry unchanged explicit source-profile provenance.
+  if (isBrandSource) getLoadedBrandSourceInventory(options.source);
+  else if (options.sourceConnection !== undefined || options.sourceOrgId !== undefined)
+    throw new TypeError('Independent source authentication is only for Brand definition mode');
   const source = await loadWorkspaceExport(options.source.sourceDirectory, {
-    profile: options.brandMappings === undefined ? 'general' : 'brand',
+    profile: isBrandSource ? 'brand-source' : 'general',
   });
   if (source.manifestSha256 !== options.source.manifestSha256)
     throw new TypeError('Source baseline manifest changed before planning');
+  const brandRefresh = isBrandSource
+    ? await refreshBrandSourceInventory(source, {
+        sourceConnection: options.sourceConnection!,
+        sourceOrgId: options.sourceOrgId!,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      })
+    : undefined;
+  if (brandRefresh !== undefined) assertBrandSourceRefreshProof(brandRefresh);
+  const generatedBrandIds: string[] = [];
+  const generateBrandId = (): string => {
+    const id =
+      pinnedBrandIds === undefined ? randomUUID() : pinnedBrandIds[generatedBrandIds.length];
+    if (id === undefined) throw new TypeError('Brand generated payload identity changed');
+    generatedBrandIds.push(id);
+    return id;
+  };
   const sourceDefinitions = await loadSourceDefinitions(source, options.definitionDirectory);
   const destination = destinationWorkspace(options.destinationWorkspace, options.workspaceId);
   const edits = new Map(sourceDefinitions.edits.entries.map((entry) => [entry.variantId, entry]));
@@ -2322,9 +2419,10 @@ export async function planSourceWorkspaceImport(
       selectedNativeReferences(source, proposal.items),
     );
   } else {
-    // Preserve released typed Brand report/warning admission, including its current limitation.
-    assertStrictBrandSource(source);
-    proposal = planBrandCopies(source, options.brandMappings);
+    // Source-only canonical admission above does not weaken the generic Brand gate.
+    proposal = planBrandCopies(source, options.brandMappings, generateBrandId);
+    if (pinnedBrandIds !== undefined && generatedBrandIds.length !== pinnedBrandIds.length)
+      throw new TypeError('Brand generated payload identity changed');
   }
   for (const item of proposal.items) {
     const original = originals.get(item.id);
@@ -2348,9 +2446,18 @@ export async function planSourceWorkspaceImport(
     proposal,
     destinationWorkspace: destination,
   });
+  const { source: originalSource, sourceConnection, signal, ...cloneableOptions } = options;
   sourceImportIntents.set(intent, {
-    options: structuredClone(options),
+    // Connections have methods and the original source has process-local WeakMap provenance.
+    options: {
+      ...structuredClone(cloneableOptions),
+      source: originalSource,
+      sourceConnection,
+      signal,
+    },
     fingerprint: loadedSourceIntentFingerprint(intent),
+    brandRefresh,
+    generatedBrandIds,
   });
   return intent;
 }
@@ -2370,10 +2477,32 @@ export async function revalidateSourceWorkspaceImport(
   const bound = sourceImportIntents.get(intent);
   if (bound === undefined || bound.fingerprint !== loadedSourceIntentFingerprint(intent))
     throw new TypeError('Source import intent was not planned here or was modified');
-  const current = await planSourceWorkspaceImport(bound.options);
+  if (bound.brandRefresh !== undefined) assertBrandSourceRefreshProof(bound.brandRefresh);
+  // Repeat authenticated live acquisition; a prior proof is not a freshness guarantee.
+  const current = await planSourceWorkspaceImportCheckpoint(bound.options, bound.generatedBrandIds);
   if (
     !isDeepStrictEqual(current.sourceDefinitions, intent.sourceDefinitions) ||
-    !isDeepStrictEqual(current.source, intent.source)
+    !isDeepStrictEqual(current.source, intent.source) ||
+    !isDeepStrictEqual(current.proposal, intent.proposal) ||
+    !isDeepStrictEqual(current.destinationWorkspace, intent.destinationWorkspace)
+  )
+    throw new TypeError('Source definition bytes or baseline changed after planning');
+  bound.brandRefresh = sourceImportIntents.get(current)!.brandRefresh;
+}
+
+async function revalidateSourceWorkspaceImportFiles(
+  intent: SourceWorkspaceImportIntent,
+): Promise<void> {
+  const bound = sourceImportIntents.get(intent);
+  if (bound === undefined || bound.fingerprint !== loadedSourceIntentFingerprint(intent))
+    throw new TypeError('Source import intent was not planned here or was modified');
+  const baseline = await loadWorkspaceExport(intent.source.sourceDirectory, {
+    profile: bound.brandRefresh === undefined ? 'general' : 'brand-source',
+  });
+  const definitions = await loadSourceDefinitions(baseline, bound.options.definitionDirectory);
+  if (
+    !isDeepStrictEqual(baseline, intent.source) ||
+    !isDeepStrictEqual(definitions, intent.sourceDefinitions)
   )
     throw new TypeError('Source definition bytes or baseline changed after planning');
 }
@@ -2384,8 +2513,19 @@ export async function executeWorkspaceImport(
   if (!nonemptyString(options.destinationOrgId)) {
     throw new TypeError('destinationOrgId must be the nonempty destination org ID');
   }
+  const brandSource =
+    options.brandMappings !== undefined && options.definitionDirectory !== undefined;
+  if (
+    brandSource &&
+    (options.sourceConnection === undefined || !nonemptyString(options.sourceOrgId))
+  )
+    throw new TypeError(
+      'Brand definition mode requires independent sourceConnection and sourceOrgId',
+    );
+  if (!brandSource && (options.sourceConnection !== undefined || options.sourceOrgId !== undefined))
+    throw new TypeError('Independent source authentication is only for Brand definition mode');
   let loadProfile: WorkspaceExportLoadProfile = 'general';
-  if (options.brandMappings !== undefined) loadProfile = 'brand';
+  if (options.brandMappings !== undefined) loadProfile = brandSource ? 'brand-source' : 'brand';
   else if (options.formMappings !== undefined) loadProfile = 'form';
   else if (options.formHandlerMappings !== undefined) loadProfile = 'form-handler';
   else if (options.consentBannerMappings !== undefined) loadProfile = 'consent-banner';
@@ -2396,7 +2536,8 @@ export async function executeWorkspaceImport(
       allowPartial: options.allowPartial,
       profile: loadProfile,
     }));
-  if (options.brandMappings !== undefined) assertStrictBrandSource(source);
+  if (brandSource) getLoadedBrandSourceInventory(source);
+  else if (options.brandMappings !== undefined) assertStrictBrandSource(source);
   if (options.formMappings !== undefined) assertStrictFormSource(source);
   if (options.formHandlerMappings !== undefined) assertStrictFormHandlerSource(source);
   if (options.consentBannerMappings !== undefined) assertStrictConsentBannerSource(source);
@@ -2458,6 +2599,9 @@ export async function executeWorkspaceImport(
   if (options.definitionDirectory !== undefined) {
     sourceIntent = await planSourceWorkspaceImport({
       source,
+      sourceConnection: options.sourceConnection,
+      sourceOrgId: options.sourceOrgId,
+      ...options.requestOptions,
       definitionDirectory: options.definitionDirectory,
       destinationWorkspace: options.destinationWorkspace,
       workspaceId: options.workspaceId,
@@ -2787,6 +2931,11 @@ export async function executeWorkspaceImport(
       : {
           sourceDefinitions: structuredClone(sourceIntent.sourceDefinitions),
           sourceDestination: structuredClone(sourceIntent.destinationWorkspace),
+          ...(sourceImportIntents.get(sourceIntent)!.brandRefresh === undefined
+            ? {}
+            : {
+                brandSource: structuredClone(sourceImportIntents.get(sourceIntent)!.brandRefresh),
+              }),
         }),
     ...(editableSource === undefined ? {} : { editableSource }),
     ...(landingPageTemplateProposal === undefined && landingPageProposal === undefined
@@ -3118,10 +3267,22 @@ export async function executeWorkspaceImport(
         )
           throw new TypeError('Source destination root/defaultLanguage drifted before CREATE');
         await revalidateSourceWorkspaceImport(sourceIntent);
+        const refresh = sourceImportIntents.get(sourceIntent)!.brandRefresh;
+        if (refresh !== undefined) {
+          assertBrandSourceRefreshProof(refresh);
+          Object.assign(report.brandSource!, structuredClone(refresh));
+          await rewrite(reportFile, report);
+        }
+        // All target/source network acquisition is finished. Only local evidence checks precede POST.
+        await revalidateSourceWorkspaceImportFiles(sourceIntent);
         if (
           !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report) ||
           !isDeepStrictEqual(report.sourceDefinitions, sourceIntent.sourceDefinitions) ||
           !isDeepStrictEqual(report.sourceDestination, sourceIntent.destinationWorkspace) ||
+          !isDeepStrictEqual(
+            report.brandSource,
+            sourceImportIntents.get(sourceIntent)!.brandRefresh,
+          ) ||
           parentOperation.requestSha256 !==
             operationIdentity(
               report.runId,
@@ -3232,6 +3393,11 @@ export async function executeWorkspaceImport(
       if (brand) {
         if (rewrittenGroup.variants.length > 0)
           throw new TypeError('Brand child variants are unsupported');
+        if (sourceIntent !== undefined) {
+          parentOperation.state = 'pending';
+          report.state = 'ownership-uncertain';
+          await rewrite(reportFile, report);
+        }
         const content = await getContent(
           options.connection,
           created.contentKey,
@@ -3243,6 +3409,14 @@ export async function executeWorkspaceImport(
           created.primaryVariantId,
           requestOptions,
         );
+        if (
+          sourceIntent !== undefined &&
+          [content, variant].some(
+            (value) =>
+              !isRecord(value) || !isRecord(value.folder) || value.folder.id !== plan.rootFolderId,
+          )
+        )
+          throw new TypeError('Brand source readback lacks exact destination root folder');
         assertBrandReadback(content, variant, {
           workspaceId: plan.destinationWorkspaceId,
           apiName: rewrittenGroup.primary.apiName!,
@@ -3253,6 +3427,7 @@ export async function executeWorkspaceImport(
           language: rewrittenGroup.primary.language,
           body: rewrittenGroup.primary.contentBody,
         });
+        parentOperation.state = 'succeeded';
         report.state = 'applying';
       }
       if (form) {
