@@ -1,20 +1,29 @@
 import { createHash } from 'node:crypto';
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rename,
-  rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { cleanupOwnedPath, publishDirectoryNoClobber } from '../../src/services/atomic-publish.js';
+import {
+  retainDirectoryStaging,
+  publishDirectoryNoClobber,
+} from '../../src/services/atomic-publish.js';
 import { bindLandingPageTemplatePairs } from '../../src/services/landing-page-pair-export.js';
 import type { CmsRecord } from '../../src/services/read.js';
 import {
@@ -175,6 +184,15 @@ function sourceFixture(contentType = 'sfdc_cms__email') {
 
 describe('workspace export service', () => {
   let root: string;
+  let temporaryDirectories: Array<{ run: RunOwnedTemp; parent: string }>;
+  let fixtureLinks: string[];
+
+  async function createFixture(prefix: string): Promise<string> {
+    const fixtureRun = await createRunOwnedTemp(prefix);
+    const parent = await createRunOwnedDirectory(fixtureRun, 'fixture');
+    temporaryDirectories.push({ run: fixtureRun, parent });
+    return parent;
+  }
 
   it('publishes flat qualified Email and Template sources without changing baseline or result contracts', async () => {
     for (const contentType of ['sfdc_cms__email', 'sfdc_cms__emailTemplate']) {
@@ -474,11 +492,29 @@ describe('workspace export service', () => {
   });
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-export-'));
+    temporaryDirectories = [];
+    fixtureLinks = [];
+    root = await createFixture('sf-plugin-cms-export');
   });
 
   afterEach(async () => {
-    await rm(root, { force: true, recursive: true });
+    // Remove only explicitly created links without traversing their targets.
+    for (const link of fixtureLinks) {
+      const metadata = await lstat(link);
+      expect(metadata.isSymbolicLink()).to.equal(true);
+      await unlink(link);
+    }
+    for (const fixture of temporaryDirectories) {
+      await removeRunOwnedPath(fixture.run, fixture.parent);
+      const metadata = await lstat(fixture.run.root);
+      expect(metadata.isDirectory()).to.equal(true);
+      try {
+        await lstat(fixture.parent);
+        expect.fail('expected fixture removal');
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      }
+    }
   });
 
   it('publishes deterministic portable metadata after exact resolution without changing root placement', async () => {
@@ -566,6 +602,63 @@ describe('workspace export service', () => {
       await readFile(path.join(cacheRoot, cacheFiles[0]), 'utf8'),
     ) as CmsResolutionCacheFile;
     expect(cache.scope.capabilityFixtureSha256).to.equal(METADATA_CAPABILITY_FIXTURE_SHA256);
+  });
+
+  it('does not report moved staging or change published bytes after cache refresh failure', async () => {
+    const raw = {
+      ...brandDetail('brand-variant', 'main_brand'),
+      contentSpace: { id: 'space', resourceUrl: '/connect/cms/spaces/space' },
+      folder: null,
+    };
+    const request = sinon
+      .stub()
+      .callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? { items: [row('brand-variant')], total: 1 }
+            : raw,
+        ),
+      );
+    const destination = path.join(root, 'export');
+    const cacheRoot = path.join(root, 'cache');
+    let manifestBytes: Buffer | undefined;
+    let publishedStaging: string | undefined;
+    const publishPath = async (temporary: string, target: string): Promise<void> => {
+      publishedStaging = temporary;
+      manifestBytes = await readFile(path.join(temporary, 'manifest.json'));
+      await publishDirectoryNoClobber(temporary, target);
+      await writeFile(cacheRoot, 'cache blocker', { flag: 'wx' });
+    };
+    let failure: unknown;
+    try {
+      await exportWorkspace({ request }, 'space', destination, {
+        selection: { contentType: 'sfdc_cms__brand', apiNames: ['main_brand'], brandReports: true },
+        portableMetadata: {
+          workspaceApiName: 'marketing',
+          cache: {
+            root: cacheRoot,
+            sourceOrg: { kind: 'exact-scope', value: 'source.example' },
+            targetOrg: { kind: 'exact-scope', value: 'target.example' },
+            apiVersion: '67.0',
+          },
+        },
+        atomicPublish: { publishPath },
+      });
+      expect.fail('expected cache refresh failure');
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.be.instanceOf(Error);
+    expect(failure).not.to.have.property('stagingPath');
+    expect(await readFile(path.join(destination, 'manifest.json'))).to.deep.equal(manifestBytes);
+    expect(await readFile(path.join(destination, 'items/brand-variant.json'), 'utf8')).to.equal(
+      `${JSON.stringify(raw, null, 2)}\n`,
+    );
+    expect(await readdir(root)).to.deep.equal(['cache', 'export']);
+    await lstat(publishedStaging!).then(
+      () => expect.fail('staging was moved'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
   });
 
   it('blocks optional portable metadata and cache writes on partial evidence', async () => {
@@ -715,11 +808,9 @@ describe('workspace export service', () => {
     const existing = path.join(root, 'existing');
     await mkdir(existing);
     await writeFile(path.join(root, 'file'), 'keep');
-    await symlink(
-      existing,
-      path.join(root, 'link'),
-      process.platform === 'win32' ? 'junction' : 'dir',
-    );
+    const link = path.join(root, 'link');
+    await symlink(existing, link, process.platform === 'win32' ? 'junction' : 'dir');
+    fixtureLinks.push(link);
     const request = sinon.stub();
     for (const editableDirectory of [
       existing,
@@ -774,7 +865,7 @@ describe('workspace export service', () => {
     ).to.equal(0);
   });
 
-  it('cleans owned companion staging on a publication collision without clobbering either output', async () => {
+  it('retains companion staging on a publication collision without clobbering either output', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) =>
       fakeRequest(
         url.startsWith('/connect/cms/items/search')
@@ -802,7 +893,9 @@ describe('workspace export service', () => {
       failure = error;
     }
     expect((failure as Error).message).to.include('Baseline export retained');
-    expect(await readdir(root)).to.deep.equal(['editable', 'source']);
+    const staging = ((failure as Error).cause as Error & { stagingPath: string }).stagingPath;
+    expect(await readdir(root)).to.deep.equal([path.basename(staging), 'editable', 'source']);
+    expect(await readFile(path.join(staging, 'items/a.html'), 'utf8')).to.equal('<p>safe</p>');
     expect(await readFile(path.join(editableDirectory, 'keep'), 'utf8')).to.equal('keep');
     expect(
       JSON.parse(await readFile(path.join(root, 'source/manifest.json'), 'utf8')).exportedCount,
@@ -2041,7 +2134,7 @@ describe('workspace export service', () => {
   }
 
   it('emits unsupported relationships only when relationship fields are encountered', async () => {
-    const referenceRoot = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-reference-'));
+    const referenceRoot = await createFixture('sf-plugin-cms-reference');
     const request = sinon.stub().callsFake((request_: { url: string }) => {
       if (request_.url.includes('/connect/cms/items/search')) {
         return fakeRequest({ items: [row('with-reference')], total: 1 });
@@ -2078,7 +2171,6 @@ describe('workspace export service', () => {
       },
     ]);
     expect(manifest.warnings.map(({ code }) => code)).to.include('REFERENCE_UNSUPPORTED');
-    await rm(referenceRoot, { force: true, recursive: true });
   });
 
   it('marks ownership-ambiguous and identity-incomplete references explicitly', async () => {
@@ -2329,10 +2421,14 @@ describe('workspace export service', () => {
   });
 
   it('rejects a real destination collision without changing either directory', async () => {
-    const temporary = path.join(root, '.export.tmp-real');
-    const destination = path.join(root, 'export');
-    await mkdir(temporary);
-    await mkdir(destination);
+    const collisionRun = await createRunOwnedTemp('sf-plugin-cms-export-collision');
+    const temporary = await createRunOwnedDirectory(collisionRun, 'temporary');
+    const destination = await createRunOwnedDirectory(collisionRun, 'export');
+    temporaryDirectories.push(
+      { run: collisionRun, parent: temporary },
+      { run: collisionRun, parent: destination },
+    );
+    const collisionEntries = await readdir(collisionRun.root);
     await writeFile(path.join(temporary, 'temporary.txt'), 'temporary', 'utf8');
     await writeFile(path.join(destination, 'destination.txt'), 'destination', 'utf8');
 
@@ -2351,11 +2447,13 @@ describe('workspace export service', () => {
     expect(await readFile(path.join(temporary, 'temporary.txt'), 'utf8')).to.equal('temporary');
 
     try {
-      await cleanupOwnedPath(temporary, publicationError);
+      retainDirectoryStaging(temporary, publicationError);
     } catch (error) {
       expect(error).to.equal(publicationError);
     }
-    expect(await readdir(root)).to.deep.equal(['export']);
+    expect((publicationError as Error & { stagingPath: string }).stagingPath).to.equal(temporary);
+    expect(await readdir(collisionRun.root)).to.deep.equal(collisionEntries);
+    expect(await readdir(root)).to.deep.equal([]);
   });
 
   it('leaves a destination that appears after preflight untouched', async () => {
@@ -2366,6 +2464,7 @@ describe('workspace export service', () => {
       await writeFile(destination, 'keep', 'utf8');
       throw collision;
     });
+    let caught: unknown;
 
     try {
       await exportWorkspace({ request }, 'space', destination, {
@@ -2373,12 +2472,20 @@ describe('workspace export service', () => {
       });
       expect.fail('expected no-clobber publication failure');
     } catch (error) {
-      expect(error).to.equal(collision);
+      caught = error;
+      expect(caught).to.equal(collision);
     }
 
     expect(await readFile(destination, 'utf8')).to.equal('keep');
     const remainingFiles = await readdir(root);
-    expect(remainingFiles.filter((name) => name.includes('.tmp-'))).to.deep.equal([]);
+    const staging = remainingFiles.filter((name) => name.includes('.tmp-'));
+    expect(staging).to.have.length(1);
+    expect((caught as Error & { stagingPath: string }).stagingPath).to.equal(
+      path.join(root, staging[0]),
+    );
+    expect(await readFile(path.join(root, staging[0], 'manifest.json'), 'utf8')).to.include(
+      '"exportedCount": 0',
+    );
   });
 
   it('does not clean a temp path when uniquely owned temp creation fails', async () => {
@@ -2387,13 +2494,10 @@ describe('workspace export service', () => {
     const preexisting = path.join(root, '.export.tmp-preexisting');
     await writeFile(preexisting, 'keep', 'utf8');
     const setupError = Object.assign(new Error('temp allocation collision'), { code: 'EEXIST' });
-    const removePath = sinon.stub().resolves();
-
     try {
       await exportWorkspace({ request }, 'space', destination, {
         atomicPublish: {
           makeTemporaryDirectory: sinon.stub().rejects(setupError),
-          removePath,
         },
       });
       expect.fail('expected temp allocation failure');
@@ -2401,7 +2505,7 @@ describe('workspace export service', () => {
       expect(error).to.equal(setupError);
     }
 
-    expect(removePath.callCount).to.equal(0);
+    expect(setupError).not.to.have.property('stagingPath');
     expect(await readFile(preexisting, 'utf8')).to.equal('keep');
   });
 
@@ -2431,12 +2535,13 @@ describe('workspace export service', () => {
     expect(await readdir(root)).to.deep.equal(['export']);
   });
 
-  it('preserves permanent directory publication errors and cleans its sibling temp directory', async () => {
+  it('preserves permanent directory publication errors and retains its sibling staging directory', async () => {
     const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
     const destination = path.join(root, 'export');
     const permanent = Object.assign(new Error('directory remains locked'), { code: 'EPERM' });
     const renamePath = sinon.stub().rejects(permanent);
     const wait = sinon.stub().resolves();
+    let caught: unknown;
 
     try {
       await exportWorkspace({ request }, 'space', destination, {
@@ -2444,36 +2549,62 @@ describe('workspace export service', () => {
       });
       expect.fail('expected permanent rename failure');
     } catch (error) {
-      expect(error).to.equal(permanent);
+      caught = error;
+      expect(caught).to.equal(permanent);
     }
 
     expect(renamePath.callCount).to.equal(4);
     expect(wait.args).to.deep.equal([[10], [25], [50]]);
-    expect(await readdir(root)).to.deep.equal([]);
+    const staging = (caught as Error & { stagingPath: string }).stagingPath;
+    expect(path.dirname(staging)).to.equal(root);
+    expect(await readdir(root)).to.deep.equal([path.basename(staging)]);
+    expect(await readFile(path.join(staging, 'manifest.json'), 'utf8')).to.include(
+      '"exportedCount": 0',
+    );
   });
 
-  it('preserves the original publication error identity when temp cleanup fails', async () => {
+  it('preserves error identity when staging diagnostics cannot be attached', async () => {
     const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
-    const destination = path.join(root, 'export');
-    const publicationError = Object.assign(new Error('publication failed'), { code: 'EACCES' });
-    const cleanupError = Object.assign(new Error('cleanup failed'), { code: 'EPERM' });
-
-    try {
-      await exportWorkspace({ request }, 'space', destination, {
-        atomicPublish: {
-          platform: 'win32',
-          publishPath: sinon.stub().rejects(publicationError),
-          removePath: sinon.stub().rejects(cleanupError),
-        },
-      });
-      expect.fail('expected publication failure');
-    } catch (error) {
-      expect(error).to.equal(publicationError);
-      expect((error as Error & { cleanupError?: unknown }).cleanupError).to.equal(cleanupError);
+    const conflicting = Object.defineProperty(new Error('conflicting'), 'stagingPath', {
+      value: 'existing',
+    });
+    const failures = [
+      'primitive',
+      null,
+      Object.freeze(new Error('frozen')),
+      conflicting,
+      new Error('extensible'),
+    ];
+    for (const [index, failure] of failures.entries()) {
+      let caught: unknown;
+      const destination = path.join(root, `export-${index}`);
+      try {
+        await exportWorkspace({ request }, 'space', destination, {
+          atomicPublish: {
+            publishPath: async () => {
+              throw failure;
+            },
+          },
+        });
+        expect.fail('expected publication failure');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).to.equal(failure);
+      const files = await readdir(root);
+      const staging = files.find((name) => name.startsWith(`.export-${index}.tmp-`));
+      expect(staging).to.be.a('string');
+      expect(await readFile(path.join(root, staging!, 'manifest.json'), 'utf8')).to.include(
+        '"exportedCount": 0',
+      );
+      if (index === 4) {
+        expect(Object.getOwnPropertyDescriptor(failure, 'stagingPath')?.enumerable).to.equal(false);
+        expect((failure as Error & { stagingPath: string }).stagingPath).to.equal(
+          path.join(root, staging!),
+        );
+      }
     }
-
-    const remainingFiles = await readdir(root);
-    expect(remainingFiles.some((name) => name.includes('.tmp-'))).to.equal(true);
+    expect(Object.getOwnPropertyDescriptor(conflicting, 'stagingPath')?.value).to.equal('existing');
   });
 
   it('does not retry unrelated or non-Windows directory publication errors', async () => {
@@ -2499,25 +2630,35 @@ describe('workspace export service', () => {
       expect(renamePath.callCount).to.equal(1);
       expect(wait.callCount).to.equal(0);
     }
-    expect(await readdir(root)).to.deep.equal([]);
+    const files = await readdir(root);
+    expect(files.filter((name) => name.includes('.tmp-'))).to.have.length(2);
   });
 
-  it('cleans the temporary directory and never publishes after a write failure', async () => {
-    const request = sinon
+  it('retains the staging directory and never publishes after a staged-write failure', async () => {
+    const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
+    const makeTemporaryDirectory = sinon
       .stub()
-      .callsFake(({ url }: { url: string }) =>
-        url.startsWith('/connect/cms/items/search')
-          ? fakeRequest({ items: [row('missing/child')], total: 1 })
-          : fakeRequest(detail('missing/child')),
-      );
+      .callsFake(async (prefix: string): Promise<string> => {
+        const temporary = await mkdtemp(prefix);
+        await writeFile(path.join(temporary, 'items'), 'staged write blocker', { flag: 'wx' });
+        return temporary;
+      });
     const destination = path.join(root, 'export');
-
+    const publishPath = sinon.stub().resolves();
+    let staging: string | undefined;
     try {
-      await exportWorkspace({ request }, 'space', destination);
+      await exportWorkspace({ request }, 'space', destination, {
+        atomicPublish: { publishPath, makeTemporaryDirectory },
+      });
       expect.fail('expected write failure');
     } catch (error) {
       expect(error).to.be.instanceOf(Error);
+      staging = (error as Error & { stagingPath: string }).stagingPath;
     }
-    expect(await readdir(root)).to.deep.equal([]);
+    expect(publishPath.callCount).to.equal(0);
+    expect(path.dirname(staging!)).to.equal(root);
+    expect(await readdir(root)).to.deep.equal([path.basename(staging!)]);
+    expect(await readdir(staging!)).to.deep.equal(['items']);
+    expect(await readFile(path.join(staging!, 'items'), 'utf8')).to.equal('staged write blocker');
   });
 });

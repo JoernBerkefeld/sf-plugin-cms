@@ -1,5 +1,10 @@
-import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, lstat, mkdir, writeFile } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
@@ -31,14 +36,24 @@ function workspace(id: string, name: string, type?: unknown) {
 }
 
 describe('bulk workspace export service', () => {
+  let run: RunOwnedTemp;
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-bulk-'));
+    run = await createRunOwnedTemp('sf-plugin-cms-bulk');
+    root = await createRunOwnedDirectory(run, 'fixture');
   });
 
   afterEach(async () => {
-    await rm(root, { force: true, recursive: true });
+    await removeRunOwnedPath(run, root);
+    const rootMetadata = await lstat(run.root);
+    expect(rootMetadata.isDirectory()).to.equal(true);
+    try {
+      await access(root);
+      expect.fail('expected registered fixture cleanup');
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+    }
   });
 
   it('normalizes workspace type casing and rejects other values', () => {
@@ -431,7 +446,14 @@ describe('bulk workspace export service', () => {
       sourceOrgId: '00DSource',
     };
     const first = await exportAllWorkspaces({ request }, outputDirectory, 'Marketing', options);
-    await rm(outputDirectory, { force: true, recursive: true });
+    await removeRunOwnedPath(run, root);
+    try {
+      await access(outputDirectory);
+      expect.fail('expected first export fixture cleanup');
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+    }
+    root = await createRunOwnedDirectory(run, 'fixture');
     const second = await exportAllWorkspaces({ request }, outputDirectory, 'Marketing', options);
 
     expect(first).to.deep.equal(second);

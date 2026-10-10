@@ -1,10 +1,15 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import { exportWorkspace } from '../../src/services/export-workspace.js';
 
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
@@ -34,15 +39,23 @@ function imageDetail(modifiedAt = '2026-01-01T00:00:00.000Z') {
 }
 
 describe('experimental workspace media export', () => {
+  let run: RunOwnedTemp;
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-media-export-'));
+    run = await createRunOwnedTemp('sf-plugin-cms-media-export');
+    root = await createRunOwnedDirectory(run, 'fixture');
   });
 
   afterEach(async () => {
     sinon.restore();
-    await rm(root, { force: true, recursive: true });
+    await removeRunOwnedPath(run, root);
+    await lstat(root).then(
+      () => expect.fail('Fixture child must be removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const retainedRoot = await lstat(run.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
   it('fails closed on invalid media caps before requests or fetches', async () => {

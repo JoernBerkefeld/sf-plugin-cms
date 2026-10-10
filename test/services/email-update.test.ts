@@ -1,21 +1,15 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
-import crypto from 'node:crypto';
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  rmdir,
-  stat,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import { exportWorkspace } from '../../src/services/export-workspace.js';
 import {
   applyDraftEmailUpdateWithReport,
@@ -143,10 +137,11 @@ describe('bounded Draft Email update pilot', () => {
   let root: string;
   let sourceDirectory: string;
   let editableDirectory: string;
+  let fixtureRun: RunOwnedTemp;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'cms-email-update-'));
-    await writeFile(path.join(root, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    fixtureRun = await createRunOwnedTemp('cms-email-update');
+    root = await createRunOwnedDirectory(fixtureRun, 'fixture');
     sourceDirectory = path.join(root, 'source');
     editableDirectory = path.join(root, 'editable');
     const original = state();
@@ -160,15 +155,12 @@ describe('bounded Draft Email update pilot', () => {
 
   afterEach(async () => {
     sinon.restore();
-    await removeOwnedFixture(root, sourceDirectory);
-    await removeOwnedFixture(root, editableDirectory);
-    await unlink(path.join(root, '.owner'));
-    await rmdir(root);
+    await removeFixture(fixtureRun, root);
   });
 
   it('accepts the observed Draft Email Template body without subjectLine', async () => {
-    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-no-subject-'));
-    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateRun = await createRunOwnedTemp('cms-template-update-no-subject');
+    const templateRoot = await createRunOwnedDirectory(templateRun, 'fixture');
     const templateSource = path.join(templateRoot, 'source');
     const templateEditable = path.join(templateRoot, 'editable');
     const observed = template('template-en', 'en_US');
@@ -216,16 +208,13 @@ describe('bounded Draft Email update pilot', () => {
       });
       expect(preview.status).to.equal('ready');
     } finally {
-      await removeOwnedFixture(templateRoot, templateSource);
-      await removeOwnedFixture(templateRoot, templateEditable);
-      await unlink(path.join(templateRoot, '.owner'));
-      await rmdir(templateRoot);
+      await removeFixture(templateRun, templateRoot);
     }
   });
 
   it('previews and applies one exact Draft Email Template with dual inventory and one PUT', async () => {
-    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-'));
-    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateRun = await createRunOwnedTemp('cms-template-update');
+    const templateRoot = await createRunOwnedDirectory(templateRun, 'fixture');
     const templateSource = path.join(templateRoot, 'source');
     const templateEditable = path.join(templateRoot, 'editable');
     const current: State = {
@@ -310,16 +299,13 @@ describe('bounded Draft Email update pilot', () => {
       expect(submitted.contentBody.subjectLine).to.equal('Pilot subject');
     } finally {
       mutation.restore();
-      await removeOwnedFixture(templateRoot, templateSource);
-      await removeOwnedFixture(templateRoot, templateEditable);
-      await unlink(path.join(templateRoot, '.owner'));
-      await rmdir(templateRoot);
+      await removeFixture(templateRun, templateRoot);
     }
   });
 
   it('blocks Template update when dual inventories disagree without PUT', async () => {
-    const templateRoot = await mkdtemp(path.join(tmpdir(), 'cms-template-update-mismatch-'));
-    await writeFile(path.join(templateRoot, '.owner'), crypto.randomUUID(), { flag: 'wx' });
+    const templateRun = await createRunOwnedTemp('cms-template-update-mismatch');
+    const templateRoot = await createRunOwnedDirectory(templateRun, 'fixture');
     const templateSource = path.join(templateRoot, 'source');
     const templateEditable = path.join(templateRoot, 'editable');
     const current: State = {
@@ -387,10 +373,7 @@ describe('bounded Draft Email update pilot', () => {
       expect(mutation.notCalled).to.equal(true);
     } finally {
       mutation.restore();
-      await removeOwnedFixture(templateRoot, templateSource);
-      await removeOwnedFixture(templateRoot, templateEditable);
-      await unlink(path.join(templateRoot, '.owner'));
-      await rmdir(templateRoot);
+      await removeFixture(templateRun, templateRoot);
     }
   });
 
@@ -812,7 +795,6 @@ describe('bounded Draft Email update pilot', () => {
     expect(existingMutation.notCalled).to.equal(true);
     await expectMissing(path.join(existingReport, 'content-update-run.json'));
     existingMutation.restore();
-    await rmdir(existingReport);
   });
 
   it('persists pending intent before one PUT and completes the durable report', async () => {
@@ -851,7 +833,6 @@ describe('bounded Draft Email update pilot', () => {
       state: 'completed',
     });
     expect(mutation.calledOnce).to.equal(true);
-    await removeOwnedFixture(root, reportDirectory);
   });
 
   it('treats completed-report persistence failure as ownership uncertain without another PUT', async () => {
@@ -895,7 +876,6 @@ describe('bounded Draft Email update pilot', () => {
     expect((JSON.parse(await readFile(reportFile, 'utf8')) as { state: string }).state).to.equal(
       'ownership-uncertain',
     );
-    await removeOwnedFixture(root, reportDirectory);
   });
 
   it('retains ownership-uncertain reconciliation identity without retrying', async () => {
@@ -924,7 +904,6 @@ describe('bounded Draft Email update pilot', () => {
     expect(report.reconciliation.variantId).to.equal('variant-en');
     expect(report.reconciliation.payloadHash).to.match(/^[a-f\d]{64}$/u);
     expect(mutation.calledOnce).to.equal(true);
-    await removeOwnedFixture(root, reportDirectory);
   });
 
   it('reports an ambiguous mutation outcome without retrying', async () => {
@@ -986,20 +965,11 @@ describe('bounded Draft Email update pilot', () => {
   }
 });
 
-async function removeOwnedFixture(runRoot: string, target: string): Promise<void> {
-  const relative = path.relative(runRoot, target);
-  if (
-    relative === '' ||
-    path.isAbsolute(relative) ||
-    relative === '..' ||
-    relative.startsWith(`..${path.sep}`)
-  ) {
-    throw new Error('Refusing unsafe fixture cleanup target');
-  }
-  await readFile(path.join(runRoot, '.owner'), 'utf8');
-  const information = await lstat(target);
-  if (information.isSymbolicLink()) throw new Error('Refusing fixture cleanup through a symlink');
-  await rm(target, { recursive: true });
+async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
+  await removeRunOwnedPath(run, parent);
+  await expectMissing(parent);
+  const information = await stat(run.root);
+  expect(information.isDirectory()).to.equal(true);
 }
 
 async function expectMissing(target: string): Promise<void> {

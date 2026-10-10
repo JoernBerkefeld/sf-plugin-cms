@@ -1,11 +1,16 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   applyPublishedEmailUnpublishWithReport,
   EmailUnpublishOutcomeUnknownError,
@@ -107,6 +112,19 @@ async function captureFailure(promise: Promise<unknown>): Promise<unknown> {
   throw new Error('Expected operation to fail');
 }
 
+async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
+  await removeRunOwnedPath(run, parent);
+  let parentError: unknown;
+  try {
+    await stat(parent);
+  } catch (error) {
+    parentError = error;
+  }
+  expect((parentError as NodeJS.ErrnoException | undefined)?.code).to.equal('ENOENT');
+  const rootMetadata = await stat(run.root);
+  expect(rootMetadata.isDirectory()).to.equal(true);
+}
+
 describe('Email unpublish service', () => {
   it('previews one exact Published variant without mutation', async () => {
     const current = fixture();
@@ -119,7 +137,8 @@ describe('Email unpublish service', () => {
 
   it('writes pending intent then unpublishes only the selected variant', async () => {
     const current = fixture();
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
       const pending = JSON.parse(
@@ -156,7 +175,7 @@ describe('Email unpublish service', () => {
       });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
@@ -167,7 +186,8 @@ describe('Email unpublish service', () => {
       .returns(
         Object.assign(Promise.reject(new Error('timeout')), { stream: () => new PassThrough() }),
       );
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-uncertain-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-uncertain');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.relative(process.cwd(), path.join(parent, 'report'));
     try {
       const failure = await captureFailure(
@@ -196,7 +216,7 @@ describe('Email unpublish service', () => {
       expect(report.state).to.equal('ownership-uncertain');
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
@@ -221,7 +241,8 @@ describe('Email unpublish service', () => {
         { stream: () => new PassThrough() },
       ),
     );
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-rejected-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-rejected');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {
       const failure = await captureFailure(
@@ -248,7 +269,7 @@ describe('Email unpublish service', () => {
       expect(report.state).to.equal('rejected-before-mutation');
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
@@ -265,7 +286,8 @@ describe('Email unpublish service', () => {
         { stream: () => new PassThrough() },
       ),
     );
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-conflict-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-conflict');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const failure = await captureFailure(
         applyPublishedEmailUnpublishWithReport(
@@ -282,14 +304,15 @@ describe('Email unpublish service', () => {
       });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('prevents POST when pending report persistence fails', async () => {
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request');
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-pending-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-pending');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {
       const failure = await captureFailure(
@@ -304,13 +327,14 @@ describe('Email unpublish service', () => {
       expect(mutation.notCalled).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('retains deployment ownership when the completed report write fails', async () => {
     const current = fixture();
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-final-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-final');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
       current.variants['variant-en'] = {
@@ -347,13 +371,14 @@ describe('Email unpublish service', () => {
       expect(report.reconciliation.deploymentId).to.equal('deployment-final');
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('allows delayed convergence within five read attempts and performs one POST', async () => {
     const current = fixture();
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-delayed-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-delayed');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon
       .stub(JsforceConnection.prototype, 'request')
@@ -400,13 +425,14 @@ describe('Email unpublish service', () => {
       expect(current.request.callCount).to.be.greaterThan(0);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('stops after five non-converged read attempts and performs one POST', async () => {
     const current = fixture();
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-bounded-'));
+    const run = await createRunOwnedTemp('sf-cms-unpublish-bounded');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon
       .stub(JsforceConnection.prototype, 'request')
@@ -428,7 +454,7 @@ describe('Email unpublish service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 

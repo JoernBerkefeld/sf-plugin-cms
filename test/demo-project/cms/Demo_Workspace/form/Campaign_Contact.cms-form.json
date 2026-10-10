@@ -1,0 +1,41 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Form",
+    "apiName": "Campaign_Contact",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__form",
+  "language": "en_US",
+  "title": "Campaign contact form",
+  "folderPath": ["Campaigns", "Welcome"],
+  "companions": {},
+  "contentBody": {
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "sfdc_cms:title": "Campaign contact form",
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-form-root",
+      "type": "block",
+      "children": [
+        {
+          "definition": "lightning/actionButton",
+          "id": "demo-form-submit",
+          "type": "block",
+          "attributes": {
+            "label": "Contact us",
+            "actions": [
+              { "type": "custom", "name": "formsubmit" },
+              { "type": "built-in", "name": "umaFormSubmissionAction" },
+              { "type": "built-in", "name": "showThankYouAction" }
+            ]
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

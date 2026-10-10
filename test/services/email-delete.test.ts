@@ -1,11 +1,16 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import { exportWorkspace } from '../../src/services/export-workspace.js';
 import {
   applyDraftEmailDeleteWithReport,
@@ -329,9 +334,18 @@ async function captureFailure(promise: Promise<unknown>): Promise<unknown> {
   throw new Error('Expected operation to fail');
 }
 
+async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
+  await removeRunOwnedPath(run, parent);
+  const parentError = await captureFailure(stat(parent));
+  expect((parentError as NodeJS.ErrnoException).code).to.equal('ENOENT');
+  const rootMetadata = await stat(run.root);
+  expect(rootMetadata.isDirectory()).to.equal(true);
+}
+
 describe('Email delete service', () => {
   it('previews one exact CREATE-owned Draft Email Template from strict artifacts', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-preview-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-preview');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       const ownership = await templateCreateJournal(parent);
@@ -346,12 +360,13 @@ describe('Email delete service', () => {
         'sfdc_cms__emailTemplate',
       );
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('accepts per-page count semantics for a complete workspace inventory page', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-page-count-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-page-count');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       current.request.resetBehavior();
@@ -398,12 +413,13 @@ describe('Email delete service', () => {
       });
       expect(result.status).to.equal('ready');
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('paginates complete Template inventories and rejects duplicate variant IDs', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-pagination-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-pagination');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       current.request.resetBehavior();
@@ -444,12 +460,13 @@ describe('Email delete service', () => {
         'Email Template search returned a duplicate variant',
       );
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('blocks Template delete when family search disagrees with workspace family inventory', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-inventory-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-inventory');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       current.request.resetBehavior();
@@ -493,12 +510,13 @@ describe('Email delete service', () => {
         'Email Template family search disagrees with complete workspace inventory',
       );
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('writes pending intent, deletes one Template variant, and proves exact absence', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-apply-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-apply');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = templateFixture();
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
@@ -536,12 +554,13 @@ describe('Email delete service', () => {
       expect(report.intent).to.deep.equal({ cascade: false, selectorScope: 'variant' });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('blocks Email ownership reports for Email Template deletion', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-cross-family-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-cross-family');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       const result = await previewDraftEmailDelete(current.connection, {
@@ -555,12 +574,13 @@ describe('Email delete service', () => {
         'EMAIL_TEMPLATE_DELETE_PREFLIGHT_BLOCKED',
       );
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('blocks changed Template source artifacts and unsafe references', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-template-delete-artifact-'));
+    const run = await createRunOwnedTemp('sf-cms-template-delete-artifact');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
       const ownership = await templateCreateJournal(parent);
@@ -576,12 +596,13 @@ describe('Email delete service', () => {
       });
       expect(result.status).to.equal('blocked');
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('previews one exact owned Draft variant without mutation', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-preview-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-preview');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = fixture();
       const result = await previewDraftEmailDelete(current.connection, {
@@ -592,12 +613,13 @@ describe('Email delete service', () => {
       expect(result.status).to.equal('ready');
       expect(result.status === 'ready' && result.evidence.siblingVariantCount).to.equal(1);
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('writes pending intent, deletes once, and proves variant plus inventory absence', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-apply-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-apply');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
@@ -632,12 +654,13 @@ describe('Email delete service', () => {
       expect(report.intent).to.deep.equal({ cascade: false, selectorScope: 'variant' });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('accepts exact parent NOT_FOUND only after variant and inventory absence are proven', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-parent-absent-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-parent-absent');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
       current.deleteVariant();
@@ -663,7 +686,7 @@ describe('Email delete service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
@@ -674,7 +697,8 @@ describe('Email delete service', () => {
     { label: 'parent NOT_FOUND without HTTP status', errorCode: 'NOT_FOUND', errorEntryCount: 1 },
   ]) {
     it(`keeps ${invalid.label} ownership-uncertain`, async () => {
-      const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-parent-invalid-'));
+      const run = await createRunOwnedTemp('sf-cms-delete-parent-invalid');
+      const parent = await createRunOwnedDirectory(run, 'fixture');
       const current = fixture();
       const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
         current.deleteVariant();
@@ -708,13 +732,14 @@ describe('Email delete service', () => {
         expect(mutation.calledOnce).to.equal(true);
       } finally {
         mutation.restore();
-        await rm(parent, { recursive: true, force: true });
+        await removeFixture(run, parent);
       }
     });
   }
 
   it('keeps a parent transport failure ownership-uncertain', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-parent-transport-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-parent-transport');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
       current.deleteVariant();
@@ -740,12 +765,13 @@ describe('Email delete service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('blocks a changed semantic body before DELETE', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-drift-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-drift');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     current.variants['variant-en'].contentBody = { rawHtml: '&lt;p&gt;Changed&lt;/p&gt;' };
     try {
@@ -756,12 +782,13 @@ describe('Email delete service', () => {
       });
       expect(result.status).to.equal('blocked');
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('keeps a generic post-delete 404 ownership-uncertain', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-generic-404-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-generic-404');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     current.request.callsFake(({ url }: { url: string }) => {
       if (url === '/connect/cms/spaces/space')
@@ -822,12 +849,13 @@ describe('Email delete service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('classifies an explicit 403 response as rejected before mutation', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-rejected-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-rejected');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').returns(
       Object.assign(
@@ -859,12 +887,13 @@ describe('Email delete service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
   it('never retries an ambiguous DELETE', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-delete-uncertain-'));
+    const run = await createRunOwnedTemp('sf-cms-delete-uncertain');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon
       .stub(JsforceConnection.prototype, 'request')
@@ -890,7 +919,7 @@ describe('Email delete service', () => {
       expect(mutation.calledOnce).to.equal(true);
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 });

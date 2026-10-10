@@ -1,0 +1,152 @@
+{
+  "format": "sf-cms-demo-inventory@1",
+  "owner": "cms",
+  "scenario": "imaginary-retrieve-all-result",
+  "status": "source-only",
+  "importReady": false,
+  "workspaceApiName": "Demo_Workspace",
+  "defaultLanguage": "en_US",
+  "baseline": "absent: no integrity-bound baseline, source admission evidence, provenance, or org export",
+  "notes": [
+    "Fictional desired end state, not output produced by a shipped retrieve-all command. One bounded representative per listed CMS family, not exhaustive CMS coverage.",
+    "Current-contract means portable shape validation only, never import admission. Email and Template are static HTML; Brand is immutable inline content.",
+    "Proposed examples reuse representative native body vocabulary but their portable envelopes, block shapes and media field mapping are not implemented or qualified contracts.",
+    "The SVG companion illustrates desired local media placement, not qualified lossless image retrieval or deploy support.",
+    "Logical folders are folderPath metadata only. Nested folder retrieval/admission is a gap; no folder records or physical folder directories are claimed.",
+    "All identities and block identifiers are fictional. Shared campaign naming does not assert resolved dependency wiring.",
+    "Content Block display labels preserve emailFragment/webFragment API identifiers and existing email-fragment/web-fragment file tokens. Inventory type names retain compatible provider identity vocabulary."
+  ],
+  "coverageGaps": [
+    "retrieve-all orchestration and complete family inventory evidence",
+    "integrity-bound baseline and per-family source admission contracts",
+    "lossless native image/media binding and dependency rewriting",
+    "logical folder enumeration, ancestry evidence and portable folder contracts",
+    "structured builder fidelity, relationship resolution and rendered/readback qualification"
+  ],
+  "outOfScope": [
+    "variants",
+    "non-default languages",
+    "org operations",
+    "import or deploy readiness"
+  ],
+  "items": [
+    {
+      "family": "email",
+      "type": "Email",
+      "displayLabel": "Email",
+      "apiName": "Welcome_Email",
+      "token": "email",
+      "status": "current-contract",
+      "definition": "cms/Demo_Workspace/email/Welcome_Email.cms-email.json",
+      "companions": ["cms/Demo_Workspace/email/Welcome_Email.cms-email.html"]
+    },
+    {
+      "family": "emailTemplate",
+      "type": "Email Template",
+      "displayLabel": "Email Template",
+      "apiName": "Campaign_Template",
+      "token": "email-template",
+      "status": "current-contract",
+      "definition": "cms/Demo_Workspace/emailTemplate/Campaign_Template.cms-email-template.json",
+      "companions": ["cms/Demo_Workspace/emailTemplate/Campaign_Template.cms-email-template.html"]
+    },
+    {
+      "family": "brand",
+      "type": "Brand",
+      "displayLabel": "Brand",
+      "apiName": "Demo_Brand",
+      "token": "brand",
+      "status": "current-contract",
+      "definition": "cms/Demo_Workspace/brand/Demo_Brand.cms-brand.json",
+      "companions": []
+    },
+    {
+      "family": "image",
+      "type": "Image",
+      "displayLabel": "Image",
+      "apiName": "Campaign_Hero",
+      "token": "image",
+      "status": "proposed-not-implemented",
+      "gap": "Unqualified native media binding; media field and SVG export are illustrative only.",
+      "definition": "cms/Demo_Workspace/image/Campaign_Hero.cms-image.json",
+      "companions": ["cms/Demo_Workspace/image/Campaign_Hero.cms-image.svg"]
+    },
+    {
+      "family": "landingPage",
+      "type": "Landing Page",
+      "displayLabel": "Landing Page",
+      "apiName": "Welcome_Page",
+      "token": "landing-page",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and builder/dependency qualification absent.",
+      "definition": "cms/Demo_Workspace/landingPage/Welcome_Page.cms-landing-page.json",
+      "companions": []
+    },
+    {
+      "family": "landingPageTemplate",
+      "type": "Landing Page Template",
+      "displayLabel": "Landing Page Template",
+      "apiName": "Campaign_Page_Template",
+      "token": "landing-page-template",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and template relationship qualification absent.",
+      "definition": "cms/Demo_Workspace/landingPageTemplate/Campaign_Page_Template.cms-landing-page-template.json",
+      "companions": []
+    },
+    {
+      "family": "emailFragment",
+      "type": "Email Fragment",
+      "displayLabel": "Content Block: Email",
+      "apiName": "Campaign_Footer",
+      "token": "email-fragment",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and fragment layout qualification absent.",
+      "definition": "cms/Demo_Workspace/emailFragment/Campaign_Footer.cms-email-fragment.json",
+      "companions": []
+    },
+    {
+      "family": "webFragment",
+      "type": "Web Fragment",
+      "displayLabel": "Content Block: Landing Page",
+      "apiName": "Campaign_Intro",
+      "token": "web-fragment",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and fragment layout qualification absent.",
+      "definition": "cms/Demo_Workspace/webFragment/Campaign_Intro.cms-web-fragment.json",
+      "companions": []
+    },
+    {
+      "family": "form",
+      "type": "Form",
+      "displayLabel": "Form",
+      "apiName": "Campaign_Contact",
+      "token": "form",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition, action/provider wiring and builder qualification absent.",
+      "definition": "cms/Demo_Workspace/form/Campaign_Contact.cms-form.json",
+      "companions": []
+    },
+    {
+      "family": "formHandler",
+      "type": "Form Handler",
+      "displayLabel": "Form Handler",
+      "apiName": "Campaign_Handler",
+      "token": "form-handler",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and external form wiring qualification absent.",
+      "definition": "cms/Demo_Workspace/formHandler/Campaign_Handler.cms-form-handler.json",
+      "companions": []
+    },
+    {
+      "family": "consentBanner",
+      "type": "Consent Banner",
+      "displayLabel": "Consent Banner",
+      "apiName": "Campaign_Consent",
+      "token": "consent-banner",
+      "status": "proposed-not-implemented",
+      "gap": "Source definition and consent action/layout qualification absent.",
+      "definition": "cms/Demo_Workspace/consentBanner/Campaign_Consent.cms-consent-banner.json",
+      "companions": []
+    }
+  ]
+}

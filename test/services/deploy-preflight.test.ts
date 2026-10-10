@@ -361,7 +361,10 @@ describe('CMS package-first deploy preflight', () => {
     const input = build([], [rootNode([])]);
     expect(input.registryVersion).to.equal('1.0.0');
     expect(preflightCmsDeploy(input).ready).to.equal(true);
-    for (const providerVersion of ['0.8.999', '0.10.0', '1.0.0']) {
+    for (const providerVersion of ['0.10.0', '0.10.999']) {
+      expect(preflightCmsDeploy({ ...input, providerVersion }).ready).to.equal(true);
+    }
+    for (const providerVersion of ['0.9.999', '0.11.0', '1.0.0']) {
       expect(preflightCmsDeploy({ ...input, providerVersion }).blockedReasons.join(' ')).to.include(
         'provider version',
       );

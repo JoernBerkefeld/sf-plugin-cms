@@ -17,8 +17,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -43,8 +43,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -69,8 +69,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -95,8 +95,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -121,8 +121,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -147,8 +147,8 @@
         "strategy": "targeted"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -173,8 +173,8 @@
         "strategy": "batched"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -199,8 +199,8 @@
         "strategy": "batched"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -225,8 +225,8 @@
         "strategy": "batched"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {
@@ -251,8 +251,8 @@
         "strategy": "batched"
       },
       "providerContract": {
-        "maxVersion": "0.9.999",
-        "minVersion": "0.9.0",
+        "maxVersion": "0.10.999",
+        "minVersion": "0.10.0",
         "name": "sf-plugin-cms"
       },
       "retrieval": {

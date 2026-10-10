@@ -1,0 +1,26 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Form Handler",
+    "apiName": "Campaign_Handler",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__formHandler",
+  "language": "en_US",
+  "title": "Campaign external form handler",
+  "folderPath": ["Campaigns", "Welcome"],
+  "companions": {},
+  "contentBody": {
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "sfdc_cms:title": "Campaign external form handler",
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-handler-root",
+      "type": "block",
+      "children": []
+    }
+  }
+}

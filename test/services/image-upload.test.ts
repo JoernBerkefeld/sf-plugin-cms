@@ -269,7 +269,9 @@ describe('no-JSON image upload preparation', () => {
   });
 
   for (const count of [1, 2, 5, 10, 17]) {
-    it(`prepares all ${count} explicit files with bound bytes/hash and root-folder destinations`, async () => {
+    it(`prepares all ${count} explicit files with bound bytes/hash and root-folder destinations`, async function () {
+      // Windows checks each real file route using a separate PowerShell process.
+      this.timeout(60_000);
       const files = [];
       for (let index = 0; index < count; index += 1) files.push(await file(`banner ${index}.png`));
       const services = reads();
@@ -295,7 +297,9 @@ describe('no-JSON image upload preparation', () => {
     });
   }
 
-  it('accepts only matching PNG JPEG GIF WebP signatures', async () => {
+  it('accepts only matching PNG JPEG GIF WebP signatures', async function () {
+    // Keep real filesystem guards while allowing the repeated Windows process checks.
+    this.timeout(60_000);
     for (const [name, bytes, mediaType] of [
       ['a.png', png, 'image/png'],
       ['a.jpg', Buffer.from([255, 216, 255, 0]), 'image/jpeg'],

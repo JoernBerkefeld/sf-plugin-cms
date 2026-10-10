@@ -1,13 +1,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isMainThread } from 'node:worker_threads';
 
 const contractCase = process.env.SF_PLUGIN_CMS_CONTRACT_CASE;
 
-if (contractCase !== undefined) {
+if (contractCase !== undefined && isMainThread) {
   const testRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
   const pluginVersion = process.env.SF_PLUGIN_CMS_INSTALLED_VERSION;
@@ -91,12 +92,52 @@ if (contractCase !== undefined) {
       import(new URL(`lib/commands/cms/${command}.js`, pluginBaseUrl)),
       import(new URL('lib/transport/json-request.js', pluginBaseUrl)),
     ]);
+    const isTemplateUpdate = contractCase.startsWith('email-template-update-');
+    if (isTemplateUpdate) {
+      const { exportWorkspace } = await import(
+        new URL('lib/services/export-workspace.js', pluginBaseUrl)
+      );
+      const sourceDirectory = path.resolve(`${contractCase}-source`);
+      const editableDirectory = path.resolve(`${contractCase}-editable`);
+      await exportWorkspace(
+        {
+          request: ({ url }) => {
+            if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
+            if (url.startsWith('/connect/cms/items/search'))
+              return {
+                items: [
+                  {
+                    id: 'template-en',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                total: 1,
+              };
+            if (url.endsWith('/template-en')) return emailTemplateVariant();
+            throw new Error(`Unexpected template source request: ${url}`);
+          },
+        },
+        'space',
+        sourceDirectory,
+        {
+          selection: {
+            contentType: 'sfdc_cms__emailTemplate',
+            apiNames: ['pilot_template'],
+          },
+          editableDirectory,
+        },
+      );
+      await writeFile(
+        path.join(editableDirectory, 'items', 'template-en.html'),
+        '<p>Installed Template edit</p>',
+      );
+    }
     Command.prototype.getOrgContext = async function () {
       const events = [{ phase: 'org' }];
       const evidenceFile = path.resolve(`${contractCase}-transport.json`);
       await writeFile(evidenceFile, JSON.stringify(events));
       const isUnpublish = contractCase.startsWith('email-unpublish-');
-      const isTemplateUpdate = contractCase.startsWith('email-template-update-');
       const isTemplateDelete = contractCase.startsWith('email-template-delete-');
       const isTemplate = isTemplateUpdate || isTemplateDelete;
       const isDelete = contractCase.startsWith('email-delete-') || isTemplateDelete;
@@ -110,19 +151,12 @@ if (contractCase !== undefined) {
             },
             'variant-en': emailVariant('variant-en', 'en_US', isUnpublish),
           };
-      if (isTemplate) {
+      if (isTemplateDelete) {
         const { createHash } = await import('node:crypto');
         const { exportWorkspace } = await import(
           new URL('lib/services/export-workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
         );
         const sourceDirectory = path.resolve(`${contractCase}-source`);
-        const editableDirectory = isTemplateUpdate
-          ? path.resolve(`${contractCase}-editable`)
-          : undefined;
-        if (isTemplateUpdate) {
-          await rm(sourceDirectory, { recursive: true, force: true });
-          await rm(editableDirectory, { recursive: true, force: true });
-        }
         await exportWorkspace(
           {
             request: ({ url }) => {
@@ -149,15 +183,8 @@ if (contractCase !== undefined) {
               contentType: 'sfdc_cms__emailTemplate',
               apiNames: ['pilot_template'],
             },
-            ...(editableDirectory === undefined ? {} : { editableDirectory }),
           },
         );
-        if (editableDirectory !== undefined) {
-          await writeFile(
-            path.join(editableDirectory, 'items', 'template-en.html'),
-            '<p>Installed Template edit</p>',
-          );
-        }
         const payload = {
           apiName: 'pilot_template',
           contentBody: {

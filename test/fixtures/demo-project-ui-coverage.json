@@ -1,0 +1,198 @@
+{
+  "format": "sf-cms-demo-ui-coverage@1",
+  "scope": "User-supplied Marketing workspace UI labels; not an exhaustive API catalog or retrieve-all support claim",
+  "notes": [
+    "Verified mappings below are evidenced by existing CMS provider code, not by UI availability. Support is bounded to existing profiles and does not qualify the proposed demo source formats.",
+    "Unresolved entries have no asserted API type or provider support and no fabricated demo files. Mapping and retrieval/edit/deploy support need independent verification.",
+    "All 11 demo families are representative. Preference Page has existing read-report support but intentionally has no demo source file."
+  ],
+  "labels": [
+    {
+      "displayLabel": "Audio",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Brand",
+      "apiType": "sfdc_cms__brand",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded read-report/create-only profiles; immutable portable source definition",
+      "evidence": "src/contracts/source-definition.ts",
+      "demoFamily": "brand"
+    },
+    {
+      "displayLabel": "Consent Banner",
+      "apiType": "sfdc_cms__consentBanner",
+      "mappingStatus": "verified",
+      "providerSupport": "Evidence-qualified read/create profiles only; demo source definition remains proposed",
+      "evidence": "src/services/consent-banner.ts",
+      "demoFamily": "consentBanner"
+    },
+    {
+      "displayLabel": "Contact Card (VCF)",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Content Block: Email",
+      "apiType": "sfdc_cms__emailFragment",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded native fragment profiles; demo source definition remains proposed",
+      "evidence": "src/services/email-fragment.ts",
+      "demoFamily": "emailFragment"
+    },
+    {
+      "displayLabel": "Content Block: Landing Page",
+      "apiType": "sfdc_cms__webFragment",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded native fragment profiles; demo source definition remains proposed",
+      "evidence": "src/services/web-fragment.ts",
+      "demoFamily": "webFragment"
+    },
+    {
+      "displayLabel": "Custom Font",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Document",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Email",
+      "apiType": "sfdc_cms__email",
+      "mappingStatus": "verified",
+      "providerSupport": "Static raw-HTML portable source and bounded native/lifecycle profiles; not general builder fidelity",
+      "evidence": "src/contracts/source-definition.ts",
+      "demoFamily": "email"
+    },
+    {
+      "displayLabel": "Email Template",
+      "apiType": "sfdc_cms__emailTemplate",
+      "mappingStatus": "verified",
+      "providerSupport": "Static raw-HTML portable source and bounded native/lifecycle profiles; not general builder fidelity",
+      "evidence": "src/contracts/source-definition.ts",
+      "demoFamily": "emailTemplate"
+    },
+    {
+      "displayLabel": "Expression",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Form",
+      "apiType": "sfdc_cms__form",
+      "mappingStatus": "verified",
+      "providerSupport": "Evidence-qualified read/create profiles only; demo source definition remains proposed",
+      "evidence": "src/services/form.ts",
+      "demoFamily": "form"
+    },
+    {
+      "displayLabel": "Form Handler",
+      "apiType": "sfdc_cms__formHandler",
+      "mappingStatus": "verified",
+      "providerSupport": "Strict empty-root read/create profiles only; demo source definition remains proposed",
+      "evidence": "src/services/form-handler.ts",
+      "demoFamily": "formHandler"
+    },
+    {
+      "displayLabel": "Image",
+      "apiType": "sfdc_cms__image",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded upload and experimental media export; demo SVG/source binding and lossless round trip unqualified",
+      "evidence": "src/services/image-upload.ts",
+      "demoFamily": "image"
+    },
+    {
+      "displayLabel": "In-App Message",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Landing Page",
+      "apiType": "sfdc_cms__landingPage",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded native page and paired-template profiles; demo source definition remains proposed",
+      "evidence": "src/services/landing-page.ts",
+      "demoFamily": "landingPage"
+    },
+    {
+      "displayLabel": "Landing Page Template",
+      "apiType": "sfdc_cms__landingPageTemplate",
+      "mappingStatus": "verified",
+      "providerSupport": "Bounded native template/pair profiles; demo source definition remains proposed",
+      "evidence": "src/services/landing-page-template.ts",
+      "demoFamily": "landingPageTemplate"
+    },
+    {
+      "displayLabel": "Preference Page",
+      "apiType": "sfdc_cms__preferencePage",
+      "mappingStatus": "verified",
+      "providerSupport": "Partial read reports with unresolved channel/subchannel references; no demo source or general editing/deploy qualification",
+      "evidence": "src/services/export-workspace.ts",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Push Notification Message",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "RCS Message",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "SMS and MMS",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Tracked Link",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "Video",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "WhatsApp Session Message",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    },
+    {
+      "displayLabel": "WhatsApp Template Message",
+      "apiType": null,
+      "mappingStatus": "unresolved",
+      "providerSupport": "unresolved",
+      "demoFamily": null
+    }
+  ]
+}

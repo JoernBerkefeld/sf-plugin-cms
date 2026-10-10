@@ -1,7 +1,13 @@
 import { expect } from 'chai';
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   assertLandingPageTemplateItem,
   planLandingPageTemplateCopies,
@@ -428,9 +434,8 @@ describe('landing-page-template create-only profile', () => {
     expect(dryRun.dryRun).to.equal(true);
     expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
 
-    const { mkdtemp, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-template-'));
+    const run = await createRunOwnedTemp('cms-landing-template');
+    const root = await createRunOwnedDirectory(run, 'fixture');
     try {
       const postBodies: Array<Record<string, unknown>> = [];
       request.callsFake(({ body, method, url }: { body?: string; method: string; url: string }) => {
@@ -488,7 +493,13 @@ describe('landing-page-template create-only profile', () => {
       expect(JSON.stringify(postBodies[0])).not.to.include('/cms/media/source-image-key');
       expect(JSON.stringify(postBodies[0])).to.include('target-image-key');
     } finally {
-      await rm(root, { force: true, recursive: true });
+      await removeRunOwnedPath(run, root);
+      await lstat(root).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const retainedRoot = await lstat(run.root);
+      expect(retainedRoot.isDirectory()).to.equal(true);
     }
   });
 });

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 export const METADATA_CAPABILITY_CONTRACT = 'sf-metadata-capability-v1' as const;
 export const METADATA_CAPABILITY_VERSION = '1.0.0' as const;
 export const METADATA_CAPABILITY_FIXTURE_SHA256 =
-  'da8ae969a4eba4e814400a320bff4ad7db0e6bf26fd8483ddaef887429aae11c' as const;
+  '557e9007ddaeea4c58807d9fc246fc62be646148591123d4398d5d00fa7f6f1b' as const;
 
 export type JsonScalar = boolean | number | string | null;
 export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue };
@@ -380,8 +380,8 @@ function cmsDeclaration(
     },
     providerContract: {
       // Package compatibility is independent of the metadata contract major.
-      maxVersion: '0.9.999',
-      minVersion: '0.9.0',
+      maxVersion: '0.10.999',
+      minVersion: '0.10.0',
       name: 'sf-plugin-cms',
     },
     retrieval: {

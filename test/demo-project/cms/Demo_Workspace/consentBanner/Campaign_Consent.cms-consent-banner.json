@@ -1,0 +1,54 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Consent Banner",
+    "apiName": "Campaign_Consent",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__consentBanner",
+  "language": "en_US",
+  "title": "Campaign consent banner",
+  "folderPath": ["Reusable"],
+  "companions": {},
+  "contentBody": {
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "lightning:verticalAlignment": "bottom",
+    "maxWidth": { "unit": "%", "value": 70 },
+    "minWidth": { "unit": "px", "value": 200 },
+    "sfdc_cms:title": "Campaign consent banner",
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-consent-root",
+      "type": "block",
+      "children": [
+        {
+          "definition": "lightning/actionButton",
+          "id": "demo-consent-accept",
+          "type": "block",
+          "attributes": {
+            "text": "Allow",
+            "lightning:click": {
+              "actions": [{ "attributes": {}, "definition": "sfdc_cms__consentAcceptAction" }]
+            }
+          },
+          "children": []
+        },
+        {
+          "definition": "lightning/actionButton",
+          "id": "demo-consent-reject",
+          "type": "block",
+          "attributes": {
+            "text": "Reject",
+            "lightning:click": {
+              "actions": [{ "attributes": {}, "definition": "sfdc_cms__consentRejectAction" }]
+            }
+          },
+          "children": []
+        }
+      ]
+    }
+  }
+}

@@ -1,8 +1,13 @@
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import sinon from 'sinon';
 import { writeEditableRawHtml } from '../../src/services/editable-raw-html-export.js';
@@ -370,7 +375,14 @@ async function writeImageSource(root: string): Promise<{ mapFile: string; source
 
 describe('CMS import workspace command', () => {
   const $$ = new TestContext();
-  const temporaryDirectories: string[] = [];
+  const fixtures: Array<{ run: RunOwnedTemp; parent: string }> = [];
+
+  async function createFixture(prefix: string): Promise<string> {
+    const run = await createRunOwnedTemp(prefix);
+    const parent = await createRunOwnedDirectory(run, 'fixture');
+    fixtures.push({ run, parent });
+    return parent;
+  }
 
   beforeEach(() => {
     process.exitCode = undefined;
@@ -379,11 +391,18 @@ describe('CMS import workspace command', () => {
   afterEach(async () => {
     process.exitCode = undefined;
     $$.restore();
-    await Promise.all(
-      temporaryDirectories
-        .splice(0)
-        .map((directory) => rm(directory, { force: true, recursive: true })),
-    );
+    for (const { run, parent } of fixtures.splice(0)) {
+      await removeRunOwnedPath(run, parent);
+      const rootMetadata = await lstat(run.root);
+      expect(rootMetadata.isDirectory()).to.equal(true);
+      let failure: unknown;
+      try {
+        await lstat(parent);
+      } catch (error) {
+        failure = error;
+      }
+      expect((failure as NodeJS.ErrnoException | undefined)?.code).to.equal('ENOENT');
+    }
   });
 
   it('defines the requested create-only safety flags', () => {
@@ -516,8 +535,7 @@ describe('CMS import workspace command', () => {
 
   for (const mode of ['plan', 'apply', 'simultaneous-editable', 'missing-map']) {
     it(`runs additive definition-dir through the public command: ${mode}`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'cms-command-source-'));
-      // Source fixtures are retained rather than extending recursive cleanup scope.
+      const root = await createFixture('cms-command-source-');
       const source = path.join(root, 'baseline');
       const definitions = path.join(root, 'definitions');
       const raw = {
@@ -665,8 +683,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('executes the explicit native-copy-map file through the public command', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-native-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-command-native-');
     const source = await writeSource(root, true, true);
     const mapFile = path.join(root, 'copy.json');
     await writeFile(
@@ -734,8 +751,7 @@ describe('CMS import workspace command', () => {
     'default language',
   ]) {
     it(`preflights public editable input and preserves literal POST: ${failure}`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'cms-command-editable-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('cms-command-editable-');
       const source = await writeSource(root, true, true);
       const loaded = await loadWorkspaceExport(source);
       const originalFile = path.join(source, 'items/source-variant.json');
@@ -751,7 +767,8 @@ describe('CMS import workspace command', () => {
       if (failure === 'metadata')
         await writeFile(path.join(editable, 'items/source-variant.json'), '{}');
       if (failure === 'baseline') await writeFile(originalFile, '{}');
-      if (failure === 'missing HTML') await rm(path.join(editable, 'items/source-variant.html'));
+      if (failure === 'missing HTML')
+        await unlink(path.join(editable, 'items/source-variant.html'));
       const mapFile = path.join(root, 'copy.json');
       await writeFile(
         mapFile,
@@ -829,8 +846,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('blocks a malformed image content key before org context', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-invalid-key-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-command-image-invalid-key-');
     const { mapFile, source } = await writeImageSource(root);
     const mappings = JSON.parse(await readFile(mapFile, 'utf8')) as Array<{
       contentKey: { strategy: string; value: string };
@@ -871,8 +887,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('runs the v2 image profile as dry-run preflight without mutation', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-command-image-');
     const { mapFile, source } = await writeImageSource(root);
     const request = $$.SANDBOX.stub().callsFake(
       ({ method, url }: { method: string; url: string }) => {
@@ -912,8 +927,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('applies the v2 image profile only with a new report directory', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-command-image-apply-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-command-image-apply-');
     const { mapFile, source } = await writeImageSource(root);
     const reportDirectory = path.join(root, 'image-report');
     let searches = 0;
@@ -1052,8 +1066,7 @@ describe('CMS import workspace command', () => {
 
   for (const allowPartial of [false, true]) {
     it(`blocks typed Preference Page reports before org access or artifacts (allowPartial=${allowPartial})`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-preference-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command-preference-');
       const source = await writeSource(root);
       await addPreferencePageReadReport(source);
       const reportDirectory = path.join(root, 'report');
@@ -1099,8 +1112,7 @@ describe('CMS import workspace command', () => {
 
   for (const allowPartial of [false, true]) {
     it(`blocks typed Brand reports before org access or artifacts (allowPartial=${allowPartial})`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-brand-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command-brand-');
       const source = await writeSource(root);
       await addBrandReadReport(source);
       const reportDirectory = path.join(root, 'report');
@@ -1145,8 +1157,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('validates the source locally before requesting org context', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-');
     const source = await writeSource(root);
     await writeFile(path.join(source, 'items', 'source-variant.json'), '[]\n');
     const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
@@ -1175,8 +1186,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('loads a strict v2 package locally before org or workspace access', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-v2-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-v2-');
     const source = await writeSource(root);
     const manifestFile = path.join(source, 'manifest.json');
     const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
@@ -1210,8 +1220,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('blocks a partial Form package before org access even with allow-partial', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-partial-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-form-partial-');
     const { mapFile, source } = await writeFormCommandSource(root);
     const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
     const getOrgContext = $$.SANDBOX.stub();
@@ -1243,8 +1252,7 @@ describe('CMS import workspace command', () => {
 
   for (const profile of ['form', 'form-handler'] as const) {
     it(`requires canonical structured Marketing evidence for ${profile} import`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), `sf-plugin-cms-command-${profile}-space-`));
-      temporaryDirectories.push(root);
+      const root = await createFixture(`sf-plugin-cms-command-${profile}-space-`);
       const { mapFile, source } =
         profile === 'form'
           ? await writeFormCommandSource(root)
@@ -1296,8 +1304,7 @@ describe('CMS import workspace command', () => {
   for (const profile of ['form', 'form-handler'] as const) {
     for (const fallback of [false, true]) {
       it(`dry-runs strict ${profile} with native lowercase Marketing ${fallback ? 'listing' : 'detail'} evidence`, async () => {
-        const root = await mkdtemp(path.join(tmpdir(), 'cms-command-native-type-'));
-        // Retain new fixtures rather than extending recursive cleanup scope.
+        const root = await createFixture('cms-command-native-type-');
         const { mapFile, source } =
           profile === 'form'
             ? await writeFormCommandSource(root)
@@ -1370,8 +1377,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('keeps a pre-mutation Form workspace failure definitive without claiming a journal', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-workspace-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-form-workspace-');
     const { mapFile, source } = await writeFormCommandSource(root);
     const manifestFile = path.join(source, 'manifest.json');
     const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
@@ -1426,8 +1432,7 @@ describe('CMS import workspace command', () => {
     { statusCode: 400, expectedCode: 'IMPORT_FAILED', message: 'invalid form payload' },
   ]) {
     it(`classifies Form CREATE ${rejection.statusCode} outcomes with reconciliation-safe command diagnostics`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-form-create-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command-form-create-');
       const { mapFile, source } = await writeFormCommandSource(root);
       const manifestFile = path.join(source, 'manifest.json');
       const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
@@ -1508,8 +1513,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('blocks contradictory complete packages before org access even with allow-partial', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-');
     const source = await writeSource(root);
     const manifestFile = path.join(source, 'manifest.json');
     const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as Record<string, unknown>;
@@ -1542,8 +1546,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('validates a sound source before rejecting missing or combined destination selectors', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-');
     const source = await writeSource(root);
     for (const selector of [{}, { 'workspace-id': 'id', 'workspace-name': 'name' }]) {
       const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
@@ -1570,8 +1573,7 @@ describe('CMS import workspace command', () => {
   });
 
   it('imports by workspace name using the canonical resolved workspace and ID', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-');
     const source = await writeSource(root);
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/spaces?')) {
@@ -1618,8 +1620,7 @@ describe('CMS import workspace command', () => {
 
   for (const jsonEnabled of [false, true]) {
     it(`defaults to dry-run and ${jsonEnabled ? 'suppresses' : 'shows'} the human plan in JSON=${jsonEnabled} mode`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command-import-');
       const source = await writeSource(root);
       const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
         if (url === '/connect/cms/spaces/space') {
@@ -1667,8 +1668,7 @@ describe('CMS import workspace command', () => {
   }
 
   it('applies only when explicitly requested and returns the durable report', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-import-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command-import-');
     const source = await writeSource(root, false);
     const reportDirectory = path.join(root, 'report');
     const request = $$.SANDBOX.stub().callsFake(

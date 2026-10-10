@@ -1,9 +1,14 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   downloadExperimentalCmsMedia,
   isApprovedSalesforceMediaUrl,
@@ -12,14 +17,22 @@ import {
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
 
 describe('experimental CMS media transport', () => {
+  let run: RunOwnedTemp;
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-media-'));
+    run = await createRunOwnedTemp('sf-plugin-cms-media');
+    root = await createRunOwnedDirectory(run, 'fixture');
   });
 
   afterEach(async () => {
-    await rm(root, { force: true, recursive: true });
+    await removeRunOwnedPath(run, root);
+    await lstat(root).then(
+      () => expect.fail('Fixture child must be removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const retainedRoot = await lstat(run.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
   it('accepts only a strict IDNA-normalized HTTPS file.force.com subdomain', () => {

@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, lstat, readdir, readFile, writeFile } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
@@ -86,16 +91,30 @@ describe('CMS export workspace command', () => {
     }
   });
   const $$ = new TestContext();
-  const temporaryDirectories: string[] = [];
+  const fixtures: Array<{ run: RunOwnedTemp; parent: string }> = [];
+
+  async function createFixture(prefix: string): Promise<string> {
+    const run = await createRunOwnedTemp(prefix);
+    const parent = await createRunOwnedDirectory(run, 'fixture');
+    fixtures.push({ run, parent });
+    return parent;
+  }
 
   afterEach(async () => {
     process.exitCode = undefined;
     $$.restore();
-    await Promise.all(
-      temporaryDirectories
-        .splice(0)
-        .map((directory) => rm(directory, { force: true, recursive: true })),
-    );
+    for (const { run, parent } of fixtures.splice(0)) {
+      await removeRunOwnedPath(run, parent);
+      const rootMetadata = await lstat(run.root);
+      expect(rootMetadata.isDirectory()).to.equal(true);
+      let failure: unknown;
+      try {
+        await lstat(parent);
+      } catch (error) {
+        failure = error;
+      }
+      expect((failure as NodeJS.ErrnoException | undefined)?.code).to.equal('ENOENT');
+    }
   });
 
   it('defines only the required explicit export flags', () => {
@@ -266,8 +285,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires the email-fragment JSON selection flag to the exact export type', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-email-selection-command');
     const selectionFile = path.join(root, 'email-fragments.json');
     await writeFile(selectionFile, '["FooterBlock","HeaderBlock"]\n', 'utf8');
     const destination = path.join(root, 'export');
@@ -325,8 +343,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires exact Email Template selection with an editable companion', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-template-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-template-selection-command');
     const selectionFile = path.join(root, 'email-templates.json');
     await writeFile(selectionFile, '["WelcomeTemplate"]\n', 'utf8');
     const destination = path.join(root, 'export');
@@ -386,8 +403,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires the web-fragment JSON selection flag through wildcard inventory resolution', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-web-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-web-selection-command');
     const selectionFile = path.join(root, 'web-fragments.json');
     await writeFile(selectionFile, '["MCNEXT_P4_Landing_Block_2026_09_27"]\n', 'utf8');
     const destination = path.join(root, 'export');
@@ -442,8 +458,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires exact Preference Page selection to raw and typed read-report output', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-preference-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-preference-selection-command');
     const selectionFile = path.join(root, 'preference-pages.json');
     await writeFile(selectionFile, '["PreferenceA"]\n', 'utf8');
     const destination = path.join(root, 'export');
@@ -518,8 +533,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires exact Brand selection to raw and typed read-report output', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-brand-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-brand-selection-command');
     const selectionFile = path.join(root, 'brands.json');
     await writeFile(selectionFile, '["BrandA"]\n', 'utf8');
     const destination = path.join(root, 'export');
@@ -589,8 +603,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('rejects malformed Brand selection before export search', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-brand-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-brand-selection-command');
     const selectionFile = path.join(root, 'invalid.json');
     await writeFile(selectionFile, '["BrandA",1]\n', 'utf8');
     const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
@@ -620,8 +633,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('rejects malformed Preference Page selection before export search', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-preference-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-preference-selection-command');
     const selectionFile = path.join(root, 'invalid.json');
     await writeFile(selectionFile, '["PreferenceA",1]\n', 'utf8');
     const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
@@ -651,8 +663,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('requires canonical structured Marketing evidence for Form Handler export', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-form-handler-space-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-form-handler-space-command');
     const selectionFile = path.join(root, 'form-handlers.json');
     await writeFile(selectionFile, '["source_form_handler_api"]\n', 'utf8');
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
@@ -701,8 +712,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('wires title-resolved landing-page pairs and records canonical template identity', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-pair-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-landing-pair-command');
     const selectionFile = path.join(root, 'pairs.json');
     await writeFile(
       selectionFile,
@@ -791,8 +801,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('rejects malformed email-fragment selection JSON before export search', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-selection-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-email-selection-command');
     for (const [index, json] of ['{}', '["Valid",1]'].entries()) {
       const selectionFile = path.join(root, `invalid-${index}.json`);
       await writeFile(selectionFile, `${json}\n`, 'utf8');
@@ -821,8 +830,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('rejects invalid editable flags and both overlap directions before org access or writes', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-editable-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-editable-command');
     const output = path.join(root, 'source');
     for (const flags of [
       { 'editable-dir': path.join(root, 'editable') },
@@ -863,8 +871,7 @@ describe('CMS export workspace command', () => {
   });
 
   it('publishes the editable subset while retaining partial exit and machine result shape', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-editable-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('cms-editable-command');
     const editable = path.join(root, 'editable');
     const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
@@ -910,8 +917,7 @@ describe('CMS export workspace command', () => {
 
   for (const enabled of [false, true]) {
     it(`${enabled ? 'enables' : 'does not enable'} single-workspace media transport only with the explicit flag`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'cms-media-command-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('cms-media-command');
       const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
       const md5 = createHash('md5').update(png).digest('hex');
       const request = $$.SANDBOX.stub().callsFake(
@@ -1040,8 +1046,7 @@ describe('CMS export workspace command', () => {
 
   it('rejects an omitted output when the canonical workspace has no usable name before writing', async () => {
     const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command');
     const request = $$.SANDBOX.stub().returns(fakeRequest({ id: 'space' }));
     Object.assign(command, {
       parse: $$.SANDBOX.stub().resolves({
@@ -1076,8 +1081,7 @@ describe('CMS export workspace command', () => {
 
   it('exports by workspace name to the safe default destination', async () => {
     const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
-    const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
-    temporaryDirectories.push(root);
+    const root = await createFixture('sf-plugin-cms-command');
     const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
       if (url.startsWith('/connect/cms/spaces?')) {
         const page = Number(new URL(url, 'https://example.test').searchParams.get('page'));
@@ -1122,8 +1126,7 @@ describe('CMS export workspace command', () => {
   for (const jsonEnabled of [false, true]) {
     it(`exports, warns, and ${jsonEnabled ? 'suppresses' : 'renders'} human output in JSON=${jsonEnabled} mode`, async () => {
       const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command');
       const destination = path.join(root, 'export');
       const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
         if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
@@ -1182,8 +1185,7 @@ describe('CMS export workspace command', () => {
   for (const jsonEnabled of [false, true]) {
     it(`retains partial diagnostics and provenance with exit 2 in JSON=${jsonEnabled} mode`, async () => {
       const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command');
       const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
         if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
         return fakeRequest({ items: [], total: 1 });
@@ -1256,8 +1258,7 @@ describe('CMS export workspace command', () => {
   for (const jsonEnabled of [false, true]) {
     it(`returns mixed bulk results in JSON=${jsonEnabled} mode and sets exitCode`, async () => {
       const command = Object.create(ExportWorkspace.prototype) as ExportWorkspace;
-      const root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-command-'));
-      temporaryDirectories.push(root);
+      const root = await createFixture('sf-plugin-cms-command');
       const outputDirectory = path.join(root, 'cms');
       const request = $$.SANDBOX.stub().callsFake(({ url }: { url: string }) => {
         if (url.startsWith('/connect/cms/spaces?')) {

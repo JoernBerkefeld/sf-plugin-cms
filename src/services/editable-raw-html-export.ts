@@ -1,14 +1,13 @@
 import { lstat, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  cleanupOwnedPath,
+  retainDirectoryStaging,
   publishDirectoryNoClobber,
-  type CleanupOptions,
   type DirectoryPublishOptions,
 } from './atomic-publish.js';
 import { projectEditableRawHtml, type EditableRawItem } from './editable-raw-html.js';
 
-export type EditablePublishOptions = DirectoryPublishOptions & CleanupOptions;
+export type EditablePublishOptions = DirectoryPublishOptions;
 
 /**
  * Validate portable directory paths and reject observed symlink routes.
@@ -88,7 +87,7 @@ export async function preflightEditableExport(
  * @param {readonly EditableRawItem[]} rawItems - Verified original JSON paired with manifest IDs.
  * @param {string} sourceManifestSha256 - Verified immutable manifest digest.
  * @param {string} destination - New companion directory.
- * @param {EditablePublishOptions} options - Atomic publication and cleanup hooks.
+ * @param {EditablePublishOptions} options - Atomic publication hooks.
  * @returns {Promise<void>} Resolves after no-clobber publication.
  */
 export async function writeEditableRawHtml(
@@ -116,6 +115,6 @@ export async function writeEditableRawHtml(
     await assertEditableDirectoryPath(destination);
     await publishDirectoryNoClobber(temporary, absolute, options);
   } catch (error) {
-    await cleanupOwnedPath(temporary, error, options);
+    retainDirectoryStaging(temporary, error);
   }
 }

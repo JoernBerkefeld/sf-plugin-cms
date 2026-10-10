@@ -1,6 +1,13 @@
 import { expect } from 'chai';
+import { lstat } from 'node:fs/promises';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   assertWebFragmentItem,
   planWebFragmentCopies,
@@ -411,9 +418,8 @@ describe('web fragment create-only profile', () => {
     expect(dryRun.dryRun).to.equal(true);
     expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
 
-    const root = await import('node:fs/promises').then(({ mkdtemp }) =>
-      mkdtemp(String.raw`${process.env.TEMP ?? '.'}\cms-web-fragment-`),
-    );
+    const run = await createRunOwnedTemp('cms-web-fragment');
+    const root = await createRunOwnedDirectory(run, 'fixture');
     try {
       const applied = await executeWorkspaceImport({
         connection: { query, request, version: '67.0' },
@@ -425,7 +431,7 @@ describe('web fragment create-only profile', () => {
         },
         dryRun: false,
         loadedSource: source(),
-        reportDirectory: String.raw`${root}\report`,
+        reportDirectory: path.join(root, 'report'),
         sourceDirectory: 'synthetic-source',
         webFragmentMappings: [mapping()],
         workspaceId: 'destination-space',
@@ -439,7 +445,13 @@ describe('web fragment create-only profile', () => {
       expect(graphRequests).to.equal(3);
       expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
     } finally {
-      await import('node:fs/promises').then(({ rm }) => rm(root, { force: true, recursive: true }));
+      await removeRunOwnedPath(run, root);
+      await lstat(root).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const retainedRoot = await lstat(run.root);
+      expect(retainedRoot.isDirectory()).to.equal(true);
     }
   });
 
@@ -488,14 +500,13 @@ describe('web fragment create-only profile', () => {
       expect(dryRun.dryRun).to.equal(true);
       expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
 
-      const root = await import('node:fs/promises').then(({ mkdtemp }) =>
-        mkdtemp(String.raw`${process.env.TEMP ?? '.'}\cms-web-fragment-live-absence-`),
-      );
+      const run = await createRunOwnedTemp('cms-web-fragment-live-absence');
+      const root = await createRunOwnedDirectory(run, 'fixture');
       try {
         const applied = await executeWorkspaceImport({
           ...options,
           dryRun: false,
-          reportDirectory: String.raw`${root}\report`,
+          reportDirectory: path.join(root, 'report'),
         });
         expect(applied.report?.state).to.equal('completed');
         expect(keyChecks).to.equal(3);
@@ -505,9 +516,13 @@ describe('web fragment create-only profile', () => {
           1,
         );
       } finally {
-        await import('node:fs/promises').then(({ rm }) =>
-          rm(root, { force: true, recursive: true }),
+        await removeRunOwnedPath(run, root);
+        await lstat(root).then(
+          () => expect.fail('Fixture child must be removed'),
+          (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
         );
+        const retainedRoot = await lstat(run.root);
+        expect(retainedRoot.isDirectory()).to.equal(true);
       }
     });
   }
@@ -570,6 +585,8 @@ describe('web fragment create-only profile', () => {
       if (method === 'GET') return fakeNotFound();
       return Promise.resolve({});
     });
+    const run = await createRunOwnedTemp('cms-web-fragment-blocked');
+    const root = await createRunOwnedDirectory(run, 'fixture');
     let failure: unknown;
     try {
       await executeWorkspaceImport({
@@ -582,13 +599,21 @@ describe('web fragment create-only profile', () => {
         },
         dryRun: false,
         loadedSource: source(),
-        reportDirectory: String.raw`${process.env.TEMP ?? '.'}\cms-web-fragment-blocked-${Date.now()}`,
+        reportDirectory: path.join(root, 'report'),
         sourceDirectory: 'synthetic-source',
         webFragmentMappings: [mapping()],
         workspaceId: 'destination-space',
       });
     } catch (error) {
       failure = error;
+    } finally {
+      await removeRunOwnedPath(run, root);
+      await lstat(root).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const retainedRoot = await lstat(run.root);
+      expect(retainedRoot.isDirectory()).to.equal(true);
     }
     expect(failure).to.be.instanceOf(TypeError);
     expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);

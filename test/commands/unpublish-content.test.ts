@@ -1,8 +1,13 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import UnpublishContent from '../../src/commands/cms/unpublish/content.js';
@@ -14,12 +19,33 @@ function fakeRequest<T>(value?: T): FakeRequest<T | undefined> {
 
 describe('cms unpublish content command', () => {
   const context = new TestContext();
+  const fixtures: Array<{ run: RunOwnedTemp; parent: string }> = [];
+
+  async function createFixture(prefix: string): Promise<string> {
+    const run = await createRunOwnedTemp(prefix);
+    const parent = await createRunOwnedDirectory(run, 'fixture');
+    fixtures.push({ run, parent });
+    return parent;
+  }
+
   beforeEach(() => {
     process.exitCode = undefined;
   });
-  afterEach(() => {
+  afterEach(async () => {
     context.restore();
     process.exitCode = undefined;
+    for (const { run, parent } of fixtures.splice(0)) {
+      await removeRunOwnedPath(run, parent);
+      const rootMetadata = await lstat(run.root);
+      expect(rootMetadata.isDirectory()).to.equal(true);
+      let failure: unknown;
+      try {
+        await lstat(parent);
+      } catch (error) {
+        failure = error;
+      }
+      expect((failure as NodeJS.ErrnoException | undefined)?.code).to.equal('ENOENT');
+    }
   });
 
   it('blocks apply without active-use acknowledgement before org access', async () => {
@@ -77,7 +103,7 @@ describe('cms unpublish content command', () => {
   });
 
   it('returns sanitized evidence for a definite parser rejection', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-command-rejected-'));
+    const parent = await createFixture('sf-cms-unpublish-command-rejected');
     const reportDirectory = path.join(parent, 'report');
     const variants: Record<string, Record<string, unknown>> = {
       'variant-en': {
@@ -161,31 +187,27 @@ describe('cms unpublish content command', () => {
       }),
       jsonEnabled: context.SANDBOX.stub().returns(true),
     });
-    try {
-      const result = await command.run();
-      expect(result.status).to.equal('failed');
-      expect(result.result?.outcome).to.equal('rejected-before-mutation');
-      expect(result.result?.evidence).to.deep.include({
-        selectorScope: 'parent',
-        includeContentReferencesOmitted: true,
-        mutationError: {
-          classification: 'definite-pre-mutation-rejection',
-          errorCode: 'JSON_PARSER_ERROR',
-          httpStatus: 400,
-          requestBodySha256: '2c79189680b6c30fa3f3d74456152f3eebb59971d58b3b43240f3204030419df',
-          requestId: 'request-id-parser',
-          requestSelector: 'POST /connect/cms/contents/unpublish',
-          salesforceMessage: 'Unrecognized field includeContentReferences',
-        },
-      });
-      expect(mutation.calledOnce).to.equal(true);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
+    const result = await command.run();
+    expect(result.status).to.equal('failed');
+    expect(result.result?.outcome).to.equal('rejected-before-mutation');
+    expect(result.result?.evidence).to.deep.include({
+      selectorScope: 'parent',
+      includeContentReferencesOmitted: true,
+      mutationError: {
+        classification: 'definite-pre-mutation-rejection',
+        errorCode: 'JSON_PARSER_ERROR',
+        httpStatus: 400,
+        requestBodySha256: '2c79189680b6c30fa3f3d74456152f3eebb59971d58b3b43240f3204030419df',
+        requestId: 'request-id-parser',
+        requestSelector: 'POST /connect/cms/contents/unpublish',
+        salesforceMessage: 'Unrecognized field includeContentReferences',
+      },
+    });
+    expect(mutation.calledOnce).to.equal(true);
   });
 
   it('uses only service-resolved identity and report path in the ambiguity envelope', async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-unpublish-command-'));
+    const parent = await createFixture('sf-cms-unpublish-command');
     const reportDirectory = path.relative(process.cwd(), path.join(parent, 'relative-report'));
     const variants: Record<string, Record<string, unknown>> = {
       'variant-en': {
@@ -254,30 +276,26 @@ describe('cms unpublish content command', () => {
       }),
       jsonEnabled: context.SANDBOX.stub().returns(true),
     });
-    try {
-      const result = await command.run();
-      expect(result.status).to.equal('failed');
-      expect(result.result).to.deep.include({
-        mode: 'apply',
-        outcome: 'ownership-uncertain',
-        target: {
-          workspaceId: 'space-resolved',
-          apiName: 'pilot_email',
-          language: 'en_US',
-          contentId: 'parent-email',
-          variantId: 'variant-en',
-        },
-        reportFile: path.resolve(reportDirectory, 'content-unpublish-run.json'),
-        reconciliation: {
-          workspaceId: 'space-resolved',
-          contentId: 'parent-email',
-          variantId: 'variant-en',
-        },
-      });
-      expect(result.result?.target.language).not.to.equal('workspace-default');
-      expect(mutation.calledOnce).to.equal(true);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
+    const result = await command.run();
+    expect(result.status).to.equal('failed');
+    expect(result.result).to.deep.include({
+      mode: 'apply',
+      outcome: 'ownership-uncertain',
+      target: {
+        workspaceId: 'space-resolved',
+        apiName: 'pilot_email',
+        language: 'en_US',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+      reportFile: path.resolve(reportDirectory, 'content-unpublish-run.json'),
+      reconciliation: {
+        workspaceId: 'space-resolved',
+        contentId: 'parent-email',
+        variantId: 'variant-en',
+      },
+    });
+    expect(result.result?.target.language).not.to.equal('workspace-default');
+    expect(mutation.calledOnce).to.equal(true);
   });
 });

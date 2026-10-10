@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
@@ -14,12 +19,14 @@ const digest = (bytes: Buffer | string): string => createHash('sha256').update(b
 const htmlFile = (directory: string, id = 'a'): string => path.join(directory, `items/${id}.html`);
 
 describe('editable raw HTML verified loading', () => {
+  let run: RunOwnedTemp;
   let root: string;
   let sourceDirectory: string;
   let editableDirectory: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'cms-editable-import-'));
+    run = await createRunOwnedTemp('cms-editable-import');
+    root = await createRunOwnedDirectory(run, 'fixture');
     sourceDirectory = path.join(root, 'source');
     editableDirectory = path.join(root, 'editable');
     const variants = [
@@ -66,7 +73,13 @@ describe('editable raw HTML verified loading', () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeRunOwnedPath(run, root);
+    await lstat(root).then(
+      () => expect.fail('Fixture child must be removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const retainedRoot = await lstat(run.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
   it('accepts only literal HTML edits, preserves normalized metadata, and returns detached selected siblings', async () => {
@@ -212,13 +225,24 @@ describe('editable raw HTML verified loading', () => {
     }
     const alias = path.join(root, 'alias');
     await symlink(editableDirectory, alias, 'junction');
-    await expectFailure(loadEditableRawHtml(source, alias), /symlink|reparse/u);
-    await expectFailure(loadEditableRawHtml(source, path.join(alias, 'items')), /symlink|reparse/u);
+    try {
+      await expectFailure(loadEditableRawHtml(source, alias), /symlink|reparse/u);
+      await expectFailure(
+        loadEditableRawHtml(source, path.join(alias, 'items')),
+        /symlink|reparse/u,
+      );
+    } finally {
+      await unlink(alias);
+    }
     const items = path.join(editableDirectory, 'items');
     const moved = path.join(root, 'moved-items');
     await rename(items, moved);
     await symlink(moved, items, 'junction');
-    await expectFailure(loadEditableRawHtml(source, editableDirectory), /symlink|reparse/u);
+    try {
+      await expectFailure(loadEditableRawHtml(source, editableDirectory), /symlink|reparse/u);
+    } finally {
+      await unlink(items);
+    }
   });
 });
 

@@ -1,6 +1,10 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../lib/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +76,8 @@ await validatePackedConsumer();
 console.log('package metadata and packed consumer valid');
 
 async function validatePackedConsumer() {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'sf-plugin-cms-consumer-'));
+  const run = await createRunOwnedTemp('sf-plugin-cms-consumer');
+  const temporaryRoot = await createRunOwnedDirectory(run, 'fixture');
   const packDirectory = path.join(temporaryRoot, 'pack');
   const consumerDirectory = path.join(temporaryRoot, 'consumer');
 
@@ -107,7 +112,7 @@ async function validatePackedConsumer() {
       `validated ${result.nodeCount} installed runtime dependency nodes (${result.uniquePackageVersions} unique package versions)`,
     );
   } finally {
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await removeRunOwnedPath(run, temporaryRoot);
   }
 }
 

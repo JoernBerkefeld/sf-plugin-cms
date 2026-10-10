@@ -1,8 +1,13 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { brandDetail } from '../fixtures/brand.js';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,6 +26,7 @@ const sfExecutable = path.resolve('node_modules', '@salesforce', 'cli', 'bin', '
 const sfPrefix = [sfExecutable];
 const executable = process.execPath;
 const npmCli = process.env.npm_execpath;
+let fixtureRun: RunOwnedTemp;
 let isolatedDataDirectory: string;
 let installedPackageVersion: string;
 let installedPluginRoot: string;
@@ -138,24 +144,28 @@ function compare(left: string, right: string): number {
 }
 
 async function installPackedPlugin(dataDirectory: string): Promise<string> {
-  const temporaryPackDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-pack-'));
-  {
+  const packRun = await createRunOwnedTemp('sf-plugin-cms-pack');
+  const temporaryPackDirectory = await createRunOwnedDirectory(packRun, 'fixture');
+  try {
     if (npmCli === undefined) throw new Error('npm executable path is unavailable');
-    const pending = execFileAsync(executable, [
-      npmCli,
-      'pack',
-      '--json',
-      '--pack-destination',
-      temporaryPackDirectory,
-    ]);
+    const pending = execFileAsync(
+      executable,
+      [npmCli, 'pack', '--json', '--pack-destination', temporaryPackDirectory],
+      {
+        env: { ...process.env, npm_config_cache: path.join(dataDirectory, 'npm-cache') },
+      },
+    );
     const { stdout } = await pending;
     const [{ filename }] = JSON.parse(stdout) as Array<{ filename: string }>;
     const packageName = JSON.parse(await readFile('package.json', 'utf8')).name as string;
     const specification = `${packageName}@file:${path.join(temporaryPackDirectory, filename).replaceAll('\\', '/')}`;
     await runInstall(specification, dataDirectory);
     return path.join(dataDirectory, 'node_modules', packageName);
+  } finally {
+    await removeRunOwnedPath(packRun, temporaryPackDirectory);
+    const retainedRoot = await lstat(packRun.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   }
-  // Isolated packaging output is retained; no recursive cleanup of unregistered roots.
 }
 
 async function runInstall(specification: string, dataDirectory: string): Promise<void> {
@@ -176,6 +186,7 @@ async function runInstall(specification: string, dataDirectory: string): Promise
         NO_COLOR: '1',
         SF_DATA_DIR: dataDirectory,
         SF_CONFIG_DIR: dataDirectory,
+        npm_config_cache: path.join(dataDirectory, 'npm-cache'),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -197,7 +208,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   this.timeout(240_000);
 
   before(async () => {
-    isolatedDataDirectory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-cli-data-'));
+    fixtureRun = await createRunOwnedTemp('sf-plugin-cms-cli-data');
+    isolatedDataDirectory = await createRunOwnedDirectory(fixtureRun, 'fixture');
     installedPluginRoot = await installPackedPlugin(isolatedDataDirectory);
     installedPackageVersion = (
       JSON.parse(await readFile(path.join(installedPluginRoot, 'package.json'), 'utf8')) as {
@@ -206,7 +218,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ).version;
   });
 
-  // Retain this run's isolated CLI state; never recursively delete an unregistered root.
+  after(async () => {
+    if (isolatedDataDirectory === undefined) return;
+    await removeRunOwnedPath(fixtureRun, isolatedDataDirectory);
+    await lstat(isolatedDataDirectory).then(
+      () => expect.fail('registered CLI fixture should have been removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const retainedRoot = await lstat(fixtureRun.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
+  });
 
   for (const [title, command, contractCase, expectedStatus, expectedExit] of [
     ['success', ['cms', 'info', '--json'], undefined, 'success', 0],
@@ -930,13 +951,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('previews and applies one installed packed bounded Email Template update v2', async function () {
     this.timeout(300_000);
-    for (const name of [
-      'email-template-update-preview-source',
-      'email-template-update-preview-editable',
-      'email-template-update-apply-source',
-      'email-template-update-apply-editable',
-    ])
-      await mkdir(file(name));
+    // Harness exports create these destinations; leave them nonexistent.
     const base = [
       'cms',
       'update',

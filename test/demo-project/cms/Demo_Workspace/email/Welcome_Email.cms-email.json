@@ -1,0 +1,22 @@
+{
+  "contract": "sf-cms-source-definition",
+  "contractVersion": "1.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Email",
+    "apiName": "Welcome_Email",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__email",
+  "contentBody": {
+    "sfdc_cms:title": "Welcome to the demo",
+    "subjectLine": "Your imaginary campaign begins here",
+    "messagePurpose": "Transactional",
+    "lightning:expressions": [],
+    "sfdc_cms:variants": []
+  },
+  "language": "en_US",
+  "title": "Welcome to the demo",
+  "folderPath": [],
+  "companions": { "rawHtml": "Welcome_Email.cms-email.html" }
+}

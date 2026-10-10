@@ -1,0 +1,40 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Landing Page",
+    "apiName": "Welcome_Page",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__landingPage",
+  "language": "en_US",
+  "title": "Welcome campaign page",
+  "urlName": "welcome-campaign",
+  "folderPath": ["Campaigns", "Welcome"],
+  "companions": {},
+  "contentBody": {
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "sfdc_cms:title": "Welcome campaign page",
+    "sfdc_cms:urlName": "welcome-campaign",
+    "sfdc_cms:description": "An imaginary campaign landing page",
+    "sfdc_cms:seoProperties": { "isIndexed": false, "title": "Welcome campaign" },
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-page-root",
+      "type": "block",
+      "children": [
+        {
+          "definition": "lightning/paragraph",
+          "id": "demo-page-intro",
+          "type": "block",
+          "attributes": { "text": "Welcome to the imaginary campaign" },
+          "children": []
+        }
+      ]
+    },
+    "sfdc_cms:variants": []
+  }
+}

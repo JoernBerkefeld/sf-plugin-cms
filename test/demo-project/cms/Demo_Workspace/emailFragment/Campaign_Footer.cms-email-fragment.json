@@ -1,0 +1,40 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Email Fragment",
+    "apiName": "Campaign_Footer",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__emailFragment",
+  "language": "en_US",
+  "title": "Campaign footer",
+  "urlName": "campaign-footer",
+  "folderPath": ["Reusable"],
+  "companions": {},
+  "contentBody": {
+    "backgroundColor": "#f3f3f3",
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "sfdc_cms:title": "Campaign footer",
+    "sfdc_cms:urlName": "campaign-footer",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-email-footer-root",
+      "type": "block",
+      "children": [
+        {
+          "definition": "lightning/paragraph",
+          "id": "demo-email-footer-text",
+          "type": "block",
+          "attributes": { "text": "Example Company - imaginary campaign" },
+          "children": []
+        }
+      ]
+    },
+    "sfdc_cms:variants": []
+  }
+}

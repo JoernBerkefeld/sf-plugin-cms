@@ -1,7 +1,11 @@
 import { expect } from 'chai';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   collectInstalledRuntimeNodes,
   nodeRangeSupportsRuntime,
@@ -40,7 +44,8 @@ describe('packed runtime dependency validation', () => {
   });
 
   it('rejects incompatible engines and non-optional npm-ls problems', async () => {
-    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'runtime-tree-test-'));
+    const run = await createRunOwnedTemp('runtime-tree-test');
+    const temporaryRoot = await createRunOwnedDirectory(run, 'fixture');
     try {
       const jsforcePath = await writePackage(
         temporaryRoot,
@@ -78,7 +83,13 @@ describe('packed runtime dependency validation', () => {
         'future-only@1.2.3 has Node engine ">=24" excluding supported Node >=22.19 <25',
       );
     } finally {
-      await rm(temporaryRoot, { recursive: true, force: true });
+      await removeRunOwnedPath(run, temporaryRoot);
+      await lstat(temporaryRoot).then(
+        () => expect.fail('fixture should have been removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const rootMetadata = await lstat(run.root);
+      expect(rootMetadata.isDirectory()).to.equal(true);
     }
   });
 });

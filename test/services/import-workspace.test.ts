@@ -1,17 +1,23 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
 import {
-  mkdtemp,
+  lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
   rename,
-  rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
@@ -411,11 +417,21 @@ function liveNativeBody(type: string, rawHtml: string) {
 
 describe('native raw-HTML workspace copy', () => {
   let root: string;
+  let run: RunOwnedTemp;
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'cms-native-'));
+    run = await createRunOwnedTemp('cms-native');
+    root = await createRunOwnedDirectory(run, 'fixture');
   });
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeRunOwnedPath(run, root);
+    const metadata = await lstat(run.root);
+    expect(metadata.isDirectory()).to.equal(true);
+    try {
+      await lstat(root);
+      expect.fail('expected fixture removal');
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+    }
   });
   const mapping = [
     { sourceContentKey: 'key', language: 'en', apiName: 'fresh_api', urlName: 'fresh-url' },
@@ -989,13 +1005,40 @@ describe('native raw-HTML workspace copy', () => {
 
 describe('workspace import core', () => {
   let root: string;
+  let temporaryDirectories: Array<{ run: RunOwnedTemp; parent: string }>;
+  let fixtureLinks: string[];
+
+  async function createFixture(prefix: string): Promise<string> {
+    const run = await createRunOwnedTemp(prefix);
+    const parent = await createRunOwnedDirectory(run, 'fixture');
+    temporaryDirectories.push({ run, parent });
+    return parent;
+  }
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-import-'));
+    temporaryDirectories = [];
+    fixtureLinks = [];
+    root = await createFixture('sf-plugin-cms-import');
   });
 
   afterEach(async () => {
-    await rm(root, { force: true, recursive: true });
+    // Unlink only links explicitly created by this test without traversing their targets.
+    for (const link of fixtureLinks) {
+      const metadata = await lstat(link);
+      expect(metadata.isSymbolicLink()).to.equal(true);
+      await unlink(link);
+    }
+    for (const fixture of temporaryDirectories) {
+      await removeRunOwnedPath(fixture.run, fixture.parent);
+      const metadata = await lstat(fixture.run.root);
+      expect(metadata.isDirectory()).to.equal(true);
+      try {
+        await lstat(fixture.parent);
+        expect.fail('expected fixture removal');
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      }
+    }
   });
 
   it('plans fresh parent identities coherently without changing raw hashes or literal content', async () => {
@@ -1422,6 +1465,168 @@ describe('workspace import core', () => {
     expect(loaded.items[0].id).to.equal('variant-fixture');
   });
 
+  it('never authorizes removal when exclusive allocation fails on an existing object', async () => {
+    for (const directory of [false, true]) {
+      const destination = path.join(root, `allocation-${directory}.json`);
+      const allocationError = new Error('exclusive allocation failed');
+      const removePath = sinon.stub().resolves();
+      let allocatedPath = '';
+      try {
+        await rewriteAtomic(
+          destination,
+          {},
+          {
+            openPath: async (temporary, flags) => {
+              expect(flags).to.equal('wx');
+              allocatedPath = temporary;
+              if (directory) {
+                await mkdir(temporary);
+                await writeFile(path.join(temporary, 'sentinel'), 'keep');
+              } else {
+                await writeFile(temporary, 'keep');
+              }
+              await open(temporary, flags).catch(() => {});
+              throw allocationError;
+            },
+            removePath,
+          },
+        );
+        expect.fail('expected allocation failure');
+      } catch (error) {
+        expect(error).to.equal(allocationError);
+      }
+      expect(removePath.called).to.equal(false);
+      expect(
+        await readFile(directory ? path.join(allocatedPath, 'sentinel') : allocatedPath, 'utf8'),
+      ).to.equal('keep');
+    }
+  });
+
+  it('cleans only the exclusively created file after write or close failure', async () => {
+    for (const stage of ['write', 'close']) {
+      const destination = path.join(root, `${stage}.json`);
+      await writeFile(destination, 'old report');
+      const sentinel = path.join(root, `${stage}-sentinel`);
+      await writeFile(sentinel, 'keep');
+      const primary = new Error(`${stage} failed`);
+      let temporaryPath = '';
+      let closeAttempts = 0;
+      try {
+        await rewriteAtomic(
+          destination,
+          {},
+          {
+            openPath: async (temporary, flags) => {
+              temporaryPath = temporary;
+              const handle = await open(temporary, flags);
+              return {
+                writeFile: async () => {
+                  if (stage === 'write') throw primary;
+                  await handle.writeFile('new report');
+                },
+                close: async () => {
+                  closeAttempts += 1;
+                  await handle.close();
+                  if (stage === 'close' && closeAttempts === 1) throw primary;
+                },
+              };
+            },
+          },
+        );
+        expect.fail('expected file failure');
+      } catch (error) {
+        expect(error).to.equal(primary);
+      }
+      expect(await readFile(destination, 'utf8')).to.equal('old report');
+      expect(await readFile(sentinel, 'utf8')).to.equal('keep');
+      await lstat(temporaryPath).then(
+        () => expect.fail('expected file removal'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
+  });
+
+  it('preserves write error identity and both close and removal diagnostics', async () => {
+    const primary = new Error('write failed');
+    const closeError = new Error('close failed');
+    const cleanupError = new Error('removal failed');
+    const removePath = sinon.stub().rejects(cleanupError);
+    let temporaryPath = '';
+    try {
+      await rewriteAtomic(
+        path.join(root, 'diagnostics.json'),
+        {},
+        {
+          openPath: async (temporary, flags) => {
+            temporaryPath = temporary;
+            const handle = await open(temporary, flags);
+            return {
+              writeFile: async () => {
+                throw primary;
+              },
+              close: async () => {
+                await handle.close();
+                throw closeError;
+              },
+            };
+          },
+          removePath,
+        },
+      );
+      expect.fail('expected write failure');
+    } catch (error) {
+      expect(error).to.equal(primary);
+      expect((primary as Error & { closeError?: unknown }).closeError).to.equal(closeError);
+      expect((primary as Error & { cleanupError?: unknown }).cleanupError).to.equal(cleanupError);
+    }
+    expect(removePath.args).to.deep.equal([[temporaryPath, { force: true, recursive: false }]]);
+  });
+
+  it('never recursively removes a directory substituted after exclusive file creation', async () => {
+    const primary = new Error('publication failed');
+    let temporaryPath = '';
+    try {
+      await rewriteAtomic(
+        path.join(root, 'substitution.json'),
+        {},
+        {
+          renamePath: async (temporary) => {
+            temporaryPath = temporary.toString();
+            await unlink(temporaryPath);
+            await mkdir(temporaryPath);
+            await writeFile(path.join(temporaryPath, 'sentinel'), 'keep');
+            throw primary;
+          },
+        },
+      );
+      expect.fail('expected publication failure');
+    } catch (error) {
+      expect(error).to.equal(primary);
+      expect((primary as Error & { cleanupError?: unknown }).cleanupError).to.be.instanceOf(Error);
+    }
+    expect(await readFile(path.join(temporaryPath, 'sentinel'), 'utf8')).to.equal('keep');
+  });
+
+  it('preserves frozen and primitive primary errors when file removal fails', async () => {
+    for (const primary of [Object.freeze(new Error('frozen failure')), 'primitive failure', null]) {
+      try {
+        await rewriteAtomic(
+          path.join(root, 'frozen.json'),
+          {},
+          {
+            removePath: sinon.stub().rejects(new Error('cleanup failed')),
+            renamePath: async () => {
+              throw primary;
+            },
+          },
+        );
+        expect.fail('expected publication failure');
+      } catch (error) {
+        expect(error).to.equal(primary);
+      }
+    }
+  });
+
   it('retries transient Windows atomic replacement errors and cleans the sibling temp file', async () => {
     const destination = path.join(root, 'workspace-import-run.json');
     await writeFile(destination, 'old report\n');
@@ -1806,7 +2011,7 @@ describe('workspace import core', () => {
         ],
       },
     ]) {
-      const caseRoot = await mkdtemp(path.join(root, 'contradictory-'));
+      const caseRoot = await createFixture('cms-import-contradictory');
       const source = await writeExport(caseRoot, [unnamedItem('primary')], overrides);
       await expectRejected(loadWorkspaceExport(source));
       await expectRejected(loadWorkspaceExport(source, { allowPartial: true }));
@@ -1829,7 +2034,7 @@ describe('workspace import core', () => {
       { entries: [{ file: 'items/other.json', variantId: 'primary' }] },
     ];
     for (const overrides of cases) {
-      const caseRoot = await mkdtemp(path.join(root, 'case-'));
+      const caseRoot = await createFixture('cms-import-case');
       const source = await writeExport(caseRoot, [unnamedItem('primary')], overrides);
       try {
         await loadWorkspaceExport(source, { allowPartial: true });
@@ -1841,9 +2046,9 @@ describe('workspace import core', () => {
   });
 
   it('rejects missing, extra, symlinked, and variant-mismatched item files', async () => {
-    const missingRoot = await mkdtemp(path.join(root, 'missing-'));
+    const missingRoot = await createFixture('cms-import-missing');
     const missing = await writeExport(missingRoot, [unnamedItem('primary')]);
-    await rm(path.join(missing, 'items', 'primary.json'));
+    await unlink(path.join(missing, 'items', 'primary.json'));
     try {
       await loadWorkspaceExport(missing);
       expect.fail('expected missing-file rejection');
@@ -1852,23 +2057,25 @@ describe('workspace import core', () => {
       expect((error as Error).message).to.include('missing');
     }
 
-    const extraRoot = await mkdtemp(path.join(root, 'extra-'));
+    const extraRoot = await createFixture('cms-import-extra');
     const extra = await writeExport(extraRoot, [unnamedItem('primary')]);
     await writeFile(path.join(extra, 'items', 'extra.json'), '{}');
     await expectRejected(loadWorkspaceExport(extra));
 
-    const mismatchRoot = await mkdtemp(path.join(root, 'mismatch-'));
+    const mismatchRoot = await createFixture('cms-import-mismatch');
     const mismatch = await writeExport(mismatchRoot, [unnamedItem('primary')]);
     await writeFile(path.join(mismatch, 'items', 'primary.json'), JSON.stringify(item('other')));
     await expectRejected(loadWorkspaceExport(mismatch));
 
-    const linkRoot = await mkdtemp(path.join(root, 'link-'));
+    const linkRoot = await createFixture('cms-import-link');
     const link = await writeExport(linkRoot, [unnamedItem('primary')]);
     const target = path.join(linkRoot, 'target.json');
     await writeFile(target, JSON.stringify(item('primary')));
-    await rm(path.join(link, 'items', 'primary.json'));
+    const linkPath = path.join(link, 'items', 'primary.json');
+    await unlink(linkPath);
     try {
-      await symlink(target, path.join(link, 'items', 'primary.json'), 'file');
+      await symlink(target, linkPath, 'file');
+      fixtureLinks.push(linkPath);
       await expectRejected(loadWorkspaceExport(link));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
@@ -1883,14 +2090,14 @@ describe('workspace import core', () => {
       item('one', 'en', 'key', { contentType: 'news' }),
     ];
     for (const invalid of invalidItems) {
-      const caseRoot = await mkdtemp(path.join(root, 'invalid-'));
+      const caseRoot = await createFixture('cms-import-invalid');
       const source = await writeExport(caseRoot, [invalid]);
       await expectRejected(loadWorkspaceExport(source));
     }
-    const duplicateRoot = await mkdtemp(path.join(root, 'duplicate-'));
+    const duplicateRoot = await createFixture('cms-import-duplicate');
     const duplicateSource = await writeExport(duplicateRoot, [item('one'), item('two', 'en')]);
     await expectRejected(loadWorkspaceExport(duplicateSource));
-    const apiRoot = await mkdtemp(path.join(root, 'api-'));
+    const apiRoot = await createFixture('cms-import-api');
     const apiSource = await writeExport(apiRoot, [
       item('one'),
       item('two', 'fr', 'key', { apiName: 'other' }),

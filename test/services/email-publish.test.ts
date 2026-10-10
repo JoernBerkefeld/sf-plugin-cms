@@ -1,11 +1,16 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   applyDraftEmailPublishWithReport,
   EmailPublishOutcomeUnknownError,
@@ -86,6 +91,19 @@ function fixture() {
   };
 }
 
+async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
+  await removeRunOwnedPath(run, parent);
+  let parentError: unknown;
+  try {
+    await stat(parent);
+  } catch (error) {
+    parentError = error;
+  }
+  expect((parentError as NodeJS.ErrnoException | undefined)?.code).to.equal('ENOENT');
+  const rootMetadata = await stat(run.root);
+  expect(rootMetadata.isDirectory()).to.equal(true);
+}
+
 describe('Email publish service', () => {
   it('previews one exact Draft variant without mutation', async () => {
     const current = fixture();
@@ -98,7 +116,8 @@ describe('Email publish service', () => {
 
   it('writes pending intent then publishes only the selected variant', async () => {
     const current = fixture();
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-publish-'));
+    const run = await createRunOwnedTemp('sf-cms-publish');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
       const pending = JSON.parse(
@@ -139,7 +158,7 @@ describe('Email publish service', () => {
       });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 
@@ -150,7 +169,8 @@ describe('Email publish service', () => {
       .returns(
         Object.assign(Promise.reject(new Error('timeout')), { stream: () => new PassThrough() }),
       );
-    const parent = await mkdtemp(path.join(tmpdir(), 'sf-cms-publish-uncertain-'));
+    const run = await createRunOwnedTemp('sf-cms-publish-uncertain');
+    const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {
       let failure: unknown;
@@ -176,7 +196,7 @@ describe('Email publish service', () => {
       });
     } finally {
       mutation.restore();
-      await rm(parent, { recursive: true, force: true });
+      await removeFixture(run, parent);
     }
   });
 });

@@ -21,9 +21,8 @@ import {
 } from '../transport/json-request.js';
 import { getPluginVersion } from '../runtime-version.js';
 import {
-  cleanupOwnedPath,
+  retainDirectoryStaging,
   publishDirectoryNoClobber,
-  type CleanupOptions,
   type DirectoryPublishOptions,
 } from './atomic-publish.js';
 import { inventoryExportReferences } from './export-references.js';
@@ -170,10 +169,9 @@ export type ExportWorkspaceOptions = JsonRequestOptions & {
   };
   landingPagePairs?: readonly LandingPagePairSelector[];
   portableMetadata?: PortableExportMetadataOptions;
-  atomicPublish?: DirectoryPublishOptions &
-    CleanupOptions & {
-      readonly makeTemporaryDirectory?: typeof mkdtemp;
-    };
+  atomicPublish?: DirectoryPublishOptions & {
+    readonly makeTemporaryDirectory?: typeof mkdtemp;
+  };
   experimentalMedia?: {
     readonly accessToken: string;
     readonly instanceUrl: string;
@@ -1147,7 +1145,6 @@ export async function exportWorkspace(
             ? {}
             : { landingPagePairs: landingPageTemplatePairs }),
         }).catch(() => {});
-  let phase5Report: import('./phase5-results.js').CmsPhase5Result | undefined;
   const portableMetadataPath = 'phase5/portable-metadata.v1.json';
   const portableMetadataBytes =
     portableMetadata === undefined
@@ -1432,10 +1429,10 @@ export async function exportWorkspace(
     await assertRegularPackageFiles(temporary, new Set(manifest.items.map(({ path }) => path)));
     await writeExclusive(path.join(temporary, 'manifest.json'), manifest);
     await publishDirectoryNoClobber(temporary, destination, options.atomicPublish);
-    phase5Report = await portableMetadata?.refreshCache();
   } catch (error) {
-    await cleanupOwnedPath(temporary, error, options.atomicPublish);
+    retainDirectoryStaging(temporary, error);
   }
+  const phase5Report = await portableMetadata?.refreshCache();
 
   const manifestSha256 = sha256(await readFile(path.join(destination, 'manifest.json')));
   if (options.editableDirectory !== undefined) {

@@ -1,7 +1,13 @@
 import { expect } from 'chai';
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   assertEmailFragmentItem,
   planEmailFragmentCopies,
@@ -494,9 +500,8 @@ describe('bounded email fragment create profile', () => {
       records: [{ ApiName: 'fresh_fragment_api' }],
       totalSize: 1,
     });
-    const { mkdtemp, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-email-fragment-collision-'));
+    const run = await createRunOwnedTemp('cms-email-fragment-collision');
+    const root = await createRunOwnedDirectory(run, 'fixture');
     try {
       let failure: unknown;
       try {
@@ -522,7 +527,13 @@ describe('bounded email fragment create profile', () => {
       expect(query.callCount).to.equal(2);
       expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
     } finally {
-      await rm(root, { force: true, recursive: true });
+      await removeRunOwnedPath(run, root);
+      await lstat(root).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const runMetadata = await lstat(run.root);
+      expect(runMetadata.isDirectory()).to.equal(true);
     }
   });
 

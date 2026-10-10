@@ -1,15 +1,19 @@
 import type { Connection } from '@salesforce/core';
 import type { CmsDiagnostic } from '../contracts/shared.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  type FileHandle,
+} from 'node:fs/promises';
 import path from 'node:path';
 import type { JsonRequestOptions } from '../transport/json-request.js';
-import {
-  cleanupOwnedPath,
-  replaceFileByAtomicRename,
-  type AtomicPublishOptions,
-  type CleanupOptions,
-} from './atomic-publish.js';
+import { replaceFileByAtomicRename, type AtomicPublishOptions } from './atomic-publish.js';
 import { CmsRequestError } from '../transport/json-request.js';
 import {
   assertWorkspaceExportManifest,
@@ -2089,7 +2093,34 @@ async function writeExclusive(file: string, value: unknown): Promise<void> {
   }
 }
 
-type AtomicRewriteOptions = AtomicPublishOptions & CleanupOptions;
+type AtomicRewriteOptions = AtomicPublishOptions & {
+  readonly openPath?: (
+    file: string,
+    flags: 'wx',
+  ) => Promise<Pick<FileHandle, 'writeFile' | 'close'>>;
+  readonly removePath?: typeof rm;
+};
+
+function attachRewriteDiagnostic(
+  primaryError: unknown,
+  key: 'closeError' | 'cleanupError',
+  secondaryError: unknown,
+): void {
+  try {
+    if (
+      (typeof primaryError === 'object' && primaryError !== null) ||
+      typeof primaryError === 'function'
+    ) {
+      Object.defineProperty(primaryError, key, {
+        configurable: true,
+        enumerable: false,
+        value: secondaryError,
+      });
+    }
+  } catch {
+    // Frozen or conflicting diagnostics must never replace the primary error.
+  }
+}
 
 export async function rewriteAtomic(
   file: string,
@@ -2097,11 +2128,28 @@ export async function rewriteAtomic(
   options: AtomicRewriteOptions = {},
 ): Promise<void> {
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
+  // Only a successful exclusive allocation authorizes removal of this single file.
+  const handle = await (options.openPath ?? open)(temporary, 'wx');
+  let closed = false;
   try {
-    await writeExclusive(temporary, value);
+    await handle.writeFile(jsonBytes(value), 'utf8');
+    await handle.close();
+    closed = true;
     await replaceFileByAtomicRename(temporary, file, options);
   } catch (error) {
-    await cleanupOwnedPath(temporary, error, options);
+    if (!closed) {
+      try {
+        await handle.close();
+      } catch (closeError) {
+        attachRewriteDiagnostic(error, 'closeError', closeError);
+      }
+    }
+    try {
+      await (options.removePath ?? rm)(temporary, { force: true, recursive: false });
+    } catch (cleanupError) {
+      attachRewriteDiagnostic(error, 'cleanupError', cleanupError);
+    }
+    throw error;
   }
 }
 

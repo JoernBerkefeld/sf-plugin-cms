@@ -90,6 +90,44 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
+  it('qualifies the CMS 0.10 release line without changing contract or sibling provider versions', async () => {
+    const { value } = await loadFixture();
+    expect(value.contract).to.equal('sf-metadata-capability-v1');
+    expect(value.version).to.equal('1.0.0');
+    for (const declaration of CMS_CAPABILITY_DECLARATIONS) {
+      expect(declaration.providerContract).to.deep.equal({
+        name: 'sf-plugin-cms',
+        minVersion: '0.10.0',
+        maxVersion: '0.10.999',
+      });
+    }
+    const siblingDeclarations = value.declarations.filter(
+      (entry) => entry.identity.provider === 'sf-plugin-mcnext',
+    );
+    expect(siblingDeclarations).to.have.length(2);
+    for (const declaration of siblingDeclarations) {
+      expect(declaration.providerContract).to.deep.equal({
+        name: 'sf-plugin-mcnext',
+        minVersion: '0.8.0',
+        maxVersion: '0.8.999',
+      });
+    }
+  });
+
+  it('documents candidate inclusion without inflating live evidence or asserting publication', async () => {
+    const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+    expect(readme).to.include('CMS `0.10.0`–`0.10.999` line');
+    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.10.0" }');
+    expect(readme).to.include('"pluginVersion": "0.10.0"');
+    expect(readme).to.include('Publication of `0.10.0` is not yet asserted.');
+    expect(readme).to.include('**no live image upload has been performed**');
+    expect(readme).to.include(
+      '**Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.**',
+    );
+    expect(readme).not.to.include('local, unreleased source mode');
+    expect(readme).not.to.include('v0.9.0');
+  });
+
   it('rejects unknown keys and missing completion, bounds, or extractor fields', async () => {
     const { value } = await loadFixture();
     const base = value.declarations[0];

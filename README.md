@@ -94,7 +94,7 @@ sf cms upload images --target-org my-org --workspace-id 0ZuTARGET --file ./Logo.
 - The seven-key `sf-cms-images-upload` envelope uses contract version `1.0.0` (`--contract-version 1`). Results contain `mode`, `outcome`, distinct `target`, ordered immutable `intents` (names, media type, size, SHA-256; never bytes), `byteProof: "unavailable"`, and `reportFile`. Outcomes are `ready`, `completed`, `blocked`, `failed`, or `ownership-uncertain`; blocked/failed exit `1`, success exits `0`. Invalid local inputs are rejected before authentication where possible. Resolving a workspace and proving destination collisions requires authenticated reads even in dry-run.
 - Apply reports live at `image-upload-run.json`; a fallback failure journal may be used if the normal journal cannot persist. Failure output retains the durable report path. `ownership-uncertain` means CREATE may have succeeded: inspect that report and reconcile destination ownership before any new apply. The CLI does not expose arbitrary transport error bodies. Metadata readback is **not binary-byte proof**; downloaded bytes are not verified.
 
-This independent local feature has controlled-transport service/command tests and packed CLI dry-run qualification, but **no live image upload has been performed**. It is not asserted to be included in the currently released `0.9.0` package. A successful dry-run does not prove that Salesforce will accept a later CREATE.
+The `0.10.0` release candidate includes this independent feature with controlled-transport service/command tests and packed CLI dry-run qualification, but **no live image upload has been performed**. Publication of `0.10.0` is not yet asserted. A successful dry-run does not prove that Salesforce will accept a later CREATE.
 
 ### `sf cms info`
 
@@ -107,9 +107,9 @@ sf cms info --contract-version 1 --json
 
 The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. The strict v2 image-create profile and the bounded v1 component-create profiles remain experimental. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds and explicitly mapped prerequisites can be resolved. Installation alone does not prove org permissions or endpoint availability.
 
-Local Phase 5 candidates expose a read-only metadata capability registry through `sf cms info --contract-version 2 --json`; info v1 remains unchanged. Provider package qualification uses the CMS `0.9.0`–`0.9.999` line independently of registry contract `1.0.0`. The narrow Email Template `dependency-free` profile additionally applies the retained raw-HTML dependency scanner (unlike native-copy's temporary opaque-HTML bypass); Form Handler `strict-empty-root` requires the existing exact Draft envelope, empty providers, and empty root normalizer. Both profiles advertise retrieval only, not general deploy support. These are local candidate interfaces, not assertions that the currently published package includes Phase 5: release the qualified CMS provider before releasing a consumer that requires its new registry.
+The `0.10.0` release candidate exposes a read-only metadata capability registry through `sf cms info --contract-version 2 --json`; info v1 remains unchanged. Provider package qualification uses the CMS `0.10.0`–`0.10.999` line independently of registry contract `1.0.0`. The narrow Email Template `dependency-free` profile additionally applies the retained raw-HTML dependency scanner (unlike native-copy's temporary opaque-HTML bypass); Form Handler `strict-empty-root` requires the existing exact Draft envelope, empty providers, and empty root normalizer. Both profiles advertise retrieval only, not general deploy support. These interfaces are included in the `0.10.0` release candidate, not an assertion that it is already published: publish the qualified CMS provider before releasing a consumer that requires its new registry.
 
-The local portable-export cache reuses an exact server mapping only when its source-details hash still matches; API-name or language drift triggers exact resolution and targeted refresh. The local zero-mutation deploy preflight checks the age of selected org-local bindings, including mappings and package roots, separately from package integrity. Required package cycles are blocked with a closed dependency path; non-root package dependencies are currently unsupported and block operation planning.
+The portable-export cache reuses an exact server mapping only when its source-details hash still matches; API-name or language drift triggers exact resolution and targeted refresh. The zero-mutation deploy preflight checks the age of selected org-local bindings, including mappings and package roots, separately from package integrity. Required package cycles are blocked with a closed dependency path; non-root package dependencies are currently unsupported and block operation planning.
 
 `--contract-version <major>` defaults to `1`. Any unsupported major returns a `blocked` `sf-cms-info` envelope with diagnostic code `UNSUPPORTED_CONTRACT_VERSION` and exit `1`, without org access.
 
@@ -671,7 +671,7 @@ Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fr
 
 #### Flat portable source definitions (`--definition-dir`)
 
-This additive **local, unreleased source mode with bounded B1 JSON editing** uses an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, broader live-org qualification, or a release. The bounded immutable Brand SOURCE path is live-qualified for one root/default-language Draft CREATE. The working-tree package version remains `0.9.0`; that version alone does not establish that an installed published package contains this mode.
+The `0.10.0` release candidate includes this additive **source mode with bounded B1 JSON editing**, using an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, or broader live-org qualification. The bounded immutable Brand SOURCE path is live-qualified for one root/default-language Draft CREATE. Inclusion in the release candidate does not establish publication or that an installed package contains this mode.
 
 Email and Email Template support qualified export, bounded existing JSON string-leaf plus HTML editing, dry-run planning, and create-only apply. Brand supports inline definition export and immutable baseline-bound loading, dry-run, and create-only apply through the narrow source-only canonical inventory profile described below. Brand definitions cannot be semantically edited; the fresh destination identity belongs to the explicit Brand map. Brand SOURCE additionally has bounded live qualification for one immutable root/default-language Draft CREATE; this does not qualify broader source-mode behavior. Image source definitions remain unsupported because lossless native-media binding is unqualified. The separately committed `sf cms upload images` command and existing image-package mode do not qualify Image source definitions. Other families are unsupported in this mode.
 
@@ -733,7 +733,7 @@ Both dry-run and apply require explicit `--source-org`, resolved and authenticat
 
 CREATE is root-only and exact destination-default-language only in a canonical Marketing workspace. Target collision inventory is exhaustive across content families, validates each page's `count` against that page's item length (not a global total), rejects duplicate/missing/contradictory identity evidence, and terminates on the bounded short/empty page rather than trusting `nextPageUri`. Target API-name/title/URL absence is repeated immediately before CREATE. Apply durably records ordered intents and source-refresh/hash evidence, creates sequentially without retry, omits `contentKey` for server generation, and requires independent Draft/unpublished content-key and variant readback. Ownership ambiguity stops later writes and requires read-only journal reconciliation. No UPDATE, publish, workspace-default Brand assignment, dependent-content mutation, rollback, or resume is added.
 
-Controlled service/command and packed CLI tests qualify the local candidate. **Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.** A fresh packed run completed export, dry-run and one non-retried CREATE, with independent Draft/unpublished parent and variant readback, one canonical sibling, completed journal with final source-refresh proof, unchanged baseline/definition bytes and four unchanged source snapshots. The native body matched the submitted body and original source except the explicit map-owned embedded title replacement. This qualifies only that bounded source path, not full B or the installed published package; historical generic Brand CREATE is separate evidence. Image replacement, folder hierarchy/non-root placement, non-default language, and full B remain open.
+Controlled service/command and packed CLI tests qualify the `0.10.0` release candidate. **Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.** A fresh packed run completed export, dry-run and one non-retried CREATE, with independent Draft/unpublished parent and variant readback, one canonical sibling, completed journal with final source-refresh proof, unchanged baseline/definition bytes and four unchanged source snapshots. The native body matched the submitted body and original source except the explicit map-owned embedded title replacement. This qualifies only that bounded source path, not full B or the installed published package; historical generic Brand CREATE is separate evidence. Image replacement, folder hierarchy/non-root placement, non-default language, and full B remain open.
 
 ### `sf cms publish content`
 
@@ -857,13 +857,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.9.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.10.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.9.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.9.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.10.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.10.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -876,14 +876,14 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "status": "success",
   "metadata": {
     "operation": "<cms.info|workspace.export.bulk|workspace.import>",
-    "plugin": { "name": "sf-plugin-cms", "version": "0.9.0" },
+    "plugin": { "name": "sf-plugin-cms", "version": "0.10.0" },
     "apiVersion": "67.0"
   },
   "diagnostics": { "warnings": [], "errors": [] },
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "<org-id-or-offline>",
-    "pluginVersion": "0.9.0",
+    "pluginVersion": "0.10.0",
     "command": "sf cms <operation>",
     "generatedAt": "<ISO-8601>"
   },
@@ -900,7 +900,7 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.9.0 does not provide general relationship discovery or traversal.
+- `workspace.export.dependency-closure` — `unavailable`; v0.10.0 does not provide general relationship discovery or traversal.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
 - `content.delete.email` — `experimental`, contract `sf-cms-content-delete@1`; public/live-verified for one exact run-owned single-variant Draft Email.
@@ -950,6 +950,12 @@ Automation should parse stdout JSON and inspect the process exit code. It must n
 
 ## Development
 
+The [demo project](test/demo-project) depicts an **imaginary result of a future retrieve-all operation**, not a shipped command's output or an import-ready export. Its external test-only [inventory](test/fixtures/demo-project-inventory.json) distinguishes current portable Email, Email Template, and immutable Brand shapes from **proposed, not implemented** Image, landing page/template, fragment, form/handler, and consent banner source formats. The fictional campaign uses flat `cms/Demo_Workspace/<family>/<apiName>.cms-<token>` files, same-stem HTML/media companions, inline structured content, and metadata-only logical `folderPath` values. Current-contract examples use root folders and the demo's default language; proposed examples illustrate logical hierarchy without adding physical folder, language, or variant directories.
+
+The 11 representative families are **not** the complete Marketing workspace catalog. The external [UI-label coverage checklist](test/fixtures/demo-project-ui-coverage.json) accounts for all 25 supplied labels, separating evidenced API mappings and bounded provider profiles from unresolved mapping/support; unrepresented types do not receive invented source files. The exact display labels **Content Block: Email** and **Content Block: Landing Page** correspond to native `emailFragment` and `webFragment`. Existing directories, `email-fragment`/`web-fragment` file tokens, and provider identity vocabulary remain compatible. Neither test-only metadata file is retrieved content or a requirement for user projects. The demo root includes only a minimal `sfdx-project.json` with `packageDirectories: []`, plus CMS source artifacts—no MCNext/core samples or placeholder vendor manifests. This fixture convention does not require every standalone CMS operation to run in a Salesforce project.
+
+The demo is source-only: it has **no integrity-bound baseline or admission evidence** and must not be passed to import/deploy as a qualified export. The SVG companion is a proposed local-media illustration, not proof of lossless Image support. Folder enumeration/admission, builder fidelity, dependencies, and broader family contracts remain explicit inventory gaps; variants and non-default languages are out of scope. `test/demo-project.test.ts` checks current definitions with the existing validators and proposed files only for fixture shape, inventory coverage, and companions—not production admission or rendering.
+
 ```sh
 npm install --no-workspaces
 npm run lint:fix
@@ -969,7 +975,11 @@ String-array query values such as `contentSpaceOrFolderIds` and `languages` are 
 
 Current shipped export guards include an explicit single-workspace mode and a strict bulk preflight. Workspace enumeration is zero-based with `pageSize=250`; a requested Marketing or Content bulk export is filtered server-side with `spaceType`, preventing unrelated workspace families from entering that preflight. Enumeration deduplicates exact IDs, rejects conflicting recognized types for the same ID during bulk preflight, ignores advertised totals as a termination signal, and continues until an empty page. It fails closed on repeated pages, no progress, malformed IDs, case/Unicode-equivalent IDs, or the 1,000-page cap. Bulk preflight canonicalizes every returned workspace with a GET, validates canonical ID and name, prefers recognized canonical `spaceType`, and uses recognized list type evidence only when the canonical detail type is absent and the exact ID matches. It rejects present malformed, null, or unsupported canonical type evidence, filters an explicit contradictory type, sorts by canonical ID, and rejects unsafe or colliding destinations before any export starts.
 
-Per-workspace variant export remains atomic and best-effort: it verifies `managedContentSpaceId` in search rows and `contentSpace.id` in variant details, records ownership rejections and detail failures, refuses an existing destination, writes stable JSON to a temporary sibling directory, removes staging after failure, and renames staging only after all output is written. Bulk execution continues across workspace failures and emits a deterministic complete aggregate in both human and JSON modes.
+Per-workspace variant export remains atomic and best-effort: it verifies `managedContentSpaceId` in search rows and `contentSpace.id` in variant details, records ownership rejections and detail failures, refuses an existing destination, writes stable JSON to a temporary sibling directory, retains staging after a write or publication failure, and renames staging only after all output is written. Bulk execution continues across workspace failures and emits a deterministic complete aggregate in both human and JSON modes.
+
+Failed baseline and editable-companion writes leave their hidden sibling staging directories (`.<destination-name>.tmp-<generated-suffix>`) beside the requested destination for inspection; they are not qualified exports and must not be imported as such. Check that parent directory when recovering from a failure. If baseline publication succeeded but the editable companion failed, the published baseline remains intact and the failed companion staging is retained. Preserve this evidence, reconcile any existing destination, and use new, separate output paths for a fresh export rather than overwriting or treating retained staging as a resume mechanism. The service can attach `stagingPath` to an error when possible, but this diagnostic is not a guaranteed CLI JSON field.
+
+Import report replacement has a separate, single-file cleanup boundary: only a temporary file successfully created exclusively by that replacement attempt is eligible for nonrecursive removal after failure. Failed allocation authorizes no cleanup, and a substituted directory is not traversed or removed. The original failure remains primary even if closing or removing the temporary file also fails; report-write failure does not imply that a preceding destination mutation was rolled back. Reconcile the durable import report and destination state before another apply.
 
 For every API-version upgrade, recheck the operation path and required parameters, wildcard behavior, repeated-key serialization, inventory counts and statuses, empty-page/`nextPageUri` behavior, both ownership fields, draft visibility, delivery coverage, SOQL parity, folder enumeration, duplicate-page handling, and all stop conditions before retaining export support.
 

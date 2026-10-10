@@ -1,15 +1,11 @@
 import { createRequire } from 'node:module';
-import { open, rename, rm } from 'node:fs/promises';
+import { open, rename } from 'node:fs/promises';
 import path from 'node:path';
 
 export type AtomicPublishOptions = {
   readonly delay?: (milliseconds: number) => Promise<void>;
   readonly platform?: NodeJS.Platform;
   readonly renamePath?: typeof rename;
-};
-
-export type CleanupOptions = {
-  readonly removePath?: typeof rm;
 };
 
 export type DirectoryPublishOptions = AtomicPublishOptions & {
@@ -129,29 +125,20 @@ export async function publishDirectoryNoClobber(
   });
 }
 
-export async function cleanupOwnedPath(
-  ownedPath: string,
-  primaryError: unknown,
-  options: CleanupOptions = {},
-): Promise<never> {
+export function retainDirectoryStaging(stagingPath: string, primaryError: unknown): never {
   try {
-    await (options.removePath ?? rm)(ownedPath, { force: true, recursive: true });
-  } catch (cleanupError) {
-    try {
-      if (
-        typeof primaryError === 'object' &&
-        primaryError !== null &&
-        Object.isExtensible(primaryError)
-      ) {
-        Object.defineProperty(primaryError, 'cleanupError', {
-          configurable: true,
-          enumerable: false,
-          value: cleanupError,
-        });
-      }
-    } catch {
-      // Preserve the primary publication error even when diagnostics cannot be attached.
+    if (
+      (typeof primaryError === 'object' && primaryError !== null) ||
+      typeof primaryError === 'function'
+    ) {
+      Object.defineProperty(primaryError, 'stagingPath', {
+        configurable: true,
+        enumerable: false,
+        value: stagingPath,
+      });
     }
+  } catch {
+    // Diagnostics must never replace a primitive, frozen, or conflicting primary error.
   }
   throw primaryError;
 }

@@ -1,11 +1,16 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { InvalidImageImportMapError } from '../../src/contracts/workspace-import.js';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   applyImageImports,
   normalizeImageMultipartFilename,
@@ -133,12 +138,20 @@ async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
 }
 
 describe('image import contracts and loader', () => {
+  let run: RunOwnedTemp;
   let root: string;
   beforeEach(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'cms-image-import-'));
+    run = await createRunOwnedTemp('cms-image-import');
+    root = await createRunOwnedDirectory(run, 'fixture');
   });
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeRunOwnedPath(run, root);
+    await lstat(root).then(
+      () => expect.fail('Fixture child must be removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const retainedRoot = await lstat(run.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
   it('loads strict v2 offline and plans all identity strategies deterministically', async () => {

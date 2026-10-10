@@ -1,7 +1,11 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect } from 'chai';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import { intakeOpenApi, OpenApiIntakeError, resolveInternalRef } from '../../src/openapi/intake.js';
 
 const baseDocument = `openapi: 3.0.3
@@ -22,13 +26,20 @@ components:
 `;
 
 async function withFixture(contents: string, run: (path: string) => Promise<void>): Promise<void> {
-  const directory = await mkdtemp(path.join(tmpdir(), 'sf-plugin-cms-openapi-'));
+  const fixtureRun = await createRunOwnedTemp('sf-plugin-cms-openapi');
+  const directory = await createRunOwnedDirectory(fixtureRun, 'fixture');
   const fixturePath = path.join(directory, 'fixture.yaml');
   try {
     await writeFile(fixturePath, contents, 'utf8');
     await run(fixturePath);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await removeRunOwnedPath(fixtureRun, directory);
+    await lstat(directory).then(
+      () => expect.fail('fixture child should be removed'),
+      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+    );
+    const rootMetadata = await lstat(fixtureRun.root);
+    expect(rootMetadata.isDirectory()).to.equal(true);
   }
 }
 

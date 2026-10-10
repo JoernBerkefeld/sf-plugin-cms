@@ -1,0 +1,19 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Image",
+    "apiName": "Campaign_Hero",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__image",
+  "contentBody": {
+    "sfdc_cms:title": "Demo campaign hero",
+    "altText": "Imaginary campaign on a purple background"
+  },
+  "language": "en_US",
+  "title": "Demo campaign hero",
+  "folderPath": ["Campaigns", "Welcome"],
+  "companions": { "media": "Campaign_Hero.cms-image.svg" }
+}

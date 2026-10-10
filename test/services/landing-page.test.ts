@@ -1,9 +1,14 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+} from '../../src/filesystem/runOwnedTemp.js';
 import {
   assertLandingPageItem,
   planLandingPageCopies,
@@ -735,9 +740,8 @@ describe('landing-page create-only profile', () => {
     expect(dryRun.templatePrerequisites?.[0]).not.to.have.property('preCreate');
     expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
 
-    const { mkdtemp, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-page-'));
+    const run = await createRunOwnedTemp('cms-landing-page');
+    const root = await createRunOwnedDirectory(run, 'fixture');
     try {
       const postBodies: Array<Record<string, unknown>> = [];
       request.callsFake(
@@ -874,7 +878,13 @@ describe('landing-page create-only profile', () => {
       expect(JSON.stringify(postBodies[0])).not.to.include('target-template-key');
       expect(JSON.stringify(postBodies[0])).to.include('/cms/media/target-image-key');
     } finally {
-      await rm(root, { force: true, recursive: true });
+      await removeRunOwnedPath(run, root);
+      await lstat(root).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+      const retainedRoot = await lstat(run.root);
+      expect(retainedRoot.isDirectory()).to.equal(true);
     }
   });
 
@@ -935,9 +945,8 @@ describe('landing-page create-only profile', () => {
         if (method === 'GET') return fakeNotFound();
         throw new Error('CREATE must not be called after drift');
       });
-      const { mkdtemp, rm } = await import('node:fs/promises');
-      const { tmpdir } = await import('node:os');
-      const root = await mkdtemp(path.join(tmpdir(), 'cms-landing-page-drift-'));
+      const run = await createRunOwnedTemp('cms-landing-page-drift');
+      const root = await createRunOwnedDirectory(run, 'fixture');
       try {
         let failure: unknown;
         try {
@@ -967,7 +976,13 @@ describe('landing-page create-only profile', () => {
           0,
         );
       } finally {
-        await rm(root, { force: true, recursive: true });
+        await removeRunOwnedPath(run, root);
+        await lstat(root).then(
+          () => expect.fail('Fixture child must be removed'),
+          (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+        );
+        const retainedRoot = await lstat(run.root);
+        expect(retainedRoot.isDirectory()).to.equal(true);
       }
     });
   }

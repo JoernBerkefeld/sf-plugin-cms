@@ -1,0 +1,21 @@
+{
+  "contract": "sf-cms-source-definition",
+  "contractVersion": "1.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Email Template",
+    "apiName": "Campaign_Template",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__emailTemplate",
+  "contentBody": {
+    "sfdc_cms:title": "Demo campaign template",
+    "messagePurpose": "Transactional",
+    "lightning:expressions": [],
+    "sfdc_cms:variants": []
+  },
+  "language": "en_US",
+  "title": "Demo campaign template",
+  "folderPath": [],
+  "companions": { "rawHtml": "Campaign_Template.cms-email-template.html" }
+}

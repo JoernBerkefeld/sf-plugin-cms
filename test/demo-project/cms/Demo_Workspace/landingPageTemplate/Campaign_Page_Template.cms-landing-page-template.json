@@ -1,0 +1,38 @@
+{
+  "contract": "sf-cms-demo-proposed-definition",
+  "contractVersion": "0.0.0",
+  "identity": {
+    "family": "cms",
+    "type": "Landing Page Template",
+    "apiName": "Campaign_Page_Template",
+    "context": { "workspaceApiName": "Demo_Workspace" }
+  },
+  "contentType": "sfdc_cms__landingPageTemplate",
+  "language": "en_US",
+  "title": "Campaign page layout",
+  "urlName": "campaign-page-layout",
+  "folderPath": ["Templates"],
+  "companions": {},
+  "contentBody": {
+    "lightning:brandSource": { "defaultBrandOption": "sfdcBrand" },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "sfdc_cms:title": "Campaign page layout",
+    "sfdc_cms:urlName": "campaign-page-layout",
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "demo-template-root",
+      "type": "block",
+      "children": [
+        {
+          "definition": "lightning/section",
+          "id": "demo-template-section",
+          "type": "block",
+          "attributes": { "stackOnMobile": true, "reverseOrderOnMobile": false },
+          "children": []
+        }
+      ]
+    },
+    "sfdc_cms:variants": []
+  }
+}
