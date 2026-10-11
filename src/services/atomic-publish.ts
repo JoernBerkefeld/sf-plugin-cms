@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { open, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { getSystemErrorName } from 'node:util';
 
 export type AtomicPublishOptions = {
   readonly delay?: (milliseconds: number) => Promise<void>;
@@ -87,13 +88,13 @@ function nativeDirectoryPublisher(): (temporary: string, destination: string) =>
     );
   }
   const binding = require(packageName) as
-    | ((parentFileDescriptor: number, temporaryName: string, destinationName: string) => void)
+    | ((parentFileDescriptor: number, temporaryName: string, destinationName: string) => unknown)
     | {
         readonly renameNoReplace?: (
           parentFileDescriptor: number,
           temporaryName: string,
           destinationName: string,
-        ) => void;
+        ) => unknown;
       };
   const renameNoReplace = typeof binding === 'function' ? binding : binding.renameNoReplace;
   if (renameNoReplace === undefined) {
@@ -106,11 +107,23 @@ function nativeDirectoryPublisher(): (temporary: string, destination: string) =>
     }
     const directory = await open(parent, 'r');
     try {
-      renameNoReplace(directory.fd, path.basename(temporary), path.basename(destination));
+      assertNativeRenameResult(
+        renameNoReplace(directory.fd, path.basename(temporary), path.basename(destination)),
+      );
     } finally {
       await directory.close();
     }
   };
+}
+
+// The pinned Node-API helper returns zero on success or a positive system errno.
+export function assertNativeRenameResult(result: unknown): void {
+  if (typeof result !== 'number' || !Number.isInteger(result) || result < 0) {
+    throw new TypeError('Atomic no-clobber native helper returned an invalid result');
+  }
+  if (result === 0) return;
+  const code = getSystemErrorName(-result);
+  throw Object.assign(new Error(`Atomic no-clobber rename failed: ${code}`), { code });
 }
 
 export async function publishDirectoryNoClobber(

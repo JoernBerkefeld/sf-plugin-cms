@@ -8,6 +8,7 @@ import {
   readdir,
   realpath,
   rm,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -56,6 +57,72 @@ export async function removeRunOwnedPath(run: RunOwnedTemp, target: string): Pro
   owner.registered.delete(absolute);
 }
 
+// Only the verified project's literal direct dependency directory gets the link exception.
+export async function removeRunOwnedNodeModules(
+  run: RunOwnedTemp,
+  projectRoot: string,
+  expectedPackageName: string,
+): Promise<void> {
+  const owner = await validateRoot(run);
+  if (
+    !projectRoot ||
+    !isAbsolute(projectRoot) ||
+    /[*?[\]{}]/u.test(projectRoot) ||
+    projectRoot.split(/[\\/]/u).includes('..') ||
+    !isDescendant(run.root, resolve(projectRoot)) ||
+    !expectedPackageName
+  ) {
+    throw new Error('Invalid dependency project root');
+  }
+  const project = resolve(projectRoot);
+  if (
+    ![...owner.registered].some((target) => target === project || isDescendant(target, project))
+  ) {
+    throw new Error('Dependency project is not in a registered run-owned directory');
+  }
+  await rejectLinks(run.root, project, false);
+  const projectMetadata = await lstat(project);
+  if ((await realpath(project)) !== project || !projectMetadata.isDirectory()) {
+    throw new Error('Dependency project changed location');
+  }
+  const manifest = join(project, 'package.json');
+  const manifestMetadata = await lstat(manifest);
+  if (!manifestMetadata.isFile() || manifestMetadata.isSymbolicLink()) {
+    throw new Error('Invalid dependency project manifest');
+  }
+  const identity = JSON.parse(await readFile(manifest, 'utf8')) as { name?: unknown };
+  if (identity.name !== expectedPackageName)
+    throw new Error('Dependency project identity mismatch');
+  const target = join(project, 'node_modules');
+  try {
+    await lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  await rejectLinks(run.root, target, process.platform === 'win32');
+  const targetMetadata = await lstat(target);
+  if ((await realpath(target)) !== target || !targetMetadata.isDirectory()) {
+    throw new Error('Dependency directory changed location');
+  }
+  // POSIX unlink removes the link entry itself, including dangling and external links.
+  // Windows stays fail-closed for every reparse type, as in ordinary cleanup.
+  if (process.platform !== 'win32') await unlinkDependencyLinks(target);
+  await rejectLinks(run.root, target);
+  await rm(target, { recursive: true, force: false });
+}
+
+async function unlinkDependencyLinks(target: string): Promise<void> {
+  const metadata = await lstat(target);
+  if (metadata.isSymbolicLink()) {
+    await unlink(target);
+    return;
+  }
+  if (!metadata.isDirectory()) return;
+  const entries = await readdir(target);
+  await Promise.all(entries.map((entry) => unlinkDependencyLinks(join(target, entry))));
+}
+
 function isDescendant(root: string, target: string): boolean {
   const rel = relative(root, target);
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -88,7 +155,7 @@ async function validateRoot(
   return owner;
 }
 
-async function rejectLinks(root: string, target: string): Promise<void> {
+async function rejectLinks(root: string, target: string, inspectSubtree = true): Promise<void> {
   // Windows exposes additional reparse types beyond the links reported by Node's lstat.
   if (process.platform === 'win32') {
     await execute(
@@ -108,6 +175,7 @@ async function rejectLinks(root: string, target: string): Promise<void> {
         if ($current -eq $root) { break }
         $current = [IO.Path]::GetDirectoryName($current)
       }
+      if ($env:SF_CMS_CLEANUP_INSPECT_SUBTREE -eq '1') {
       $pending = New-Object 'Collections.Generic.Stack[string]'
       $pending.Push($target)
       while ($pending.Count -gt 0) {
@@ -117,10 +185,16 @@ async function rejectLinks(root: string, target: string): Promise<void> {
           foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) { $pending.Push($child.FullName) }
         }
       }
+      }
     `,
       ],
       {
-        env: { ...process.env, SF_CMS_CLEANUP_ROOT: root, SF_CMS_CLEANUP_TARGET: target },
+        env: {
+          ...process.env,
+          SF_CMS_CLEANUP_ROOT: root,
+          SF_CMS_CLEANUP_TARGET: target,
+          SF_CMS_CLEANUP_INSPECT_SUBTREE: inspectSubtree ? '1' : '0',
+        },
         windowsHide: true,
       },
     );
@@ -132,7 +206,7 @@ async function rejectLinks(root: string, target: string): Promise<void> {
     if (current === root) break;
     current = dirname(current);
   }
-  await inspectTree(target);
+  if (inspectSubtree) await inspectTree(target);
 }
 
 async function inspectTree(target: string): Promise<void> {

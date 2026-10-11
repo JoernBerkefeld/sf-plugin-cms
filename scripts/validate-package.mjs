@@ -4,6 +4,7 @@ import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
   removeRunOwnedPath,
+  removeRunOwnedNodeModules,
 } from '../lib/filesystem/runOwnedTemp.js';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -83,6 +84,11 @@ async function validatePackedConsumer() {
 
   try {
     await mkdir(packDirectory);
+    await mkdir(consumerDirectory);
+    await writeFile(
+      path.join(consumerDirectory, 'package.json'),
+      `${JSON.stringify({ name: 'sf-plugin-cms-consumer', private: true, version: '1.0.0' }, null, 2)}\n`,
+    );
     await execFile(process.execPath, [npmCli, 'run', 'build'], { cwd: packageRoot });
     await execFile(
       process.execPath,
@@ -93,12 +99,6 @@ async function validatePackedConsumer() {
     const packedFiles = await readdir(packDirectory);
     const tarballs = packedFiles.filter((file) => file.endsWith('.tgz'));
     if (tarballs.length !== 1) throw new Error('expected exactly one packed package tarball');
-
-    await mkdir(consumerDirectory);
-    await writeFile(
-      path.join(consumerDirectory, 'package.json'),
-      `${JSON.stringify({ name: 'sf-plugin-cms-consumer', private: true, version: '1.0.0' }, null, 2)}\n`,
-    );
 
     const tarballPath = path.join(packDirectory, tarballs[0]);
     await execFile(
@@ -112,6 +112,7 @@ async function validatePackedConsumer() {
       `validated ${result.nodeCount} installed runtime dependency nodes (${result.uniquePackageVersions} unique package versions)`,
     );
   } finally {
+    await removeRunOwnedNodeModules(run, consumerDirectory, 'sf-plugin-cms-consumer');
     await removeRunOwnedPath(run, temporaryRoot);
   }
 }

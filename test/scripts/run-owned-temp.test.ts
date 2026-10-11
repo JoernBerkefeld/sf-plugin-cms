@@ -7,6 +7,7 @@ import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
   removeRunOwnedPath,
+  removeRunOwnedNodeModules,
 } from '../../src/filesystem/runOwnedTemp.js';
 
 async function rejected(action: Promise<unknown>): Promise<void> {
@@ -97,6 +98,58 @@ describe('run-owned OS-temp cleanup', () => {
       await unlink(link);
     }
     await removeRunOwnedPath(run, target);
+    await removeRunOwnedPath(run, outside);
+  });
+
+  it('bounds dependency cleanup to a verified direct node_modules child', async () => {
+    const run = await createRunOwnedTemp('cms-cleanup-test');
+    const project = await createRunOwnedDirectory(run, 'project');
+    const modules = join(project, 'node_modules');
+    await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'fixture' }));
+    await mkdir(modules);
+    await writeFile(join(modules, 'evidence'), 'installed');
+    await rejected(removeRunOwnedNodeModules(run, project, 'wrong-name'));
+    await rejected(removeRunOwnedNodeModules({ root: run.root }, project, 'fixture'));
+    await rejected(removeRunOwnedNodeModules(run, run.root, 'fixture'));
+    await rejected(removeRunOwnedNodeModules(run, `${project}/../project`, 'fixture'));
+    const unregistered = join(run.root, 'unregistered');
+    await mkdir(unregistered);
+    await writeFile(join(unregistered, 'package.json'), JSON.stringify({ name: 'fixture' }));
+    await rejected(removeRunOwnedNodeModules(run, unregistered, 'fixture'));
+    await unlink(join(unregistered, 'package.json'));
+    await rmdir(unregistered);
+    expect(await readFile(join(modules, 'evidence'), 'utf8')).to.equal('installed');
+    await removeRunOwnedNodeModules(run, project, 'fixture');
+    await rejected(lstat(modules));
+    expect(JSON.parse(await readFile(join(project, 'package.json'), 'utf8'))).to.deep.equal({
+      name: 'fixture',
+    });
+    await removeRunOwnedPath(run, project);
+  });
+
+  it('never follows dependency links and keeps ordinary cleanup strict', async () => {
+    const run = await createRunOwnedTemp('cms-cleanup-test');
+    const project = await createRunOwnedDirectory(run, 'project');
+    const outside = await createRunOwnedDirectory(run, 'outside');
+    await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'fixture' }));
+    await writeFile(join(outside, 'sentinel'), 'outside');
+    const modules = join(project, 'node_modules');
+    await mkdir(modules);
+    const link = join(modules, 'external');
+    await symlink(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    await rejected(removeRunOwnedPath(run, project));
+    if (process.platform === 'win32') {
+      await rejected(removeRunOwnedNodeModules(run, project, 'fixture'));
+      await unlink(link);
+    } else {
+      await symlink(join(outside, 'missing'), join(modules, 'dangling'));
+    }
+    await removeRunOwnedNodeModules(run, project, 'fixture');
+    expect(await readFile(join(outside, 'sentinel'), 'utf8')).to.equal('outside');
+    await symlink(outside, modules, process.platform === 'win32' ? 'junction' : 'dir');
+    await rejected(removeRunOwnedNodeModules(run, project, 'fixture'));
+    await unlink(modules);
+    await removeRunOwnedPath(run, project);
     await removeRunOwnedPath(run, outside);
   });
 

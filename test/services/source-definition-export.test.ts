@@ -337,6 +337,40 @@ describe('source definition filesystem publication', () => {
     expect(await readFile(path.join(baseline, 'sentinel'), 'utf8')).to.equal('immutable');
   });
 
+  it('interprets the native helper zero/positive errno contract and rejects invalid results', async () => {
+    const { assertNativeRenameResult } = await import('../../src/services/atomic-publish.js');
+    expect(() => assertNativeRenameResult(0)).not.to.throw();
+    for (const result of [undefined, null, false, -1, 1.5, Number.NaN, Infinity]) {
+      expect(() => assertNativeRenameResult(result)).to.throw(TypeError);
+    }
+    const { getSystemErrorName } = await import('node:util');
+    // The binding runs on POSIX only; Windows libuv uses a different errno mapping.
+    for (const errno of [17, 2]) {
+      expect(() => assertNativeRenameResult(errno)).to.throw(getSystemErrorName(-errno));
+    }
+  });
+
+  for (const nonempty of [false, true]) {
+    it(`preserves native staging bytes when an existing ${nonempty ? 'nonempty' : 'empty'} destination wins`, async () => {
+      const { publishDirectoryNoClobber } = await import('../../src/services/atomic-publish.js');
+      const staging = path.join(root, 'native-staging');
+      await mkdir(staging);
+      const bytes = Buffer.from([0, 255, 195, 169, 10]);
+      await writeFile(path.join(staging, 'payload'), bytes);
+      await mkdir(destination);
+      if (nonempty) await writeFile(path.join(destination, 'winner'), bytes);
+      const failure = await rejected(publishDirectoryNoClobber(staging, destination));
+      expect(failure).to.be.instanceOf(Error);
+      const retainedBytes = await readFile(path.join(staging, 'payload'));
+      expect(retainedBytes.equals(bytes)).to.equal(true);
+      expect(await readdir(destination)).to.deep.equal(nonempty ? ['winner'] : []);
+      if (nonempty) {
+        const winnerBytes = await readFile(path.join(destination, 'winner'));
+        expect(winnerBytes.equals(bytes)).to.equal(true);
+      }
+    });
+  }
+
   it('uses atomic no-clobber when another publisher wins after final preflight', async () => {
     const original = [item()];
     const { publishDirectoryNoClobber } = await import('../../src/services/atomic-publish.js');

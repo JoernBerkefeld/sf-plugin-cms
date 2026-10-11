@@ -6,6 +6,7 @@ import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
   removeRunOwnedPath,
+  removeRunOwnedNodeModules,
   type RunOwnedTemp,
 } from '../../src/filesystem/runOwnedTemp.js';
 import path from 'node:path';
@@ -210,6 +211,14 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   before(async () => {
     fixtureRun = await createRunOwnedTemp('sf-plugin-cms-cli-data');
     isolatedDataDirectory = await createRunOwnedDirectory(fixtureRun, 'fixture');
+    await writeFile(
+      file('package.json'),
+      JSON.stringify({
+        name: 'sf-plugin-cms-cli-fixture',
+        private: true,
+        oclif: { plugins: [], schema: 1 },
+      }),
+    );
     installedPluginRoot = await installPackedPlugin(isolatedDataDirectory);
     installedPackageVersion = (
       JSON.parse(await readFile(path.join(installedPluginRoot, 'package.json'), 'utf8')) as {
@@ -220,6 +229,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   after(async () => {
     if (isolatedDataDirectory === undefined) return;
+    await removeRunOwnedNodeModules(fixtureRun, isolatedDataDirectory, 'sf-plugin-cms-cli-fixture');
     await removeRunOwnedPath(fixtureRun, isolatedDataDirectory);
     await lstat(isolatedDataDirectory).then(
       () => expect.fail('registered CLI fixture should have been removed'),
