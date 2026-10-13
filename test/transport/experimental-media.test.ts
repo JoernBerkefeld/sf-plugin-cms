@@ -100,6 +100,137 @@ describe('experimental CMS media transport', () => {
     ).to.equal(true);
   });
 
+  it('admits text/plain only with explicit Document family and preserves exact bytes', async () => {
+    const bytes = Buffer.from('Document fixture\r\nUTF-8 café\n');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    const source = new URL(
+      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=document.txt&version=1`,
+    );
+    const fetcher = sinon.stub().resolves(
+      new Response(bytes, {
+        headers: { 'content-type': 'text/plain', 'content-length': String(bytes.length) },
+      }),
+    );
+    const base = {
+      accessToken: 'synthetic-token',
+      expectedMd5: md5,
+      expectedMimeType: 'text/plain',
+      expectedSize: bytes.length,
+      fetch: fetcher,
+      instanceUrl: 'https://tenant.my.salesforce.com',
+      outputFile: path.join(root, 'document.txt'),
+    };
+    await expectRejected(downloadExperimentalCmsMedia(source, base), 'unsupported');
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__image' }),
+      'unsupported',
+    );
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, {
+        ...base,
+        contentType: 'sfdc_cms__document',
+        expectedMimeType: 'application/pdf',
+      }),
+      'unsupported',
+    );
+    expect(fetcher.notCalled).to.equal(true);
+    const result = await downloadExperimentalCmsMedia(source, {
+      ...base,
+      contentType: 'sfdc_cms__document',
+    });
+    expect(result).to.include({
+      bytes: bytes.length,
+      mimeType: 'text/plain',
+      md5,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
+    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('text/plain');
+  });
+
+  it('keeps Document extension, response MIME, byte/hash, cap and redirect checks fail-closed', async () => {
+    const bytes = Buffer.from('Document fixture\n');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    for (const failure of [
+      'extension',
+      'missing-extension',
+      'mime',
+      'size',
+      'md5',
+      'length',
+      'cap',
+      'redirect',
+    ]) {
+      let fileName = 'document.txt';
+      if (failure === 'extension') fileName = 'document.pdf';
+      if (failure === 'missing-extension') fileName = 'document';
+      const source = new URL(
+        `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=${fileName}&version=1`,
+      );
+      const outputFile = path.join(root, `${failure}.txt`);
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, {
+          accessToken: 'synthetic-token',
+          contentType: 'sfdc_cms__document',
+          expectedMd5: failure === 'md5' ? '00000000000000000000000000000000' : md5,
+          expectedMimeType: 'text/plain',
+          expectedSize: bytes.length + Number(failure === 'size'),
+          instanceUrl: 'https://tenant.my.salesforce.com',
+          outputFile,
+          maxBytes: failure === 'cap' ? bytes.length - 1 : bytes.length + 1,
+          fetch: async () =>
+            failure === 'redirect'
+              ? new Response(null, {
+                  status: 301,
+                  headers: { location: 'https://evil.test/media' },
+                })
+              : new Response(bytes, {
+                  headers: {
+                    'content-type': failure === 'mime' ? 'image/png' : 'text/plain',
+                    'content-length': String(bytes.length + Number(failure === 'length')),
+                  },
+                }),
+        }),
+        {
+          extension: 'extension must be txt',
+          'missing-extension': 'extension must be txt',
+          mime: 'MIME type changed',
+          size: 'authoring metadata',
+          md5: 'MD5 differs',
+          length: 'Content-Length',
+          cap: 'exceeds the cap',
+          redirect: 'outside the approved',
+        }[failure]!,
+      );
+      await lstat(outputFile).then(
+        () => expect.fail('Rejected Document must not leave a binary file'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
+  });
+
+  it('preserves Image signature guards even with matching byte/hash metadata', async () => {
+    const bytes = Buffer.from('This is not a PNG image');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    await expectRejected(
+      downloadExperimentalCmsMedia(
+        new URL(
+          `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=image.png&version=1`,
+        ),
+        {
+          accessToken: 'synthetic-token',
+          expectedMd5: md5,
+          expectedMimeType: 'image/png',
+          expectedSize: bytes.length,
+          fetch: async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }),
+          instanceUrl: 'https://tenant.my.salesforce.com',
+          outputFile: path.join(root, 'false-image.png'),
+        },
+      ),
+      'signature does not match',
+    );
+  });
+
   it('always closes and unlinks after opened-file failures while preserving the primary error', async () => {
     const md5 = createHash('md5').update(PNG).digest('hex');
     const source = new URL(

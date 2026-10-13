@@ -279,9 +279,10 @@ function mediaValue(record: CmsRecord): Record<string, unknown> | undefined {
   return isRecord(media) ? media : undefined;
 }
 
-function imageEvidence(record: CmsRecord):
+function mediaEvidence(record: CmsRecord):
   | {
       contentKey: string;
+      contentType: 'sfdc_cms__image' | 'sfdc_cms__document';
       fileName: string;
       md5: string;
       mimeType: string;
@@ -295,7 +296,7 @@ function imageEvidence(record: CmsRecord):
   const contentType = isRecord(record.contentType)
     ? record.contentType.fullyQualifiedName
     : record.contentType;
-  if (contentType !== 'sfdc_cms__image') return undefined;
+  if (contentType !== 'sfdc_cms__image' && contentType !== 'sfdc_cms__document') return undefined;
   const media = mediaValue(record);
   const source = isRecord(media?.source) ? media.source : undefined;
   const status = isRecord(record.status) ? record.status.status : undefined;
@@ -330,6 +331,7 @@ function imageEvidence(record: CmsRecord):
   }
   return {
     contentKey: record.contentKey,
+    contentType,
     fileName,
     md5: md5.toLowerCase(),
     mimeType: source.mimeType,
@@ -1026,7 +1028,7 @@ export async function exportWorkspace(
     });
   }
   const mediaCandidates = [...details.entries()].flatMap(([variantId, detail]) => {
-    const evidence = imageEvidence(detail);
+    const evidence = mediaEvidence(detail);
     return evidence === undefined ? [] : [{ variantId, evidence }];
   });
   const selectedExpectedCount = selection === undefined ? expectedCount : selection.apiNames.length;
@@ -1161,7 +1163,7 @@ export async function exportWorkspace(
     warnings.push({
       code: 'MEDIA_EXPORT_FAILED',
       message:
-        'Image candidate JSON was exported without media binaries because --experimental-media was not enabled.',
+        'Image/Document candidate JSON was exported without media binaries because --experimental-media was not enabled.',
       variantIds: mediaCandidates.map(({ variantId }) => variantId),
     });
     manifest.completeness = 'partial';
@@ -1350,6 +1352,7 @@ export async function exportWorkspace(
             new URL(evidence.url, options.experimentalMedia.instanceUrl),
             {
               accessToken: options.experimentalMedia.accessToken,
+              contentType: evidence.contentType,
               expectedMd5: evidence.md5,
               expectedMimeType: evidence.mimeType,
               expectedSize: evidence.size,
@@ -1363,9 +1366,9 @@ export async function exportWorkspace(
             throw new TypeError('Experimental media total byte accounting exceeded the cap');
           }
           totalBytes += downloaded.bytes;
-          const current = imageEvidence(await getVariant(connection, variantId, options));
+          const current = mediaEvidence(await getVariant(connection, variantId, options));
           if (current === undefined || JSON.stringify(current) !== JSON.stringify(evidence)) {
-            throw new TypeError('Experimental image authoring metadata changed during export');
+            throw new TypeError('Experimental media authoring metadata changed during export');
           }
           manifest.media!.push({
             variantId,
@@ -1391,7 +1394,7 @@ export async function exportWorkspace(
           await unlink(path.join(temporary, mediaPath)).catch(() => {});
           warnings.push({
             code: 'MEDIA_EXPORT_FAILED',
-            message: `Experimental image export failed for ${variantId}: ${error instanceof Error ? error.message : String(error)}`,
+            message: `Experimental media export failed for ${variantId}: ${error instanceof Error ? error.message : String(error)}`,
             variantIds: [variantId],
           });
           manifest.completeness = 'partial';

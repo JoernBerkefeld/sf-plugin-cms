@@ -39,6 +39,7 @@ type ExperimentalMediaFileHandle = Pick<FileHandle, 'close' | 'write'>;
 
 export type ExperimentalMediaDownloadOptions = {
   readonly accessToken: string;
+  readonly contentType?: 'sfdc_cms__image' | 'sfdc_cms__document';
   readonly expectedMd5: string;
   readonly expectedMimeType: string;
   readonly expectedSize: number;
@@ -143,6 +144,14 @@ export async function downloadExperimentalCmsMedia(
   source: URL,
   options: ExperimentalMediaDownloadOptions,
 ): Promise<ExperimentalMediaDownload> {
+  const contentType = options.contentType ?? 'sfdc_cms__image';
+  if (
+    (contentType === 'sfdc_cms__document' && options.expectedMimeType !== 'text/plain') ||
+    (contentType === 'sfdc_cms__image' && !IMAGE_SIGNATURES.has(options.expectedMimeType)) ||
+    (contentType !== 'sfdc_cms__image' && contentType !== 'sfdc_cms__document')
+  ) {
+    throw new TypeError(`Experimental media MIME type is unsupported: ${options.expectedMimeType}`);
+  }
   const instance = new URL(options.instanceUrl);
   assertSafeHttps(instance);
   if (!sameOrigin(source, instance)) {
@@ -163,7 +172,10 @@ export async function downloadExperimentalCmsMedia(
     }
     response = await fetcher(current, {
       headers: {
-        accept: 'image/*,application/octet-stream;q=0.8',
+        accept:
+          contentType === 'sfdc_cms__document'
+            ? 'text/plain'
+            : 'image/*,application/octet-stream;q=0.8',
         authorization: `Bearer ${options.accessToken}`,
       },
       redirect: 'manual',
@@ -251,7 +263,13 @@ export async function downloadExperimentalCmsMedia(
     if (actualMd5 !== options.expectedMd5.toLowerCase()) {
       throw new TypeError('Experimental media MD5 differs from the authoring URL');
     }
-    assertImageEvidence(Buffer.concat(prefix), options.expectedMimeType, fileName);
+    if (contentType === 'sfdc_cms__document') {
+      if (extension(fileName) !== 'txt') {
+        throw new TypeError('Experimental Document filename extension must be txt');
+      }
+    } else {
+      assertImageEvidence(Buffer.concat(prefix), options.expectedMimeType, fileName);
+    }
     closeAttempted = true;
     await handle.close();
     return {
