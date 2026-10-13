@@ -2,6 +2,8 @@
 
 Salesforce CLI commands for inspecting Marketing Cloud CMS resources, experimentally exporting a workspace, safely planning or applying a create-only workspace import, and performing narrowly bounded Email UPDATE, PUBLISH, UNPUBLISH, and DELETE lifecycle operations through Connect REST API calls. Email Template UPDATE and DELETE are available only through their stricter version 2 contracts. The plugin does not provide general overwrite, upsert, cross-family lifecycle mutation, or broadly destructive CMS operations.
 
+The `0.11.0` release is being prepared from the published `v0.10.1` baseline. This preparation adds narrow Audio/Video binary export and opt-in Document import while retaining the evidence limits documented below. The provider compatibility ceiling is `0.11.999` with the existing `0.10.0` floor; metadata contracts are unchanged. Release preparation is not publication or broader live-org qualification, and the installed development-tarball Document probe is not released-package qualification.
+
 ## Installation and getting started
 
 ### Prerequisites
@@ -94,7 +96,7 @@ sf cms upload images --target-org my-org --workspace-id 0ZuTARGET --file ./Logo.
 - The seven-key `sf-cms-images-upload` envelope uses contract version `1.0.0` (`--contract-version 1`). Results contain `mode`, `outcome`, distinct `target`, ordered immutable `intents` (names, media type, size, SHA-256; never bytes), `byteProof: "unavailable"`, and `reportFile`. Outcomes are `ready`, `completed`, `blocked`, `failed`, or `ownership-uncertain`; blocked/failed exit `1`, success exits `0`. Invalid local inputs are rejected before authentication where possible. Resolving a workspace and proving destination collisions requires authenticated reads even in dry-run.
 - Apply reports live at `image-upload-run.json`; a fallback failure journal may be used if the normal journal cannot persist. Failure output retains the durable report path. `ownership-uncertain` means CREATE may have succeeded: inspect that report and reconcile destination ownership before any new apply. The CLI does not expose arbitrary transport error bodies. Metadata readback is **not binary-byte proof**; downloaded bytes are not verified.
 
-The `0.10.0` release candidate includes this independent feature with controlled-transport service/command tests and packed CLI dry-run qualification, but **no live image upload has been performed**. Publication of `0.10.0` is not yet asserted. A successful dry-run does not prove that Salesforce will accept a later CREATE.
+The `0.11.0` release candidate includes this independent feature with controlled-transport service/command tests and packed CLI dry-run qualification, but **no live image upload has been performed**. Publication of `0.11.0` is not yet asserted. A successful dry-run does not prove that Salesforce will accept a later CREATE.
 
 ### `sf cms info`
 
@@ -107,7 +109,7 @@ sf cms info --contract-version 1 --json
 
 The result advertises command-result versions separately from compatible workspace-package manifest majors. It currently reports API `67.0` as both the default and sole tested version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. The strict v2 image-create profile and the bounded v1 component-create profiles remain experimental. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds and explicitly mapped prerequisites can be resolved. Installation alone does not prove org permissions or endpoint availability.
 
-The `0.10.0` release candidate exposes a read-only metadata capability registry through `sf cms info --contract-version 2 --json`; info v1 remains unchanged. Provider package qualification uses the CMS `0.10.0`–`0.10.999` line independently of registry contract `1.0.0`. The narrow Email Template `dependency-free` profile additionally applies the retained raw-HTML dependency scanner (unlike native-copy's temporary opaque-HTML bypass); Form Handler `strict-empty-root` requires the existing exact Draft envelope, empty providers, and empty root normalizer. Both profiles advertise retrieval only, not general deploy support. These interfaces are included in the `0.10.0` release candidate, not an assertion that it is already published: publish the qualified CMS provider before releasing a consumer that requires its new registry.
+The `0.11.0` release candidate exposes a read-only metadata capability registry through `sf cms info --contract-version 2 --json`; info v1 remains unchanged. Provider package compatibility accepts the CMS `0.10.0`–`0.11.999` range independently of registry contract `1.0.0`. The narrow Email Template `dependency-free` profile additionally applies the retained raw-HTML dependency scanner (unlike native-copy's temporary opaque-HTML bypass); Form Handler `strict-empty-root` requires the existing exact Draft envelope, empty providers, and empty root normalizer. Both profiles advertise retrieval only, not general deploy support. These interfaces are included in the `0.11.0` release candidate, not an assertion that it is already published: publish the qualified CMS provider before releasing a consumer that requires its new registry.
 
 The portable-export cache reuses an exact server mapping only when its source-details hash still matches; API-name or language drift triggers exact resolution and targeted refresh. The zero-mutation deploy preflight checks the age of selected org-local bindings, including mappings and package roots, separately from package integrity. Required package cycles are blocked with a closed dependency path; non-root package dependencies are currently unsupported and block operation planning.
 
@@ -215,7 +217,7 @@ sf cms export workspace --target-org my-org --all --workspace-type Marketing --o
 
 Choose either single or bulk mode:
 
-- Single mode requires exactly one of `--workspace-id <id>` or `--workspace-name <name>`. Name matching is exact but case-insensitive. Case-only or Unicode-normalization-equivalent duplicates are ambiguous. The canonical fetched workspace name is always used for the default folder, preserving its casing. Image and Document candidates are JSON-only and force an honest partial result by default. `--experimental-media` explicitly opts into the undocumented binary download transport and strict v2 media manifest; only then may Salesforce authorization follow the transport's narrowly validated redirect policy.
+- Single mode requires exactly one of `--workspace-id <id>` or `--workspace-name <name>`. Name matching is exact but case-insensitive. Case-only or Unicode-normalization-equivalent duplicates are ambiguous. The canonical fetched workspace name is always used for the default folder, preserving its casing. Image, Document, Audio, and Video candidates are JSON-only and force an honest partial result by default. `--experimental-media` explicitly opts into the undocumented binary download transport and strict v2 media manifest; only then may Salesforce authorization follow the transport's narrowly validated redirect policy.
 - Bulk mode uses `--all`, which is mutually exclusive with both single selectors. Optional `--workspace-type Marketing|Content` is valid only with `--all`; input casing is ignored and output is normalized to `Marketing` or `Content`. `--experimental-media` is incompatible with `--all`; bulk export never enables media binaries.
 
 In single mode, `--output-dir <path>` remains the exact new destination. When omitted, export writes to `./cms/<safe-canonical-workspace-name>`. In bulk mode, `--output-dir` is the parent directory and defaults to `./cms`; each workspace is written beneath it using the canonical fetched name. Safe segments preserve Unicode and case, replace path/control/Windows-invalid characters, and trim unsafe trailing dots or spaces.
@@ -307,7 +309,11 @@ Historical native-copy evidence includes local compiled public-command execution
 
 #### CMS images (`--image-map`)
 
-Experimental single-workspace binary **export only** also admits `sfdc_cms__document` with exact source/response MIME `text/plain` and a `.txt` filename. This narrow Document admission is backed by one API 67.0 Draft readback with exact downloaded-byte verification; it does not qualify other Document MIME types, Document import/create, or bulk media export. It uses the existing byte caps, approved-host Bearer redirect policy, size/hash checks, and immediate source-family/metadata revalidation. Without `--experimental-media`, Document JSON is retained with a media warning and partial completeness; unsupported Document MIME types fail closed without a binary descriptor.
+Experimental single-workspace binary **export only** admits `sfdc_cms__video` only with exact source/response MIME `video/mp4`, a `.mp4` filename, and byte-exact `ftyp`/`isom` evidence at offsets 4/8. One API 67.0 unpublished Draft probe qualified this narrow combination with exact 1,545-byte, MD5, and SHA-256 readback; the owned H.264 fixture also decoded successfully. This is a signature gate, not a full MP4 parser or a claim that every codec, MP4 brand, or Video format is supported. Other brands and MIME types are not admitted. Video preserves the existing redirect policy, byte caps, integrity checks, and immediate source-family/metadata reread. Without opt-in, Video remains JSON-only with partial completeness; unsupported media fails closed without a binary descriptor. This is not Video import/create or restore support.
+
+Experimental single-workspace binary **export only** admits `sfdc_cms__audio` only with exact source/response MIME `audio/x-wav`, a `.wav` filename, and RIFF/WAVE signature evidence. One API 67.0 unpublished Draft probe qualified this pair with exact 844-byte, MD5, and SHA-256 verification. Salesforce normalized the submitted `audio/wav` to `audio/x-wav`; the former alias and other Audio formats are not admitted. Audio uses the unchanged redirect policy, byte caps, integrity checks, and immediate source-family/metadata reread. Without opt-in, Audio remains JSON-only with partial completeness; unsupported media fails closed without a binary descriptor. This is not Audio import/create or restore support.
+
+Experimental single-workspace binary export also admits `sfdc_cms__document` with exact source/response MIME `text/plain` and a `.txt` filename. This narrow Document export admission is backed by one API 67.0 Draft readback with exact downloaded-byte verification; it does not qualify other Document MIME types, live Document import/create, or bulk media export. The separately opted-in bounded Document import profile and its limited live qualification are described below. It uses the existing byte caps, approved-host Bearer redirect policy, size/hash checks, and immediate source-family/metadata revalidation. Without `--experimental-media`, Document JSON is retained with a media warning and partial completeness; unsupported Document MIME types fail closed without a binary descriptor.
 
 Image transfer is an experimental single-workspace workflow built on strict workspace package v2. Export must use `--experimental-media`, which downloads the selected image binaries and records an exact bijection between each image variant, its media descriptor, and its packaged file. Import requires `--contract-version 2` and a nonempty `--image-map` JSON array. One row imports one image; multiple rows import many images sequentially in their deterministic typed-source order.
 
@@ -338,6 +344,21 @@ Every row selects exactly one integrity-verified `cms/image` item by exact API n
 Dry-run validates the complete v2 package, verifies media bytes and hashes, resolves the exact destination workspace, and checks every selected destination identity before reporting the plan. Apply repeats destination checks immediately before each sequential multipart CREATE, records a pending operation before transport, and verifies returned identity, workspace, type, Draft state, authoring metadata, and canonical variant readback. Binary byte proof is reported separately because the authoring readback may not expose original bytes. Multipart filenames are normalized to the declared GIF, JPEG, PNG, or WebP MIME type; missing extensions are added and mismatches are rejected.
 
 Image import is create-only. It has no update fallback, overwrite, publication, rollback, cleanup, or automatic retry. A transport or report-persistence ambiguity leaves ownership uncertain and must be reconciled from `workspace-import-run.json` before any new attempt.
+
+#### Bounded Document import (`--document-map`)
+
+`--document-map <json-file>` explicitly selects exactly one `cms/document` by exact source API name from an integrity-verified strict v2 experimental-media export. Only native `sfdc_cms__document` file evidence with exact `text/plain`, an ASCII-only filename with a final lowercase `.txt` extension, and matching source variant, workspace, status, modified time, filename/version URL, SHA-256, MD5, and size is admitted (10 MiB cap). Unsupported MIME types, external references, unresolved dependencies, and other media families remain rejected; the default and Image import paths are unchanged.
+
+The one-row map has the same four explicit identity-strategy fields as Image, but selects `"source": { "family": "cms", "type": "document", "apiName": "SourceDocument" }`. Optional exact source bindings are title, workspaceId, language, serverId, and version (the managed content version ID). `apiName` and `title` require `preserve` or `fresh`; `contentKey` and `urlName` also permit `generated`. Submitted keys and URL names retain the strict Image validation rules above. For example, use fresh API/title/URL values and a generated content key; no old native file reference is submitted.
+
+```sh
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --json
+sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --apply --report-dir ./cms-document-report --json
+```
+
+Dry-run performs source-byte and exact destination collision checks without CREATE; byte proof remains unavailable. Apply requires a new report directory outside the source package, persists a pending intent and exact multipart request hash before one no-retry CREATE, and immediately rechecks destination and source evidence. Success requires independent exact parent/variant/key/workspace/native Document identity and unpublished Draft readback, followed by created-variant-bound downloaded bytes equal to the submitted bytes, SHA-256, MD5, and size. It returns the existing major-2 result contract with `byteProof: passed`, not a widened definition or results contract. Any attempted CREATE failure or incomplete readback remains ownership-uncertain; reconcile the retained journal before another apply. There is no overwrite, update, delete, publication, activation, rollback, or automatic retry.
+
+An isolated installed development tarball qualified exactly one same-source-org CREATE-only import of a 94-byte native `sfdc_cms__document` `text/plain` `.txt` file as an unpublished Draft. Independent readback verified exact metadata, SHA-256, MD5, size, and downloaded bytes against the submitted export. This is not cross-org transfer, full workspace restoration, released-package qualification, or evidence for other Document formats. Filenames must be ASCII-only; Unicode title and content are allowed. `--document-map` is opt-in, requires explicit `--contract-version 2`, and is mutually exclusive with `--image-map`, all other profile maps, `--editable-dir`, and `--definition-dir`; it does not enable broader media families.
 
 #### Bounded email-fragment copies (`--email-fragment-map`)
 
@@ -673,7 +694,7 @@ Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fr
 
 #### Flat portable source definitions (`--definition-dir`)
 
-The `0.10.0` release candidate includes this additive **source mode with bounded B1 JSON editing**, using an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, or broader live-org qualification. The bounded immutable Brand SOURCE path is live-qualified for one root/default-language Draft CREATE. Inclusion in the release candidate does not establish publication or that an installed package contains this mode.
+The `0.11.0` release candidate includes this additive **source mode with bounded B1 JSON editing**, using an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, or broader live-org qualification. The bounded immutable Brand SOURCE path is live-qualified for one root/default-language Draft CREATE. Inclusion in the release candidate does not establish publication or that an installed package contains this mode.
 
 Email and Email Template support qualified export, bounded existing JSON string-leaf plus HTML editing, dry-run planning, and create-only apply. Brand supports inline definition export and immutable baseline-bound loading, dry-run, and create-only apply through the narrow source-only canonical inventory profile described below. Brand definitions cannot be semantically edited; the fresh destination identity belongs to the explicit Brand map. Brand SOURCE additionally has bounded live qualification for one immutable root/default-language Draft CREATE; this does not qualify broader source-mode behavior. Image source definitions remain unsupported because lossless native-media binding is unqualified. The separately committed `sf cms upload images` command and existing image-package mode do not qualify Image source definitions. Other families are unsupported in this mode.
 
@@ -735,7 +756,7 @@ Both dry-run and apply require explicit `--source-org`, resolved and authenticat
 
 CREATE is root-only and exact destination-default-language only in a canonical Marketing workspace. Target collision inventory is exhaustive across content families, validates each page's `count` against that page's item length (not a global total), rejects duplicate/missing/contradictory identity evidence, and terminates on the bounded short/empty page rather than trusting `nextPageUri`. Target API-name/title/URL absence is repeated immediately before CREATE. Apply durably records ordered intents and source-refresh/hash evidence, creates sequentially without retry, omits `contentKey` for server generation, and requires independent Draft/unpublished content-key and variant readback. Ownership ambiguity stops later writes and requires read-only journal reconciliation. No UPDATE, publish, workspace-default Brand assignment, dependent-content mutation, rollback, or resume is added.
 
-Controlled service/command and packed CLI tests qualify the `0.10.0` release candidate. **Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.** A fresh packed run completed export, dry-run and one non-retried CREATE, with independent Draft/unpublished parent and variant readback, one canonical sibling, completed journal with final source-refresh proof, unchanged baseline/definition bytes and four unchanged source snapshots. The native body matched the submitted body and original source except the explicit map-owned embedded title replacement. This qualifies only that bounded source path, not full B or the installed published package; historical generic Brand CREATE is separate evidence. Image replacement, folder hierarchy/non-root placement, non-default language, and full B remain open.
+Controlled service/command and packed CLI tests qualify the `0.11.0` release candidate. **Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.** A fresh packed run completed export, dry-run and one non-retried CREATE, with independent Draft/unpublished parent and variant readback, one canonical sibling, completed journal with final source-refresh proof, unchanged baseline/definition bytes and four unchanged source snapshots. The native body matched the submitted body and original source except the explicit map-owned embedded title replacement. This qualifies only that bounded source path, not full B or the installed published package; historical generic Brand CREATE is separate evidence. Image replacement, folder hierarchy/non-root placement, non-default language, and full B remain open.
 
 ### `sf cms publish content`
 
@@ -859,13 +880,13 @@ sf cms get content --help
 
 ### Integration boundary and ownership
 
-The supported v0.10.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported v0.11.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
 
 1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
 2. Run bulk export or workspace import with `--contract-version 1 --json`.
 3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.10.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.10.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.11.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.11.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
 
 ### Authoritative envelope
 
@@ -878,14 +899,14 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "status": "success",
   "metadata": {
     "operation": "<cms.info|workspace.export.bulk|workspace.import>",
-    "plugin": { "name": "sf-plugin-cms", "version": "0.10.0" },
+    "plugin": { "name": "sf-plugin-cms", "version": "0.11.0" },
     "apiVersion": "67.0"
   },
   "diagnostics": { "warnings": [], "errors": [] },
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "<org-id-or-offline>",
-    "pluginVersion": "0.10.0",
+    "pluginVersion": "0.11.0",
     "command": "sf cms <operation>",
     "generatedAt": "<ISO-8601>"
   },
@@ -902,7 +923,7 @@ The `--contract-version <major>` flag selects the command envelope/result major 
 `sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
 
 - `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.10.0 does not provide general relationship discovery or traversal.
+- `workspace.export.dependency-closure` — `unavailable`; v0.11.0 does not provide general relationship discovery or traversal.
 - `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
 - `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
 - `content.delete.email` — `experimental`, contract `sf-cms-content-delete@1`; public/live-verified for one exact run-owned single-variant Draft Email.
@@ -935,7 +956,7 @@ The correlation table exists only at `result.externalReferenceCorrelations`. Eac
 
 ### Package layout and integrity
 
-A workspace export package contains `manifest.json` plus regular item files. Packages without Image or Document candidates use manifest v1. Paired landing-page exports can additionally contain deterministic `landingPageTemplatePairs` rows that bind each selected page item to a title-resolved canonical template item while retaining the page's generic unsupported relationship descriptor. Image and Document candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful Image and admitted `text/plain` Document downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
+A workspace export package contains `manifest.json` plus regular item files. Packages without Image, Document, Audio, or Video candidates use manifest v1. Paired landing-page exports can additionally contain deterministic `landingPageTemplatePairs` rows that bind each selected page item to a title-resolved canonical template item while retaining the page's generic unsupported relationship descriptor. Image, Document, Audio, and Video candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful Image, admitted `text/plain` Document, admitted `audio/x-wav` Audio, and admitted `video/mp4` Video downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
 
 Each item records exactly `{ path, sha256, kind, referenceId? }`, with lowercase SHA-256 calculated over the finalized exact file bytes. Import independently validates the manifest major, enumerates the package, rejects missing, substituted, duplicate-path, or unlisted files, and verifies every item hash. Only after the listed set and hashes are verified does it hash the exact `manifest.json` bytes and use that hash as package identity.
 

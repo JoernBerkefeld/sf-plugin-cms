@@ -209,6 +209,252 @@ describe('experimental CMS media transport', () => {
     }
   });
 
+  it('admits only explicit Audio audio/x-wav and verifies exact WAV bytes', async () => {
+    const bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    const source = new URL(
+      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=audio.wav&version=1`,
+    );
+    const fetcher = sinon
+      .stub()
+      .resolves(new Response(bytes, { headers: { 'content-type': 'audio/x-wav' } }));
+    const base = {
+      accessToken: 'synthetic-token',
+      expectedMd5: md5,
+      expectedMimeType: 'audio/x-wav',
+      expectedSize: bytes.length,
+      fetch: fetcher,
+      instanceUrl: 'https://tenant.my.salesforce.com',
+      outputFile: path.join(root, 'audio.wav'),
+    };
+    await expectRejected(downloadExperimentalCmsMedia(source, base), 'unsupported');
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__document' }),
+      'unsupported',
+    );
+    for (const mimeType of ['audio/wav', 'audio/mpeg', 'image/png']) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, {
+          ...base,
+          contentType: 'sfdc_cms__audio',
+          expectedMimeType: mimeType,
+        }),
+        'unsupported',
+      );
+    }
+    expect(fetcher.notCalled).to.equal(true);
+    const result = await downloadExperimentalCmsMedia(source, {
+      ...base,
+      contentType: 'sfdc_cms__audio',
+    });
+    expect(result).to.include({
+      bytes: bytes.length,
+      mimeType: 'audio/x-wav',
+      md5,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
+    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('audio/x-wav');
+  });
+
+  it('rejects Audio extension, signature, MIME, integrity, cap and redirect failures', async () => {
+    for (const failure of [
+      'extension',
+      'missing-extension',
+      'signature',
+      'high-bit-signature',
+      'wave',
+      'mime',
+      'size',
+      'md5',
+      'length',
+      'cap',
+      'redirect',
+    ]) {
+      const bytes =
+        failure === 'high-bit-signature'
+          ? Buffer.from('d2c9c6c604000000d7c1d6c5', 'hex')
+          : Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
+      if (failure === 'signature') bytes.write('FAKE', 0);
+      if (failure === 'wave') bytes.write('WEBP', 8);
+      const md5 = createHash('md5').update(bytes).digest('hex');
+      let fileName = 'audio.wav';
+      if (failure === 'extension') fileName = 'audio.mp3';
+      if (failure === 'missing-extension') fileName = 'audio';
+      const outputFile = path.join(root, `${failure}.wav`);
+      await expectRejected(
+        downloadExperimentalCmsMedia(
+          new URL(
+            `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=${fileName}&version=1`,
+          ),
+          {
+            accessToken: 'synthetic-token',
+            contentType: 'sfdc_cms__audio',
+            expectedMd5: failure === 'md5' ? '00000000000000000000000000000000' : md5,
+            expectedMimeType: 'audio/x-wav',
+            expectedSize: bytes.length + Number(failure === 'size'),
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            outputFile,
+            maxBytes: failure === 'cap' ? bytes.length - 1 : bytes.length + 1,
+            fetch: async () =>
+              failure === 'redirect'
+                ? new Response(null, {
+                    status: 301,
+                    headers: { location: 'https://evil.test/media' },
+                  })
+                : new Response(bytes, {
+                    headers: {
+                      'content-type': failure === 'mime' ? 'audio/wav' : 'audio/x-wav',
+                      'content-length': String(bytes.length + Number(failure === 'length')),
+                    },
+                  }),
+          },
+        ),
+        {
+          extension: 'extension must be wav',
+          'missing-extension': 'extension must be wav',
+          signature: 'WAV signature',
+          'high-bit-signature': 'WAV signature',
+          wave: 'WAV signature',
+          mime: 'MIME type changed',
+          size: 'authoring metadata',
+          md5: 'MD5 differs',
+          length: 'Content-Length',
+          cap: 'exceeds the cap',
+          redirect: 'outside the approved',
+        }[failure]!,
+      );
+      await lstat(outputFile).then(
+        () => expect.fail('Rejected Audio must not leave a binary file'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
+  });
+
+  it('admits only explicit Video video/mp4 with byte-exact isom evidence', async () => {
+    const bytes = Buffer.from('000000206674797069736f6d', 'hex');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    const source = new URL(
+      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=video.mp4&version=1`,
+    );
+    const fetcher = sinon
+      .stub()
+      .resolves(new Response(bytes, { headers: { 'content-type': 'video/mp4' } }));
+    const base = {
+      accessToken: 'synthetic-token',
+      expectedMd5: md5,
+      expectedMimeType: 'video/mp4',
+      expectedSize: bytes.length,
+      fetch: fetcher,
+      instanceUrl: 'https://tenant.my.salesforce.com',
+      outputFile: path.join(root, 'video.mp4'),
+    };
+    for (const contentType of [undefined, 'sfdc_cms__document', 'sfdc_cms__audio'] as const) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, { ...base, contentType }),
+        'unsupported',
+      );
+    }
+    for (const expectedMimeType of ['video/webm', 'video/quicktime', 'application/octet-stream']) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, {
+          ...base,
+          contentType: 'sfdc_cms__video',
+          expectedMimeType,
+        }),
+        'unsupported',
+      );
+    }
+    expect(fetcher.notCalled).to.equal(true);
+    const result = await downloadExperimentalCmsMedia(source, {
+      ...base,
+      contentType: 'sfdc_cms__video',
+    });
+    expect(result).to.include({
+      bytes: bytes.length,
+      mimeType: 'video/mp4',
+      md5,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
+    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('video/mp4');
+  });
+
+  it('rejects Video extension, byte-exact signature and existing security failures', async () => {
+    for (const failure of [
+      'extension',
+      'missing-extension',
+      'signature',
+      'high-bit-signature',
+      'brand',
+      'truncated',
+      'mime',
+      'size',
+      'md5',
+      'length',
+      'cap',
+      'redirect',
+    ]) {
+      let bytes = Buffer.from('000000206674797069736f6d', 'hex');
+      if (failure === 'signature') bytes.write('fake', 4);
+      if (failure === 'high-bit-signature') bytes = Buffer.from('00000020e6f4f9f0e9f3efed', 'hex');
+      if (failure === 'brand') bytes.write('mp42', 8);
+      if (failure === 'truncated') bytes = bytes.subarray(0, 11);
+      const md5 = createHash('md5').update(bytes).digest('hex');
+      let fileName = 'video.mp4';
+      if (failure === 'extension') fileName = 'video.mov';
+      if (failure === 'missing-extension') fileName = 'video';
+      const outputFile = path.join(root, `video-${failure}.mp4`);
+      await expectRejected(
+        downloadExperimentalCmsMedia(
+          new URL(
+            `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=${fileName}&version=1`,
+          ),
+          {
+            accessToken: 'synthetic-token',
+            contentType: 'sfdc_cms__video',
+            expectedMd5: failure === 'md5' ? '00000000000000000000000000000000' : md5,
+            expectedMimeType: 'video/mp4',
+            expectedSize: bytes.length + Number(failure === 'size'),
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            outputFile,
+            maxBytes: failure === 'cap' ? bytes.length - 1 : bytes.length + 1,
+            fetch: async () =>
+              failure === 'redirect'
+                ? new Response(null, {
+                    status: 301,
+                    headers: { location: 'https://evil.test/media' },
+                  })
+                : new Response(bytes, {
+                    headers: {
+                      'content-type': failure === 'mime' ? 'video/webm' : 'video/mp4',
+                      'content-length': String(bytes.length + Number(failure === 'length')),
+                    },
+                  }),
+          },
+        ),
+        {
+          extension: 'extension must be mp4',
+          'missing-extension': 'extension must be mp4',
+          signature: 'isom signature',
+          'high-bit-signature': 'isom signature',
+          brand: 'isom signature',
+          truncated: 'isom signature',
+          mime: 'MIME type changed',
+          size: 'authoring metadata',
+          md5: 'MD5 differs',
+          length: 'Content-Length',
+          cap: 'exceeds the cap',
+          redirect: 'outside the approved',
+        }[failure]!,
+      );
+      await lstat(outputFile).then(
+        () => expect.fail('Rejected Video must not leave a binary file'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
+  });
+
   it('preserves Image signature guards even with matching byte/hash metadata', async () => {
     const bytes = Buffer.from('This is not a PNG image');
     const md5 = createHash('md5').update(bytes).digest('hex');

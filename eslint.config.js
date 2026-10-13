@@ -22,6 +22,7 @@ export default tseslint.config(
     },
     rules: {
       'jsdoc/require-jsdoc': 'off',
+      'unicorn/no-asterisk-prefix-in-documentation-comments': 'off',
       'unicorn/filename-case': 'off',
       'unicorn/no-null': 'off',
       'unicorn/prevent-abbreviations': 'off',

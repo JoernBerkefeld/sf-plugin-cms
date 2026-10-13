@@ -5,7 +5,9 @@ import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import {
+  buildDocumentCreateMultipart,
   buildImageCreateMultipart,
+  createDocumentContent,
   createImageContent,
   MAX_IMAGE_BYTES,
 } from '../../src/transport/multipart-image-create.js';
@@ -28,6 +30,147 @@ const input = {
 function constantBoundary(value: string): () => string {
   return () => value;
 }
+
+describe('multipart Document create transport', () => {
+  it('matches the qualified native text/plain multipart body byte for byte', () => {
+    const backing = Buffer.from('discard\nDocument bytes\r\n\u00E4\nignore', 'utf8');
+    const bytes = backing.subarray(8, -6);
+    const result = buildDocumentCreateMultipart(input, 'owned.txt', bytes, {
+      boundaryFactory: constantBoundary('safe'),
+    });
+    const nativeInput = {
+      ...input,
+      contentType: 'sfdc_cms__document',
+      contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
+    };
+    const expected = Buffer.concat([
+      Buffer.from(
+        '--safe\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(nativeInput) +
+          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="owned.txt"\r\n' +
+          'Content-Type: text/plain\r\n\r\n',
+      ),
+      bytes,
+      Buffer.from('\r\n--safe--\r\n'),
+    ]);
+    expect(result.input).to.deep.equal(nativeInput);
+    expect(result.body.equals(expected)).to.equal(true);
+  });
+
+  it('rejects unqualified extensions, injection and overrides before any request', async () => {
+    const request = sinon.stub();
+    for (const filename of [
+      'owned.pdf',
+      'owned',
+      'owned.TXT',
+      'owned.txt.exe',
+      '../owned.txt',
+      'a".txt',
+    ]) {
+      try {
+        await createDocumentContent({ request }, input, filename, Buffer.from('document'));
+        expect.fail('expected invalid Document filename');
+      } catch (error) {
+        expect(error).to.be.instanceOf(CmsRequestError);
+      }
+    }
+    for (const extra of [
+      { contentType: 'sfdc_cms__image' },
+      { mimeType: 'text/html' },
+      { contentBody: {} },
+    ]) {
+      expect(() =>
+        buildDocumentCreateMultipart({ ...input, ...extra }, 'owned.txt', Buffer.from('document')),
+      ).to.throw(CmsRequestError, 'Unsupported image create field');
+    }
+    expect(request.called).to.equal(false);
+  });
+
+  it('rejects Unicode low-byte delimiters and filename corruption before framing or CREATE', async () => {
+    const request = sinon.stub();
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const filename of [
+      'owned\u010D.txt',
+      'owned\u010A.txt',
+      'owned\u0122.txt',
+      'owned\u010D\u010AInjected.txt',
+      'caf\u00E9.txt',
+      '\u6587\u4EF6.txt',
+      '\u{1F600}.txt',
+    ]) {
+      expect(() =>
+        buildDocumentCreateMultipart(input, filename, Buffer.from('document'), { boundaryFactory }),
+      ).to.throw(CmsRequestError, 'Document filename must contain only ASCII characters');
+      try {
+        await createDocumentContent({ request }, input, filename, Buffer.from('document'), {
+          boundaryFactory,
+        });
+        expect.fail('expected non-ASCII Document filename rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(CmsRequestError);
+        expect((error as Error).message).to.equal(
+          'Document filename must contain only ASCII characters',
+        );
+      }
+    }
+    expect(boundaryFactory.called).to.equal(false);
+    expect(request.called).to.equal(false);
+  });
+
+  it('preserves caps and bounded boundary collision rejection', () => {
+    for (const bytes of [Buffer.alloc(0), Buffer.alloc(MAX_IMAGE_BYTES + 1)]) {
+      expect(() => buildDocumentCreateMultipart(input, 'owned.txt', bytes)).to.throw(
+        CmsRequestError,
+      );
+    }
+    expect(() =>
+      buildDocumentCreateMultipart(input, 'owned.txt', Buffer.from('collision'), {
+        boundaryFactory: constantBoundary('collision'),
+        maxBoundaryAttempts: 2,
+      }),
+    ).to.throw(CmsRequestError, 'Unable to generate collision-free multipart boundary');
+  });
+
+  it('sends the exact built Document request once with retry disabled', async () => {
+    const bytes = Buffer.from('owned document\n');
+    const options = { boundaryFactory: constantBoundary('safe'), timeoutMs: 1234 };
+    const expected = buildDocumentCreateMultipart(input, 'owned.txt', bytes, options);
+    const binding = {
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    };
+    const request = sinon.stub().returns(fakeRequest(Promise.resolve(binding)));
+    expect(
+      await createDocumentContent({ request }, input, 'owned.txt', bytes, options),
+    ).to.deep.equal(binding);
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0].body.equals(expected.body)).to.equal(true);
+    expect(request.firstCall.args[0].headers).to.deep.equal({
+      'content-length': String(expected.body.length),
+      'content-type': 'multipart/form-data; boundary=safe',
+    });
+    expect(request.firstCall.args[1]).to.deep.equal({ retry: { maxRetries: 0 }, timeout: 1234 });
+  });
+
+  it('does not retry an ambiguous CREATE or malformed successful binding', async () => {
+    for (const promise of [
+      Promise.reject(new Error('ambiguous socket failure')),
+      Promise.resolve({ contentKey: 'key' }),
+    ]) {
+      const request = sinon.stub().returns(fakeRequest(promise));
+      try {
+        await createDocumentContent({ request }, input, 'owned.txt', Buffer.from('document'));
+        expect.fail('expected uncertain CREATE');
+      } catch (error) {
+        expect(error).to.be.instanceOf(CmsRequestError);
+      }
+      expect(request.calledOnce).to.equal(true);
+      expect(request.firstCall.args[1].retry).to.deep.equal({ maxRetries: 0 });
+    }
+  });
+});
 
 describe('multipart image create transport', () => {
   it('builds exactly two ordered parts with exact headers and CRLF framing', () => {

@@ -39,7 +39,8 @@ type ExperimentalMediaFileHandle = Pick<FileHandle, 'close' | 'write'>;
 
 export type ExperimentalMediaDownloadOptions = {
   readonly accessToken: string;
-  readonly contentType?: 'sfdc_cms__image' | 'sfdc_cms__document';
+  readonly contentType?:
+    'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio' | 'sfdc_cms__video';
   readonly expectedMd5: string;
   readonly expectedMimeType: string;
   readonly expectedSize: number;
@@ -147,8 +148,13 @@ export async function downloadExperimentalCmsMedia(
   const contentType = options.contentType ?? 'sfdc_cms__image';
   if (
     (contentType === 'sfdc_cms__document' && options.expectedMimeType !== 'text/plain') ||
+    (contentType === 'sfdc_cms__audio' && options.expectedMimeType !== 'audio/x-wav') ||
+    (contentType === 'sfdc_cms__video' && options.expectedMimeType !== 'video/mp4') ||
     (contentType === 'sfdc_cms__image' && !IMAGE_SIGNATURES.has(options.expectedMimeType)) ||
-    (contentType !== 'sfdc_cms__image' && contentType !== 'sfdc_cms__document')
+    (contentType !== 'sfdc_cms__image' &&
+      contentType !== 'sfdc_cms__document' &&
+      contentType !== 'sfdc_cms__audio' &&
+      contentType !== 'sfdc_cms__video')
   ) {
     throw new TypeError(`Experimental media MIME type is unsupported: ${options.expectedMimeType}`);
   }
@@ -170,12 +176,13 @@ export async function downloadExperimentalCmsMedia(
         'Experimental media redirect target is outside the approved Salesforce class',
       );
     }
+    const accept =
+      contentType === 'sfdc_cms__image'
+        ? 'image/*,application/octet-stream;q=0.8'
+        : options.expectedMimeType;
     response = await fetcher(current, {
       headers: {
-        accept:
-          contentType === 'sfdc_cms__document'
-            ? 'text/plain'
-            : 'image/*,application/octet-stream;q=0.8',
+        accept,
         authorization: `Bearer ${options.accessToken}`,
       },
       redirect: 'manual',
@@ -263,12 +270,41 @@ export async function downloadExperimentalCmsMedia(
     if (actualMd5 !== options.expectedMd5.toLowerCase()) {
       throw new TypeError('Experimental media MD5 differs from the authoring URL');
     }
-    if (contentType === 'sfdc_cms__document') {
-      if (extension(fileName) !== 'txt') {
-        throw new TypeError('Experimental Document filename extension must be txt');
+    switch (contentType) {
+      case 'sfdc_cms__document': {
+        if (extension(fileName) !== 'txt') {
+          throw new TypeError('Experimental Document filename extension must be txt');
+        }
+
+        break;
       }
-    } else {
-      assertImageEvidence(Buffer.concat(prefix), options.expectedMimeType, fileName);
+      case 'sfdc_cms__audio': {
+        if (extension(fileName) !== 'wav') {
+          throw new TypeError('Experimental Audio filename extension must be wav');
+        }
+        const signature = Buffer.concat(prefix);
+        if (
+          !signature.subarray(0, 4).equals(Buffer.from('RIFF')) ||
+          !signature.subarray(8, 12).equals(Buffer.from('WAVE'))
+        ) {
+          throw new TypeError('Experimental Audio WAV signature is invalid');
+        }
+
+        break;
+      }
+      case 'sfdc_cms__video': {
+        if (extension(fileName) !== 'mp4') {
+          throw new TypeError('Experimental Video filename extension must be mp4');
+        }
+        if (!Buffer.concat(prefix).subarray(4, 12).equals(Buffer.from('ftypisom'))) {
+          throw new TypeError('Experimental Video MP4 isom signature is invalid');
+        }
+
+        break;
+      }
+      default: {
+        assertImageEvidence(Buffer.concat(prefix), options.expectedMimeType, fileName);
+      }
     }
     closeAttempted = true;
     await handle.close();

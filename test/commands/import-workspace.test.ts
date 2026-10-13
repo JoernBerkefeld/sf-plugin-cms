@@ -1,3 +1,4 @@
+import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
@@ -373,6 +374,64 @@ async function writeImageSource(root: string): Promise<{ mapFile: string; source
   return { mapFile, source };
 }
 
+async function writeDocumentSource(root: string) {
+  const { source, mapFile } = await writeImageSource(root);
+  const bytes = Buffer.from('Command Document fixture.\n');
+  const md5 = createHash('md5').update(bytes).digest('hex');
+  const itemFile = path.join(source, 'items/source-image-variant.json');
+  const item = JSON.parse(await readFile(itemFile, 'utf8')) as Record<string, unknown>;
+  Object.assign(item, {
+    contentType: 'sfdc_cms__document',
+    managedContentId: 'source-parent',
+    managedContentVariantId: 'source-image-variant',
+    managedContentVersionId: 'source-version',
+    urlName: 'source-url',
+    status: { status: 'Draft' },
+    isPublished: false,
+    lastModifiedDate: '2026-01-01T00:00:00.000Z',
+    contentBody: {
+      'sfdc_cms:media': {
+        source: { type: 'file', ref: 'native-ref', size: bytes.length, mimeType: 'text/plain' },
+        url: `/cms/media/${SOURCE_IMAGE_CONTENT_KEY}?version=1.1&fileHash=${md5}&fileName=fixture.txt`,
+      },
+    },
+  });
+  const itemBytes = Buffer.from(`${JSON.stringify(item)}\n`);
+  await writeFile(itemFile, itemBytes);
+  // Keep the existing bijective package path; only the media admission and bytes change.
+  await writeFile(path.join(source, 'media/source-image-variant.png'), bytes);
+  const manifestFile = path.join(source, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+    media: Array<Record<string, unknown>>;
+    items: Array<{ sha256: string }>;
+  };
+  Object.assign(manifest.media[0], {
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    md5,
+    bytes: bytes.length,
+    mimeType: 'text/plain',
+    fileName: 'fixture.txt',
+    sourceVersion: '1.1',
+    sourceUrl: (item.contentBody as { 'sfdc_cms:media': { url: string } })['sfdc_cms:media'].url,
+  });
+  manifest.items[0].sha256 = createHash('sha256').update(itemBytes).digest('hex');
+  manifest.items[1].sha256 = manifest.media[0].sha256 as string;
+  await writeFile(manifestFile, `${JSON.stringify(manifest)}\n`);
+  await writeFile(
+    mapFile,
+    JSON.stringify([
+      {
+        source: { family: 'cms', type: 'document', apiName: 'source_image' },
+        contentKey: { strategy: 'fresh', value: FRESH_IMAGE_CONTENT_KEY },
+        apiName: { strategy: 'fresh', value: 'fresh_document' },
+        title: { strategy: 'fresh', value: 'Fresh Document' },
+        urlName: { strategy: 'fresh', value: 'fresh-document' },
+      },
+    ]),
+  );
+  return { source, mapFile, bytes, md5, item };
+}
+
 describe('CMS import workspace command', () => {
   const $$ = new TestContext();
   const fixtures: Array<{ run: RunOwnedTemp; parent: string }> = [];
@@ -426,6 +485,7 @@ describe('CMS import workspace command', () => {
       'brand-map',
       'preference-page-map',
       'image-map',
+      'document-map',
       'editable-dir',
       'apply',
       'allow-partial',
@@ -453,6 +513,7 @@ describe('CMS import workspace command', () => {
       'brand-map',
       'preference-page-map',
       'image-map',
+      'document-map',
     ];
     const flags = ImportWorkspace.flags as Record<string, { exclusive?: string[] }>;
     for (const flag of familyFlags) {
@@ -498,7 +559,36 @@ describe('CMS import workspace command', () => {
     expect(importHelp).to.include('Never defaults to --target-org');
   });
 
-  it('distinguishes strict source admission from legacy opaque HTML in help', () => {
+  it('distinguishes strict source admission from legacy opaque HTML in help', async () => {
+    const readme = await readFile(path.resolve('README.md'), 'utf8');
+    const importHelp = await readFile(path.resolve('messages/cms.import.workspace.md'), 'utf8');
+    for (const help of [
+      readme,
+      importHelp,
+      ImportWorkspace.description,
+      ImportWorkspace.flags['document-map'].summary,
+    ]) {
+      expect(help).to.include('ASCII-only filename');
+      expect(help).to.match(/Unicode title(?: and |\/)content(?: is | are | )allowed/u);
+      expect(help).to.include('same-source-org');
+      expect(help).to.include('94-byte');
+      expect(help).to.include('isolated installed development tarball');
+      expect(help).not.to.include('live Document import qualification is pending');
+      expect(help).not.to.include('live import qualification is pending');
+      expect(help).not.to.include('live qualification pending');
+    }
+    for (const help of [readme, importHelp, ImportWorkspace.description]) {
+      expect(help).to.include('cross-org transfer');
+      expect(help).to.match(/full (?:workspace restoration|restoration)/u);
+      expect(help).to.match(/released(?:-package qualification| packages| package)/u);
+    }
+    expect(importHelp).to.include('sf-cms-workspace-import@2');
+    expect(importHelp).to.include('Profile map flags are mutually exclusive');
+    expect(importHelp).to.include('# flags.document-map.summary');
+    expect(ImportWorkspace.flags['document-map'].exclusive).to.include('image-map');
+    expect(ImportWorkspace.flags['contract-version'].summary).to.include(
+      '--image-map and --document-map require 2',
+    );
     expect(ImportWorkspace.description).to.include(
       'Legacy native-copy/editable HTML without --definition-dir',
     );
@@ -841,6 +931,165 @@ describe('CMS import workspace command', () => {
           0,
         );
         if (failure !== 'default language') expect(getOrgContext.notCalled).to.equal(true);
+      }
+    });
+  }
+
+  for (const mode of [
+    'plan',
+    'apply',
+    'ambiguous',
+    'collision',
+    'invalid-map',
+    'contract',
+    'report',
+    'default',
+  ] as const) {
+    it(`runs the explicit Document command boundary: ${mode}`, async () => {
+      const root = await createFixture('cms-command-document-');
+      const { source, mapFile, bytes, md5, item } = await writeDocumentSource(root);
+      const reportDirectory = path.join(root, 'document-report');
+      if (mode === 'invalid-map') await writeFile(mapFile, '[]');
+      const request = $$.SANDBOX.stub().callsFake(
+        ({ method, url }: { method: string; url: string }) => {
+          if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+          if (url.startsWith('/connect/cms/items/search')) {
+            if (mode === 'collision')
+              return fakeRequest({
+                items: [
+                  {
+                    id: 'existing',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  },
+                ],
+                count: 1,
+              });
+            return fakeRequest({ items: [], count: 0 });
+          }
+          if (url === '/connect/cms/contents/variants/existing')
+            return fakeRequest({
+              ...item,
+              managedContentVariantId: 'existing',
+              apiName: 'fresh_document',
+            });
+          if (url === `/connect/cms/contents/${FRESH_IMAGE_CONTENT_KEY}`) return missingRequest();
+          if (method === 'POST') {
+            if (mode === 'ambiguous')
+              return Object.assign(Promise.reject(new Error('connection lost')), {
+                stream: () => ({ destroy: () => {} }),
+              });
+            return fakeRequest({
+              contentKey: FRESH_IMAGE_CONTENT_KEY,
+              managedContentId: 'created-parent',
+              managedContentVariantId: 'created-variant',
+            });
+          }
+          if (url === '/connect/cms/contents/variants/created-variant')
+            return fakeRequest({
+              ...item,
+              apiName: 'fresh_document',
+              title: 'Fresh Document',
+              urlName: 'fresh-document',
+              managedContentId: 'created-parent',
+              managedContentVariantId: 'created-variant',
+              contentKey: FRESH_IMAGE_CONTENT_KEY,
+              contentSpace: { id: 'space' },
+              contentBody: {
+                'sfdc_cms:media': {
+                  source: {
+                    type: 'file',
+                    ref: 'created-ref',
+                    size: bytes.length,
+                    mimeType: 'text/plain',
+                  },
+                  url: `/cms/media/${FRESH_IMAGE_CONTENT_KEY}?version=1.1&fileHash=${md5}&fileName=fixture.txt`,
+                },
+              },
+            });
+          throw new Error(`Unexpected ${method} ${url}`);
+        },
+      );
+      // Capture the token-only no-refresh connection too; never contact a real org.
+      $$.SANDBOX.stub(JsforceConnection.prototype, 'request').callsFake(request);
+      const fetcher = $$.SANDBOX.stub(globalThis, 'fetch').resolves(
+        new Response(bytes, {
+          headers: { 'content-type': 'text/plain', 'content-length': String(bytes.length) },
+        }),
+      );
+      const getOrgContext = $$.SANDBOX.stub().resolves({
+        connection: {
+          request,
+          instanceUrl: 'https://example.my.salesforce.com',
+          accessToken: 'fixture-token',
+        },
+        orgId: '00D-org',
+      });
+      const log = $$.SANDBOX.stub();
+      const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
+      Object.assign(command, {
+        parse: $$.SANDBOX.stub().resolves({
+          flags: {
+            'api-version': '67.0',
+            'contract-version': mode === 'contract' || mode === 'default' ? 1 : 2,
+            'source-dir': source,
+            'workspace-id': 'space',
+            ...(mode === 'default' ? {} : { 'document-map': mapFile }),
+            ...(mode === 'apply' || mode === 'ambiguous' || mode === 'report'
+              ? { apply: true }
+              : {}),
+            ...(mode === 'apply' || mode === 'ambiguous' ? { 'report-dir': reportDirectory } : {}),
+          },
+        }),
+        getOrgContext,
+        jsonEnabled: () => false,
+        log,
+      });
+      const result = await command.run();
+      const posts = request.getCalls().filter(({ args }) => args[0].method === 'POST');
+      expect(posts, JSON.stringify(result.diagnostics)).to.have.length(
+        mode === 'apply' || mode === 'ambiguous' ? 1 : 0,
+      );
+      if (mode === 'plan' || mode === 'apply') {
+        expect(result, JSON.stringify(result.diagnostics)).to.include({
+          status: 'success',
+          contractVersion: '2.0.0',
+        });
+        const contract = result.result as {
+          status: string;
+          assets: Array<{ byteProof: string; source: { type: string } }>;
+        };
+        expect(contract.status).to.equal(mode === 'plan' ? 'planned' : 'completed');
+        expect(contract.assets[0].byteProof).to.equal(mode === 'plan' ? 'unavailable' : 'passed');
+        expect(
+          log.getCalls().some(({ args }) => String(args[0]).includes('Selected Documents: 1')),
+        ).to.equal(true);
+        if (mode === 'apply') {
+          expect(fetcher.calledOnce).to.equal(true);
+          expect(await readFile(path.join(reportDirectory, 'document-readback.txt'))).to.deep.equal(
+            bytes,
+          );
+        }
+      } else {
+        expect(result.result).to.equal(null);
+        expect(result.status).to.equal(
+          ['contract', 'report', 'invalid-map'].includes(mode) ? 'blocked' : 'failed',
+        );
+        if (mode === 'ambiguous') {
+          expect(result.diagnostics.errors[0]).to.include({
+            code: 'IMPORT_OWNERSHIP_UNCERTAIN',
+            retryable: false,
+          });
+          expect(result.diagnostics.errors[0].message).to.include('do not retry');
+          expect(
+            JSON.parse(
+              await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+            ).state,
+          ).to.equal('ownership-uncertain');
+        }
+        if (['contract', 'report', 'invalid-map'].includes(mode))
+          expect(getOrgContext.notCalled).to.equal(true);
+        expect(fetcher.notCalled).to.equal(true);
       }
     });
   }

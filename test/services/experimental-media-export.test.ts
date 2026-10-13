@@ -113,7 +113,7 @@ describe('experimental workspace media export', () => {
     expect(result.manifest.warnings.at(-1)).to.deep.equal({
       code: 'MEDIA_EXPORT_FAILED',
       message:
-        'Image/Document candidate JSON was exported without media binaries because --experimental-media was not enabled.',
+        'Image/Document/Audio/Video candidate JSON was exported without media binaries because --experimental-media was not enabled.',
       variantIds: ['variant'],
     });
     expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
@@ -206,7 +206,175 @@ describe('experimental workspace media export', () => {
     }
   });
 
-  for (const initialFamily of ['sfdc_cms__document', 'sfdc_cms__image']) {
+  it('exports exact admitted Audio bytes through the approved redirect in strict v2', async () => {
+    const bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
+    const detail = imageDetail();
+    detail.contentType = 'sfdc_cms__audio';
+    detail.contentBody['sfdc_cms:media'] = {
+      source: { mimeType: 'audio/x-wav', ref: 'synthetic-ref', size: bytes.length, type: 'file' },
+      url: `/cms/media/media-key?fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=audio.wav&version=1.1`,
+    };
+    const request = mediaRequest(detail);
+    const fetcher = sinon.stub();
+    fetcher.onFirstCall().resolves(
+      new Response(null, {
+        status: 301,
+        headers: {
+          location: `https://tenant.file.force.com${detail.contentBody['sfdc_cms:media'].url}`,
+        },
+      }),
+    );
+    fetcher.onSecondCall().resolves(
+      new Response(bytes, {
+        headers: { 'content-type': 'audio/x-wav', 'content-length': String(bytes.length) },
+      }),
+    );
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'audio'), {
+      experimentalMedia: {
+        accessToken: 'synthetic-token',
+        fetch: fetcher,
+        instanceUrl: 'https://tenant.my.salesforce.com',
+      },
+    });
+    expect(result.manifest).to.include({ schemaVersion: 2, contractVersion: '2.0.0' });
+    expect(result.manifest.media).to.have.length(1);
+    expect(result.manifest.media![0]).to.include({
+      bytes: bytes.length,
+      mimeType: 'audio/x-wav',
+      fileName: 'audio.wav',
+      md5: createHash('md5').update(bytes).digest('hex'),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(
+      await readFile(path.join(result.destination, result.manifest.media![0].path)),
+    ).to.deep.equal(bytes);
+    expect(result.manifest.items.filter(({ kind }) => kind === 'cms.media')).to.have.length(1);
+    expect(result.manifest.warnings.map(({ code }) => code)).not.to.include('MEDIA_EXPORT_FAILED');
+    expect(request.callCount).to.equal(3);
+    expect(fetcher.callCount).to.equal(2);
+  });
+
+  it('retains Audio JSON without opt-in and rejects unqualified Audio MIME aliases', async () => {
+    for (const mimeType of ['audio/x-wav', 'audio/wav', 'audio/mpeg']) {
+      const detail = imageDetail();
+      detail.contentType = 'sfdc_cms__audio';
+      detail.contentBody['sfdc_cms:media'].source.mimeType = mimeType;
+      const fetcher = sinon.stub(globalThis, 'fetch');
+      const result = await exportWorkspace(
+        { request: mediaRequest(detail) },
+        'space',
+        path.join(root, mimeType.split('/')[1]),
+        {
+          ...(mimeType === 'audio/x-wav'
+            ? {}
+            : {
+                experimentalMedia: {
+                  accessToken: 'synthetic-token',
+                  instanceUrl: 'https://tenant.my.salesforce.com',
+                },
+              }),
+        },
+      );
+      expect(result.manifest).to.include({ completeness: 'partial', schemaVersion: 2 });
+      expect(result.manifest.media).to.deep.equal([]);
+      expect(result.manifest.warnings.at(-1)?.message).to.include(
+        mimeType === 'audio/x-wav' ? 'not enabled' : 'unsupported',
+      );
+      expect(fetcher.notCalled).to.equal(true);
+      expect(
+        JSON.parse(await readFile(path.join(result.destination, 'items/variant.json'), 'utf8')),
+      ).to.have.property('contentType', 'sfdc_cms__audio');
+      fetcher.restore();
+    }
+  });
+
+  it('exports exact qualified Video bytes through the approved redirect in strict v2', async () => {
+    const bytes = Buffer.from('000000206674797069736f6d', 'hex');
+    const detail = imageDetail();
+    detail.contentType = 'sfdc_cms__video';
+    detail.contentBody['sfdc_cms:media'] = {
+      source: { mimeType: 'video/mp4', ref: 'synthetic-ref', size: bytes.length, type: 'file' },
+      url: `/cms/media/media-key?fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=video.mp4&version=1.1`,
+    };
+    const request = mediaRequest(detail);
+    const fetcher = sinon.stub();
+    fetcher.onFirstCall().resolves(
+      new Response(null, {
+        status: 301,
+        headers: { location: 'https://tenant.file.force.com/media/video' },
+      }),
+    );
+    fetcher.onSecondCall().resolves(
+      new Response(bytes, {
+        headers: { 'content-type': 'video/mp4', 'content-length': String(bytes.length) },
+      }),
+    );
+    const result = await exportWorkspace({ request }, 'space', path.join(root, 'video'), {
+      experimentalMedia: {
+        accessToken: 'synthetic-token',
+        fetch: fetcher,
+        instanceUrl: 'https://tenant.my.salesforce.com',
+      },
+    });
+    expect(result.manifest).to.include({ schemaVersion: 2, contractVersion: '2.0.0' });
+    expect(result.manifest.media).to.have.length(1);
+    expect(result.manifest.media![0]).to.include({
+      bytes: bytes.length,
+      mimeType: 'video/mp4',
+      fileName: 'video.mp4',
+      md5: createHash('md5').update(bytes).digest('hex'),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(
+      await readFile(path.join(result.destination, result.manifest.media![0].path)),
+    ).to.deep.equal(bytes);
+    expect(result.manifest.items.filter(({ kind }) => kind === 'cms.media')).to.have.length(1);
+    expect(result.manifest.warnings.map(({ code }) => code)).not.to.include('MEDIA_EXPORT_FAILED');
+    expect(request.callCount).to.equal(3);
+    expect(fetcher.callCount).to.equal(2);
+  });
+
+  it('retains Video JSON without opt-in and rejects unqualified Video MIME types', async () => {
+    for (const mimeType of ['video/mp4', 'video/webm', 'video/quicktime']) {
+      const detail = imageDetail();
+      detail.contentType = 'sfdc_cms__video';
+      detail.contentBody['sfdc_cms:media'].source.mimeType = mimeType;
+      const fetcher = sinon.stub(globalThis, 'fetch');
+      const result = await exportWorkspace(
+        { request: mediaRequest(detail) },
+        'space',
+        path.join(root, mimeType.split('/')[1]),
+        {
+          ...(mimeType === 'video/mp4'
+            ? {}
+            : {
+                experimentalMedia: {
+                  accessToken: 'synthetic-token',
+                  instanceUrl: 'https://tenant.my.salesforce.com',
+                },
+              }),
+        },
+      );
+      expect(result.manifest).to.include({ completeness: 'partial', schemaVersion: 2 });
+      expect(result.manifest.media).to.deep.equal([]);
+      expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
+      expect(result.manifest.warnings.at(-1)?.message).to.include(
+        mimeType === 'video/mp4' ? 'not enabled' : 'unsupported',
+      );
+      expect(fetcher.notCalled).to.equal(true);
+      expect(
+        JSON.parse(await readFile(path.join(result.destination, 'items/variant.json'), 'utf8')),
+      ).to.have.property('contentType', 'sfdc_cms__video');
+      fetcher.restore();
+    }
+  });
+
+  for (const initialFamily of [
+    'sfdc_cms__document',
+    'sfdc_cms__image',
+    'sfdc_cms__audio',
+    'sfdc_cms__video',
+  ]) {
     for (const drift of [
       'family',
       'modifiedAt',
@@ -217,14 +385,28 @@ describe('experimental workspace media export', () => {
       'status',
     ]) {
       it(`rejects ${initialFamily} source revalidation drift in ${drift}`, async () => {
-        const bytes =
-          initialFamily === 'sfdc_cms__document' ? Buffer.from('Document bytes\n') : PNG;
+        let bytes = PNG;
+        let mimeType = 'image/png';
+        let fileName = 'image.png';
+        if (initialFamily === 'sfdc_cms__document') {
+          bytes = Buffer.from('Document bytes\n');
+          mimeType = 'text/plain';
+          fileName = 'document.txt';
+        }
+        if (initialFamily === 'sfdc_cms__audio') {
+          bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
+          mimeType = 'audio/x-wav';
+          fileName = 'audio.wav';
+        }
+        if (initialFamily === 'sfdc_cms__video') {
+          bytes = Buffer.from('000000206674797069736f6d', 'hex');
+          mimeType = 'video/mp4';
+          fileName = 'video.mp4';
+        }
         const detail = imageDetail();
         detail.contentType = initialFamily;
-        detail.contentBody['sfdc_cms:media'].source.mimeType =
-          initialFamily === 'sfdc_cms__document' ? 'text/plain' : 'image/png';
+        detail.contentBody['sfdc_cms:media'].source.mimeType = mimeType;
         detail.contentBody['sfdc_cms:media'].source.size = bytes.length;
-        const fileName = initialFamily === 'sfdc_cms__document' ? 'document.txt' : 'image.png';
         detail.contentBody['sfdc_cms:media'].url =
           `/cms/media/media-key?fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=${fileName}&version=1`;
         const stale = structuredClone(detail);

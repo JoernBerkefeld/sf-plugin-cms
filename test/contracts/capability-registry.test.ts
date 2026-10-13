@@ -45,6 +45,29 @@ function sampleIdentity(): PortableIdentity {
 }
 
 describe('sf-metadata-capability-v1 foundation', () => {
+  it('keeps starred JSDoc and the effective Unicorn formatting exception after autofix', async () => {
+    const { ESLint } = await import('eslint');
+    const eslint = new ESLint({ fix: true });
+    const filePath = 'src/contracts/capability-registry.ts';
+    const config = await eslint.calculateConfigForFile(filePath);
+    expect(config.rules['unicorn/no-asterisk-prefix-in-documentation-comments'][0]).to.equal(0);
+    const source = [
+      '/**',
+      ' * Return the supplied value.',
+      ' * @param {string} value - The value to return.',
+      ' * @returns {string} The supplied value.',
+      ' */',
+      'export function retainStars(value: string): string {',
+      '  return value;',
+      '}',
+      '',
+    ].join('\n');
+    const [result] = await eslint.lintText(source, { filePath });
+    expect(result.errorCount).to.equal(0);
+    expect(result.warningCount).to.equal(0);
+    expect(result.output ?? source).to.equal(source);
+  });
+
   it('validates the canonical evidence-qualified profile fixture', async () => {
     const { value } = await loadFixture();
     expect(() => assertCapabilityRegistryFixture(value)).not.to.throw();
@@ -75,10 +98,25 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
-  it('derives exactly the CMS-owned declarations from the locked fixture', async () => {
+  it('widens only the CMS-owned provider ceiling from the locked historical fixture', async () => {
     const { value } = await loadFixture();
+    const historicalCms = value.declarations.filter(
+      (entry) => entry.identity.provider === 'sf-plugin-cms',
+    );
+    for (const declaration of historicalCms) {
+      expect(declaration.providerContract).to.deep.equal({
+        name: 'sf-plugin-cms',
+        minVersion: '0.10.0',
+        maxVersion: '0.10.999',
+      });
+    }
     expect(CMS_CAPABILITY_DECLARATIONS).to.deep.equal(
-      value.declarations.filter((entry) => entry.identity.provider === 'sf-plugin-cms'),
+      value.declarations
+        .filter((entry) => entry.identity.provider === 'sf-plugin-cms')
+        .map((entry) => ({
+          ...entry,
+          providerContract: { ...entry.providerContract, maxVersion: '0.11.999' },
+        })),
     );
     expect(CMS_CAPABILITY_DECLARATIONS.map((entry) => entry.identity.type)).not.to.include.members([
       'Campaign',
@@ -90,7 +128,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
-  it('qualifies the CMS 0.10 release line without changing contract or sibling provider versions', async () => {
+  it('accepts the CMS 0.10–0.11 release lines without changing contract or sibling provider versions', async () => {
     const { value } = await loadFixture();
     expect(value.contract).to.equal('sf-metadata-capability-v1');
     expect(value.version).to.equal('1.0.0');
@@ -98,7 +136,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
       expect(declaration.providerContract).to.deep.equal({
         name: 'sf-plugin-cms',
         minVersion: '0.10.0',
-        maxVersion: '0.10.999',
+        maxVersion: '0.11.999',
       });
     }
     const siblingDeclarations = value.declarations.filter(
@@ -116,10 +154,13 @@ describe('sf-metadata-capability-v1 foundation', () => {
 
   it('documents candidate inclusion without inflating live evidence or asserting publication', async () => {
     const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
-    expect(readme).to.include('CMS `0.10.0`–`0.10.999` line');
-    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.10.0" }');
-    expect(readme).to.include('"pluginVersion": "0.10.0"');
-    expect(readme).to.include('Publication of `0.10.0` is not yet asserted.');
+    expect(readme).to.include('CMS `0.10.0`–`0.11.999` range');
+    expect(readme).to.include('release is being prepared from the published `v0.10.1` baseline');
+    expect(readme).to.include('not publication or broader live-org qualification');
+    expect(readme).to.include('not released-package qualification');
+    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.11.0" }');
+    expect(readme).to.include('"pluginVersion": "0.11.0"');
+    expect(readme).to.include('Publication of `0.11.0` is not yet asserted.');
     expect(readme).to.include('**no live image upload has been performed**');
     expect(readme).to.include(
       '**Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.**',

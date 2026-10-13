@@ -45,6 +45,13 @@ import {
   type ImageImportApplyResult,
   type ImageImportPreflightResult,
 } from '../../../services/image-import.js';
+import {
+  applyDocumentImports,
+  planDocumentImports,
+  preflightDocumentImports,
+  readDocumentImportBytes,
+  type DocumentImportPreflightResult,
+} from '../../../services/document-import.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 type WorkspaceImportCommandResult = WorkspaceImportResult | WorkspaceImageImportResultV2;
@@ -54,6 +61,10 @@ async function hasOwnershipUncertainJournal(
   error: unknown,
 ): Promise<boolean> {
   if (journalFile === undefined) return false;
+  if (error instanceof Error && 'documentImportEvidence' in error) {
+    const evidence = error.documentImportEvidence as { report?: { state?: unknown } };
+    if (evidence.report?.state === 'ownership-uncertain') return true;
+  }
   try {
     const report = JSON.parse(await readFile(journalFile, 'utf8')) as {
       operations?: Array<{ operationId?: unknown; state?: unknown }>;
@@ -78,7 +89,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
   public static readonly summary =
     'Safely plan or apply a create-only import into a CMS workspace.';
   public static readonly description =
-    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. Profile map flags are mutually exclusive. Legacy native-copy/editable HTML without --definition-dir is not resolved, rewritten, sanitized, or scanned through Phase 7. --definition-dir requires strict original and edited dependency-free HTML admission for Email/Email Template, bounded existing JSON string-leaf edits with immutable identity/structure, complete workspace API/title/URL collision proof, proven root placement, and exact destination-default language; Brand source import requires --brand-map and independent --source-org authentication with pinned canonical inventory and live refresh, Image source definitions are unsupported, and variants/translations/personalization are deferred. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
+    'Validates the complete source workspace export locally, selects a destination, and defaults to dry-run. The default profile checks source-key absence, but complete server conflict validation and destination name availability are not established. --native-copy-map selects bounded default-language raw-HTML email/template copies with fresh names and server-generated keys; --editable-dir applies verified HTML-only companion edits against the unchanged baseline. --email-fragment-map selects only the exact dependency-free sfdc_cms__emailFragment root/section/empty-column profile for create-only destination-default-language Drafts with fresh identities. --web-fragment-map selects exact sfdc_cms__webFragment API names, fresh create identities, and exact preserved or explicitly mapped Data Graph developer-name/data-space prerequisites. --landing-page-template-map selects exact sfdc_cms__landingPageTemplate API names with fresh identities and explicit typed CMS/Data Graph prerequisites. --landing-page-map selects paired sfdc_cms__landingPage exports with an explicitly declared destination Landing Page Template plus exact image and Data Graph prerequisites. Source pairing is title-first and the canonical package template identity is retained as compatibility evidence, not historical provenance. --brand-map selects complete typed Brand reports for faithful create-only body transport with fresh identities, server-generated keys, durable all-intent journaling, no retry, and independent Draft readback. --image-map selects strict workspace package v2 images for exact destination preflight and sequential create-only apply under contract version 2. --document-map requires --contract-version 2 and selects exactly one integrity-bound native text/plain .txt Document with an ASCII-only filename for CREATE-only import with exact metadata and downloaded-byte proof; Unicode title/content is allowed. An isolated installed development tarball qualified one same-source-org 94-byte unpublished Draft CREATE, not cross-org transfer, full restoration, or a released package. Profile map flags are mutually exclusive. Legacy native-copy/editable HTML without --definition-dir is not resolved, rewritten, sanitized, or scanned through Phase 7. --definition-dir requires strict original and edited dependency-free HTML admission for Email/Email Template, bounded existing JSON string-leaf edits with immutable identity/structure, complete workspace API/title/URL collision proof, proven root placement, and exact destination-default language; Brand source import requires --brand-map and independent --source-org authentication with pinned canonical inventory and live refresh, Image source definitions are unsupported, and variants/translations/personalization are deferred. Pass --apply with a new --report-dir. No updates, publication, activation, send, rollback, or package transaction.';
   public static readonly examples = [
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source',
     '<%= config.bin %> cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir ./cms/Source --apply --report-dir ./cms-import-report --contract-version 1 --json',
@@ -107,7 +118,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     'contract-version': Flags.integer({
       default: 1,
       min: 1,
-      summary: 'Machine contract major version (supported: 1; --image-map requires 2).',
+      summary:
+        'Machine contract major version (supported: 1; --image-map and --document-map require 2).',
     }),
     'workspace-id': Flags.string({ summary: 'Exact destination CMS workspace ID.' }),
     'workspace-name': Flags.string({
@@ -131,6 +143,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'consent-banner-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'Baseline-bound Email/Email Template source definitions with bounded existing JSON string-leaf and literal HTML edits via --native-copy-map; immutable identity/structure, root/default-language only. Changed source URL must equal the explicit mapped target URL. Brand source import requires --brand-map and --source-org with canonical original inventory and live refresh; Image is unsupported.',
@@ -154,6 +167,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting native raw-HTML parents: sourceContentKey, language, fresh apiName and urlName. Server generates keys; no updates or publication.',
@@ -172,6 +186,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting exact typed cms/emailFragment API names with fresh target contentKey/apiName; source keys remain provenance.',
@@ -190,6 +205,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting exact cms/webFragment API names, fresh create identities, and exact Data Graph prerequisite mappings.',
@@ -208,6 +224,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting exact cms/landingPageTemplate API names, fresh identities, and explicit CMS/Data Graph prerequisites.',
@@ -226,6 +243,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting paired cms/landingPage API names, fresh identities, an exact Draft template selector, and image/Data Graph prerequisites.',
@@ -244,6 +262,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting strict typed cms/form reports by exact API name with fresh apiName, title, and urlName targets.',
@@ -262,6 +281,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting strict typed cms/formHandler reports by exact API name with fresh apiName, title, and urlName targets.',
@@ -280,6 +300,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'brand-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting strict typed cms/consentBanner reports by exact API name with fresh apiName, title, and urlName targets.',
@@ -298,6 +319,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'consent-banner-map',
         'preference-page-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting typed cms/brand reports by exact API name with fresh apiName, title, and urlName targets.',
@@ -316,6 +338,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'consent-banner-map',
         'brand-map',
         'image-map',
+        'document-map',
       ],
       summary:
         'JSON array selecting strict typed cms/preferencePage reports, fresh apiName targets, exact channel/subchannel ID mappings, and optional explicit Brand selectors.',
@@ -333,10 +356,31 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         'consent-banner-map',
         'brand-map',
         'preference-page-map',
+        'document-map',
         'editable-dir',
       ],
       summary:
         'JSON array selecting strict v2 package images and explicit preserve/fresh/generated identity strategies; requires --contract-version 2.',
+    }),
+    'document-map': Flags.file({
+      exists: true,
+      exclusive: [
+        'native-copy-map',
+        'email-fragment-map',
+        'web-fragment-map',
+        'landing-page-template-map',
+        'landing-page-map',
+        'form-map',
+        'form-handler-map',
+        'consent-banner-map',
+        'brand-map',
+        'preference-page-map',
+        'image-map',
+        'editable-dir',
+        'definition-dir',
+      ],
+      summary:
+        'JSON array selecting exactly one strict v2 cms/document text/plain .txt with an ASCII-only filename and explicit identity strategies; requires --contract-version 2. CREATE only; Unicode title/content allowed. Qualified only for one same-source-org 94-byte Draft in an isolated installed development tarball.',
     }),
     apply: Flags.boolean({
       default: false,
@@ -359,11 +403,13 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     const { flags } = await this.parse(ImportWorkspace);
     const requestedVersion = flags['contract-version'] ?? 1;
     const imageProfile = flags['image-map'] !== undefined;
-    const profileContractMajor = imageProfile ? 2 : 1;
+    const documentProfile = flags['document-map'] !== undefined;
+    const profileContractMajor = imageProfile || documentProfile ? 2 : 1;
     if (requestedVersion !== profileContractMajor) {
-      const message = imageProfile
-        ? '--image-map requires --contract-version 2.'
-        : `Contract major ${requestedVersion} is unsupported for this profile; supported major is 1.`;
+      const message =
+        imageProfile || documentProfile
+          ? `${documentProfile ? '--document-map' : '--image-map'} requires --contract-version 2.`
+          : `Contract major ${requestedVersion} is unsupported for this profile; supported major is 1.`;
       return this.finish(
         envelope(
           'blocked',
@@ -404,6 +450,7 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     let consentBannerMappings: unknown;
     let preferencePageMappings: unknown;
     let imagePlans: ReturnType<typeof planImageImports> | undefined;
+    let documentPlans: ReturnType<typeof planDocumentImports> | undefined;
     let landingPageTemplateMappings: unknown;
     let landingPageMappings: unknown;
     let nativeCopyMappings: unknown;
@@ -445,6 +492,13 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
       if (flags['image-map'] !== undefined) {
         const imageMappings = JSON.parse(await readFile(flags['image-map'], 'utf8')) as unknown;
         imagePlans = planImageImports(source, imageMappings);
+      }
+      if (documentProfile) {
+        const documentMappings = JSON.parse(
+          await readFile(flags['document-map']!, 'utf8'),
+        ) as unknown;
+        documentPlans = planDocumentImports(source, documentMappings);
+        await readDocumentImportBytes(source, documentPlans);
       }
       if (flags['native-copy-map'] !== undefined) {
         nativeCopyMappings = JSON.parse(
@@ -551,6 +605,36 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         preferencePageMappings !== undefined
       )
         await assertCanonicalMarketingWorkspace(connection, selected);
+      if (documentPlans !== undefined) {
+        const options = {
+          connection,
+          destinationOrgId: orgId,
+          destinationWorkspaceId: selected.id,
+          plans: documentPlans,
+          source,
+        };
+        const execution = flags.apply
+          ? await applyDocumentImports({
+              ...options,
+              reportDirectory: flags['report-dir']!,
+              mediaOptions: {
+                instanceUrl: connection.instanceUrl,
+                accessToken: connection.accessToken ?? '',
+              },
+            })
+          : await preflightDocumentImports(options);
+        const result = envelope(
+          'success',
+          2,
+          flags['api-version'],
+          orgId,
+          this.pluginVersion,
+          execution.contractResult,
+          [],
+        );
+        if (!this.jsonEnabled()) this.showDocumentPlan(execution, result);
+        return this.finish(result);
+      }
       if (imagePlans !== undefined) {
         const execution = flags.apply
           ? await applyImageImports({
@@ -656,6 +740,26 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
     return result.contractVersion === '2.0.0'
       ? this.finishEnvelope(result, assertWorkspaceImageImportResultV2)
       : this.finishEnvelope(result, assertWorkspaceImportResult);
+  }
+
+  private showDocumentPlan(
+    execution: ImageImportApplyResult | DocumentImportPreflightResult,
+    envelopeResult: CmsEnvelope<WorkspaceImportCommandResult>,
+  ): void {
+    this.log(`Status: ${envelopeResult.status}`);
+    this.log(`Mode: ${execution.dryRun ? 'dry-run (preflight only)' : 'apply (create-only)'}`);
+    this.log(`Destination workspace: ${execution.contractResult.target.workspaceId}`);
+    this.log(`Selected Documents: ${execution.contractResult.assets.length}`);
+    if (execution.dryRun) {
+      this.log(
+        'No Document was created. Exact destination preflight passed; byte proof remains unavailable.',
+      );
+    } else {
+      this.log(`Run report: ${execution.reportFile}`);
+      this.log(
+        'One unpublished Draft Document was created; exact metadata and downloaded-byte proof passed.',
+      );
+    }
   }
 
   private showImagePlan(

@@ -40,7 +40,11 @@ Validates the complete source workspace export locally before any org request, s
 
 `--email-fragment-map` rows contain exact `source` and `target` objects. `source` must be `{ "family": "cms", "type": "emailFragment", "apiName": "..." }` and resolve exactly once to `sfdc_cms__emailFragment`; missing, ambiguous, wrong-type, and duplicate selections are rejected. `target` contains fresh `contentKey` and `apiName`. Source content keys remain provenance rather than selectors.
 
-JSON uses `sf-cms-workspace-import@1`. Package integrity and the independently declared manifest major are validated before org access. Exit 0 means success, 2 means partial with a usable result, and 1 means failed or blocked.
+`--document-map` opts into exactly one integrity-bound native `sfdc_cms__document` file from a strict v2 experimental-media export. Only exact `text/plain` with an ASCII-only filename ending in lowercase `.txt` is admitted, with a 10 MiB cap; Unicode title and content are allowed. The map selects exact source API name with optional title/workspace/language/server/version bindings and explicit identity strategies: API name/title use `preserve` or `fresh`, while content key/URL name also allow `generated`. Dry-run validates source bytes and destination collisions without CREATE. Apply requires a new report directory, journals pending intent and the request hash before one no-retry CREATE, rechecks evidence, and requires exact native metadata plus created-variant-bound downloaded-byte/hash/size proof. Failed or incomplete attempted CREATE remains ownership-uncertain; reconcile the retained journal before another attempt. No update, overwrite, deletion, publication, activation, rollback, or automatic retry is provided.
+
+An isolated installed development tarball qualified one same-source-org CREATE-only import of a 94-byte `sfdc_cms__document` `text/plain` `.txt` file as an unpublished Draft, with independent exact metadata, SHA-256, MD5, size, and byte readback. This does not qualify cross-org transfer, full workspace restoration, released packages, other Document formats, or broader media families.
+
+JSON uses `sf-cms-workspace-import@1` for default and other bounded profiles, or `sf-cms-workspace-import@2` for `--image-map` and `--document-map`, which require explicit `--contract-version 2`. Profile map flags are mutually exclusive; Document cannot be combined with Image, another profile map, `--editable-dir`, or `--definition-dir`. Package integrity and the independently declared manifest major are validated before org access. Exit 0 means success, 2 means partial with a usable result, and 1 means failed or blocked.
 
 - Preview immutable Brand source definitions with independently authenticated original source and destination orgs:
 
@@ -62,7 +66,7 @@ Username or alias of the target Salesforce org.
 
 # flags.contract-version.summary
 
-Machine contract major version (supported: 1). Unsupported majors return a blocked contract envelope before package or org access.
+Machine contract major version (default: 1; --image-map and --document-map require explicit 2). Unsupported profile majors return a blocked contract envelope before package or org access.
 
 # flags.api-version.summary
 
@@ -87,6 +91,10 @@ JSON array selecting eligible native raw-HTML email/template variants by sourceC
 # flags.email-fragment-map.summary
 
 JSON array selecting exact typed cms/emailFragment API names with fresh target contentKey and apiName values. Source content keys remain provenance.
+
+# flags.document-map.summary
+
+JSON array selecting exactly one strict v2 cms/document text/plain .txt with an ASCII-only filename and explicit identity strategies; requires --contract-version 2. CREATE only; Unicode title/content allowed. Qualified only for one same-source-org 94-byte Draft in an isolated installed development tarball.
 
 # flags.editable-dir.summary
 

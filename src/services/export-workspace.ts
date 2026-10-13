@@ -282,7 +282,7 @@ function mediaValue(record: CmsRecord): Record<string, unknown> | undefined {
 function mediaEvidence(record: CmsRecord):
   | {
       contentKey: string;
-      contentType: 'sfdc_cms__image' | 'sfdc_cms__document';
+      contentType: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio' | 'sfdc_cms__video';
       fileName: string;
       md5: string;
       mimeType: string;
@@ -296,7 +296,13 @@ function mediaEvidence(record: CmsRecord):
   const contentType = isRecord(record.contentType)
     ? record.contentType.fullyQualifiedName
     : record.contentType;
-  if (contentType !== 'sfdc_cms__image' && contentType !== 'sfdc_cms__document') return undefined;
+  if (
+    contentType !== 'sfdc_cms__image' &&
+    contentType !== 'sfdc_cms__document' &&
+    contentType !== 'sfdc_cms__audio' &&
+    contentType !== 'sfdc_cms__video'
+  )
+    return undefined;
   const media = mediaValue(record);
   const source = isRecord(media?.source) ? media.source : undefined;
   const status = isRecord(record.status) ? record.status.status : undefined;
@@ -1163,7 +1169,7 @@ export async function exportWorkspace(
     warnings.push({
       code: 'MEDIA_EXPORT_FAILED',
       message:
-        'Image/Document candidate JSON was exported without media binaries because --experimental-media was not enabled.',
+        'Image/Document/Audio/Video candidate JSON was exported without media binaries because --experimental-media was not enabled.',
       variantIds: mediaCandidates.map(({ variantId }) => variantId),
     });
     manifest.completeness = 'partial';

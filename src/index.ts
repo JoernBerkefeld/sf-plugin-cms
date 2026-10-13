@@ -36,6 +36,17 @@ export {
   type PlannedImageImport,
 } from './services/image-import.js';
 export {
+  applyDocumentImports,
+  documentCreateInput,
+  planDocumentImports,
+  preflightDocumentImports,
+  readDocumentImportBytes,
+  type DocumentImportApplyOptions,
+  type DocumentImportPreflightOptions,
+  type DocumentImportPreflightResult,
+  type PlannedDocumentImport,
+} from './services/document-import.js';
+export {
   assertWorkspaceImageImportResultV2,
   InvalidImageImportMapError,
   type WorkspaceImageImportAssetResult,

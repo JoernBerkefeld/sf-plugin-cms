@@ -163,6 +163,36 @@ export function buildImageCreateMultipart(
   image: Uint8Array,
   options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> = {},
 ): MultipartParts {
+  return buildFileCreateMultipart(input, filename, image, 'sfdc_cms__image', options);
+}
+
+export function buildDocumentCreateMultipart(
+  input: ImageCreateInput,
+  filename: string,
+  document: Uint8Array,
+  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> = {},
+): MultipartParts {
+  validateFilename(filename);
+  // ASCII framing truncates Unicode code points, potentially introducing header delimiters.
+  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
+    throw new CmsRequestError(
+      OPERATION_KEY,
+      'Document filename must contain only ASCII characters',
+    );
+  }
+  if (!filename.endsWith('.txt')) {
+    throw new CmsRequestError(OPERATION_KEY, 'Document filename must end with .txt');
+  }
+  return buildFileCreateMultipart(input, filename, document, 'sfdc_cms__document', options);
+}
+
+function buildFileCreateMultipart(
+  input: ImageCreateInput,
+  filename: string,
+  image: Uint8Array,
+  contentType: 'sfdc_cms__image' | 'sfdc_cms__document',
+  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'>,
+): MultipartParts {
   validateInput(input);
   validateFilename(filename);
   if (!(image instanceof Uint8Array)) {
@@ -177,7 +207,7 @@ export function buildImageCreateMultipart(
 
   const managedContentInput = {
     ...input,
-    contentType: 'sfdc_cms__image',
+    contentType,
     contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
   } as const;
   const json = Buffer.from(JSON.stringify(managedContentInput), 'utf8');
@@ -192,8 +222,12 @@ export function buildImageCreateMultipart(
     `--${boundary}\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
     'ascii',
   );
+  const binaryContentType =
+    contentType === 'sfdc_cms__document'
+      ? 'text/plain'
+      : 'application/octet-stream; charset=ISO-8859-1';
   const secondHeader = Buffer.from(
-    `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: application/octet-stream; charset=ISO-8859-1\r\n\r\n`,
+    `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: ${binaryContentType}\r\n\r\n`,
     'ascii',
   );
   const closing = Buffer.from(`\r\n--${boundary}--\r\n`, 'ascii');
@@ -228,6 +262,32 @@ export async function createImageContent(
   image: Uint8Array,
   options: MultipartImageCreateOptions = {},
 ): Promise<ManagedContentDocumentBinding> {
+  return sendFileCreateMultipart(
+    connection,
+    buildImageCreateMultipart(input, filename, image, options),
+    options,
+  );
+}
+
+export async function createDocumentContent(
+  connection: RequestConnection,
+  input: ImageCreateInput,
+  filename: string,
+  document: Uint8Array,
+  options: MultipartImageCreateOptions = {},
+): Promise<ManagedContentDocumentBinding> {
+  return sendFileCreateMultipart(
+    connection,
+    buildDocumentCreateMultipart(input, filename, document, options),
+    options,
+  );
+}
+
+async function sendFileCreateMultipart(
+  connection: RequestConnection,
+  multipart: MultipartParts,
+  options: MultipartImageCreateOptions,
+): Promise<ManagedContentDocumentBinding> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new CmsRequestError(OPERATION_KEY, 'Request timeout must be a positive number');
@@ -236,7 +296,6 @@ export async function createImageContent(
     throw new CmsRequestError(OPERATION_KEY, 'CMS image create cancelled');
   }
 
-  const multipart = buildImageCreateMultipart(input, filename, image, options);
   const request = withoutRefreshReplay(connection).request<unknown>(
     {
       body: multipart.body,
