@@ -224,8 +224,11 @@ describe('sf-metadata-capability-v1 foundation', () => {
     );
   });
 
-  it('keeps the sibling canonical fixture byte-identical when available', async () => {
-    const { bytes } = await loadFixture();
+  it('locks distinct producer and compatible sibling fixture identities when available', async () => {
+    const { bytes, value } = await loadFixture();
+    expect(createHash('sha256').update(bytes).digest('hex')).to.equal(
+      '557e9007ddaeea4c58807d9fc246fc62be646148591123d4398d5d00fa7f6f1b',
+    );
     const sibling = path.resolve(
       '..',
       'sf-plugin-mcnext',
@@ -235,7 +238,25 @@ describe('sf-metadata-capability-v1 foundation', () => {
       'metadata-capability-v1.json',
     );
     try {
-      expect(bytes.equals(await readFile(sibling))).to.equal(true);
+      const siblingBytes = await readFile(sibling);
+      expect(createHash('sha256').update(siblingBytes).digest('hex')).to.equal(
+        '96360dde4c93dc04eb16a50e34b8b61c6950016dcd0451321ef781f9a565c6ff',
+      );
+      // The consumer widens only its native provider range; the producer stays frozen.
+      const compatibleProducer = clone(value);
+      const nativeDeclarations = compatibleProducer.declarations.filter(
+        (entry) => entry.identity.provider === 'sf-plugin-mcnext',
+      );
+      expect(nativeDeclarations).to.have.length(2);
+      for (const declaration of nativeDeclarations) {
+        expect(declaration.providerContract).to.deep.equal({
+          name: 'sf-plugin-mcnext',
+          minVersion: '0.8.0',
+          maxVersion: '0.8.999',
+        });
+        declaration.providerContract.maxVersion = '0.9.999';
+      }
+      expect(JSON.parse(siblingBytes.toString('utf8'))).to.deep.equal(compatibleProducer);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

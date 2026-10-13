@@ -172,6 +172,14 @@ function nonempty(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || value.trim().length === 0) fail(`${label} must be nonempty`);
 }
 
+function validateUrlName(value: string, label: string): void {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?(?![\s\S])/u.test(value)) {
+    fail(
+      `${label} must contain only lowercase letters, numbers, and hyphens, be at most 80 characters long, and begin and end with an alphanumeric character`,
+    );
+  }
+}
+
 function sourceValue(
   item: WorkspaceImportItem,
   field: ImageImportIdentityField,
@@ -203,6 +211,7 @@ function validateField(
         'contentKey preserve source',
         (message) => new InvalidImageImportMapError(message),
       );
+    if (field === 'urlName') validateUrlName(source, 'urlName preserve source');
     return { strategy, source, submitted: source } as ImageImportFieldPlan;
   }
   if (strategy === 'fresh') {
@@ -213,6 +222,7 @@ function validateField(
         'contentKey fresh value',
         (message) => new InvalidImageImportMapError(message),
       );
+    if (field === 'urlName') validateUrlName(raw.value, 'urlName fresh value');
     if (raw.value === source) fail(`${field} fresh value must differ from the source`);
     return {
       strategy,
