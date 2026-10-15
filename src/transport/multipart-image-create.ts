@@ -4,6 +4,7 @@ import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
 import { CmsRequestError, type JsonRequestOptions } from './json-request.js';
 import { redactSecrets } from './redact-secrets.js';
+import { inheritCmsApiSelection } from '../api-policy.js';
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -74,13 +75,14 @@ function safeErrorMessage(error: unknown): string {
 }
 
 function withoutRefreshReplay(connection: RequestConnection): Pick<Connection, 'request'> {
-  return connection.accessToken && connection.instanceUrl
-    ? new JsforceConnection({
-        accessToken: connection.accessToken,
-        instanceUrl: connection.instanceUrl,
-        version: connection.version,
-      })
-    : connection;
+  if (!connection.accessToken || !connection.instanceUrl) return connection;
+  const fresh = new JsforceConnection({
+    accessToken: connection.accessToken,
+    instanceUrl: connection.instanceUrl,
+    version: connection.version,
+  });
+  inheritCmsApiSelection(connection.version ? connection : fresh, fresh);
+  return fresh;
 }
 
 function hasControlCharacter(value: string): boolean {

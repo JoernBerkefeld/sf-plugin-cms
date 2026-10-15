@@ -1,5 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import { lstat } from 'node:fs/promises';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 import {
   assertImageUploadCommandResult,
@@ -143,6 +144,8 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
     try {
       const context = await this.getOrgContext(flags['target-org'], flags['api-version']);
       orgId = context.orgId;
+      if (flags['api-version'] === 'latest')
+        flags['api-version'] = getCmsApiSelection(context.connection).effectiveApiVersion;
       const services = imageUploadReadServices(context.connection);
       const preparation = await prepareImageUpload(
         {

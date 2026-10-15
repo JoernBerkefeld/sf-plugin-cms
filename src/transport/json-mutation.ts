@@ -10,6 +10,7 @@ import {
   type JsonRequestValues,
 } from './json-request.js';
 import { redactSecrets } from './redact-secrets.js';
+import { inheritCmsApiSelection } from '../api-policy.js';
 
 export type JsonMutationBody = Readonly<Record<string, unknown>>;
 
@@ -143,11 +144,13 @@ function withoutRefreshReplay(
       'Mutation transport requires an access token and instance URL',
     );
   }
-  return new JsforceConnection({
+  const fresh = new JsforceConnection({
     accessToken: connection.accessToken,
     instanceUrl: connection.instanceUrl,
     version: connection.version,
   });
+  inheritCmsApiSelection(connection.version ? connection : fresh, fresh);
+  return fresh;
 }
 
 function validateMutationOperation(operation: SelectedOperation, hasBody: boolean): void {

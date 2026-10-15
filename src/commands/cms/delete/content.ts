@@ -21,6 +21,7 @@ import {
   previewDraftEmailDelete,
   type DeleteContentType,
 } from '../../../services/email-delete.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 /** Permanently deletes one exact run-owned Draft Email variant. */
@@ -151,6 +152,8 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       flags['target-org'],
       flags['api-version'],
     );
+    if (flags['api-version'] === 'latest')
+      flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {
       contentType: selectedContentType,
       orgId,

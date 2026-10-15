@@ -18,6 +18,7 @@ import {
   EmailPublishPreflightBlockedError,
   previewDraftEmailPublish,
 } from '../../../services/email-publish.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 /** Publishes one exact unpublished Draft Email variant without sending it. */
@@ -96,6 +97,8 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
       flags['target-org'],
       flags['api-version'],
     );
+    if (flags['api-version'] === 'latest')
+      flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {
       selector: {
         workspaceId: flags['workspace-id'],

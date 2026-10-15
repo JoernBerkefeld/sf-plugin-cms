@@ -1,15 +1,28 @@
 import path from 'node:path';
 import { Flags } from '@salesforce/sf-plugins-core';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 import { type CmsEnvelope, type CmsStatus } from '../../../contracts/shared.js';
-import { acquireEditableEmailSource } from '../../../services/retrieve-item-source.js';
+import { prepareEditableSourceSelection } from '../../../services/retrieve-item-source.js';
+import type { NativeRetrieveResolution } from '../../../services/retrieve-native-resolution.js';
+import {
+  normalizeRetrieveSelection,
+  type RetrieveSelection,
+} from '../../../services/retrieve-selection.js';
 import {
   writeEditableItemSource,
   type ItemSourceWriteReceipt,
 } from '../../../services/write-item-source.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
 
-type Identity = { contentType: string; apiName: string; language: string | null };
+type Identity = {
+  contentType: string;
+  apiName: string | null;
+  language: string | null;
+  selector?: string;
+  selectorKind?: 'api-name' | 'content-key-or-id' | 'all';
+  variantId?: string;
+};
 export type RetrieveContentResult = {
   scope: {
     targetOrg: string;
@@ -19,7 +32,8 @@ export type RetrieveContentResult = {
     defaultLanguage: boolean;
     outputDir: string;
   };
-  selection: { contentTypes: string[]; apiNames: string[] };
+  selection: { contentTypes: string[]; apiNames: string[]; groups?: RetrieveSelection['groups'] };
+  resolution?: Pick<NativeRetrieveResolution, 'inventory' | 'unresolved'>;
   items: Array<{
     identity: Identity;
     operation: 'retrieve';
@@ -39,12 +53,14 @@ export type RetrieveContentResult = {
 };
 
 export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveContentResult>> {
-  public static readonly summary = 'Retrieve one editable Email into an explicit local project.';
+  public static readonly summary =
+    'Retrieve selected editable Emails and Email Templates into an explicit local project.';
   public static readonly description =
-    'Partial developer-workflow checkpoint: only one exact sfdc_cms__email API name, in one explicit workspace and language. Acquires a supported root-level, single-variant Email and writes portable v2 JSON plus HTML/text companions. Differing selected local files require --overwrite. No org mutations or deploy command; Template, native ID, metadata, all-of-type and batch selection are not supported.';
+    'Select qualified Email or Email Template types by exact API names, native content keys/parent IDs, all-of-type, or repeatable metadata Type[:ApiName]. Metadata is exclusive of separate selectors. Resolves complete native inventory before local writes; each supported root-level, single-variant item is acquired independently. Writes portable v2 JSON and HTML/text companions. Differing local files require --overwrite. No org mutations or deploy command.';
   public static readonly examples = [
-    '<%= config.bin %> cms retrieve content --target-org my-org --workspace-name Marketing --content-type sfdc_cms__email --api-name Welcome --default-language --output-dir ./project --json',
-    '<%= config.bin %> cms retrieve content -o my-org -w 0ZuSOURCE -t sfdc_cms__email -n Welcome -l en_US -d ./project -x',
+    '<%= config.bin %> cms retrieve content -o my-org -W Marketing -t sfdc_cms__email -n Welcome -L -d ./project --json',
+    '<%= config.bin %> cms retrieve content -o my-org -w 0ZuSOURCE -t sfdc_cms__email -i CONTENT_KEY -l en_US -d ./project -x',
+    '<%= config.bin %> cms retrieve content -o my-org -W Marketing -m sfdc_cms__email -m sfdc_cms__emailTemplate:Welcome_Template -L -d ./project --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -59,17 +75,31 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
     }),
     'content-type': Flags.string({
       char: 't',
-      required: true,
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Exactly one content type: sfdc_cms__email only.',
+      summary: 'Qualified sfdc_cms__email or sfdc_cms__emailTemplate type; repeat for --all.',
     }),
     'api-name': Flags.string({
       char: 'n',
-      required: true,
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Exactly one exact Email API name.',
+      summary: 'Exact API name; repeat within one qualified content type.',
+    }),
+    'content-key-or-id': Flags.string({
+      char: 'i',
+      multiple: true,
+      multipleNonGreedy: true,
+      summary: 'Exact native content key or parent ID (not variant ID); repeat within one type.',
+    }),
+    metadata: Flags.string({
+      char: 'm',
+      multiple: true,
+      multipleNonGreedy: true,
+      summary: 'Qualified Type or Type:ApiName; repeat. Exclusive of separate selection flags.',
+    }),
+    all: Flags.boolean({
+      char: 'a',
+      summary: 'Retrieve all items of the explicitly selected types.',
     }),
     language: Flags.string({
       char: 'l',
@@ -89,15 +119,11 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
     overwrite: Flags.boolean({
       char: 'x',
       default: false,
-      summary: 'Permit replacing differing files owned by this selected item.',
+      summary: 'Permit replacing differing files owned by each selected item.',
     }),
-    metadata: Flags.string({ char: 'm', multiple: true, hidden: true }),
-    all: Flags.boolean({ char: 'a', hidden: true }),
-    'content-key-or-id': Flags.string({ char: 'i', multiple: true, hidden: true }),
   };
 
-  // Narrow service seams keep command orchestration independently testable.
-  protected acquireSource = acquireEditableEmailSource;
+  protected prepareSources = prepareEditableSourceSelection;
   protected writeSource = writeEditableItemSource;
   protected resolveSourceWorkspace = resolveWorkspace;
 
@@ -113,26 +139,17 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
         defaultLanguage: flags['default-language'],
         outputDir: path.resolve(flags['output-dir']),
       },
-      selection: { contentTypes: flags['content-type'], apiNames: flags['api-name'] },
+      selection: { contentTypes: [], apiNames: [] },
       items: [],
-      summary: {
-        selected: flags['api-name'].length,
-        retrieved: 0,
-        unchanged: 0,
-        blocked: 0,
-        unattempted: flags['api-name'].length,
-      },
-      unattempted: flags['api-name'].map((apiName) => ({
-        contentType: flags['content-type'][0],
-        apiName,
-        language: flags.language ?? null,
-      })),
+      summary: { selected: 0, retrieved: 0, unchanged: 0, blocked: 0, unattempted: 0 },
+      unattempted: [],
     };
     const finish = (
       status: CmsStatus,
       code?: string,
       message?: string,
     ): CmsEnvelope<RetrieveContentResult> => {
+      result.summary.unattempted = result.unattempted.length;
       const envelope: CmsEnvelope<RetrieveContentResult> = {
         contract: 'sf-cms-content-retrieve',
         contractVersion: '1.0.0',
@@ -165,6 +182,7 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
       }
       return this.finishEnvelope(envelope, assertRetrieveContentResult);
     };
+    let selection: RetrieveSelection;
     try {
       assertWorkspaceSelector({
         workspaceId: flags['workspace-id'],
@@ -174,103 +192,203 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
         !flags['target-org'].trim() ||
         !flags['output-dir'].trim() ||
         flags.language?.trim() === '' ||
-        flags['api-name'].some((name) => !name.trim())
+        flags['workspace-id']?.trim() === '' ||
+        flags['workspace-name']?.trim() === ''
       )
         throw new Error('empty selector');
       if ((flags.language !== undefined) === flags['default-language'])
         throw new Error('language selector');
+      selection = normalizeRetrieveSelection(flags);
     } catch {
       return finish(
         'blocked',
         'RETRIEVE_SELECTION_INVALID',
-        'Specify an explicit target org and output directory, exactly one workspace ID/name, and exactly one language/default-language choice with nonempty selectors.',
+        'Specify an explicit org/output, one workspace ID/name and one language/default-language choice. Use qualified Email/Email Template types with exactly one selection mode; metadata is exclusive of separate selectors.',
       );
     }
-    if (
-      flags.metadata !== undefined ||
-      flags.all ||
-      flags['content-key-or-id'] !== undefined ||
-      flags['content-type'].length !== 1 ||
-      flags['api-name'].length !== 1 ||
-      flags['content-type'][0] !== 'sfdc_cms__email'
-    ) {
-      return finish(
-        'blocked',
-        'RETRIEVE_MODE_UNSUPPORTED',
-        'This checkpoint supports one sfdc_cms__email API name only; batch, Template/other types, metadata, all-of-type and native ID modes are not implemented.',
-      );
-    }
-    const identity = result.unattempted[0];
-    let stage: 'scope' | 'acquire' | 'write' = 'scope';
+    result.selection = {
+      contentTypes: selection.groups.map((group) => group.contentType),
+      apiNames: selection.groups.flatMap((group) => group.apiNames),
+      ...(selection.mode === 'api-name' ? {} : { groups: structuredClone(selection.groups) }),
+    };
+    result.unattempted = selection.groups.flatMap((group) => [
+      ...group.apiNames.map((apiName) => ({
+        contentType: group.contentType,
+        apiName,
+        language: result.scope.language,
+      })),
+      ...group.contentKeysOrIds.map((selector) => ({
+        contentType: group.contentType,
+        apiName: null,
+        language: result.scope.language,
+        selector,
+        selectorKind: 'content-key-or-id' as const,
+      })),
+      ...(group.all
+        ? [
+            {
+              contentType: group.contentType,
+              apiName: null,
+              language: result.scope.language,
+              selectorKind: 'all' as const,
+            },
+          ]
+        : []),
+    ]);
+    result.summary.selected = result.unattempted.length;
+    let stage: 'scope' | 'resolution' = 'scope';
+    let prepared: Awaited<ReturnType<typeof prepareEditableSourceSelection>>;
     try {
       const context = await this.getOrgContext(flags['target-org'], flags['api-version']);
       orgId = context.orgId;
+      if (flags['api-version'] === 'latest')
+        flags['api-version'] = getCmsApiSelection(context.connection).effectiveApiVersion;
       const workspace = await this.resolveSourceWorkspace(context.connection, {
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],
       });
       result.scope.workspaceId = workspace.id;
-      stage = 'acquire';
-      result.unattempted = [];
-      result.summary.unattempted = 0;
-      const source = await this.acquireSource(context.connection, {
+      const language = flags.language ?? workspace.workspace.defaultLanguage;
+      if (typeof language !== 'string' || !language.trim())
+        throw new TypeError('Workspace default language unavailable');
+      result.scope.language = language;
+      for (const identity of result.unattempted) identity.language = language;
+      stage = 'resolution';
+      prepared = await this.prepareSources(context.connection, {
         workspaceId: workspace.id,
-        apiName: identity.apiName,
-        ...(flags.language === undefined
-          ? { useDefaultLanguage: true as const }
-          : { language: flags.language }),
+        language,
+        selection,
       });
-      identity.language = source.projection.definition.language;
-      result.scope.language = identity.language;
+    } catch {
+      return finish(
+        'blocked',
+        stage === 'scope' ? 'RETRIEVE_SCOPE_BLOCKED' : 'RETRIEVE_RESOLUTION_BLOCKED',
+        'Cannot prove the explicit org/workspace/language or complete native selection. No local write was attempted.',
+      );
+    }
+    const { resolution } = prepared;
+    result.resolution = { inventory: resolution.inventory, unresolved: resolution.unresolved };
+    result.summary.selected = resolution.variants.length + resolution.unresolved.length;
+    result.unattempted = resolution.variants.map((row) => ({
+      contentType: row.ContentTypeFullyQualifiedName,
+      apiName: row.ManagedContent.ApiName,
+      language: row.Language,
+      ...(selection.mode !== 'api-name' ||
+      resolution.variants.length !== 1 ||
+      row.ManagedContent.ApiName === null
+        ? { variantId: row.Id }
+        : {}),
+    }));
+    for (const unresolved of resolution.unresolved) {
+      result.items.push({
+        identity: {
+          contentType: unresolved.contentType,
+          apiName: unresolved.kind === 'api-name' ? unresolved.selector : null,
+          language: resolution.language,
+          selector: unresolved.selector,
+          selectorKind: unresolved.kind,
+        },
+        operation: 'retrieve',
+        outcome: 'blocked',
+        paths: null,
+        evidence: null,
+        diagnostics: [`RETRIEVE_SELECTOR_${unresolved.reason.toUpperCase()}`],
+      });
+      result.summary.blocked += 1;
+    }
+    // Distinct native parents must never compete for one portable output identity,
+    // even when overwrite is enabled or their eventual projections are identical.
+    const parentsByIdentity = new Map<string, Set<string>>();
+    for (const row of resolution.variants) {
+      const key = portableKey(row);
+      const parents = parentsByIdentity.get(key) ?? new Set<string>();
+      parents.add(row.ManagedContentId);
+      parentsByIdentity.set(key, parents);
+    }
+    const collidingVariants = new Set<string>();
+    for (const [index, row] of resolution.variants.entries()) {
+      if (parentsByIdentity.get(portableKey(row))!.size < 2) continue;
+      collidingVariants.add(row.Id);
+      result.items.push({
+        identity: result.unattempted[index],
+        operation: 'retrieve',
+        outcome: 'blocked',
+        paths: null,
+        evidence: { variantId: row.Id, contentId: row.ManagedContentId },
+        diagnostics: ['RETRIEVE_PORTABLE_IDENTITY_COLLISION'],
+      });
+      result.summary.blocked += 1;
+    }
+    result.unattempted = result.unattempted.filter(
+      (_, index) => !collidingVariants.has(resolution.variants[index].Id),
+    );
+    let fatal = false;
+    for (const row of resolution.variants) {
+      if (collidingVariants.has(row.Id)) continue;
+      const identity = result.unattempted.shift()!;
       const item: RetrieveContentResult['items'][number] = {
         identity,
         operation: 'retrieve',
         outcome: 'blocked',
         paths: null,
-        evidence: source.evidence,
+        evidence: { variantId: row.Id, contentId: row.ManagedContentId },
         diagnostics: [],
       };
       result.items.push(item);
-      stage = 'write';
-      item.paths = await this.writeSource(
-        flags['output-dir'],
-        source.directory,
-        source.projection,
-        flags.overwrite,
-      );
-      const changed =
-        item.paths.created.length + item.paths.updated.length + item.paths.removed.length > 0;
-      item.outcome = changed ? 'retrieved' : 'unchanged';
-      result.summary[changed ? 'retrieved' : 'unchanged'] = 1;
-      return finish('success');
-    } catch {
-      const code = {
-        scope: 'RETRIEVE_SCOPE_BLOCKED',
-        acquire: 'RETRIEVE_SOURCE_BLOCKED',
-        write: 'RETRIEVE_WRITE_BLOCKED',
-      }[stage];
-      if (stage !== 'scope') {
-        result.summary.blocked = 1;
-        if (result.items.length === 0)
-          result.items.push({
-            identity,
-            operation: 'retrieve',
-            outcome: 'blocked',
-            paths: null,
-            evidence: null,
-            diagnostics: [],
-          });
-        result.items[0].diagnostics.push(code);
+      let writing = false;
+      try {
+        const source = await prepared.acquire(row.Id);
+        item.evidence = source.evidence;
+        writing = true;
+        item.paths = await this.writeSource(
+          flags['output-dir'],
+          source.directory,
+          source.projection,
+          flags.overwrite,
+        );
+        const changed =
+          item.paths.created.length + item.paths.updated.length + item.paths.removed.length > 0;
+        item.outcome = changed ? 'retrieved' : 'unchanged';
+        result.summary[item.outcome] += 1;
+      } catch (error) {
+        item.diagnostics.push(writing ? 'RETRIEVE_WRITE_BLOCKED' : 'RETRIEVE_SOURCE_BLOCKED');
+        result.summary.blocked += 1;
+        if (!writing && fatalReadFailure(error)) {
+          fatal = true;
+          break;
+        }
       }
-      return finish(
-        'blocked',
-        code,
-        stage === 'write'
-          ? 'Selected local files were not completely written. Check overwrite conflicts, item ownership and filesystem access; an I/O failure can leave partial local progress. No org mutation occurred.'
-          : 'Cannot prove the explicit org/workspace or complete supported Email source. Check authentication, exact API name/language, root folder, sibling variants and supported components. No local write was attempted.',
-      );
     }
+    const completed = result.summary.retrieved + result.summary.unchanged;
+    if (result.summary.blocked === 0 && !fatal) return finish('success');
+    return finish(
+      completed > 0 ? 'partial' : 'blocked',
+      fatal ? 'RETRIEVE_SCOPE_BLOCKED' : 'RETRIEVE_ITEMS_BLOCKED',
+      'Some selections could not be retrieved. Inspect per-item diagnostics and unattempted identities. Local I/O failure can leave partial local progress; no org mutation occurred.',
+    );
   }
+}
+
+function portableKey(row: NativeRetrieveResolution['variants'][number]): string {
+  return JSON.stringify([
+    row.ContentTypeFullyQualifiedName,
+    row.ManagedContent.ApiName,
+    row.Language,
+  ]);
+}
+
+function fatalReadFailure(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const observed = error as { status?: number; statusCode?: number; errorCode?: string };
+  return (
+    [401, 403].includes(observed.status ?? observed.statusCode ?? 0) ||
+    [
+      'INVALID_SESSION_ID',
+      'INSUFFICIENT_ACCESS',
+      'INSUFFICIENT_ACCESS_OR_READONLY',
+      'API_DISABLED_FOR_ORG',
+    ].includes(observed.errorCode ?? '')
+  );
 }
 
 function assertRetrieveContentResult(value: unknown): asserts value is RetrieveContentResult {

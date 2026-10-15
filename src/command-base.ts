@@ -3,6 +3,12 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import type { CmsPage, CmsRecord } from './services/read.js';
 import { getPluginVersion } from './runtime-version.js';
 import {
+  DEFAULT_API_VERSION,
+  FALLBACK_API_VERSION,
+  isNumericApiVersion,
+  prepareCmsConnection,
+} from './api-policy.js';
+import {
   finalizeCmsEnvelope,
   serializeCmsEnvelope,
   type CmsEnvelope,
@@ -15,9 +21,14 @@ export const targetOrgFlag = Flags.string({
   summary: 'Username or alias of the target Salesforce org.',
 });
 
-export const apiVersionFlag = Flags.orgApiVersion({
-  default: '67.0',
-  summary: 'Salesforce API version used for CMS requests.',
+export const apiVersionFlag = Flags.string({
+  default: DEFAULT_API_VERSION,
+  summary: 'Salesforce API version used for CMS requests (latest or a numeric version).',
+  parse: async (value) => {
+    if (value !== DEFAULT_API_VERSION && !isNumericApiVersion(value))
+      throw new Error(`Invalid CMS API version: ${value}`);
+    return value;
+  },
 });
 
 export const pageFlag = Flags.integer({ min: 0, summary: 'Zero-based page number.' });
@@ -32,6 +43,8 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
     envelope: CmsEnvelope<R>,
     resultValidator: (result: unknown, provenance?: CmsProvenance) => asserts result is R,
   ): CmsEnvelope<R> {
+    // Offline/pre-org failures have no resolved numeric API version.
+    if (envelope.metadata.apiVersion === DEFAULT_API_VERSION) envelope.metadata.apiVersion = null;
     return finalizeCmsEnvelope(envelope, resultValidator, {
       emit: (value) => {
         if (this.config !== undefined && this.jsonEnabled()) {
@@ -65,7 +78,11 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
     apiVersion: string,
   ): Promise<{ connection: ReturnType<Org['getConnection']>; orgId: string }> {
     const org = await Org.create({ aliasOrUsername: targetOrg });
-    return { connection: org.getConnection(apiVersion), orgId: org.getOrgId() };
+    const connection = org.getConnection(
+      apiVersion === DEFAULT_API_VERSION ? FALLBACK_API_VERSION : apiVersion,
+    );
+    await prepareCmsConnection(connection, apiVersion);
+    return { connection, orgId: org.getOrgId() };
   }
 
   protected showPage(title: string, page: CmsPage): void {

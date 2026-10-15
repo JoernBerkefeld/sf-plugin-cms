@@ -1,4 +1,5 @@
 import { Flags } from '@salesforce/sf-plugins-core';
+import { DEFAULT_API_VERSION, FALLBACK_API_VERSION } from '../../api-policy.js';
 import {
   CMS_CAPABILITY_DECLARATIONS,
   METADATA_CAPABILITY_CONTRACT,
@@ -69,7 +70,7 @@ function successEnvelope(pluginVersion: string): CmsEnvelope<CmsInfoResult> {
     },
     result: {
       plugin: { name: 'sf-plugin-cms', version: pluginVersion },
-      api: { defaultVersion: '67.0', testedVersions: ['67.0'] },
+      api: { defaultVersion: DEFAULT_API_VERSION, testedVersions: [FALLBACK_API_VERSION] },
       contracts: {
         commandResults: {
           info: ['1.0.0'],

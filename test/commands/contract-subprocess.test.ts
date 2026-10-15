@@ -787,7 +787,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ) as Array<{ method?: string; url?: string }>;
     const deletes = events.filter(({ method }) => method === 'DELETE');
     expect(deletes).to.deep.equal([
-      { method: 'DELETE', url: '/connect/cms/contents/variants/variant-en' },
+      { method: 'DELETE', url: '/services/data/v67.0/connect/cms/contents/variants/variant-en' },
     ]);
     expect(
       events.filter(

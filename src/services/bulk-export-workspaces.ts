@@ -34,7 +34,7 @@ export type BulkWorkspaceExportOptions = JsonRequestOptions & {
   sourceOrgId?: string;
 };
 
-type RequestConnection = Pick<Connection, 'request'>;
+type RequestConnection = Pick<Connection, 'request'> & Partial<Pick<Connection, 'version'>>;
 
 type PreparedWorkspace = {
   id: string;
@@ -317,7 +317,7 @@ export async function exportAllWorkspaces(
     metadata: {
       operation: 'workspace.export.bulk',
       plugin: { name: 'sf-plugin-cms', version: pluginVersion },
-      apiVersion: options.apiVersion ?? '67.0',
+      apiVersion: connection.version ?? options.apiVersion ?? null,
     },
     diagnostics: { warnings, errors },
     provenance: {

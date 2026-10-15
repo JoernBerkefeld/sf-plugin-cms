@@ -380,7 +380,7 @@ function cmsDeclaration(
     },
     providerContract: {
       // Package compatibility is independent of the metadata contract major.
-      maxVersion: '0.11.999',
+      maxVersion: '0.12.999',
       minVersion: '0.10.0',
       name: 'sf-plugin-cms',
     },

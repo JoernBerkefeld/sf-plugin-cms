@@ -17,6 +17,7 @@ import {
   EmailUnpublishPreflightBlockedError,
   previewPublishedEmailUnpublish,
 } from '../../../services/email-unpublish.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 /** Unpublishes one exact published Email variant without deleting it. */
@@ -99,6 +100,8 @@ export default class UnpublishContent extends CmsCommand<CmsEnvelope<ContentUnpu
       flags['target-org'],
       flags['api-version'],
     );
+    if (flags['api-version'] === 'latest')
+      flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {
       selector: {
         workspaceId: flags['workspace-id'],

@@ -2,21 +2,29 @@ import { expect } from 'chai';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { reassembleEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
+import { NativeInventoryRequestError } from '../../src/services/retrieve-native-inventory.js';
+import type { ResolveNativeRetrieveInput } from '../../src/services/retrieve-native-resolution.js';
 import {
   acquireEditableEmailSource,
+  acquireEditableTemplateSource,
+  prepareEditableSourceSelection,
   type AcquireEditableEmailSourceInput,
 } from '../../src/services/retrieve-item-source.js';
 
 type RecordValue = Record<string, unknown>;
-function email(id = 'variant-source', language = 'en_US', apiName = 'Welcome'): RecordValue {
+function email(id = '9Ps000000000001AAA', language = 'en_US', apiName = 'Welcome'): RecordValue {
+  if (!id.startsWith('9Ps'))
+    id = `9Ps${String(['other', 'duplicate', 'translated', 'renamed'].indexOf(id) + 2).padStart(12, '0')}AAA`;
   return {
     managedContentVariantId: id,
-    managedContentId: 'parent-source',
+    managedContentId: '20Y000000000001AAA',
     contentKey: 'key-source',
-    contentSpace: { id: 'space-source' },
+    contentSpace: { id: '0Zu000000000001AAA' },
     apiName,
     contentType: { fullyQualifiedName: 'sfdc_cms__email' },
     language,
+    status: { status: 'Draft', label: 'Draft' },
+    isPublished: false,
     title: 'Welcome',
     folder: null,
     contentBody: {
@@ -30,48 +38,87 @@ function email(id = 'variant-source', language = 'en_US', apiName = 'Welcome'): 
     },
   };
 }
-function fixture() {
+function unchangedRows(rows: RecordValue[]): RecordValue[] {
+  return rows;
+}
+function fixture(template = false) {
+  const contentType = template ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
   const workspace: RecordValue = {
-    id: 'space-source',
+    id: '0Zu000000000001AAA',
     name: 'Content Workspace for Marketing Cloud',
     apiName: 'Default_Content_Workspace',
     defaultLanguage: 'en_US',
     rootFolderId: 'root-folder-source',
   };
   const parent: RecordValue = {
-    managedContentId: 'parent-source',
-    contentType: { fullyQualifiedName: 'sfdc_cms__email' },
-    contentSpace: { id: 'space-source' },
+    managedContentId: '20Y000000000001AAA',
+    contentType: { fullyQualifiedName: contentType },
+    contentSpace: { id: '0Zu000000000001AAA' },
     folder: null,
   };
+  const parents = [parent];
   const variants = [email()];
-  let pages: number[][] | undefined;
-  let count: number | undefined;
+  if (template) {
+    variants[0].contentType = { fullyQualifiedName: contentType };
+    delete (variants[0].contentBody as RecordValue).subjectLine;
+  }
+  let nativePatch: (rows: RecordValue[], siblingScope: boolean) => RecordValue[] = unchangedRows;
+  const nativeRows = () =>
+    variants.map((detail) => ({
+      Id: detail.managedContentVariantId,
+      ManagedContentId: detail.managedContentId,
+      ContentTypeFullyQualifiedName:
+        (detail.contentType as RecordValue)?.fullyQualifiedName ?? detail.contentType,
+      Language: detail.language,
+      IsPublished: detail.isPublished,
+      ManagedContentVariantStatus: (detail.status as RecordValue)?.status,
+      IsPrimary: true,
+      Name: detail.title,
+      UrlName: detail.urlName ?? null,
+      ManagedContentKey: detail.contentKey,
+      ManagedContent: {
+        AuthoredManagedContentSpaceId: '0Zu000000000001AAA',
+        ApiName: detail.apiName,
+      },
+    }));
   const request = sinon.stub().callsFake((input: { url: string; method: string }) => {
     expect(input.method).to.equal('GET');
     const url = new URL(input.url, 'https://example.invalid');
     let value: unknown;
-    if (url.pathname === '/connect/cms/spaces/space-source') value = workspace;
-    else if (url.pathname === '/connect/cms/items/search') {
-      expect(url.searchParams.get('queryTerm')).to.equal('*');
-      expect(url.searchParams.get('languages')).to.equal('All');
-      expect(url.searchParams.get('contentTypeFQN')).to.equal('sfdc_cms__email');
-      expect(url.searchParams.get('contentSpaceOrFolderIds')).to.equal('space-source');
-      const page = Number(url.searchParams.get('page'));
-      const indices = pages?.[page] ?? (pages ? [] : variants.map((_, index) => index));
-      value = {
-        count: count ?? variants.length,
-        items: indices.map((index) => ({
-          id: variants[index].managedContentVariantId,
-          managedContentSpaceId: 'space-source',
-          type: 'ManagedContentVariantSearchResultRepresentation',
-        })),
-      };
+    if (url.pathname === '/connect/cms/spaces/0Zu000000000001AAA') value = workspace;
+    else if (url.pathname === '/services/data/v67.0/query') {
+      const soql = url.searchParams.get('q')!;
+      const parentId = /ManagedContentId = '([^']+)'/u.exec(soql)?.[1];
+      const rows = nativePatch(
+        nativeRows().filter((row) =>
+          parentId
+            ? row.ManagedContentId === parentId
+            : row.ContentTypeFullyQualifiedName === contentType,
+        ),
+        parentId !== undefined,
+      ).toSorted((a, b) => String(a.Id).localeCompare(String(b.Id)));
+      let records: RecordValue[];
+      if (soql.includes('COUNT(Id)')) {
+        const counts = new Map<unknown, number>();
+        for (const row of rows)
+          counts.set(row.ManagedContentId, (counts.get(row.ManagedContentId) ?? 0) + 1);
+        records = [...counts].map(([ManagedContentId, siblingCount]) => ({
+          ManagedContentId,
+          siblingCount,
+        }));
+      } else {
+        const after = /Id > '([^']+)'/u.exec(soql)?.[1];
+        records = rows
+          .filter((row) => after === undefined || String(row.Id) > after)
+          .slice(0, 2000);
+      }
+      value = { totalSize: records.length, done: true, records };
     } else if (url.pathname.startsWith('/connect/cms/contents/variants/')) {
       value = variants.find(
         (raw) => raw.managedContentVariantId === url.pathname.split('/').at(-1),
       );
-    } else if (url.pathname === '/connect/cms/contents/parent-source') value = parent;
+    } else if (url.pathname.startsWith('/connect/cms/contents/'))
+      value = parents.find((item) => item.managedContentId === url.pathname.split('/').at(-1));
     else throw new Error(`Unexpected request: ${input.url}`);
     return Object.assign(Promise.resolve(structuredClone(value)), {
       stream: () => new PassThrough(),
@@ -80,18 +127,18 @@ function fixture() {
   return {
     workspace,
     parent,
+    parents,
     variants,
     connection: { request, version: '67.0' },
-    paginate(value: number[][], total?: number) {
-      pages = value;
-      count = total;
+    patchNative(patch: typeof nativePatch) {
+      nativePatch = patch;
     },
   };
 }
 // Shape recorded in independent-readback-1792035980826.json (2026-10-15T03:46:20.826Z).
 // Synthetic identities keep the regression independent of the live org.
-function recordedReadEnvelopes() {
-  const current = fixture();
+function recordedReadEnvelopes(template = false) {
+  const current = fixture(template);
   Object.assign(current.variants[0], {
     contentFqn: 'marketing--Default_Content_Workspace.sfdc_cms__email--Welcome',
     createdBy: { id: 'user-source', resourceUrl: '/chatter/users/user-source' },
@@ -122,8 +169,16 @@ function recordedReadEnvelopes() {
       subjectLine: 'Inert acceptance',
     },
   });
+  if (template) {
+    delete (current.variants[0].contentBody as RecordValue).subjectLine;
+    delete (current.variants[0].contentBody as RecordValue)['lightning:brandSource'];
+    delete (current.variants[0].contentBody as RecordValue)['sfdc_cms:urlName'];
+  }
   Object.assign(current.parent, structuredClone(current.variants[0]), {
-    contentType: { fullyQualifiedName: 'sfdc_cms__email', name: 'Email' },
+    contentType: {
+      fullyQualifiedName: template ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email',
+      name: template ? 'Email Template' : 'Email',
+    },
     contentVersion: 1,
     variantVersion: '1.1',
     createdBy: {
@@ -140,7 +195,7 @@ function recordedReadEnvelopes() {
   return current;
 }
 const selection = {
-  workspaceId: 'space-source',
+  workspaceId: '0Zu000000000001AAA',
   apiName: 'Welcome',
   useDefaultLanguage: true,
 } as const;
@@ -154,6 +209,368 @@ async function fails(current: ReturnType<typeof fixture>, message: string, input
   }
 }
 
+async function rejects(
+  current: ReturnType<typeof fixture>,
+  message = '',
+  input: AcquireEditableEmailSourceInput = selection,
+) {
+  try {
+    await acquireEditableTemplateSource(current.connection, input);
+    expect.fail('Expected Template acquisition rejection');
+  } catch (error) {
+    expect(error).to.be.instanceOf(TypeError);
+    expect((error as Error).message).to.include(message);
+  }
+}
+
+function nativeSelection(apiNames = ['Welcome']): ResolveNativeRetrieveInput {
+  return {
+    workspaceId: selection.workspaceId,
+    language: 'en_US',
+    selection: {
+      mode: 'api-name' as const,
+      groups: [
+        { contentType: 'sfdc_cms__email' as const, all: false, apiNames, contentKeysOrIds: [] },
+      ],
+    },
+  };
+}
+
+async function acquisitionRejects(action: () => Promise<unknown>, message: string) {
+  try {
+    await action();
+    expect.fail('Expected guarded acquisition rejection');
+  } catch (error) {
+    expect(error).to.be.instanceOf(TypeError);
+    expect((error as Error).message).to.include(message);
+  }
+}
+
+describe('guarded native selection acquisition', () => {
+  it('resolves once for multiple parents and independently proves each sibling scope', async () => {
+    const current = fixture();
+    current.variants.push({
+      ...email('other', 'en_US', 'Second'),
+      managedContentId: '20Y000000000002AAA',
+      contentKey: 'key-second',
+    });
+    current.parents.push({
+      ...structuredClone(current.parent),
+      managedContentId: '20Y000000000002AAA',
+    });
+    const prepared = await prepareEditableSourceSelection(
+      current.connection,
+      nativeSelection(['Welcome', 'Second']),
+    );
+    expect(prepared.resolution.unresolved).to.deep.equal([]);
+    expect(prepared.resolution.variants).to.have.length(2);
+    const acquired = [];
+    for (const row of prepared.resolution.variants) acquired.push(await prepared.acquire(row.Id));
+    expect(acquired.map((item) => item.projection.definitionName)).to.deep.equal([
+      'Welcome.cms-email.json',
+      'Second.cms-email.json',
+    ]);
+    const urls = current.connection.request.args.map(([request]) =>
+      decodeURIComponent(request.url as string),
+    );
+    expect(urls.filter((url) => url.includes('ContentTypeFullyQualifiedName IN'))).to.have.length(
+      6,
+    );
+    expect(urls.filter((url) => url.includes('ManagedContentId ='))).to.have.length(12);
+    expect(urls.filter((url) => url.includes('/variants/'))).to.have.length(4);
+  });
+
+  it('never trusts mutated resolution inventory, input or selected row proof', async () => {
+    const current = fixture();
+    const input = nativeSelection();
+    const prepared = await prepareEditableSourceSelection(current.connection, input);
+    const id = prepared.resolution.variants[0].Id;
+    input.workspaceId = 'wrong';
+    input.language = 'de_DE';
+    prepared.resolution.workspaceId = 'wrong';
+    prepared.resolution.variants[0].ManagedContentId = '20Y000000000002AAA';
+    prepared.resolution.variants[0].ManagedContent.ApiName = 'Forged';
+    prepared.resolution.variants.push({
+      ...prepared.resolution.variants[0],
+      Id: '9Ps000000000002AAA',
+    });
+    const before = current.connection.request.callCount;
+    await acquisitionRejects(() => prepared.acquire('9Ps000000000002AAA'), 'not in the resolved');
+    expect(current.connection.request.callCount).to.equal(before);
+    const acquired = await prepared.acquire(id);
+    expect(acquired.projection.definitionName).to.equal('Welcome.cms-email.json');
+  });
+
+  it('retains missing and ambiguous selectors instead of claiming complete selection success', async () => {
+    const current = fixture();
+    const prepared = await prepareEditableSourceSelection(
+      current.connection,
+      nativeSelection(['Welcome', 'Missing']),
+    );
+    expect(prepared.resolution.unresolved).to.deep.include({
+      contentType: 'sfdc_cms__email',
+      kind: 'api-name',
+      selector: 'Missing',
+      reason: 'missing',
+      parentIds: [],
+    });
+    const acquired = await prepared.acquire(prepared.resolution.variants[0].Id);
+    expect(acquired.evidence.contentId).to.equal('20Y000000000001AAA');
+    current.variants.push({ ...email('other'), managedContentId: '20Y000000000002AAA' });
+    const ambiguous = await prepareEditableSourceSelection(current.connection, nativeSelection());
+    expect(ambiguous.resolution.variants).to.deep.equal([]);
+    expect(ambiguous.resolution.unresolved[0].reason).to.equal('ambiguous');
+  });
+
+  it('preserves sanitized native request errors for fatal classification', async () => {
+    const current = fixture();
+    current.connection.request.callsFake((request: { url: string }) => {
+      if (!request.url.includes('/query'))
+        return Object.assign(Promise.resolve(structuredClone(current.workspace)), {
+          stream: () => new PassThrough(),
+        });
+      return Object.assign(
+        Promise.reject({
+          statusCode: 403,
+          data: [{ errorCode: 'INSUFFICIENT_ACCESS', message: 'Not allowed' }],
+        }),
+        { stream: () => new PassThrough() },
+      );
+    });
+    try {
+      await prepareEditableSourceSelection(current.connection, nativeSelection());
+      expect.fail('Expected native request failure');
+    } catch (error) {
+      expect(error).to.be.instanceOf(NativeInventoryRequestError);
+      const nativeError = error as NativeInventoryRequestError;
+      expect(nativeError.status).to.equal(403);
+      expect(nativeError.statusObserved).to.equal(true);
+      expect(nativeError.errorCode).to.equal('INSUFFICIENT_ACCESS');
+      expect(nativeError.errorEntryCount).to.equal(1);
+      expect(nativeError).not.to.have.property('response');
+    }
+  });
+
+  it('rejects detail drift and independent sibling proof mismatch after resolution', async () => {
+    for (const siblingDrift of [false, true]) {
+      const current = fixture();
+      const prepared = await prepareEditableSourceSelection(current.connection, nativeSelection());
+      if (siblingDrift)
+        current.patchNative((rows) => rows.map((row) => ({ ...row, IsPrimary: false })));
+      else current.variants[0].contentKey = 'changed';
+      await acquisitionRejects(
+        () => prepared.acquire(prepared.resolution.variants[0].Id),
+        siblingDrift ? 'single exact native sibling' : 'disagreement',
+      );
+    }
+  });
+
+  it('keeps root, paired User provenance and strict projection checks for both types', async () => {
+    for (const template of [false, true]) {
+      for (const invalid of ['folder', 'source', 'body', 'hidden-sibling', 'none']) {
+        const current = recordedReadEnvelopes(template);
+        current.variants[0].source = 'User';
+        current.parent.source = 'User';
+        const input = nativeSelection();
+        if (template)
+          Object.assign(input.selection.groups[0], { contentType: 'sfdc_cms__emailTemplate' });
+        const prepared = await prepareEditableSourceSelection(current.connection, input);
+        if (invalid === 'folder') current.parent.folder = { id: 'nested' };
+        if (invalid === 'source') current.parent.source = 'External';
+        if (invalid === 'body') (current.variants[0].contentBody as RecordValue).unknown = {};
+        if (invalid === 'hidden-sibling') current.variants.push(email('translated', 'de_DE'));
+        const acquire = prepared.acquire.bind(undefined, prepared.resolution.variants[0].Id);
+        if (invalid === 'none') {
+          const acquired = await acquire();
+          expect(acquired.projection.definition.identity.type).to.equal(
+            template ? 'Email Template' : 'Email',
+          );
+        } else await acquisitionRejects(acquire, '');
+      }
+    }
+  });
+});
+
+describe('recorded native User source provenance', () => {
+  for (const template of [false, true]) {
+    const acquire = template ? acquireEditableTemplateSource : acquireEditableEmailSource;
+    const family = template ? 'Template' : 'Email';
+    it(`normalizes paired User GET provenance for ${family} without losing content or identity`, async () => {
+      const current = recordedReadEnvelopes(template);
+      current.variants[0].source = 'User';
+      current.parent.source = 'User';
+      const before = JSON.stringify([current.parent, current.variants]);
+      const result = await acquire(current.connection, selection);
+      expect(result.evidence).to.deep.equal({
+        variantId: '9Ps000000000001AAA',
+        contentId: '20Y000000000001AAA',
+      });
+      expect(result.projection.definition.identity.type).to.equal(
+        template ? 'Email Template' : 'Email',
+      );
+      expect(
+        reassembleEditableItemSourceV2(
+          result.projection.definition,
+          new Map(result.projection.companions.map(({ path, bytes }) => [path, bytes])),
+        ),
+      ).to.deep.equal({
+        ...(current.variants[0].contentBody as RecordValue),
+        rawHtml: '<p>Owned inert acceptance</p>',
+      });
+      expect(result.projection.definition).not.to.have.property('source');
+      expect(result.projection.definitionBytes.toString()).not.to.include('key-source');
+      expect(JSON.stringify([current.parent, current.variants])).to.equal(before);
+      expect(await acquire(current.connection, selection)).to.deep.equal(result);
+    });
+
+    it(`rejects unknown, invalid, one-sided and disagreeing ${family} provenance`, async () => {
+      for (const [variant, parent] of [
+        ['User', undefined],
+        [undefined, 'User'],
+        ['User', 'External'],
+        ['External', 'User'],
+        ['External', 'External'],
+        [null, null],
+        [{ type: 'User' }, { type: 'User' }],
+        ['', ''],
+      ]) {
+        const current = recordedReadEnvelopes(template);
+        if (variant !== undefined) current.variants[0].source = variant;
+        if (parent !== undefined) current.parent.source = parent;
+        try {
+          await acquire(current.connection, selection);
+          expect.fail('Expected unsupported source provenance rejection');
+        } catch (error) {
+          expect(error).to.be.instanceOf(TypeError);
+          expect((error as Error).message).to.include('source provenance');
+        }
+      }
+    });
+  }
+});
+
+describe('read-only editable Template acquisition', () => {
+  it('projects portable v2 Template companions with exact workspace and language', async () => {
+    const current = fixture(true);
+    const before = JSON.stringify([current.parent, current.variants]);
+    const result = await acquireEditableTemplateSource(current.connection, selection);
+    expect(result.directory).to.equal('cms/Default_Content_Workspace/emailTemplate');
+    expect(result.projection.definitionName).to.equal('Welcome.cms-email-template.json');
+    expect(result.projection.definition.identity.type).to.equal('Email Template');
+    expect(result.projection.definition.language).to.equal('en_US');
+    expect(result.projection.definitionBytes.toString()).not.to.match(
+      /20Y000000000001AAA|9Ps000000000001AAA|0Zu000000000001AAA|key-source/u,
+    );
+    expect(
+      reassembleEditableItemSourceV2(
+        result.projection.definition,
+        new Map(result.projection.companions.map(({ path, bytes }) => [path, bytes])),
+      ),
+    ).to.deep.equal({
+      ...(current.variants[0].contentBody as RecordValue),
+      rawHtml: '<p>Café &amp; 世界</p>',
+    });
+    expect(JSON.stringify([current.parent, current.variants])).to.equal(before);
+    current.variants[0].language = 'de_DE';
+    delete current.workspace.defaultLanguage;
+    const explicit = await acquireEditableTemplateSource(current.connection, {
+      workspaceId: selection.workspaceId,
+      apiName: selection.apiName,
+      language: 'de_DE',
+    });
+    expect(explicit.projection.definition.language).to.equal('de_DE');
+  });
+
+  it('admits a native Template absent from search without any search request', async () => {
+    const current = fixture(true);
+    const acquired = await acquireEditableTemplateSource(current.connection, selection);
+    expect(acquired.evidence.variantId).to.equal('9Ps000000000001AAA');
+    const urls = current.connection.request.args.map(([request]) => request.url as string);
+    expect(urls.some((url) => url.includes('/items/search'))).to.equal(false);
+    expect(urls.filter((url) => url.includes('/variants/'))).to.have.length(2);
+  });
+
+  it('rejects native/detail metadata and workspace drift', async () => {
+    for (const patch of [
+      { ManagedContentId: '20Y000000000002AAA' },
+      { Language: 'de_DE' },
+      { ManagedContentVariantStatus: 'Published' },
+      { ManagedContentKey: 'other-key' },
+      {
+        ManagedContent: { AuthoredManagedContentSpaceId: '0Zu000000000002AAA', ApiName: 'Welcome' },
+      },
+      {
+        ManagedContent: { AuthoredManagedContentSpaceId: selection.workspaceId, ApiName: 'Other' },
+      },
+    ]) {
+      const current = fixture(true);
+      current.patchNative((rows) => rows.map((row) => ({ ...row, ...patch })));
+      await rejects(current, 'disagreement');
+    }
+  });
+
+  it('requires exact case/language, one match, root ancestry and unchanged detail identity', async () => {
+    for (const patch of [
+      { apiName: 'welcome' },
+      { language: 'fr_FR' },
+      { contentSpace: { id: 'wrong' } },
+      { contentType: 'sfdc_cms__email' },
+      { id: 'conflict' },
+      { folder: { id: 'nested' } },
+    ]) {
+      const current = fixture(true);
+      Object.assign(current.variants[0], patch);
+      await rejects(current);
+    }
+    const ambiguous = fixture(true);
+    ambiguous.variants.push({
+      ...structuredClone(ambiguous.variants[0]),
+      managedContentVariantId: '9Ps000000000002AAA',
+    });
+    await rejects(ambiguous, 'exactly one');
+  });
+
+  it('preserves known GET distinctions but rejects unknown authoring and parent disagreements', async () => {
+    const current = fixture(true);
+    Object.assign(current.variants[0], {
+      managedContentVersionId: 'version',
+      externalId: null,
+      createdDate: '2026-10-15T00:00:00Z',
+    });
+    Object.assign(current.parent, structuredClone(current.variants[0]), {
+      contentVersion: 1,
+      variantVersion: '1.1',
+    });
+    await acquireEditableTemplateSource(current.connection, selection);
+    for (const [key, value] of [
+      ['managedContentId', 'wrong'],
+      ['managedContentVariantId', 'wrong'],
+      ['managedContentVersionId', 'wrong'],
+      ['language', 'de_DE'],
+      ['contentBody', {}],
+      ['contentSpace', { id: 'wrong' }],
+      ['contentType', 'sfdc_cms__email'],
+      ['unknownField', {}],
+    ] as const) {
+      const saved = structuredClone(current.parent);
+      current.parent[key] = value;
+      await rejects(current);
+      for (const field of Object.keys(current.parent)) {
+        delete current.parent[field];
+      }
+      Object.assign(current.parent, saved);
+    }
+    for (const side of [current.parent, current.variants[0]]) {
+      side.unknownField = {};
+      await rejects(current);
+      delete side.unknownField;
+    }
+    for (const side of [current.parent, current.variants[0]])
+      (side.contentBody as RecordValue)['lightning:unknownComponent'] = {};
+    await rejects(current, 'Unsupported native body field');
+  });
+});
+
 describe('read-only editable Email acquisition', () => {
   it('acquires default-language v2 HTML/text with detached IDs and no publication', async () => {
     const current = fixture();
@@ -164,8 +581,8 @@ describe('read-only editable Email acquisition', () => {
       'Default_Content_Workspace',
     );
     expect(result.evidence).to.deep.equal({
-      variantId: 'variant-source',
-      contentId: 'parent-source',
+      variantId: '9Ps000000000001AAA',
+      contentId: '20Y000000000001AAA',
     });
     const { projection } = result;
     expect(projection.definitionName).to.equal('Welcome.cms-email.json');
@@ -184,10 +601,10 @@ describe('read-only editable Email acquisition', () => {
       rawHtml: '<p>Café &amp; 世界</p>',
     });
     expect(projection.definitionBytes.toString()).not.to.match(
-      /variant-source|parent-source|space-source|key-source|rawHtml.*<p>|Plain café/u,
+      /9Ps000000000001AAA|20Y000000000001AAA|0Zu000000000001AAA|key-source|rawHtml.*<p>|Plain café/u,
     );
     expect(JSON.stringify([current.workspace, current.parent, current.variants])).to.equal(before);
-    expect(current.connection.request.callCount).to.equal(4);
+    expect(current.connection.request.callCount).to.equal(16);
     // Only in-memory buffers are produced: no output path or publication API exists.
     expect(result).to.have.all.keys('directory', 'projection', 'evidence');
     expect(await acquireEditableEmailSource(current.connection, selection)).to.deep.equal(result);
@@ -198,15 +615,15 @@ describe('read-only editable Email acquisition', () => {
     const before = JSON.stringify([current.parent, current.variants]);
     const result = await acquireEditableEmailSource(current.connection, selection);
     expect(result.evidence).to.deep.equal({
-      variantId: 'variant-source',
-      contentId: 'parent-source',
+      variantId: '9Ps000000000001AAA',
+      contentId: '20Y000000000001AAA',
     });
     expect(result.projection.companions[0].bytes.toString()).to.equal(
       '<p>Owned inert acceptance</p>',
     );
     expect(result.projection.definition.contentBody).to.have.property('lightning:brandSource');
     expect(result.projection.definitionBytes.toString()).not.to.match(
-      /variant-source|parent-source|space-source|key-source|user-source|version-source|contentFqn|createdBy|createdDate|lastModified|managedContent|contentVersion|variantVersion/u,
+      /9Ps000000000001AAA|20Y000000000001AAA|0Zu000000000001AAA|key-source|user-source|version-source|contentFqn|createdBy|createdDate|lastModified|managedContent|contentVersion|variantVersion/u,
     );
     expect(JSON.stringify([current.parent, current.variants])).to.equal(before);
   });
@@ -260,7 +677,7 @@ describe('read-only editable Email acquisition', () => {
       );
       expect(current.connection.request.callCount).to.equal(1);
       expect(current.connection.request.firstCall.args[0].url).to.equal(
-        '/connect/cms/spaces/space-source',
+        '/connect/cms/spaces/0Zu000000000001AAA',
       );
     }
   });
@@ -271,7 +688,7 @@ describe('read-only editable Email acquisition', () => {
     Object.assign(current.variants[0], { language: 'de_DE', folder: { id: 'root-folder-source' } });
     current.parent.folder = { id: 'root-folder-source' };
     const result = await acquireEditableEmailSource(current.connection, {
-      workspaceId: 'space-source',
+      workspaceId: '0Zu000000000001AAA',
       apiName: 'Welcome',
       language: 'de_DE',
     });
@@ -314,33 +731,67 @@ describe('read-only editable Email acquisition', () => {
       await fails(current, 'exactly one');
       expect(
         current.connection.request.args.every(
-          ([request]) => !request.url.endsWith('/contents/parent-source'),
+          ([request]) => !request.url.endsWith('/contents/20Y000000000001AAA'),
         ),
       ).to.equal(true);
     }
   });
 
-  it('enumerates every global-count page and every detail before selection', async () => {
+  it('binds every native family detail before exact Email selection without search', async () => {
     const current = fixture();
     current.variants.unshift({
       ...email('other', 'fr_FR', 'Other'),
-      managedContentId: 'other-parent',
+      managedContentId: '20Y000000000002AAA',
     });
-    current.paginate([[0], [1]]);
     const result = await acquireEditableEmailSource(current.connection, selection);
-    expect(result.evidence.variantId).to.equal('variant-source');
+    expect(result.evidence.variantId).to.equal('9Ps000000000001AAA');
     const urls = current.connection.request.args.map(([request]) => request.url as string);
-    expect(urls.filter((url) => url.includes('/items/search'))).to.have.length(2);
-    expect(urls.filter((url) => url.includes('/variants/'))).to.have.length(2);
-    current.paginate([[0], []], 2);
-    await fails(current, 'count was not satisfied');
+    expect(urls.filter((url) => url.includes('/items/search'))).to.have.length(0);
+    expect(urls.filter((url) => url.includes('/variants/'))).to.have.length(3);
+  });
+
+  it('fetches hidden different-type/language siblings independently for both families', async () => {
+    for (const template of [false, true]) {
+      const current = fixture(template);
+      const sibling = email('translated', 'de_DE', 'Hidden');
+      sibling.contentType = {
+        fullyQualifiedName: template ? 'sfdc_cms__email' : 'sfdc_cms__emailTemplate',
+      };
+      current.variants.push(sibling);
+      await (template
+        ? rejects(current, 'single exact native sibling')
+        : fails(current, 'single exact native sibling'));
+      const urls = current.connection.request.args.map(([request]) => request.url as string);
+      expect(
+        urls.some((url) => url.endsWith(`/variants/${String(sibling.managedContentVariantId)}`)),
+      ).to.equal(true);
+      const siblingQueries = urls.filter((url) =>
+        decodeURIComponent(url).includes('ManagedContentId ='),
+      );
+      expect(siblingQueries).to.have.length(6);
+      expect(
+        siblingQueries.every(
+          (url) => !decodeURIComponent(url).includes('ContentTypeFullyQualifiedName IN'),
+        ),
+      ).to.equal(true);
+      expect(urls.some((url) => url.includes('/items/search'))).to.equal(false);
+    }
+  });
+
+  it('rejects native count drift and stable but different family/sibling observations', async () => {
+    const counts = fixture();
+    let reads = 0;
+    counts.patchNative((rows) => (++reads === 3 ? [] : rows));
+    await fails(counts, 'aggregate count disagreement');
+    const changed = fixture();
+    changed.patchNative((rows, siblings) => rows.map((row) => ({ ...row, IsPrimary: !siblings })));
+    await fails(changed, 'single exact native sibling');
   });
 
   it('rejects translated or differently named siblings from complete all-language inventory', async () => {
     for (const sibling of [email('translated', 'de_DE'), email('renamed', 'en_US', 'Other')]) {
       const current = fixture();
       current.variants.push(sibling);
-      current.paginate([[0], [1]]);
       await fails(current, 'single exact native sibling');
     }
   });
@@ -390,8 +841,8 @@ describe('read-only editable Email acquisition', () => {
         current.parent.folder = { id: 'nested' };
       },
       (current: ReturnType<typeof fixture>) => {
-        current.workspace.rootFolderId = 'space-source';
-        current.parent.folder = { id: 'space-source' };
+        current.workspace.rootFolderId = '0Zu000000000001AAA';
+        current.parent.folder = { id: '0Zu000000000001AAA' };
       },
       (current: ReturnType<typeof fixture>) => {
         delete current.workspace.apiName;

@@ -5,6 +5,8 @@ import sinon from 'sinon';
 import { getSelectedOperation, CmsRequestError } from '../../src/transport/json-request.js';
 import { requestEmptyMutation, requestJsonMutation } from '../../src/transport/json-mutation.js';
 
+import { prepareCmsConnection } from '../../src/api-policy.js';
+
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
 function fakeRequest<T>(value?: T): FakeRequest<T | undefined> {
@@ -83,9 +85,35 @@ describe('JSON mutation transport', () => {
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json' },
       method: 'PUT',
-      url: '/connect/cms/contents/variants/variant%2Fid',
+      url: '/services/data/v67.0/connect/cms/contents/variants/variant%2Fid',
     });
     expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
+  });
+
+  it('inherits latest and numeric selection on the actual fresh mutation connection', async () => {
+    for (const selected of ['latest', '68.0']) {
+      const caller = new JsforceConnection({
+        accessToken: 'token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        version: '67.0',
+      });
+      const discovery = sinon.stub(caller, 'request').resolves({});
+      discovery.onFirstCall().resolves([{ version: '68.0' }]);
+      await prepareCmsConnection(caller, selected);
+      const request = sinon
+        .stub(JsforceConnection.prototype, 'request')
+        .returns(fakeRequest({ id: 'created' }));
+      await requestJsonMutation(caller, getSelectedOperation('content.create'), {
+        title: 'Created',
+      });
+      expect(request.firstCall.args[0]).to.have.property(
+        'url',
+        `/services/data/${selected === 'latest' ? 'latest' : 'v68.0'}/connect/cms/contents`,
+      );
+      expect(request.thisValues[0]).not.to.equal(caller);
+      expect((request.thisValues[0] as JsforceConnection).version).to.equal('68.0');
+      request.restore();
+    }
   });
 
   it('uses a token-only connection to prevent refresh replay', async () => {
@@ -131,7 +159,7 @@ describe('JSON mutation transport', () => {
     expect(request.firstCall.args[0]).to.deep.equal({
       headers: { 'content-type': 'application/json' },
       method: 'DELETE',
-      url: '/connect/cms/contents/variants/variant%2Fid',
+      url: '/services/data/v67.0/connect/cms/contents/variants/variant%2Fid',
     });
   });
 

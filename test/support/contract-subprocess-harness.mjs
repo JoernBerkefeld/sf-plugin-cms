@@ -47,6 +47,7 @@ if (contractCase !== undefined && isMainThread) {
       return {
         orgId: '00DControlledSource',
         connection: {
+          version: '67.0',
           request: async ({ method, url }) => {
             events.push({ method, url });
             await writeFile(evidenceFile, JSON.stringify(events));
@@ -649,6 +650,7 @@ if (contractCase !== undefined && isMainThread) {
       return {
         orgId: '00DControlledSource',
         connection: {
+          version: '67.0',
           request: async ({ url, method, body }) => {
             const event = {
               url,
@@ -820,6 +822,7 @@ if (contractCase !== undefined && isMainThread) {
       return {
         orgId: '00DControlledSource',
         connection: {
+          version: '67.0',
           request: async ({ url, method }) => {
             if (method !== 'GET') throw new Error('Unexpected mutation');
             if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
@@ -863,6 +866,7 @@ if (contractCase !== undefined && isMainThread) {
       return {
         orgId: '00DControlledSource',
         connection: {
+          version: '67.0',
           request: async ({ url, method, body }) => {
             const event = {
               url,
@@ -967,6 +971,7 @@ if (contractCase !== undefined && isMainThread) {
       return {
         orgId: '00DControlledSource',
         connection: {
+          version: '67.0',
           request: async ({ url }) => {
             if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
             if (url.startsWith('/connect/cms/items/search?')) {

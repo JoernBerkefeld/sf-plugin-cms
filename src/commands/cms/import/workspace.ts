@@ -52,6 +52,7 @@ import {
   readDocumentImportBytes,
   type DocumentImportPreflightResult,
 } from '../../../services/document-import.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 type WorkspaceImportCommandResult = WorkspaceImportResult | WorkspaceImageImportResultV2;
@@ -593,6 +594,8 @@ export default class ImportWorkspace extends CmsCommand<CmsEnvelope<WorkspaceImp
         flags['source-org'] === undefined
           ? undefined
           : await this.getOrgContext(flags['source-org'], flags['api-version']);
+      if (flags['api-version'] === 'latest')
+        flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
       const selected = await resolveWorkspace(connection, {
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],

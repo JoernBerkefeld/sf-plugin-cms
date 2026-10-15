@@ -397,13 +397,19 @@ describe('bulk workspace export service', () => {
       throw new Error(`unexpected ${url}`);
     });
 
-    const envelope = await exportAllWorkspaces({ request }, outputDirectory, 'Marketing', {
-      generatedAt: '2026-09-13T18:00:00.000Z',
-      pluginVersion: '0.3.0',
-      sourceOrgId: '00DSource',
-    });
+    const envelope = await exportAllWorkspaces(
+      { request, version: '68.0' },
+      outputDirectory,
+      'Marketing',
+      {
+        generatedAt: '2026-09-13T18:00:00.000Z',
+        pluginVersion: '0.3.0',
+        sourceOrgId: '00DSource',
+      },
+    );
     const result = envelope.result!;
     const artifactHash = result.workspaces[0].artifact!.manifestSha256;
+    expect(envelope.metadata.apiVersion).to.equal('68.0');
 
     expect(envelope.status).to.equal('success');
     expect(result.externalReferenceCorrelations).to.deep.equal([

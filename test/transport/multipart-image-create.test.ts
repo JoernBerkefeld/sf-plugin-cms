@@ -13,6 +13,8 @@ import {
 } from '../../src/transport/multipart-image-create.js';
 import { CmsRequestError } from '../../src/transport/json-request.js';
 
+import { prepareCmsConnection } from '../../src/api-policy.js';
+
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
 function fakeRequest<T>(promise: Promise<T>, stream = new PassThrough()): FakeRequest<T> {
@@ -402,6 +404,36 @@ describe('multipart image create transport', () => {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
+    }
+  });
+
+  it('inherits latest and numeric selection on the actual fresh multipart connection', async () => {
+    for (const selected of ['latest', '68.0']) {
+      const caller = new JsforceConnection({
+        accessToken: 'token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        version: '67.0',
+      });
+      const discovery = sinon.stub(caller, 'request').resolves({});
+      discovery.onFirstCall().resolves([{ version: '68.0' }]);
+      await prepareCmsConnection(caller, selected);
+      const request = sinon.stub(JsforceConnection.prototype, 'request').returns(
+        fakeRequest(
+          Promise.resolve({
+            contentKey: 'key',
+            managedContentId: 'content',
+            managedContentVariantId: 'variant',
+          }),
+        ),
+      );
+      await createImageContent(caller, input, 'image.png', Buffer.from('image'));
+      expect(request.firstCall.args[0]).to.have.property(
+        'url',
+        `/services/data/${selected === 'latest' ? 'latest' : 'v68.0'}/connect/cms/contents`,
+      );
+      expect(request.thisValues[0]).not.to.equal(caller);
+      expect((request.thisValues[0] as JsforceConnection).version).to.equal('68.0');
+      request.restore();
     }
   });
 

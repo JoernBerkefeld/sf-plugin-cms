@@ -56,7 +56,7 @@ describe('CMS lifecycle transport foundation', () => {
     expect(request.calledOnce).to.equal(true);
     expect(request.firstCall.args[0]).to.deep.include({
       method: 'PUT',
-      url: '/connect/cms/contents/variants/variant%2Fid',
+      url: '/services/data/v67.0/connect/cms/contents/variants/variant%2Fid',
     });
     expect(request.firstCall.args[1]).to.deep.equal({
       retry: { maxRetries: 0 },

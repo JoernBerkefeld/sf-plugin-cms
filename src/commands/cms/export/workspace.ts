@@ -24,6 +24,7 @@ import {
   assertWorkspaceSelector,
   resolveWorkspace,
 } from '../../../services/resolve-workspace.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 type WorkspaceExportCommandResult = CmsEnvelope<WorkspaceExportSetResult> | ExportWorkspaceResult;
@@ -363,6 +364,8 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
         flags['target-org'],
         flags['api-version'],
       );
+      if (flags['api-version'] === 'latest')
+        flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
       const workspaceType = normalizeWorkspaceType(flags['workspace-type'] ?? 'Marketing');
       const result = await exportAllWorkspaces(
         connection,
@@ -382,6 +385,8 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
       flags['target-org'],
       flags['api-version'],
     );
+    if (flags['api-version'] === 'latest')
+      flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const selected = await resolveWorkspace(connection, {
       workspaceId: flags['workspace-id'],
       workspaceName: flags['workspace-name'],
@@ -472,7 +477,7 @@ export default class ExportWorkspace extends CmsCommand<WorkspaceExportCommandRe
                 root: path.join(path.dirname(destination), '.sf-cms-resolution-cache'),
                 sourceOrg: { kind: 'exact-scope', value: orgId },
                 targetOrg: { kind: 'exact-scope', value: orgId },
-                apiVersion: flags['api-version'] ?? '67.0',
+                apiVersion: flags['api-version'],
               },
             },
           }),

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isNumericApiVersion } from '../api-policy.js';
 import {
   assertDependencyDescriptor,
   assertPortableIdentity,
@@ -369,7 +370,7 @@ export function preflightCmsDeploy(
   if (
     provider === undefined ||
     Number.isNaN(now) ||
-    input.apiVersion !== '67.0' ||
+    !isNumericApiVersion(input.apiVersion) ||
     !Number.isSafeInteger(input.maxEvidenceAgeMs) ||
     input.maxEvidenceAgeMs < 0 ||
     input.targetWorkspaceApiName.length === 0

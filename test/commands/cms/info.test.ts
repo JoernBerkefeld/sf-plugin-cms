@@ -38,7 +38,7 @@ describe('cms info', () => {
         version: packageJson.version,
       });
       expect(result.result?.api).to.deep.equal({
-        defaultVersion: '67.0',
+        defaultVersion: 'latest',
         testedVersions: ['67.0'],
       });
       expect(result.result?.contracts.embeddedResults.externalReferenceCorrelations).to.deep.equal([

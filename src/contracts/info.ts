@@ -1,3 +1,4 @@
+import { DEFAULT_API_VERSION, FALLBACK_API_VERSION } from '../api-policy.js';
 import {
   assertCapabilityRegistryFixture,
   METADATA_CAPABILITY_CONTRACT,
@@ -57,8 +58,8 @@ export type CmsInfoResult = {
     version: string;
   };
   api: {
-    defaultVersion: '67.0';
-    testedVersions: ['67.0'];
+    defaultVersion: typeof DEFAULT_API_VERSION | typeof FALLBACK_API_VERSION;
+    testedVersions: [typeof FALLBACK_API_VERSION];
   };
   contracts: {
     commandResults: {
@@ -101,7 +102,11 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
   if (value.plugin.name !== 'sf-plugin-cms') throw new TypeError('result.plugin.name is invalid');
   assertNonemptyString(value.plugin.version, 'result.plugin.version');
   assertExactKeys(value.api, ['defaultVersion', 'testedVersions'], 'result.api');
-  if (value.api.defaultVersion !== '67.0' || !isExactArray(value.api.testedVersions, ['67.0'])) {
+  if (
+    (value.api.defaultVersion !== DEFAULT_API_VERSION &&
+      value.api.defaultVersion !== FALLBACK_API_VERSION) ||
+    !isExactArray(value.api.testedVersions, [FALLBACK_API_VERSION])
+  ) {
     throw new TypeError('result.api is invalid');
   }
   assertExactKeys(

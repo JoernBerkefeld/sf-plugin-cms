@@ -115,7 +115,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
         .filter((entry) => entry.identity.provider === 'sf-plugin-cms')
         .map((entry) => ({
           ...entry,
-          providerContract: { ...entry.providerContract, maxVersion: '0.11.999' },
+          providerContract: { ...entry.providerContract, maxVersion: '0.12.999' },
         })),
     );
     expect(CMS_CAPABILITY_DECLARATIONS.map((entry) => entry.identity.type)).not.to.include.members([
@@ -128,7 +128,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
-  it('accepts the CMS 0.10–0.11 release lines without changing contract or sibling provider versions', async () => {
+  it('accepts the CMS 0.10–0.12 release lines without changing contract or sibling provider versions', async () => {
     const { value } = await loadFixture();
     expect(value.contract).to.equal('sf-metadata-capability-v1');
     expect(value.version).to.equal('1.0.0');
@@ -136,7 +136,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
       expect(declaration.providerContract).to.deep.equal({
         name: 'sf-plugin-cms',
         minVersion: '0.10.0',
-        maxVersion: '0.11.999',
+        maxVersion: '0.12.999',
       });
     }
     const siblingDeclarations = value.declarations.filter(
@@ -152,15 +152,18 @@ describe('sf-metadata-capability-v1 foundation', () => {
     }
   });
 
-  it('documents candidate inclusion without inflating live evidence or asserting publication', async () => {
+  it('documents qualified batch retrieval without inflating baseline live evidence', async () => {
     const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
-    expect(readme).to.include('CMS `0.10.0`–`0.11.999` range');
-    expect(readme).to.include('release is being prepared from the published `v0.10.1` baseline');
-    expect(readme).to.include('not publication or broader live-org qualification');
+    expect(readme).to.include('CMS `0.10.0`–`0.12.999` range');
+    expect(readme).to.include('**qualified batch retrieval**');
+    expect(readme).to.include('building on the `v0.11.0` release baseline');
     expect(readme).to.include('not released-package qualification');
-    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.11.0" }');
-    expect(readme).to.include('"pluginVersion": "0.11.0"');
-    expect(readme).to.include('Publication of `0.11.0` is not yet asserted.');
+    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.12.0" }');
+    expect(readme).to.include('"pluginVersion": "0.12.0"');
+    expect(readme).not.to.include('Publication of `0.11.0` is not yet asserted.');
+    expect(readme).to.include('mixed completion exits `2` with `partial`');
+    expect(readme).to.include('RETRIEVE_SOURCE_BLOCKED');
+    expect(readme).to.include('This checkpoint makes **no deployment support claim**.');
     expect(readme).to.include('**no live image upload has been performed**');
     expect(readme).to.include(
       '**Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.**',

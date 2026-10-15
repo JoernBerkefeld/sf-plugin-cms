@@ -153,6 +153,13 @@ function rootNode(dependencies: readonly DependencyDescriptor[]): CmsDeployPacka
 }
 
 describe('CMS package-first deploy preflight', () => {
+  it('accepts newer numeric API versions while rejecting an unresolved latest sentinel', () => {
+    const input = build([], []);
+    const newer = preflightCmsDeploy({ ...input, apiVersion: '68.0' });
+    expect(newer.blockedReasons).not.to.include('provider, API, or clock version is invalid');
+    const unresolved = preflightCmsDeploy({ ...input, apiVersion: 'latest' });
+    expect(unresolved.blockedReasons).to.include('provider, API, or clock version is invalid');
+  });
   it('prefers exact package identities before mappings and target evidence', () => {
     const dependency = identity('Landing Page Template', 'asset');
     const edge = descriptor(identity('Brand', 'root'), dependency);
@@ -361,10 +368,17 @@ describe('CMS package-first deploy preflight', () => {
     const input = build([], [rootNode([])]);
     expect(input.registryVersion).to.equal('1.0.0');
     expect(preflightCmsDeploy(input).ready).to.equal(true);
-    for (const providerVersion of ['0.10.0', '0.10.999', '0.11.0', '0.11.999']) {
+    for (const providerVersion of [
+      '0.10.0',
+      '0.10.999',
+      '0.11.0',
+      '0.11.999',
+      '0.12.0',
+      '0.12.999',
+    ]) {
       expect(preflightCmsDeploy({ ...input, providerVersion }).ready).to.equal(true);
     }
-    for (const providerVersion of ['0.9.999', '0.12.0', '1.0.0']) {
+    for (const providerVersion of ['0.9.999', '0.13.0', '1.0.0']) {
       expect(preflightCmsDeploy({ ...input, providerVersion }).blockedReasons.join(' ')).to.include(
         'provider version',
       );

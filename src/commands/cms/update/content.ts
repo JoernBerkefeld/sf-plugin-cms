@@ -22,6 +22,7 @@ import {
   previewDraftEmailUpdateFromEditableHtml,
   type UpdateContentType,
 } from '../../../services/email-update.js';
+import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
 /** Updates one exact unpublished Draft Email rawHtml field from an editable companion. */
@@ -138,6 +139,8 @@ export default class UpdateContent extends CmsCommand<CmsEnvelope<ContentUpdateR
       flags['target-org'],
       flags['api-version'],
     );
+    if (flags['api-version'] === 'latest')
+      flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {
       contentType: selectedContentType,
       sourceDirectory: flags['source-dir'],
