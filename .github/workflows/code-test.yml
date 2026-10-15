@@ -15,7 +15,7 @@ jobs:
         node: [22.19.0, 24.x]
     name: lint, build, and test with Node ${{ matrix.node }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
@@ -36,7 +36,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: atomic no-clobber with Node 22.19 on ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 22.19.0
@@ -49,7 +49,7 @@ jobs:
     container: node:22.19-alpine
     name: atomic no-clobber with Node 22.19 on Linux musl
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: npm ci --no-workspaces
       - run: npm run compile
       - run: npx mocha --loader=ts-node/esm --timeout 60000 --grep "rejects a real destination collision" test/services/export-workspace.test.ts
