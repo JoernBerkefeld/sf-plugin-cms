@@ -211,7 +211,8 @@ describe('item-local incremental source writer', () => {
       await mkdir(folder, { recursive: true });
       const item = projection();
       const target = path.join(folder, item.companions[0].path);
-      if (kind === 'alias') await writeFile(target.toLowerCase(), 'alias');
+      if (kind === 'alias')
+        await writeFile(path.join(folder, item.companions[0].path.toLowerCase()), 'alias');
       if (kind === 'directory') await mkdir(target);
       if (kind === 'hardlink') {
         await writeFile(path.join(project, 'outside.txt'), 'outside');
