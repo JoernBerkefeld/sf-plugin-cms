@@ -692,6 +692,14 @@ The companion is **not** an `sf-cms-workspace-export` package and must not be su
 
 Controlled-transport installed CLI tests cover export, HTML editing, dry-run, fresh CREATE, readback, and journal evidence for email/template content. **Live installed editable transfer is still unproven:** the 2026-09-16 attempt stopped on Salesforce session-refresh maintenance before export or mutation. Historical native-copy acceptance is separate evidence, not proof of edited HTML transfer.
 
+#### Standalone editable item loading (service only)
+
+The internal `loadEditableItemSource(definitionFile)` service loads one portable `sf-cms-source-definition@1.0.0` Email or Email Template JSON and its declared same-stem `.html` companion without an export baseline, manifest, or original hashes. `reassembleEditableItemSource(definition, literalHtml)` restores the native `contentBody.rawHtml` while preserving the supported inline metadata. JSON remains authoritative for portable identity, exact language, folder path, and body settings; HTML remains authoritative for `rawHtml` and is never GET-decoded during loading. Valid supported metadata can be edited, added, or removed subject to the v1 schema, independently of historical exported values. This is local format validation, **not** a promise that every accepted metadata edit can be created or updated by a destination operation.
+
+Use exact filenames such as `Welcome.cms-email.json` plus `Welcome.cms-email.html`, or `Welcome.cms-email-template.json` plus `Welcome.cms-email-template.html`, in the same directory. Both files must contain valid UTF-8 without a BOM. Missing, escaping, wrong-stem, additional, or case-aliased companion bindings fail rather than being guessed. Unrelated project files are ignored. The existing strict native-body and dependency-free HTML limits still apply; Brand, media, multiple HTML components, and all other families are unsupported by this standalone service.
+
+This checkpoint adds **no retrieve/deploy CLI commands**, destination matching, or org writes. Existing baseline-bound source import remains unchanged, including its narrower edit rules and required original evidence described below.
+
 #### Flat portable source definitions (`--definition-dir`)
 
 The `0.11.0` release candidate includes this additive **source mode with bounded B1 JSON editing**, using an unchanged workspace export as evidence and a separate flat source tree. It does not add general CMS migration, seven-family source support, or broader live-org qualification. The bounded immutable Brand SOURCE path is live-qualified for one root/default-language Draft CREATE. Inclusion in the release candidate does not establish publication or that an installed package contains this mode.
