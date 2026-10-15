@@ -68,6 +68,7 @@ Machine consumers should run this command first and select a mutually supported 
 | `sf cms list channel`     | [List workspace channels](#sf-cms-list-channel) |
 | `sf cms get channel`      | [Get a channel](#sf-cms-get-channel)            |
 | `sf cms get content`      | [Get content](#sf-cms-get-content)              |
+| `sf cms retrieve content` | [Retrieve one editable Email](#sf-cms-retrieve-content) |
 | `sf cms get variant`      | [Get a variant](#sf-cms-get-variant)            |
 | `sf cms export workspace` | [Export a workspace](#sf-cms-export-workspace)  |
 | `sf cms import workspace` | [Import a workspace](#sf-cms-import-workspace)  |
@@ -78,6 +79,22 @@ Machine consumers should run this command first and select a mutually supported 
 | `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content) |
 
 All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They use API version `67.0` by default; pass `--api-version <version>` only when you need to override it. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
+
+### `sf cms retrieve content`
+
+Partial developer-workflow checkpoint: retrieve **one Email** (`sfdc_cms__email`) by exact API name into an explicit project root. This reads the org and writes selected local files only; it does not mutate CMS content or provide a deploy command.
+
+```sh
+sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type sfdc_cms__email --api-name Welcome --default-language --output-dir ./project --json
+sf cms retrieve content -o my-org -w 0ZuSOURCE -t sfdc_cms__email -n Welcome -l en_US -d ./project -x
+```
+
+- Required scope: explicit `--target-org -o`, exactly one `--workspace-id -w` / `--workspace-name -W`, `--content-type -t`, exact `--api-name -n`, exactly one `--language -l` / `--default-language -L`, and `--output-dir -d`. No configured default org or implicit directory/language scope is used.
+- Only supported root-level, single-variant Emails with reconstructable components are eligible. Unknown folder ancestry, sibling variants, unresolved references, unsupported shapes, missing or ambiguous selections block retrieval. Email Template and other content types are not implemented in this command.
+- Writes portable v2 JSON under `cms/<workspaceApiName>/email/<apiName>.cms-email.json`, with same-stem `.rawHtml.html` and, when present, `.textContent.txt` companions. These are editable source files, not a workspace backup manifest. Source IDs remain detached retrieval evidence, not deployable identity. This checkpoint makes **no deployment support claim**.
+- Repeated type/name selectors, combined metadata selectors, all-of-type selection and native ID selection are explicitly blocked. This checkpoint does not implement batch retrieval.
+- Existing differing selected files require `--overwrite -x`; unchanged retrieval leaves their bytes stable. Only files owned by the selected item may be replaced or removed; unrelated files are retained. Local writes are not a multi-file transaction: an I/O failure can leave partial local progress.
+- JSON uses `sf-cms-content-retrieve@1` with the established seven-key CMS envelope. Its batch-shaped result contains `scope`, `selection`, `items` (identity, `operation: retrieve`, outcome, absolute path receipt, detached source evidence, diagnostics), `summary`, and `unattempted`. Successful items are `retrieved` or `unchanged`; blocked scope leaves the item unattempted. Success exits `0`; blocked retrieval exits `1`. Result content and file receipts contain no generated timestamps; envelope provenance records the invocation time. No partial-success batch behavior is claimed yet.
 
 ### `sf cms upload images`
 
