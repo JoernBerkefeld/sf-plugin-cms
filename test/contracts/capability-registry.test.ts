@@ -19,6 +19,7 @@ import {
   type PortableIdentity,
   type ServerIdentity,
 } from '../../src/contracts/capability-registry.js';
+import { getPluginVersion } from '../../src/runtime-version.js';
 
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -98,7 +99,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
-  it('widens only the CMS-owned provider ceiling from the locked historical fixture', async () => {
+  it('uses the installed version for CMS-owned declarations and preserves all other fixture fields', async () => {
     const { value } = await loadFixture();
     const historicalCms = value.declarations.filter(
       (entry) => entry.identity.provider === 'sf-plugin-cms',
@@ -115,7 +116,7 @@ describe('sf-metadata-capability-v1 foundation', () => {
         .filter((entry) => entry.identity.provider === 'sf-plugin-cms')
         .map((entry) => ({
           ...entry,
-          providerContract: { ...entry.providerContract, maxVersion: '0.12.999' },
+          providerContract: { ...entry.providerContract, maxVersion: getPluginVersion() },
         })),
     );
     expect(CMS_CAPABILITY_DECLARATIONS.map((entry) => entry.identity.type)).not.to.include.members([
@@ -128,17 +129,10 @@ describe('sf-metadata-capability-v1 foundation', () => {
     ]);
   });
 
-  it('accepts the CMS 0.10–0.12 release lines without changing contract or sibling provider versions', async () => {
+  it('preserves contract and sibling provider versions', async () => {
     const { value } = await loadFixture();
     expect(value.contract).to.equal('sf-metadata-capability-v1');
     expect(value.version).to.equal('1.0.0');
-    for (const declaration of CMS_CAPABILITY_DECLARATIONS) {
-      expect(declaration.providerContract).to.deep.equal({
-        name: 'sf-plugin-cms',
-        minVersion: '0.10.0',
-        maxVersion: '0.12.999',
-      });
-    }
     const siblingDeclarations = value.declarations.filter(
       (entry) => entry.identity.provider === 'sf-plugin-mcnext',
     );
@@ -154,7 +148,6 @@ describe('sf-metadata-capability-v1 foundation', () => {
 
   it('documents qualified batch retrieval without inflating baseline live evidence', async () => {
     const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
-    expect(readme).to.include('CMS `0.10.0`–`0.12.999` range');
     expect(readme).to.include('**qualified batch retrieval**');
     expect(readme).to.include('building on the `v0.11.0` release baseline');
     expect(readme).to.include('not released-package qualification');

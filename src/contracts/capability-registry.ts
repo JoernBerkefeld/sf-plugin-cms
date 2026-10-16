@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { getPluginVersion } from '../runtime-version.js';
 
 export const METADATA_CAPABILITY_CONTRACT = 'sf-metadata-capability-v1' as const;
 export const METADATA_CAPABILITY_VERSION = '1.0.0' as const;
@@ -380,7 +381,7 @@ function cmsDeclaration(
     },
     providerContract: {
       // Package compatibility is independent of the metadata contract major.
-      maxVersion: '0.12.999',
+      maxVersion: getPluginVersion(),
       minVersion: '0.10.0',
       name: 'sf-plugin-cms',
     },

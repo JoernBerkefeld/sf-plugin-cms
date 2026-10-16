@@ -364,24 +364,37 @@ describe('CMS package-first deploy preflight', () => {
     }
   });
 
-  it('accepts current runtime provenance independently of contract v1 and rejects incompatible package lines', () => {
-    const input = build([], [rootNode([])]);
-    expect(input.registryVersion).to.equal('1.0.0');
-    expect(preflightCmsDeploy(input).ready).to.equal(true);
-    for (const providerVersion of [
-      '0.10.0',
-      '0.10.999',
-      '0.11.0',
-      '0.11.999',
-      '0.12.0',
-      '0.12.999',
+  it('accepts installed runtime provenance for roots and dependencies and blocks incompatible provenance', () => {
+    const installedVersion = getPluginVersion();
+    const [major, minor, patch] = installedVersion.split('.').map(Number);
+    const newerVersion = `${major}.${minor}.${patch + 1}`;
+    const dependency = identity('Landing Page Template', 'asset');
+    const edge = descriptor(identity('Brand', 'root'), dependency, 'target');
+    for (const input of [
+      build([], [rootNode([])]),
+      build([edge], [rootNode([edge])], [evidence(dependency, '12')]),
     ]) {
-      expect(preflightCmsDeploy({ ...input, providerVersion }).ready).to.equal(true);
-    }
-    for (const providerVersion of ['0.9.999', '0.13.0', '1.0.0']) {
-      expect(preflightCmsDeploy({ ...input, providerVersion }).blockedReasons.join(' ')).to.include(
-        'provider version',
-      );
+      expect(input.providerVersion).to.equal(installedVersion);
+      expect(input.registryVersion).to.equal('1.0.0');
+      expect(preflightCmsDeploy(input).ready).to.equal(true);
+      expect(preflightCmsDeploy({ ...input, providerVersion: '0.10.0' }).ready).to.equal(true);
+      for (const providerVersion of ['0.9.999', newerVersion]) {
+        const report = preflightCmsDeploy({ ...input, providerVersion });
+        expect(report.ready, providerVersion).to.equal(false);
+        expect(report.operations, providerVersion).to.deep.equal([]);
+        expect(report.blockedReasons, providerVersion).to.include(
+          'provider version is incompatible with Brand',
+        );
+        if (input.metadata.roots[0].dependencies.length > 0) {
+          expect(report.blockedReasons, providerVersion).to.include(
+            'provider version is incompatible with Landing Page Template',
+          );
+        }
+      }
+      const malformed = preflightCmsDeploy({ ...input, providerVersion: 'invalid' });
+      expect(malformed.ready).to.equal(false);
+      expect(malformed.operations).to.deep.equal([]);
+      expect(malformed.blockedReasons).to.include('provider, API, or clock version is invalid');
     }
   });
 
