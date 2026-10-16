@@ -5,6 +5,7 @@ import { expect } from 'chai';
 import {
   enumerateNativeFamily,
   enumerateNativeSiblings,
+  enumerateNativeWorkspace,
   type NativeInventoryOptions,
   type NativeInventoryRow,
 } from '../../src/services/retrieve-native-inventory.js';
@@ -116,6 +117,17 @@ describe('bounded native retrieve inventory', () => {
       expect(call.refresh).to.equal(undefined);
     }
     expect(fixture.connection._refreshDelegate).to.equal(fixture.refresh);
+  });
+  it('enumerates the complete workspace without parent/type/language/status filtering', async () => {
+    const fixture = setup();
+    const result = await enumerateNativeWorkspace(fixture.conn, workspaceId);
+    expect(result.records).to.deep.equal([row()]);
+    expect(result.complete).to.equal(true);
+    expect(result.pagesRequested).to.equal(6);
+    for (const call of fixture.calls)
+      expect(query(call).split(' WHERE ')[1]).not.to.match(
+        /ManagedContentId =|ContentTypeFullyQualifiedName|Language|IsPublished|ManagedContentVariantStatus/u,
+      );
   });
   it('independently returns siblings across types, statuses and languages without narrowing filters', async () => {
     const other = {

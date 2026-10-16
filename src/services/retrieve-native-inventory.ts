@@ -262,6 +262,21 @@ export async function enumerateNativeFamily(
 }
 
 /**
+ * Enumerate visible nondeleted workspace variants without type, language or status filters.
+ * @param {NativeConnection} connection - Destination connection with the selected CMS API policy.
+ * @param {string} workspaceId - Exact authored workspace ID.
+ * @param {NativeInventoryOptions} options - Bounded read timeout/cancellation options.
+ * @returns {Promise<NativeInventory>} Terminal/count/repeat-verified workspace observations.
+ */
+export async function enumerateNativeWorkspace(
+  connection: NativeConnection,
+  workspaceId: string,
+  options: NativeInventoryOptions = {},
+): Promise<NativeInventory> {
+  return enumerate(connection, workspaceId, undefined, undefined, options);
+}
+
+/**
  * Independently enumerate all visible nondeleted siblings; deliberately no type/language/status filters.
  * @param {NativeConnection} connection - Source connection with the selected CMS API policy.
  * @param {string} workspaceId - Authored workspace native ID.

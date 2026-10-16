@@ -182,6 +182,7 @@ export async function updateVariant(
   variantId: string,
   body: UpdateVariantInput,
   options: JsonRequestOptions = {},
+  observeResponse?: (data: unknown) => Promise<void>,
 ): Promise<UpdatedVariant> {
   assertNonEmptyString(variantId, 'variantId', 'variant.update');
   validateUpdateInput(body);
@@ -192,6 +193,8 @@ export async function updateVariant(
     { path: { variantId } },
     lifecycleTransportOptions(options),
   );
+  // Journal consumers must persist returned identities before response validation can throw.
+  await observeResponse?.(response.data);
   return validateUpdatedVariant(response.data);
 }
 

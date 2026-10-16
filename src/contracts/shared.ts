@@ -8,6 +8,7 @@ export const CMS_STATUSES = ['success', 'partial', 'failed', 'blocked'] as const
 export const CMS_OPERATIONS = [
   'cms.info',
   'content.delete',
+  'content.deploy',
   'content.retrieve',
   'content.publish',
   'content.unpublish',
@@ -263,6 +264,7 @@ export function assertCmsEnvelope<T>(
   const expectedContract = new Map<CmsOperation, string>([
     ['cms.info', 'sf-cms-info'],
     ['content.delete', 'sf-cms-content-delete'],
+    ['content.deploy', 'sf-cms-content-deploy'],
     ['content.retrieve', 'sf-cms-content-retrieve'],
     ['content.publish', 'sf-cms-content-publish'],
     ['content.unpublish', 'sf-cms-content-unpublish'],

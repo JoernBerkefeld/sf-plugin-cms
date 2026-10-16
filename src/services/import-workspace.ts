@@ -395,7 +395,9 @@ export type WorkspaceImportOperation = {
   readonly destinationWorkspaceId: string;
   readonly language: string;
   readonly operationId: string;
-  readonly operationKind: 'create-parent' | 'create-child';
+  readonly operationKind: 'create-parent' | 'create-child' | 'update-variant';
+  readonly target?: { readonly contentId: string; readonly variantId: string };
+  readonly baselineSha256?: string;
   readonly requestIdentity: string;
   readonly requestSha256: string;
   readonly runId: string;
@@ -1211,11 +1213,24 @@ export function planWorkspaceImport(
   };
 }
 
-function createPayload(group: WorkspaceImportGroupPlan, rootFolderId: string): CreateContentInput {
+export function createPayload(
+  group: {
+    variants?: readonly WorkspaceImportItem[];
+    contentKey?: string;
+    primary: Pick<WorkspaceImportItem, 'contentBody' | 'contentType' | 'title'> &
+      Partial<
+        Pick<
+          WorkspaceImportItem,
+          'apiName' | 'contentKey' | 'urlName' | 'externalId' | 'externalSource'
+        >
+      >;
+  },
+  rootFolderId: string,
+): CreateContentInput {
   const item = group.primary;
   const payload: CreateContentInput = {
     contentBody: item.contentBody,
-    contentKey: item.contentKey,
+    ...(item.contentKey === undefined ? {} : { contentKey: item.contentKey }),
     contentSpaceOrFolderId: rootFolderId,
     contentType: item.contentType,
     title: item.title,
@@ -2084,7 +2099,7 @@ function landingPageTemplateEvidence(
   });
 }
 
-async function writeExclusive(file: string, value: unknown): Promise<void> {
+export async function writeExclusive(file: string, value: unknown): Promise<void> {
   const handle = await open(file, 'wx');
   try {
     await handle.writeFile(jsonBytes(value), 'utf8');
@@ -2164,7 +2179,7 @@ function responseIdentifier(
   throw new TypeError(`Create response is missing ${label}`);
 }
 
-function validateParentResponse(
+export function validateParentResponse(
   response: Record<string, unknown>,
   expectedContentKey: string,
 ): CreatedParentRecord {
@@ -2184,7 +2199,7 @@ function validateParentResponse(
   };
 }
 
-function verifyNativeCopy(
+export function verifyNativeCopy(
   response: Record<string, unknown>,
   payload: CreateContentInput,
   created: CreatedParentRecord,
@@ -2240,7 +2255,10 @@ function operationIdentity(
   kind: WorkspaceImportOperation['operationKind'],
   contentKey: string,
   language: string,
-  payload: CreateContentInput | CreateVariantInput,
+  payload:
+    | CreateContentInput
+    | CreateVariantInput
+    | import('./lifecycle-foundation.js').UpdateVariantInput,
 ): Pick<WorkspaceImportOperation, 'operationId' | 'requestIdentity' | 'requestSha256'> {
   assertJsonSafe(payload, 'Mutation payload');
   const requestIdentity = `${kind}\u0000${contentKey}\u0000${language}\u0000${JSON.stringify(payload)}`;
@@ -2252,12 +2270,15 @@ function operationIdentity(
   };
 }
 
-function pendingOperation(
+export function pendingOperation(
   report: WorkspaceImportRunReport,
   kind: WorkspaceImportOperation['operationKind'],
   contentKey: string,
   language: string,
-  payload: CreateContentInput | CreateVariantInput,
+  payload:
+    | CreateContentInput
+    | CreateVariantInput
+    | import('./lifecycle-foundation.js').UpdateVariantInput,
 ): WorkspaceImportOperation {
   return {
     contentKey,
@@ -2271,7 +2292,7 @@ function pendingOperation(
   };
 }
 
-async function persistOperationResult(
+export async function persistOperationResult(
   reportFile: string,
   report: WorkspaceImportRunReport,
   operation: WorkspaceImportOperation,
@@ -2281,7 +2302,7 @@ async function persistOperationResult(
     await rewrite(reportFile, report);
   } catch (error) {
     operation.state = 'pending';
-    delete operation.result;
+    // Returned evidence remains essential even when its first durable write failed.
     report.state = 'ownership-uncertain';
     try {
       await rewrite(reportFile, report);
