@@ -158,6 +158,29 @@ describe('bounded Draft Email update pilot', () => {
     await removeFixture(fixtureRun, root);
   });
 
+  it('blocks a Template preview with a missing manifest before any request', async () => {
+    const missingSource = path.join(root, 'sf-plugin-cms-template-update-source-');
+    const missingEditable = path.join(root, 'sf-plugin-cms-template-update-editable-');
+    await mkdir(missingSource);
+    await mkdir(missingEditable);
+    expect(path.isAbsolute(missingSource)).to.equal(true);
+    expect(path.isAbsolute(missingEditable)).to.equal(true);
+    expect(path.dirname(missingSource)).to.equal(root);
+    expect(path.dirname(missingEditable)).to.equal(root);
+    const caller = connection(state());
+    const preview = await previewDraftEmailUpdateFromEditableHtml(caller, {
+      contentType: 'sfdc_cms__emailTemplate',
+      sourceDirectory: missingSource,
+      editableDirectory: missingEditable,
+      selector: { workspaceId: 'space', apiName: 'pilot_template', language: 'en_US' },
+    });
+    expect(preview.status).to.equal('blocked');
+    expect(preview.blockers).to.have.length(1);
+    expect(preview.blockers[0]?.message).to.equal('manifest.json is missing');
+    expect(preview).not.to.have.property('evidence');
+    expect(caller.request.notCalled).to.equal(true);
+  });
+
   it('accepts the observed Draft Email Template body without subjectLine', async () => {
     const templateRun = await createRunOwnedTemp('cms-template-update-no-subject');
     const templateRoot = await createRunOwnedDirectory(templateRun, 'fixture');
@@ -773,13 +796,18 @@ describe('bounded Draft Email update pilot', () => {
     await expectMissing(staleReport);
     staleMutation.restore();
 
-    const existingReport = path.join(root, 'existing-report');
+    const existingReport = path.join(root, 'sf-plugin-cms-existing-report-');
     await mkdir(existingReport);
+    expect(path.isAbsolute(existingReport)).to.equal(true);
+    expect(path.dirname(existingReport)).to.equal(root);
+    const sentinel = path.join(existingReport, 'sentinel.txt');
+    await writeFile(sentinel, 'not owned by update');
+    const existingCaller = connection(state());
     const existingMutation = sinon.stub(JsforceConnection.prototype, 'request');
     let existingFailure: unknown;
     try {
       await applyDraftEmailUpdateWithReport(
-        connection(state()),
+        existingCaller,
         {
           sourceDirectory,
           editableDirectory,
@@ -793,6 +821,10 @@ describe('bounded Draft Email update pilot', () => {
     expect(existingFailure).to.be.instanceOf(EmailUpdatePreflightBlockedError);
     expect((existingFailure as Error).message).to.match(/already exists/u);
     expect(existingMutation.notCalled).to.equal(true);
+    expect(existingCaller.request.notCalled).to.equal(true);
+    expect(existingFailure).not.to.have.property('reportFile');
+    expect(existingFailure).not.to.have.property('reconciliation');
+    expect(await readFile(sentinel, 'utf8')).to.equal('not owned by update');
     await expectMissing(path.join(existingReport, 'content-update-run.json'));
     existingMutation.restore();
   });

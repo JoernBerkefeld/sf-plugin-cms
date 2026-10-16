@@ -77,6 +77,8 @@ export type PortableLeakScanOptions = {
   allowedStructuralIdPaths?: string[];
 };
 
+// Retained internal family-engine evidence, not the public retrieve/deploy inventory.
+// Offline info exposes these only under its explicit internal-engine-only scope.
 export const CMS_CAPABILITY_DECLARATIONS: CapabilityDeclaration[] = [
   cmsDeclaration(
     'Brand',

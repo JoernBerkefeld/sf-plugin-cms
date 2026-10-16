@@ -1,40 +1,249 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { isMainThread } from 'node:worker_threads';
 
 const contractCase = process.env.SF_PLUGIN_CMS_CONTRACT_CASE;
 
-if (contractCase !== undefined && isMainThread) {
-  const testRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+if (contractCase === 'definition-export-fixture' && isMainThread) {
+  const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
+  if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
+  const { exportWorkspace } = await import(
+    pathToFileURL(path.join(pluginRoot, 'lib/services/export-workspace.js'))
+  );
+  const raw = {
+    managedContentVariantId: 'email',
+    managedContentId: 'parent',
+    contentKey: 'key',
+    apiName: 'Welcome',
+    contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+    contentSpace: { id: 'space' },
+    language: 'en_US',
+    folder: null,
+    title: 'Welcome',
+    contentBody: {
+      'sfdc_cms:title': 'Welcome',
+      subjectLine: 'Hello',
+      messagePurpose: 'Transactional',
+      rawHtml: '&lt;p&gt;Hello&lt;/p&gt;',
+      'lightning:expressions': [],
+      'sfdc_cms:variants': [],
+    },
+  };
+  const connection = {
+    version: '67.0',
+    request: async ({ url, method }) => {
+      if (method !== 'GET') throw new Error('Unexpected mutation');
+      if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
+      if (url.startsWith('/connect/cms/items/search?'))
+        return {
+          count: 1,
+          items: [
+            {
+              id: 'email',
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            },
+          ],
+        };
+      if (url.endsWith('/variants/email')) return raw;
+      if (url.endsWith('/contents/parent'))
+        return {
+          managedContentId: 'parent',
+          contentType: raw.contentType,
+          contentSpace: raw.contentSpace,
+          folder: null,
+        };
+      throw new Error(`Unexpected source read: ${url}`);
+    },
+  };
+  const result = await exportWorkspace(connection, 'space', path.resolve('definition-base'), {
+    definitionDirectory: path.resolve('definition-source'),
+    sourceOrgId: '00DControlledSource',
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+if (contractCase === 'email-update-fixture' && isMainThread) {
+  // Prepare the installed update baseline without invoking a public export command.
+  const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
+  if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
+  const { exportWorkspace } = await import(
+    pathToFileURL(path.join(pluginRoot, 'lib/services/export-workspace.js'))
+  );
+  const events = [];
+  const result = await exportWorkspace(
+    {
+      request: ({ method, url }) => {
+        events.push({ method, url });
+        if (method !== 'GET') throw new Error(`Unexpected fixture mutation: ${method} ${url}`);
+        if (url === '/connect/cms/spaces/space')
+          return { id: 'space', name: 'Controlled', defaultLanguage: 'en_US' };
+        if (url.startsWith('/connect/cms/items/search?'))
+          return {
+            count: 1,
+            items: [
+              {
+                id: 'variant-en',
+                managedContentSpaceId: 'space',
+                contentType: { developerName: 'sfdc_cms__email' },
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+            total: 1,
+          };
+        if (url === '/connect/cms/contents/variants/variant-en')
+          return emailVariant('variant-en', 'en_US');
+        throw new Error(`Unexpected fixture request: ${method} ${url}`);
+      },
+    },
+    'space',
+    path.resolve('email-update-baseline'),
+    {
+      editableDirectory: path.resolve('email-update-editable'),
+      sourceOrgId: '00DControlledSource',
+    },
+  );
+  await writeFile('email-update-fixture-transport.json', JSON.stringify(events));
+  process.stdout.write(JSON.stringify(result));
+}
+
+if (contractCase === 'editable-export-fixture' && isMainThread) {
+  // Prepare installed editable sources without invoking a public export command.
+  const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
+  if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
+  const { exportWorkspace } = await import(
+    pathToFileURL(path.join(pluginRoot, 'lib/services/export-workspace.js'))
+  );
+  const events = [];
+  const result = await exportWorkspace(
+    {
+      request: ({ method, url }) => {
+        events.push({ method, url });
+        if (method !== 'GET') throw new Error(`Unexpected fixture mutation: ${method} ${url}`);
+        if (url === '/connect/cms/spaces/space')
+          return { id: 'space', name: 'Controlled', defaultLanguage: 'en', rootFolderId: 'root' };
+        if (url.startsWith('/connect/cms/items/search?'))
+          return {
+            items: ['email', 'template'].map((id) => ({
+              id,
+              managedContentSpaceId: 'space',
+              type: 'ManagedContentVariantSearchResultRepresentation',
+            })),
+            total: 2,
+          };
+        const id = url.split('/').at(-1);
+        if (url.startsWith('/connect/cms/contents/variants/') && ['email', 'template'].includes(id))
+          return {
+            id,
+            managedContentId: `parent-${id}`,
+            contentKey: `source-${id}`,
+            apiName: `source_${id}`,
+            urlName: `source-${id}`,
+            contentSpace: { id: 'space' },
+            language: 'en',
+            title: `${id} title`,
+            contentType: id === 'email' ? 'sfdc_cms__email' : 'sfdc_cms__emailTemplate',
+            externalId: null,
+            externalSource: null,
+            contentBody: {
+              'sfdc_cms:title': `${id} body title`,
+              subjectLine: 'Keep subject',
+              messagePurpose: 'promotional',
+              rawHtml: '&lt;p&gt;Original Café&lt;/p&gt;',
+              textContent: 'Keep text',
+            },
+          };
+        throw new Error(`Unexpected fixture request: ${method} ${url}`);
+      },
+    },
+    'space',
+    path.resolve('editable-baseline'),
+    { editableDirectory: path.resolve('editable-source'), sourceOrgId: '00DControlledSource' },
+  );
+  await writeFile('editable-export-fixture-transport.json', JSON.stringify(events));
+  process.stdout.write(JSON.stringify(result));
+}
+
+if (['source-b-export-fixture', 'brand-export-fixture'].includes(contractCase) && isMainThread) {
+  // Prepare generic source definitions through the installed internal export service only.
+  const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
+  if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
+  const { exportWorkspace } = await import(
+    pathToFileURL(path.join(pluginRoot, 'lib/services/export-workspace.js'))
+  );
+  const raw = JSON.parse(await readFile('source-a-fixture.json', 'utf8'));
+  const family = raw.contentType.fullyQualifiedName.slice('sfdc_cms__'.length);
+  const allowedFamilies =
+    contractCase === 'brand-export-fixture' ? ['brand'] : ['email', 'emailTemplate'];
+  if (!allowedFamilies.includes(family))
+    throw new Error(`Unexpected source fixture family: ${family}`);
+  const prefix = `source-a-${family}`;
+  const events = [];
+  const result = await exportWorkspace(
+    {
+      version: '67.0',
+      request: ({ method, url }) => {
+        events.push({ method, url });
+        if (method !== 'GET') throw new Error(`Unexpected fixture mutation: ${method} ${url}`);
+        if (url === '/connect/cms/spaces/space')
+          return {
+            id: 'space',
+            name: 'Controlled',
+            defaultLanguage: 'en_US',
+            rootFolderId: 'distinct-root',
+          };
+        if (url.startsWith('/connect/cms/items/search?'))
+          return {
+            count: 1,
+            items: [
+              {
+                id: 'email',
+                managedContentSpaceId: 'space',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              },
+            ],
+          };
+        if (url === '/connect/cms/contents/variants/email') return raw;
+        if (url === '/connect/cms/contents/parent')
+          return family === 'brand'
+            ? raw
+            : {
+                managedContentId: 'parent',
+                contentType: raw.contentType,
+                contentSpace: raw.contentSpace,
+                folder: null,
+              };
+        throw new Error(`Unexpected fixture request: ${method} ${url}`);
+      },
+    },
+    'space',
+    path.resolve(`${prefix}-base`),
+    {
+      definitionDirectory: path.resolve(`${prefix}-definitions`),
+      sourceOrgId: '00DControlledSource',
+    },
+  );
+  await writeFile(`${prefix}-fixture-transport.json`, JSON.stringify(events));
+  process.stdout.write(JSON.stringify(result));
+}
+
+if (
+  contractCase !== undefined &&
+  contractCase !== 'email-update-fixture' &&
+  contractCase !== 'editable-export-fixture' &&
+  contractCase !== 'source-b-export-fixture' &&
+  contractCase !== 'brand-export-fixture' &&
+  contractCase !== 'definition-export-fixture' &&
+  isMainThread
+) {
   const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
   const pluginVersion = process.env.SF_PLUGIN_CMS_INSTALLED_VERSION;
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
   if (pluginVersion === undefined) throw new Error('Installed plugin version is unavailable');
-  const cases = {
-    'export-success': {
-      command: 'lib/commands/cms/export/workspace.js',
-      fixture: 'contracts/fixtures/partial-export.json',
-      transform: exportSuccess,
-      validator: 'lib/contracts/workspace-export.js',
-      validatorName: 'assertWorkspaceExportSetResult',
-    },
-    partial: {
-      command: 'lib/commands/cms/export/workspace.js',
-      fixture: 'contracts/fixtures/partial-export.json',
-      validator: 'lib/contracts/workspace-export.js',
-      validatorName: 'assertWorkspaceExportSetResult',
-    },
-    failed: {
-      command: 'lib/commands/cms/import/workspace.js',
-      fixture: 'contracts/fixtures/failed-import.json',
-      validator: 'lib/contracts/workspace-import.js',
-      validatorName: 'assertWorkspaceImportResult',
-    },
-  };
   if (contractCase === 'image-upload-preview' || contractCase === 'image-upload-local') {
     const { default: Command } = await import(
       pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/upload/images.js'))
@@ -74,9 +283,7 @@ if (contractCase !== undefined && isMainThread) {
     contractCase === 'email-template-delete-apply'
   ) {
     // Exercise packed Email lifecycle commands with one controlled read-only transport.
-    const isExport = process.argv.includes('export');
-    let command = 'update/content';
-    if (isExport) command = 'export/workspace';
+    let command = 'publish/content';
     if (contractCase === 'email-publish-preview' || contractCase === 'email-publish-apply')
       command = 'publish/content';
     if (contractCase === 'email-unpublish-preview' || contractCase === 'email-unpublish-apply')
@@ -89,11 +296,14 @@ if (contractCase !== undefined && isMainThread) {
     )
       command = 'delete/content';
     const pluginBaseUrl = pathToFileURL(`${pluginRoot}${path.sep}`);
-    const [{ default: Command }, installedJsonRequest] = await Promise.all([
-      import(new URL(`lib/commands/cms/${command}.js`, pluginBaseUrl)),
+    const isEmailUpdate = contractCase === 'email-update-preview';
+    const isTemplateUpdate = contractCase.startsWith('email-template-update-');
+    const [commandModule, installedJsonRequest] = await Promise.all([
+      isEmailUpdate || isTemplateUpdate
+        ? undefined
+        : import(new URL(`lib/commands/cms/${command}.js`, pluginBaseUrl)),
       import(new URL('lib/transport/json-request.js', pluginBaseUrl)),
     ]);
-    const isTemplateUpdate = contractCase.startsWith('email-template-update-');
     if (isTemplateUpdate) {
       const { exportWorkspace } = await import(
         new URL('lib/services/export-workspace.js', pluginBaseUrl)
@@ -134,7 +344,7 @@ if (contractCase !== undefined && isMainThread) {
         '<p>Installed Template edit</p>',
       );
     }
-    Command.prototype.getOrgContext = async function () {
+    const getOrgContext = async function () {
       const events = [{ phase: 'org' }];
       const evidenceFile = path.resolve(`${contractCase}-transport.json`);
       await writeFile(evidenceFile, JSON.stringify(events));
@@ -360,7 +570,6 @@ if (contractCase !== undefined && isMainThread) {
             }
             if (url.startsWith('/connect/cms/items/search?')) {
               let ids = ['variant-de', 'variant-en'];
-              if (isExport) ids = ['variant-en'];
               if (isTemplate || isDelete) ids = Object.keys(variants);
               return {
                 count: ids.length,
@@ -433,12 +642,68 @@ if (contractCase !== undefined && isMainThread) {
         },
       };
     };
+    if (isEmailUpdate || isTemplateUpdate) {
+      const {
+        applyDraftEmailUpdateWithReport,
+        EmailUpdateOutcomeUnknownError,
+        EmailUpdatePreflightBlockedError,
+        previewDraftEmailUpdateFromEditableHtml,
+      } = await import(new URL('lib/services/email-update.js', pluginBaseUrl));
+      const options = isTemplateUpdate
+        ? {
+            apply: contractCase === 'email-template-update-apply',
+            reportDirectory: 'email-template-update-apply-report',
+          }
+        : JSON.parse(process.env.SF_PLUGIN_CMS_EMAIL_UPDATE_OPTIONS ?? '{}');
+      const { connection } = await getOrgContext();
+      const input = {
+        ...(isTemplateUpdate ? { contentType: 'sfdc_cms__emailTemplate' } : {}),
+        sourceDirectory: path.resolve(
+          isTemplateUpdate ? `${contractCase}-source` : 'email-update-baseline',
+        ),
+        editableDirectory: path.resolve(
+          isTemplateUpdate ? `${contractCase}-editable` : 'email-update-editable',
+        ),
+        selector: {
+          workspaceId: 'space',
+          apiName: isTemplateUpdate ? 'pilot_template' : 'pilot_email',
+          language: 'en_US',
+        },
+      };
+      if (options.apply) {
+        try {
+          const result = await applyDraftEmailUpdateWithReport(
+            connection,
+            input,
+            path.resolve(options.reportDirectory),
+          );
+          process.stdout.write(JSON.stringify(result));
+        } catch (error) {
+          if (isTemplateUpdate && error instanceof EmailUpdateOutcomeUnknownError) {
+            process.stdout.write(
+              JSON.stringify({
+                status: 'ownership-uncertain',
+                contentId: error.contentId,
+                variantId: error.variantId,
+                payloadHash: error.payloadHash,
+                message: error.message,
+              }),
+            );
+          } else {
+            if (!(error instanceof EmailUpdatePreflightBlockedError)) throw error;
+            process.stdout.write(JSON.stringify({ status: 'blocked', message: error.message }));
+          }
+        }
+      } else {
+        const result = await previewDraftEmailUpdateFromEditableHtml(connection, input);
+        process.stdout.write(JSON.stringify(result));
+      }
+    } else {
+      commandModule.default.prototype.getOrgContext = getOrgContext;
+    }
   } else if (contractCase.startsWith('brand-source-')) {
-    // Only authentication/transport are controlled; installed commands and proof services stay real.
-    const command = process.argv.includes('export') ? 'export' : 'import';
-    const { default: Command } = await import(
-      new URL(`lib/commands/cms/${command}/workspace.js`, pathToFileURL(`${pluginRoot}${path.sep}`))
-    );
+    // Reuse controlled Brand transport for internal fixture setup and real installed imports.
+    const fixture = contractCase === 'brand-source-fixture';
     const raw = JSON.parse(await readFile('brand-source-fixture.json', 'utf8'));
     const sourceOrgId = '00Daj00000bRQabEAG';
     const targetOrgId = '00Dfj00000bRQabEAG';
@@ -465,7 +730,7 @@ if (contractCase !== undefined && isMainThread) {
       };
       syncBuiltinESMExports();
     }
-    Command.prototype.getOrgContext = async function (alias, apiVersion) {
+    const getOrgContext = async function (alias, apiVersion) {
       if (contractCase === 'brand-source-local') throw new Error('Unexpected org access');
       if (!['brand-source-alias', 'brand-target-alias'].includes(alias))
         throw new Error(`Unexpected Brand org alias: ${alias}`);
@@ -488,6 +753,7 @@ if (contractCase !== undefined && isMainThread) {
             };
             events.push(event);
             await persist();
+            if (fixture && method !== 'GET') throw new Error('Fixture mutation forbidden');
             if (source) {
               if (method !== 'GET') throw new Error('Source mutation forbidden');
               if (url === `/connect/cms/spaces/${sourceWorkspace}`)
@@ -633,15 +899,71 @@ if (contractCase !== undefined && isMainThread) {
         },
       };
     };
+    if (fixture) {
+      const { exportWorkspace } = await import(
+        pathToFileURL(path.join(pluginRoot, 'lib/services/export-workspace.js'))
+      );
+      const { connection } = await getOrgContext('brand-source-alias', '67.0');
+      const result = await exportWorkspace(
+        connection,
+        sourceWorkspace,
+        path.resolve('brand-source-base'),
+        {
+          definitionDirectory: path.resolve('brand-source-definitions'),
+          sourceOrgId,
+          portableMetadata: {
+            workspaceApiName: 'Content Workspace for Marketing Cloud',
+            cache: {
+              root: path.resolve('.sf-cms-resolution-cache'),
+              sourceOrg: { kind: 'exact-scope', value: sourceOrgId },
+              targetOrg: { kind: 'exact-scope', value: sourceOrgId },
+              apiVersion: '67.0',
+            },
+          },
+          selection: {
+            contentType: 'sfdc_cms__brand',
+            apiNames: [raw.apiName],
+            brandReports: true,
+          },
+        },
+      );
+      process.stdout.write(JSON.stringify(result));
+    } else {
+      const { executeWorkspaceImport, loadWorkspaceExport } = await import(
+        pathToFileURL(path.join(pluginRoot, 'lib/services/import-workspace.js'))
+      );
+      const { assertCanonicalMarketingWorkspace, resolveWorkspace } = await import(
+        pathToFileURL(path.join(pluginRoot, 'lib/services/resolve-workspace.js'))
+      );
+      const options = JSON.parse(process.env.SF_PLUGIN_CMS_BRAND_IMPORT_OPTIONS);
+      const sourceDirectory = path.resolve('brand-source-base');
+      const source = await loadWorkspaceExport(sourceDirectory, {
+        profile: options.generic ? 'brand' : 'brand-source',
+      });
+      const brandMappings = JSON.parse(await readFile('brand-source-copy-map.json', 'utf8'));
+      const { connection, orgId } = await getOrgContext('brand-target-alias', '67.0');
+      const sourceContext = await getOrgContext('brand-source-alias', '67.0');
+      const selected = await resolveWorkspace(connection, { workspaceId: targetWorkspace });
+      await assertCanonicalMarketingWorkspace(connection, selected);
+      const result = await executeWorkspaceImport({
+        connection,
+        destinationOrgId: orgId,
+        destinationWorkspace: selected.workspace,
+        dryRun: !options.apply,
+        loadedSource: source,
+        definitionDirectory: path.resolve('brand-source-definitions'),
+        sourceConnection: sourceContext.connection,
+        sourceOrgId: sourceContext.orgId,
+        brandMappings,
+        reportDirectory: options.reportDirectory && path.resolve(options.reportDirectory),
+        sourceDirectory,
+        workspaceId: selected.id,
+      });
+      process.stdout.write(JSON.stringify(result));
+    }
   } else if (contractCase.startsWith('source-a-')) {
-    // Only org acquisition is replaced; packed flags, source services and journals stay real.
-    const command = process.argv.includes('export') ? 'export' : 'import';
-    const { default: Command } = await import(
-      new URL(`lib/commands/cms/${command}/workspace.js`, pathToFileURL(`${pluginRoot}${path.sep}`))
-    );
-    Command.prototype.getOrgContext = async function () {
-      if (contractCase === 'source-a-local') throw new Error('Unexpected org access');
-      const raw = JSON.parse(await readFile('source-a-fixture.json', 'utf8'));
+    // Retain the command-only Brand/Image local boundary until its removal slice.
+    const getOrgContext = async function () {
       const events = [{ phase: 'org' }];
       const evidenceFile = path.resolve(`${contractCase}-transport.json`);
       await writeFile(evidenceFile, JSON.stringify(events));
@@ -661,11 +983,7 @@ if (contractCase !== undefined && isMainThread) {
             await writeFile(evidenceFile, JSON.stringify(events));
             if (url === '/connect/cms/spaces/space') {
               workspaceReads += 1;
-              if (
-                command === 'import' &&
-                workspaceReads === 2 &&
-                contractCase === 'source-a-json-drift'
-              ) {
+              if (workspaceReads === 2 && contractCase === 'source-a-json-drift') {
                 const report = JSON.parse(
                   await readFile('source-a-json-drift-report/workspace-import-run.json', 'utf8'),
                 );
@@ -678,11 +996,7 @@ if (contractCase !== undefined && isMainThread) {
                 candidate.contentBody.textContent = 'Safe acquisition drift';
                 await writeFile(definitionFile, JSON.stringify(candidate));
               }
-              if (
-                command === 'import' &&
-                workspaceReads === 2 &&
-                contractCase === 'source-a-drift'
-              ) {
+              if (workspaceReads === 2 && contractCase === 'source-a-drift') {
                 const html = 'source-a-email-definitions';
                 const report = JSON.parse(
                   await readFile('source-a-drift-report/workspace-import-run.json', 'utf8'),
@@ -705,158 +1019,114 @@ if (contractCase !== undefined && isMainThread) {
                 rootFolderId: 'distinct-root',
               };
             }
-            if (command === 'export') {
-              if (url.startsWith('/connect/cms/items/search?'))
-                return {
-                  count: 1,
-                  items: [
-                    {
-                      id: 'email',
-                      managedContentSpaceId: 'space',
-                      type: 'ManagedContentVariantSearchResultRepresentation',
-                    },
-                  ],
-                };
-              if (url.endsWith('/variants/email')) return raw;
-              if (url.endsWith('/contents/parent'))
-                return raw.contentType.fullyQualifiedName === 'sfdc_cms__brand'
-                  ? raw
-                  : {
-                      managedContentId: 'parent',
-                      contentType: raw.contentType,
-                      contentSpace: raw.contentSpace,
-                      folder: null,
-                    };
-            } else {
-              if (url.startsWith('/connect/cms/items/search?'))
-                return {
-                  count: 1,
-                  items: [
-                    {
-                      id: 'destination-existing',
-                      managedContentSpaceId: 'space',
-                      type: 'ManagedContentVariantSearchResultRepresentation',
-                    },
-                  ],
-                };
-              if (url.endsWith('/variants/destination-existing'))
-                return {
-                  managedContentVariantId: 'destination-existing',
-                  managedContentId: 'destination-existing-parent',
-                  apiName: 'unrelated_destination_image',
-                  title:
-                    contractCase === 'source-a-title-collision'
-                      ? 'Edited Welcome'
-                      : 'Unrelated destination image',
-                  urlName:
-                    contractCase === 'source-a-url-collision'
-                      ? 'fresh'
-                      : 'unrelated-destination-image',
-                  contentSpace: { id: 'space' },
-                  contentType: { fullyQualifiedName: 'sfdc_cms__image' },
-                };
-              if (method === 'POST' && url === '/connect/cms/contents') {
-                payload = JSON.parse(body);
-                event.initialReport = JSON.parse(
-                  await readFile('source-a-report/workspace-import-run.json', 'utf8'),
-                );
-                await writeFile(evidenceFile, JSON.stringify(events));
-                return {
-                  contentKey: 'created',
-                  managedContentId: 'created-parent',
-                  managedContentVariantId: 'created-variant',
-                };
-              }
-              if (method === 'GET' && url.endsWith('/contents/created') && payload !== undefined) {
-                event.readback = {
-                  ...payload,
-                  contentKey: 'created',
-                  managedContentId: 'created-parent',
-                  contentSpace: { id: 'space' },
-                  folder: { id: 'distinct-root' },
-                  language: 'en_US',
-                  isPublished: false,
-                  status: { status: 'Draft' },
-                  contentBody: {
-                    ...payload.contentBody,
-                    rawHtml: payload.contentBody.rawHtml
-                      .replaceAll('&', '&amp;')
-                      .replaceAll('<', '&lt;')
-                      .replaceAll('>', '&gt;'),
+            if (url.startsWith('/connect/cms/items/search?'))
+              return {
+                count: 1,
+                items: [
+                  {
+                    id: 'destination-existing',
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
                   },
-                };
-                await writeFile(evidenceFile, JSON.stringify(events));
-                return event.readback;
-              }
+                ],
+              };
+            if (url.endsWith('/variants/destination-existing'))
+              return {
+                managedContentVariantId: 'destination-existing',
+                managedContentId: 'destination-existing-parent',
+                apiName: 'unrelated_destination_image',
+                title:
+                  contractCase === 'source-a-title-collision'
+                    ? 'Edited Welcome'
+                    : 'Unrelated destination image',
+                urlName:
+                  contractCase === 'source-a-url-collision'
+                    ? 'fresh'
+                    : 'unrelated-destination-image',
+                contentSpace: { id: 'space' },
+                contentType: { fullyQualifiedName: 'sfdc_cms__image' },
+              };
+            if (method === 'POST' && url === '/connect/cms/contents') {
+              payload = JSON.parse(body);
+              event.initialReport = JSON.parse(
+                await readFile('source-a-report/workspace-import-run.json', 'utf8'),
+              );
+              await writeFile(evidenceFile, JSON.stringify(events));
+              return {
+                contentKey: 'created',
+                managedContentId: 'created-parent',
+                managedContentVariantId: 'created-variant',
+              };
+            }
+            if (method === 'GET' && url.endsWith('/contents/created') && payload !== undefined) {
+              event.readback = {
+                ...payload,
+                contentKey: 'created',
+                managedContentId: 'created-parent',
+                contentSpace: { id: 'space' },
+                folder: { id: 'distinct-root' },
+                language: 'en_US',
+                isPublished: false,
+                status: { status: 'Draft' },
+                contentBody: {
+                  ...payload.contentBody,
+                  rawHtml: payload.contentBody.rawHtml
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;'),
+                },
+              };
+              await writeFile(evidenceFile, JSON.stringify(events));
+              return event.readback;
             }
             throw new Error(`Unexpected source acceptance request: ${method} ${url}`);
           },
         },
       };
     };
-  } else if (contractCase.startsWith('definition-')) {
-    const { default: Command } = await import(
-      new URL('lib/commands/cms/export/workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
-    );
-    Command.prototype.getOrgContext = async function () {
-      if (contractCase === 'definition-local') throw new Error('Unexpected org access');
-      const raw = {
-        managedContentVariantId: 'email',
-        managedContentId: 'parent',
-        contentKey: 'key',
-        apiName: 'Welcome',
-        contentType: { fullyQualifiedName: 'sfdc_cms__email' },
-        contentSpace: { id: 'space' },
-        language: 'en_US',
-        folder: null,
-        title: 'Welcome',
-        contentBody: {
-          'sfdc_cms:title': 'Welcome',
-          subjectLine: 'Hello',
-          messagePurpose: 'Transactional',
-          rawHtml: '&lt;p&gt;Hello&lt;/p&gt;',
-          'lightning:expressions': [],
-          'sfdc_cms:variants': [],
-        },
-      };
-      return {
-        orgId: '00DControlledSource',
-        connection: {
-          version: '67.0',
-          request: async ({ url, method }) => {
-            if (method !== 'GET') throw new Error('Unexpected mutation');
-            if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
-            if (url.startsWith('/connect/cms/items/search?'))
-              return {
-                count: 1,
-                items: [
-                  {
-                    id: 'email',
-                    managedContentSpaceId: 'space',
-                    type: 'ManagedContentVariantSearchResultRepresentation',
-                  },
-                ],
-              };
-            if (url.endsWith('/variants/email')) return raw;
-            if (url.endsWith('/contents/parent'))
-              return {
-                managedContentId: 'parent',
-                contentType: raw.contentType,
-                contentSpace: raw.contentSpace,
-                folder: null,
-              };
-            throw new Error(`Unexpected source read: ${url}`);
-          },
-        },
-      };
-    };
+    {
+      const { executeWorkspaceImport, loadWorkspaceExport, planNativeWorkspaceImport } =
+        await import(
+          new URL('lib/services/import-workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
+        );
+      const { resolveWorkspace } = await import(
+        new URL('lib/services/resolve-workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
+      );
+      const options = JSON.parse(process.env.SF_PLUGIN_CMS_SOURCE_IMPORT_OPTIONS);
+      const sourceDirectory = path.resolve(`${options.prefix}-base`);
+      const definitionDirectory = path.resolve(`${options.prefix}-definitions`);
+      const source = await loadWorkspaceExport(sourceDirectory);
+      const mappings = JSON.parse(await readFile('source-a-copies.json', 'utf8'));
+      await planNativeWorkspaceImport(source, mappings);
+      const { connection, orgId } = await getOrgContext();
+      const selected = await resolveWorkspace(connection, { workspaceId: 'space' });
+      const result = await executeWorkspaceImport({
+        connection,
+        destinationOrgId: orgId,
+        destinationWorkspace: selected.workspace,
+        dryRun: !options.apply,
+        loadedSource: source,
+        definitionDirectory,
+        nativeCopyMappings: mappings,
+        reportDirectory: options.reportDirectory && path.resolve(options.reportDirectory),
+        sourceDirectory,
+        workspaceId: selected.id,
+      });
+      process.stdout.write(JSON.stringify(result));
+    }
   } else if (contractCase.startsWith('editable-')) {
-    // Replace only org acquisition: installed parsing, export/import services and transport run normally.
-    const command = process.argv.includes('export') ? 'export' : 'import';
-    const { default: Command } = await import(
-      new URL(`lib/commands/cms/${command}/workspace.js`, pathToFileURL(`${pluginRoot}${path.sep}`))
+    // Exercise the installed internal engine without loading the public import route.
+    const { executeWorkspaceImport, loadWorkspaceExport, planNativeWorkspaceImport } = await import(
+      new URL('lib/services/import-workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
     );
-    Command.prototype.getOrgContext = async function () {
+    const { resolveWorkspace } = await import(
+      new URL('lib/services/resolve-workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
+    );
+    const options = JSON.parse(process.env.SF_PLUGIN_CMS_EDITABLE_IMPORT_OPTIONS);
+    const source = await loadWorkspaceExport(path.resolve('editable-baseline'));
+    const mappings = JSON.parse(await readFile('editable-copies.json', 'utf8'));
+    await planNativeWorkspaceImport(source, mappings, path.resolve('editable-source'));
+    const getOrgContext = async function () {
       const events = [{ phase: 'org' }];
       const evidenceFile = path.resolve(`${contractCase}-transport.json`);
       await writeFile(evidenceFile, JSON.stringify(events));
@@ -883,135 +1153,67 @@ if (contractCase !== undefined && isMainThread) {
                 rootFolderId: 'root',
               };
             }
-            if (command === 'export') {
-              if (url.startsWith('/connect/cms/items/search?')) {
-                return {
-                  items: ['email', 'template'].map((id) => ({
-                    id,
-                    managedContentSpaceId: 'space',
-                    type: 'ManagedContentVariantSearchResultRepresentation',
-                  })),
-                  total: 2,
-                };
-              }
-              const id = url.split('/').at(-1);
-              if (method === 'GET' && ['email', 'template'].includes(id)) {
-                return {
-                  id,
-                  managedContentId: `parent-${id}`,
-                  contentKey: `source-${id}`,
-                  apiName: `source_${id}`,
-                  urlName: `source-${id}`,
-                  contentSpace: { id: 'space' },
-                  language: 'en',
-                  title: `${id} title`,
-                  contentType: id === 'email' ? 'sfdc_cms__email' : 'sfdc_cms__emailTemplate',
-                  externalId: null,
-                  externalSource: null,
-                  contentBody: {
-                    'sfdc_cms:title': `${id} body title`,
-                    subjectLine: 'Keep subject',
-                    messagePurpose: 'promotional',
-                    rawHtml: '&lt;p&gt;Original Café&lt;/p&gt;',
-                    textContent: 'Keep text',
-                  },
-                };
-              }
-            } else {
-              if (method === 'POST' && url === '/connect/cms/contents') {
-                const payload = JSON.parse(body);
-                event.initialReport = JSON.parse(
-                  await readFile('editable-report/workspace-import-run.json', 'utf8'),
-                );
-                await writeFile(evidenceFile, JSON.stringify(events));
-                const key = `created-${created.size + 1}`;
-                created.set(key, payload);
-                return {
-                  contentKey: key,
-                  managedContentId: `${key}-id`,
-                  managedContentVariantId: `${key}-variant`,
-                };
-              }
-              const key = url.split('/').at(-1);
-              if (method === 'GET' && created.has(key)) {
-                const payload = created.get(key);
-                const response = {
-                  ...payload,
-                  contentKey: key,
-                  managedContentId: `${key}-id`,
-                  contentSpace: { id: 'space' },
-                  language: 'en',
-                  isPublished: false,
-                  status: { status: 'Draft' },
-                  contentBody: {
-                    ...payload.contentBody,
-                    rawHtml: payload.contentBody.rawHtml
-                      .replaceAll('&', '&amp;')
-                      .replaceAll('<', '&lt;')
-                      .replaceAll('>', '&gt;')
-                      .replaceAll('"', '&quot;')
-                      .replaceAll("'", '&#39;'),
-                  },
-                };
-                event.readback = response;
-                await writeFile(evidenceFile, JSON.stringify(events));
-                return response;
-              }
+            if (method === 'POST' && url === '/connect/cms/contents') {
+              const payload = JSON.parse(body);
+              event.initialReport = JSON.parse(
+                await readFile('editable-report/workspace-import-run.json', 'utf8'),
+              );
+              await writeFile(evidenceFile, JSON.stringify(events));
+              const key = `created-${created.size + 1}`;
+              created.set(key, payload);
+              return {
+                contentKey: key,
+                managedContentId: `${key}-id`,
+                managedContentVariantId: `${key}-variant`,
+              };
+            }
+            const key = url.split('/').at(-1);
+            if (method === 'GET' && created.has(key)) {
+              const payload = created.get(key);
+              const response = {
+                ...payload,
+                contentKey: key,
+                managedContentId: `${key}-id`,
+                contentSpace: { id: 'space' },
+                language: 'en',
+                isPublished: false,
+                status: { status: 'Draft' },
+                contentBody: {
+                  ...payload.contentBody,
+                  rawHtml: payload.contentBody.rawHtml
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#39;'),
+                },
+              };
+              event.readback = response;
+              await writeFile(evidenceFile, JSON.stringify(events));
+              return response;
             }
             throw new Error(`Unexpected controlled request: ${method} ${url}`);
           },
         },
       };
     };
-  } else if (contractCase === 'single-complete' || contractCase === 'single-partial') {
-    const { default: Command } = await import(
-      new URL('lib/commands/cms/export/workspace.js', pathToFileURL(`${pluginRoot}${path.sep}`))
-    );
-    Command.prototype.getOrgContext = async function () {
-      return {
-        orgId: '00DControlledSource',
-        connection: {
-          version: '67.0',
-          request: async ({ url }) => {
-            if (url === '/connect/cms/spaces/space') return { id: 'space', name: 'Controlled' };
-            if (url.startsWith('/connect/cms/items/search?')) {
-              return { items: [], total: contractCase === 'single-partial' ? 1 : 0 };
-            }
-            throw new Error(`Unexpected controlled request: ${url}`);
-          },
-        },
-      };
-    };
+    const { connection, orgId } = await getOrgContext();
+    const selected = await resolveWorkspace(connection, { workspaceId: 'space' });
+    const result = await executeWorkspaceImport({
+      connection,
+      destinationOrgId: orgId,
+      destinationWorkspace: selected.workspace,
+      dryRun: !options.apply,
+      loadedSource: source,
+      editableDirectory: path.resolve('editable-source'),
+      nativeCopyMappings: mappings,
+      reportDirectory: options.apply ? path.resolve('editable-report') : undefined,
+      sourceDirectory: path.resolve('editable-baseline'),
+      workspaceId: selected.id,
+    });
+    process.stdout.write(JSON.stringify(result));
   } else {
-    const selected = cases[contractCase];
-    if (selected === undefined)
-      throw new Error(`Unknown contract subprocess case: ${contractCase}`);
-
-    const [{ default: Command }, validators, fixtureBytes] = await Promise.all([
-      import(new URL(selected.command, pathToFileURL(`${pluginRoot}${path.sep}`))),
-      import(new URL(selected.validator, pathToFileURL(`${pluginRoot}${path.sep}`))),
-      readFile(path.resolve(testRoot, selected.fixture), 'utf8'),
-    ]);
-    const fixture = JSON.parse(fixtureBytes);
-    Command.prototype.run = async function () {
-      const envelope =
-        selected.transform === undefined
-          ? structuredClone(fixture)
-          : selected.transform(structuredClone(fixture));
-      envelope.metadata.plugin.version = pluginVersion;
-      envelope.provenance.pluginVersion = pluginVersion;
-      if (contractCase === 'export-success') {
-        const manifestPath = path.resolve(envelope.result.workspaces[0].artifact.manifestPath);
-        const manifestDirectory = path.dirname(manifestPath);
-        await mkdir(manifestDirectory, { recursive: true });
-        await writeFile(
-          manifestPath,
-          `${JSON.stringify({ provenance: { pluginVersion } }, null, 2)}\n`,
-          'utf8',
-        );
-      }
-      return this.finishEnvelope(envelope, validators[selected.validatorName]);
-    };
+    throw new Error(`Unknown contract subprocess case: ${contractCase}`);
   }
 }
 
@@ -1079,13 +1281,4 @@ function emailVariant(id, language, published = false) {
       'sfdc_cms:variants': [],
     },
   };
-}
-
-function exportSuccess(envelope) {
-  envelope.status = 'success';
-  envelope.diagnostics.warnings = [];
-  envelope.result.summary = { failedCount: 0, partialCount: 0, succeededCount: 1 };
-  envelope.result.workspaces[0].status = 'success';
-  envelope.result.workspaces[0].diagnostics = { errors: [], warnings: [] };
-  return envelope;
 }

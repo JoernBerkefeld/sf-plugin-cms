@@ -38,12 +38,15 @@ describe('contract subprocess fixture safety without installs', () => {
       const plugin = path.join(fixture, 'plugin');
       const source = path.join(fixture, 'email-template-update-preview-source');
       try {
-        for (const directory of ['lib/commands/cms/update', 'lib/transport', 'lib/services'])
+        for (const directory of ['lib/transport', 'lib/services'])
           await mkdir(path.join(plugin, directory), { recursive: true });
         await writeFile(path.join(plugin, 'package.json'), '{"type":"module"}');
         await writeFile(
-          path.join(plugin, 'lib/commands/cms/update/content.js'),
-          'export default class Command {}',
+          path.join(plugin, 'lib/services/email-update.js'),
+          `export class EmailUpdateOutcomeUnknownError extends Error {}
+export class EmailUpdatePreflightBlockedError extends Error {}
+export async function previewDraftEmailUpdateFromEditableHtml() { return { status: 'ready' }; }
+export async function applyDraftEmailUpdateWithReport() { throw new Error('Unexpected apply'); }`,
         );
         await writeFile(path.join(plugin, 'lib/transport/json-request.js'), 'export {};');
         await writeFile(path.join(plugin, 'lib/services/export-workspace.js'), syntheticExport);
@@ -57,9 +60,10 @@ describe('contract subprocess fixture safety without installs', () => {
             `import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
 import { isMainThread } from 'node:worker_threads';
-import Command from './plugin/lib/commands/cms/update/content.js';
+import * as update from './plugin/lib/services/email-update.js';
 assert.equal(isMainThread, false);
-assert.equal(Command.prototype.getOrgContext, undefined);
+assert.equal(update.previewDraftEmailUpdateFromEditableHtml.getOrgContext, undefined);
+assert.equal(update.getOrgContext, undefined);
 assert.equal(await readFile('email-template-update-preview-source/sentinel', 'utf8'), 'worker-preserved');
 assert.equal(await readFile('email-template-update-preview-editable/items/template-en.html', 'utf8'), '<p>Installed Template edit</p>');
 `,
@@ -69,11 +73,11 @@ assert.equal(await readFile('email-template-update-preview-editable/items/templa
           runner,
           `import { stat, writeFile } from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
-import Command from './plugin/lib/commands/cms/update/content.js';
+import * as update from './plugin/lib/services/email-update.js';
 for (const input of ['email-template-update-preview-source', 'email-template-update-preview-editable']) {
-  if (!(await stat(input)).isDirectory()) throw new Error('Directory input missing before parsing');
+  if (!(await stat(input)).isDirectory()) throw new Error('Directory input missing before service execution');
 }
-await new Command().getOrgContext();
+if (update.getOrgContext !== undefined) throw new Error('Service namespace was mutated');
 ${
   worker
     ? `await writeFile('email-template-update-preview-source/sentinel', 'worker-preserved');

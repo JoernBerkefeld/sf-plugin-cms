@@ -1,6 +1,7 @@
 # summary
 
 List Marketing Cloud CMS workspaces.
+
 # description
 
 Lists one bounded page of CMS workspaces through the authenticated Salesforce connection.

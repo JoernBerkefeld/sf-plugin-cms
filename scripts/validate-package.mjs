@@ -58,12 +58,25 @@ const requiredCommands = [
   'commands/cms/info.js',
   'commands/cms/publish/content.js',
   'commands/cms/unpublish/content.js',
-  'commands/cms/update/content.js',
+  'commands/cms/list/workspace.js',
+  'commands/cms/list/channel.js',
+  'commands/cms/retrieve/content.js',
+  'commands/cms/deploy/content.js',
   'commands/cms/upload/images.js',
 ];
 for (const command of requiredCommands) {
   if (!shippedRuntimeFiles.some((file) => file.endsWith(command.replaceAll('/', path.sep)))) {
     throw new Error(`packed command is missing: ${command}`);
+  }
+}
+for (const file of shippedRuntimeFiles) {
+  const relative = path.relative(path.join(packageRoot, 'lib'), file).split(path.sep);
+  if (
+    relative[0] === 'commands' &&
+    relative[1] === 'cms' &&
+    ['get', 'export', 'import', 'update'].includes(relative[2])
+  ) {
+    throw new Error(`removed command is still packed: ${file}`);
   }
 }
 for (const file of shippedRuntimeFiles) {

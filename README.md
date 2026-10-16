@@ -1,8 +1,56 @@
 # sf-plugin-cms
 
-Salesforce CLI commands for inspecting Marketing Cloud CMS resources, experimentally exporting a workspace, safely planning or applying a create-only workspace import, and performing narrowly bounded Email UPDATE, PUBLISH, UNPUBLISH, and DELETE lifecycle operations through Connect REST API calls. Email Template UPDATE and DELETE are available only through their stricter version 2 contracts. The plugin does not provide general overwrite, upsert, cross-family lifecycle mutation, or broadly destructive CMS operations.
+Download supported Salesforce CMS content to your computer, edit it in your editor, and preview changes before saving supported Email content back to Salesforce. Saving creates or updates **Drafts**: it does not publish or send them.
 
-Version `0.12.0` adds **qualified batch retrieval** for Email and Email Template sources and a `latest`-preferred API policy, building on the `v0.11.0` release baseline. That released retrieval checkpoint does not provide a developer deploy/upsert command, media source retrieval, or universal Email reconstruction. Version `0.13.0` adds the separately qualified **Phase 3** developer deployment below: bounded Email/Email Template create/update/unchanged operations only. Existing narrow Audio/Video export and opt-in Document import limits remain as documented below; installed development-tarball evidence is not released-package qualification.
+This is a plugin for the Salesforce `sf` command-line tool. It is **not a complete CMS backup or restore tool**. Start with one simple, dependency-free HTML Email or Email Template; builder-based content, references, folders and additional variants can prevent an item from being supported.
+
+- [Install and sign in](#installation-and-getting-started)
+- [Download, edit and save one Email](#download-edit-and-save-one-email)
+- [Check support for each content type](#content-type-support)
+- [Upload several local images](#upload-several-local-images)
+- [Understand results and recover safely](#understand-results)
+- [Upgrade from older commands](#upgrading-to-0140)
+
+## Content type support
+
+**Retrieve** means `sf cms retrieve content`. **Create** and **Update** mean `sf cms deploy content`. **Delete** means `sf cms delete content`—not general deletion in Salesforce. Loose-file image upload is separate and is **not** Image create support through deploy.
+
+**Available (limited)** means implemented with the restrictions below, not universal or fully qualified support. **Planned** means future Phase 4 work, unavailable now and subject to API discovery and operation-specific qualification; no release version or date is promised. **Not supported** in the Delete column also means no delete rollout is committed in the current roadmap. “Not verified” is deliberately not a guessed API name.
+
+| Type label                                 | Type API name                   | Retrieve support    | Create support      | Update support        | Delete support                           |
+| ------------------------------------------ | ------------------------------- | ------------------- | ------------------- | --------------------- | ---------------------------------------- |
+| Audio                                      | `sfdc_cms__audio`               | Planned             | Planned             | Planned               | Not supported                            |
+| Brand                                      | `sfdc_cms__brand`               | Planned             | Planned             | Planned               | Not supported                            |
+| Consent Banner                             | `sfdc_cms__consentBanner`       | Planned             | Planned             | Planned               | Not supported                            |
+| Contact Card (VCF)                         | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Content Block: Email (Email Fragment)      | `sfdc_cms__emailFragment`       | Planned             | Planned             | Planned               | Not supported                            |
+| Content Block: Landing Page (Web Fragment) | `sfdc_cms__webFragment`         | Planned             | Planned             | Planned               | Not supported                            |
+| Custom Font                                | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Document                                   | `sfdc_cms__document`            | Planned             | Planned             | Planned               | Not supported                            |
+| Email                                      | `sfdc_cms__email`               | Available (limited) | Available (limited) | Available (HTML only) | Available (owned Draft only; contract 1) |
+| Email Template                             | `sfdc_cms__emailTemplate`       | Available (limited) | Available (limited) | Available (HTML only) | Available (owned Draft only; contract 2) |
+| Expression                                 | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Form                                       | `sfdc_cms__form`                | Planned             | Planned             | Planned               | Not supported                            |
+| Form Handler                               | `sfdc_cms__formHandler`         | Planned             | Planned             | Planned               | Not supported                            |
+| Image                                      | `sfdc_cms__image`               | Available (limited) | Planned             | Planned               | Not supported                            |
+| In-App Message                             | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Landing Page                               | `sfdc_cms__landingPage`         | Planned             | Planned             | Planned               | Not supported                            |
+| Landing Page Template                      | `sfdc_cms__landingPageTemplate` | Planned             | Planned             | Planned               | Not supported                            |
+| Preference Page                            | `sfdc_cms__preferencePage`      | Planned             | Planned             | Planned               | Not supported                            |
+| Push Notification Message                  | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| RCS Message                                | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| SMS and MMS                                | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Tracked Link                               | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| Video                                      | `sfdc_cms__video`               | Planned             | Planned             | Planned               | Not supported                            |
+| WhatsApp Session Message                   | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+| WhatsApp Template Message                  | Not verified                    | Planned             | Planned             | Planned               | Not supported                            |
+
+Current operation limits:
+
+- Retrieve admits only supported root-level, single-variant Email, Email Template and Image shapes in an explicitly selected workspace and language. Images can have downloaded native media or external URL-only evidence; retrieving them does not make them deployable.
+- Deploy admits dependency-free raw-HTML Email/Email Template sources only. Create makes an unpublished Draft. Existing-target update changes **HTML only** and requires an eligible Draft; differing JSON metadata or text companions block the whole selection. Additional variants, non-root placement and unresolved dependencies remain blocked. Phase 5 plans to integrate retained baseline-conflict and sibling-aware safeguards; those extensions are not available now.
+- Delete requires strict ownership evidence, unchanged content, an unpublished Draft and a single-variant parent. It is not deletion by name alone. Email Template additionally requires its strict completed CREATE journal and unchanged source artifacts. A normal portable deploy report is not automatically accepted as delete ownership evidence.
+- Offline `sf cms info --json` labels retrieval/deletion **experimental** and deploy/loose-image upload **unqualified**. Retained narrow installed Email/Template evidence does not qualify every source shape; Image retrieval is not installed live qualification, and loose-image upload has no live-upload proof. Internal family profiles do not add public operation support.
 
 ## Installation and getting started
 
@@ -40,50 +88,118 @@ Install the plugin with Salesforce CLI:
 sf plugins install sf-plugin-cms
 ```
 
-For contributor work or local development from a source checkout, run these commands from the repository's `sf-plugin-cms` directory:
+Confirm that the plugin loads without contacting an org:
 
 ```sh
-npm install
-npm run compile
-sf plugins link .
+sf cms info
 ```
 
-Linked ESM plugins use the compiled files. Run `npm run compile` again after source changes, or keep `npm run compile -- --watch` running while developing.
+If Salesforce CLI asks whether you trust this unsigned plugin, check the package name before confirming. Installation does not grant CMS permissions; your signed-in user still needs access to the chosen workspace.
 
-Confirm that the plugin loads and inspect its frozen machine-contract capabilities without making an org request:
+## Download, edit and save one Email
+
+Run these commands from a folder where you want to keep your project. Replace `my-org` with the login alias you chose. First find your workspace:
 
 ```sh
-sf cms info --json
+sf cms list workspace --target-org my-org
 ```
 
-Machine consumers should run this command first and select a mutually supported command-result major before invoking an org-backed operation.
+This lists one page; use `--page 1` for the next page if needed. In the examples below, replace `Marketing` with your workspace name and `Welcome` with the exact **API name** of an eligible Email, not its display title. Quote workspace names containing spaces. Choose a simple raw-HTML Email without dependencies and with only one variant; unsupported shapes are blocked rather than converted approximately.
+
+### 1. Download the Email
+
+```sh
+sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type sfdc_cms__email --api-name Welcome --default-language --output-dir ./project
+```
+
+This reads Salesforce and writes local source files; it does not change Salesforce. `--default-language` explicitly chooses the workspace default language. Use `--language en_US` instead if that is your intended language.
+
+### 2. Edit its HTML
+
+The command prints a `Definition:` path. Keep that JSON file and its declared companions together. Open the `.html` companion listed in the definition, make a small HTML change and save it. Do not change the identity fields or JSON metadata for this first update; changing existing-item JSON metadata or text content is not supported by deploy.
+
+The next examples assume the printed definition is `./project/cms/Marketing/email/Welcome.cms-email.json`. **Replace that entire path with your actual printed path**: the directory uses the workspace API name, which can differ from its display name. Paths containing spaces need quotes.
+
+### 3. Preview the change
+
+```sh
+sf cms deploy content --target-org my-org --workspace-name Marketing --default-language --definition-file ./project/cms/Marketing/email/Welcome.cms-email.json
+```
+
+There is no `--dry-run` flag: leaving out `--apply` means preview. Preview performs authenticated reads but no Salesforce writes and creates no report directory. Check that the proposal is UPDATE for the expected item, or unchanged if the supported content already matches. A CREATE proposal means no matching destination was found; stop if you intended to update an existing Email. Resolve any blockers before continuing. Preview does not guarantee a later apply will succeed.
+
+### 4. Apply deliberately
+
+```sh
+sf cms deploy content --target-org my-org --workspace-name Marketing --default-language --definition-file ./project/cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001
+```
+
+The report directory must **not already exist**. Choose a fresh name for each apply, and keep the reports. The command checks the whole selection again before writes. This saves a Draft; it does not publish, activate or send anything. A failure can leave earlier successful changes in place: there is no automatic rollback or retry.
+
+To create supported content in another workspace or org, use its explicit destination selectors and preview first. Only qualified source shapes are admitted; source IDs do not choose the destination.
+
+## Upload several local images
+
+Use this separate workflow for loose PNG, JPEG, GIF or WebP files (up to 10 MiB each), not for deploying retrieved Image definitions. Repeat `--file` for each image:
+
+```sh
+sf cms upload images --target-org my-org --workspace-name Marketing --file ./Logo.png --file "./Summer Banner.jpg"
+```
+
+This is a preview. Titles keep the full filename including its extension; API and URL names are derived from it. Unsafe names, unsupported files or destination collisions block the upload; existing images are not overwritten. To deliberately create Drafts, use a fresh report directory:
+
+```sh
+sf cms upload images --target-org my-org --workspace-name Marketing --file ./Logo.png --file "./Summer Banner.jpg" --apply --report-dir ./reports/images-001
+```
+
+Only a proven enhanced-workspace root is supported. Upload remains unqualified: tests and packed CLI previews are retained, but no live upload has been performed. Metadata readback is not binary-byte proof. A successful preview is not proof that Salesforce will accept CREATE.
+
+## Understand results
+
+- **Preview / dry-run:** no Salesforce writes. You still need to sign in because destination checks read Salesforce.
+- **Unchanged:** the supported content already matches; no write is needed.
+- **Blocked:** a safety, selection, permission or unsupported-content check prevented the operation. Read the diagnostics and fix the cause rather than adding `--apply` to bypass it.
+- **Partial:** some items completed, others did not. Inspect each item and the remaining/unattempted list; do not assume the entire batch succeeded.
+- **Failed or uncertain / ownership-uncertain:** preserve the report. A request may have reached Salesforce even when its result could not be confirmed. Reconcile the recorded destination identities read-only before trying again; **do not retry blindly**.
+
+Deploy apply stops at the first failure or uncertain outcome. Retrieve can leave partial local progress. Neither workflow provides automatic rollback or resume. To download again over differing local files, first back up or commit your edits; only then consider retrieve's explicit `--overwrite` option. It is not a general folder cleanup.
+
+For scripts, add `--json` and inspect both the exit code and item diagnostics: `0` means success, `2` means partial, and `1` means blocked/failed for command-owned results. CLI parsing/authentication errors can use Salesforce CLI's own error format. Use `sf cms <command> --help` for installed flags.
+
+## Upgrading to 0.14.0
+
+This pre-v1 release removes seven public commands **without aliases or wrappers**:
+
+- `get workspace` and `get channel`: use `list workspace` and `list channel` for inventories, not equivalent raw detail records.
+- `get content` and `get variant`: use `retrieve content` for supported editable sources. Raw historical/version-specific reads are not replaced.
+- `export workspace` and `import workspace`: removed. Retrieve/deploy support their bounded portable workflow, not old workspace packages or a complete backup/restore replacement.
+- `update content`: removed. Deploy supports its current HTML-only update profile; the old authoring-baseline and sibling-aware guarantees are not yet integrated.
+
+Email/Email Template companions now share their definition's stem: for example, `Welcome.cms-email.json` declares `Welcome.cms-email.html` and optional `Welcome.cms-email.txt`. Back up existing edits before refreshing older sources, preferably into a separate new output directory; do not assume old filenames will be migrated automatically. Internal family/update engines are retained for planned work, not hidden public routes.
 
 ## Command reference
 
-| Command                    | Details                                                                           |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| `sf cms info`              | [Plugin information](#sf-cms-info)                                                |
-| `sf cms list workspace`    | [List workspaces](#sf-cms-list-workspace)                                         |
-| `sf cms get workspace`     | [Get a workspace](#sf-cms-get-workspace)                                          |
-| `sf cms list channel`      | [List workspace channels](#sf-cms-list-channel)                                   |
-| `sf cms get channel`       | [Get a channel](#sf-cms-get-channel)                                              |
-| `sf cms get content`       | [Get content](#sf-cms-get-content)                                                |
-| `sf cms retrieve content`  | [Retrieve selected editable Emails and Email Templates](#sf-cms-retrieve-content) |
-| `sf cms deploy content`    | [Bounded Email/Template deployment](#sf-cms-deploy-content)                       |
-| `sf cms get variant`       | [Get a variant](#sf-cms-get-variant)                                              |
-| `sf cms export workspace`  | [Export a workspace](#sf-cms-export-workspace)                                    |
-| `sf cms import workspace`  | [Import a workspace](#sf-cms-import-workspace)                                    |
-| `sf cms upload images`     | [Upload local images](#sf-cms-upload-images)                                      |
-| `sf cms publish content`   | [Publish a Draft Email](#sf-cms-publish-content)                                  |
-| `sf cms unpublish content` | [Unpublish a Published Email](#sf-cms-unpublish-content)                          |
-| `sf cms update content`    | [Update Draft Email HTML](#sf-cms-update-content)                                 |
-| `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content)                          |
+Pre-v1 breaking change: the public `get workspace`, `get channel`, `get content`, and `get variant` commands have been removed, without aliases. Use the retained list commands for workspace/channel inventories and `retrieve content` for supported editable sources. Raw historical/version-specific reads are not promised as retrieve equivalents. Internal CMS read services remain available to the retained workflows.
 
-All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They prefer the `/services/data/latest` REST routes by default, while keeping a numeric Core/JSforce connection version. Read-only CMS and native-query capability checks run before command operations; only an explicit unsupported-version or missing-route response permits a temporary `67.0` fallback. Authentication, permission and transport failures do not trigger fallback. Pass `--api-version <numeric-version>` to select a numbered API explicitly (without automatic fallback), or `--api-version latest` to request the default policy. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables and get commands print formatted JSON records.
+| Command                    | Details                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `sf cms info`              | [Plugin information](#sf-cms-info)                                               |
+| `sf cms list workspace`    | [List workspaces](#sf-cms-list-workspace)                                        |
+| `sf cms list channel`      | [List workspace channels](#sf-cms-list-channel)                                  |
+| `sf cms retrieve content`  | [Retrieve supported Email, Template and Image sources](#sf-cms-retrieve-content) |
+| `sf cms deploy content`    | [Bounded Email/Template deployment](#sf-cms-deploy-content)                      |
+| `sf cms upload images`     | [Upload local images](#sf-cms-upload-images)                                     |
+| `sf cms publish content`   | [Publish a Draft Email](#sf-cms-publish-content)                                 |
+| `sf cms unpublish content` | [Unpublish a Published Email](#sf-cms-unpublish-content)                         |
+| `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content)                         |
+
+All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They prefer the `/services/data/latest` REST routes by default, while keeping a numeric Core/JSforce connection version. Read-only CMS and native-query capability checks run before command operations; only an explicit unsupported-version or missing-route response permits a temporary `67.0` fallback. Authentication, permission and transport failures do not trigger fallback. Pass `--api-version <numeric-version>` to select a numbered API explicitly (without automatic fallback), or `--api-version latest` to request the default policy. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables; other retained commands render their command-specific human-readable output.
 
 ### `sf cms retrieve content`
 
-**Qualified Step 2 developer-workflow checkpoint (`0.12.0`):** retrieve one or several qualified Emails or Email Templates (`sfdc_cms__email` or `sfdc_cms__emailTemplate`) into an explicit project root. This reads the org and writes selected local files only; it does not mutate CMS content or provide a deploy command. All-of-type selection expands the requested scope, not the supported source shapes.
+Historical evidence: version `0.12.0` introduced **qualified batch retrieval**, building on the `v0.11.0` release baseline. This checkpoint makes **no deployment support claim**. That historical statement concerns retrieval evidence only; current bounded deployment is documented separately below. Installed development-tarball evidence is not released-package qualification.
+
+**Qualified Step 2 developer-workflow checkpoint (`0.12.0`):** retrieve one or several qualified Emails or Email Templates (`sfdc_cms__email` or `sfdc_cms__emailTemplate`) into an explicit project root. This command reads the org and writes selected local files only; use the separate bounded `deploy content` workflow below to preview or apply supported Email/Template changes. All-of-type selection expands the requested scope, not the supported source shapes.
 
 ```sh
 # One exact API name.
@@ -110,8 +226,8 @@ Names, keys, IDs and paths above are illustrative; use identities visible in you
 - Admission uses native `ManagedContentVariant` inventory through the selected CMS REST API route, not search-index completeness. Read-only workspace, Email/Template detail and native-query requests through `latest` were qualified against both test orgs on 2026-10-15, resolving to API `68.0`; newer explicit numeric versions are not artificially rejected. It covers principal-visible, nondeleted records, across all languages/statuses, with independent unfiltered parent-sibling reads and GET-detail binding. Keyset reads require empty terminal pages, grouped-count parity and matching repeat reads; limits are 1,000 pages, 250,000 rows and fewer than 2,000 parent groups per scope. This is not an atomic snapshot or evidence about inaccessible/deleted content; scope, count or detail drift blocks retrieval.
 - Native GET provenance `source: "User"` is normalized only when both parent and variant agree; unknown, conflicting or one-sided provenance blocks retrieval. Provenance is not editable content and is omitted from portable source; original body and detached source identities remain checked.
 - Only the qualified native raw-HTML Email/Email Template profiles are eligible: exact selected language, one independently proven native variant across all sibling languages/statuses, supported body/envelope fields, and reconstructable dependency-free HTML. Folder evidence must be null or the workspace's distinct proven root folder ID in both parent and variant; unknown/non-root placement is blocked. Additional variants, unresolved references/personalization, unsupported components or shapes, and missing/ambiguous identities are not silently dropped. This is not support for every Email shape, folder hierarchy, or multivariant content. Legacy Email and other families remain unsupported, except the bounded Image retrieval described below.
-- **Unreleased Image retrieval:** `sfdc_cms__image` uses the same exact-name, native key/parent ID, all-of-type and mixed metadata selectors. For example, `sf cms retrieve content -o my-org -W Marketing -m sfdc_cms__email:Welcome -m sfdc_cms__image:Hero -L -d ./project --json`. Root-level, single-variant Images are bound to native parent/variant/workspace evidence and written under `cms/<workspaceApiName>/image/<apiName>.cms-image.json` using `sf-cms-media-source@1`. Native media is downloaded as a declared binary companion (for PNG, `<apiName>.cms-image.media.png`) and verified against its native byte/MIME/hash evidence; external media remains explicitly URL-only without fetching. Resolved identity drift blocks local writing. This is retrieval-only local implementation, not installed Image CLI qualification or developer CREATE/UPDATE support. Document is not admitted by this command.
-- Writes portable v2 JSON under `cms/<workspaceApiName>/email/<apiName>.cms-email.json` or `cms/<workspaceApiName>/emailTemplate/<apiName>.cms-email-template.json`, with same-stem `.html` and, when present, `.txt` companions. These are editable source files, not a workspace backup manifest. Source IDs remain detached retrieval evidence, not deployable identity. This checkpoint makes **no deployment support claim**.
+- **Bounded Image retrieval:** `sfdc_cms__image` uses the same exact-name, native key/parent ID, all-of-type and mixed metadata selectors. For example, `sf cms retrieve content -o my-org -W Marketing -m sfdc_cms__email:Welcome -m sfdc_cms__image:Hero -L -d ./project --json`. Root-level, single-variant Images are bound to native parent/variant/workspace evidence and written under `cms/<workspaceApiName>/image/<apiName>.cms-image.json` using `sf-cms-media-source@1`. Native media is downloaded as a declared binary companion (for PNG, `<apiName>.cms-image.media.png`) and verified against its native byte/MIME/hash evidence; external media remains explicitly URL-only without fetching. Resolved identity drift blocks local writing. This is retrieval-only local implementation, not installed Image CLI qualification or developer CREATE/UPDATE support. Document is not admitted by this command.
+- Writes portable v2 JSON under `cms/<workspaceApiName>/email/<apiName>.cms-email.json` or `cms/<workspaceApiName>/emailTemplate/<apiName>.cms-email-template.json`, with same-stem `.html` and, when present, `.txt` companions. These are editable source files, not a workspace backup manifest. Source IDs remain detached retrieval evidence, not deployable identity. Only the bounded Email/Template deploy workflow below accepts these portable sources; this layout alone does not prove that an item is deployable.
 - Existing differing selected files require `--overwrite -x`, including during all-of-type retrieval; unchanged retrieval leaves their bytes stable. Only files owned by each selected item may be replaced or removed; unrelated and remote-absent local items are retained. Local writes are not an item/batch transaction: an I/O failure can leave partial local progress. There is no rollback or project-wide cleanup.
 - Complete native selection is resolved before local writes. Independent item admission/write failures may allow other selected items to complete; fatal authentication/scope read failures stop further acquisition and retain unattempted identities. A complete inventory does not mean every selected item passes strict source admission.
 - JSON uses `sf-cms-content-retrieve@1` with the established seven-key CMS envelope. The same batch-shaped result for one or many items contains `scope`, `selection`, native `resolution` when available (inventory proof and unresolved selectors), `items` (identity, `operation: retrieve`, outcome, absolute path receipt, detached source evidence, diagnostics), `summary`, and `unattempted`. Successful items are `retrieved` or `unchanged`; blocked scope leaves selections unattempted. Success exits `0` (including a proven empty type); mixed completion exits `2` with `partial`; no completed items with blockers exits `1`. CI must inspect both exit status and item/summary diagnostics, not treat a partial batch as complete. Result content and file receipts contain no generated timestamps; envelope provenance records the invocation time.
@@ -166,11 +282,11 @@ sf cms info --json
 sf cms info --contract-version 1 --json
 ```
 
-The result advertises command-result versions separately from compatible workspace-package manifest majors. It reports `latest` as the default REST preference, with `67.0` retained as a temporary capability fallback. API `67.0` has prior operation-specific qualification, while read-only CMS/detail/native-query routes through `latest` were verified on both test orgs at API `68.0`; this does not requalify every mutation at a new version. Bulk export is implemented without media binaries; single-workspace media export is experimental and requires the explicit `--experimental-media` opt-in. The strict v2 image-create profile and the bounded v1 component-create profiles remain experimental. External-reference correlation and import mapping remain experimental because only evidenced CMS reference kinds and explicitly mapped prerequisites can be resolved. Installation alone does not prove org permissions or endpoint availability.
+The current pre-v1 contract lists the nine retained public commands and their actual operation support. Retrieve covers bounded Email, Email Template, and Image profiles. Portable deploy covers only Email and Email Template create/update/unchanged and remains **unqualified** pending installed same-org and cross-org live acceptance. Loose-image upload is a separate unqualified CREATE workflow, not Image deployment. The removed get/export/import/update routes are not advertised or retained as aliases. Retained authoring-baseline and sibling-aware update engines are not yet integrated into deploy.
 
-The read-only metadata capability registry is available through `sf cms info --contract-version 2 --json`; version `0.12.0` also changes the API policy advertised by info v1. Local CMS provider package compatibility accepts versions from `0.10.0` through the installed plugin version, independently of registry contract `1.0.0`. The narrow Email Template `dependency-free` profile additionally applies the retained raw-HTML dependency scanner (unlike native-copy's temporary opaque-HTML bypass); Form Handler `strict-empty-root` requires the existing exact Draft envelope, empty providers, and empty root normalizer. Both profiles advertise retrieval only, not general deploy support. A consumer requiring this registry must verify the installed CMS provider's advertised capability and package compatibility rather than infer support from the package version alone.
+`contracts.commandResults` describes only public commands with CMS-owned envelopes; list workspace/channel retain their existing bounded page results. The family registry is available as `internalRegistry` with `scope: "internal-engine-only"`, including its existing fixture identity and provider-package bounds. Those preserved internal retrieval/reference profiles do not extend public retrieve/deploy family support or accept historical workspace packages through those commands. There is one current info contract, not alternate legacy and registry outputs; `--contract-version 2` now blocks.
 
-The portable-export cache reuses an exact server mapping only when its source-details hash still matches; API-name or language drift triggers exact resolution and targeted refresh. The zero-mutation deploy preflight checks the age of selected org-local bindings, including mappings and package roots, separately from package integrity. Required package cycles are blocked with a closed dependency path; non-root package dependencies are currently unsupported and block operation planning.
+Info reports `latest` as the default REST preference and `67.0` as the tested fallback baseline. Prior operation-specific API qualification is not broadened by this discovery refresh. Installation alone does not prove org permissions or endpoint availability.
 
 `--contract-version <major>` defaults to `1`. Any unsupported major returns a `blocked` `sf-cms-info` envelope with diagnostic code `UNSUPPORTED_CONTRACT_VERSION` and exit `1`, without org access.
 
@@ -192,17 +308,6 @@ Key flags:
 
 The command requests only the selected page; it does not automatically follow subsequent pages.
 
-### `sf cms get workspace`
-
-Retrieves one workspace by its CMS content-space ID.
-
-```sh
-sf cms get workspace --target-org my-org --workspace-id 0Zu...
-sf cms get workspace --target-org my-org --workspace-id 0Zu... --json
-```
-
-Required selector: `--workspace-id <id>`.
-
 ### `sf cms list channel`
 
 Lists one bounded page of channels assigned to a specific workspace.
@@ -220,102 +325,36 @@ Key flags:
 
 The command requests only the selected page; it does not automatically follow subsequent pages.
 
-### `sf cms get channel`
+## Advanced: retained internal engines
 
-Retrieves one CMS channel by its identifier.
+The following collapsed notes preserve historical implementation and qualification evidence. They are **not getting-started instructions**, public commands or additional portable deploy support.
 
-```sh
-sf cms get channel --target-org my-org --channel-id 0ap...
-sf cms get channel --target-org my-org --channel-id 0ap... --json
-```
+<details>
+<summary>Internal export/import/source-engine formats and historical evidence</summary>
 
-Required selector: `--channel-id <id>`.
+### Internal workspace export baselines
 
-### `sf cms get content`
+The pre-v1 `sf cms export workspace` wrapper has been removed without an alias or compatibility route. Retained internal export services still produce integrity baselines, typed reports, editable companions, and source-admission evidence for engine workflows and tests. Those internal formats are not a public whole-workspace export command; `sf cms retrieve content` supports only its documented bounded profiles, not every former export mode.
 
-Retrieves a CMS content document by content key or ID. Optional selectors are passed directly to the CMS content request when you need a particular language or version.
+The retained internal import-engine notes below assume an existing integrity-verified baseline. Family-specific export preparation and import execution remain internal until separately supported retrieve/deploy profiles are documented.
 
-```sh
-sf cms get content --target-org my-org --content-key-or-id news-banner
-sf cms get content --target-org my-org --content-key-or-id news-banner --language en-US
-sf cms get content --target-org my-org --content-key-or-id news-banner --content-version 3 --variant-version 2 --version 1 --json
-```
+### Retained internal workspace import engines
 
-Key flags:
+The pre-v1 `sf cms import workspace` wrapper has been removed without an alias or compatibility route. The engines, package formats, source proofs, CREATE journals and independent readbacks below remain internal implementation and test facilities, not public CLI workflows. There is no universal replacement: `sf cms deploy content` admits only its documented portable Email/Email Template profiles. Other family rollout and baseline/sibling integration remain separate future work.
 
-- `--content-key-or-id <value>`: required content key or content identifier.
-- `--content-version <value>`: select a content version.
-- `--language <value>`: select a content language.
-- `--variant-version <value>`: select a variant version.
-- `--version <value>`: select a document version.
-
-The selector values are strings and are optional except for `--content-key-or-id`. Use only the selectors required by the content record you want.
-
-### `sf cms get variant`
-
-Retrieves one CMS content variant by its identifier.
-
-```sh
-sf cms get variant --target-org my-org --variant-id 0aV...
-sf cms get variant --target-org my-org --variant-id 0aV... --json
-```
-
-Required selector: `--variant-id <id>`.
-
-### `sf cms export workspace`
-
-Runs an experimental, read-only, best-effort export of the variants currently observed for one CMS workspace or every workspace. This output is not a complete or guaranteed backup.
-
-```sh
-sf cms export workspace --target-org my-org --workspace-name "Main Site"
-sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --json
-sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./custom-export --experimental-media --json
-sf cms export workspace --target-org my-org --workspace-id 0Zu... --output-dir ./template-baseline --email-template-map ./email-templates.json --editable-dir ./template-editable --json
-sf cms export workspace --target-org my-org --all --workspace-type Marketing --output-dir ./cms --contract-version 1 --json
-```
-
-Choose either single or bulk mode:
-
-- Single mode requires exactly one of `--workspace-id <id>` or `--workspace-name <name>`. Name matching is exact but case-insensitive. Case-only or Unicode-normalization-equivalent duplicates are ambiguous. The canonical fetched workspace name is always used for the default folder, preserving its casing. Image, Document, Audio, and Video candidates are JSON-only and force an honest partial result by default. `--experimental-media` explicitly opts into the undocumented binary download transport and strict v2 media manifest; only then may Salesforce authorization follow the transport's narrowly validated redirect policy.
-- Bulk mode uses `--all`, which is mutually exclusive with both single selectors. Optional `--workspace-type Marketing|Content` is valid only with `--all`; input casing is ignored and output is normalized to `Marketing` or `Content`. `--experimental-media` is incompatible with `--all`; bulk export never enables media binaries.
-
-In single mode, `--output-dir <path>` remains the exact new destination. When omitted, export writes to `./cms/<safe-canonical-workspace-name>`. In bulk mode, `--output-dir` is the parent directory and defaults to `./cms`; each workspace is written beneath it using the canonical fetched name. Safe segments preserve Unicode and case, replace path/control/Windows-invalid characters, and trim unsafe trailing dots or spaces.
-
-Bulk mode performs a strict global preflight before the first workspace export. When `--workspace-type` is supplied, workspace enumeration sends the matching `spaceType` filter to Salesforce, so unrelated workspace families such as Enablement cannot enter the Marketing or Content preflight and block the requested export. The command then enumerates until an empty page, canonicalizes every returned workspace by ID, validates IDs and names, resolves recognized canonical `spaceType` values, applies the type check again, sorts by canonical ID, checks the output parent and every destination, and rejects collisions after sanitization, Unicode normalization, and case folding. If a canonical detail response omits `spaceType`, preflight can use the list response's recognized type only for the same exact workspace ID. A present malformed, null, or unsupported canonical type is rejected, while an explicit contradictory type is filtered out. Any preflight failure creates no destinations and makes no export calls.
-
-After preflight, each workspace export remains atomic. Execution continues after individual failures. Manifest warnings count as successful exports. JSON and human modes both return the complete deterministic aggregate with discovered, selected, succeeded, and failed counts plus per-workspace status, manifest, or redacted single-line error. A partial execution sets a nonzero process exit code only after the aggregate is emitted.
-
-For a strict Email Template UPDATE baseline, `--email-template-map <json-file>` selects one or more exact case-sensitive `sfdc_cms__emailTemplate` API names. The command inventories the complete Template family with wildcard search, resolves every requested name exactly once, writes only those Template variants, and can create the matching `--editable-dir` companion. Unrelated Image media and other-family relationship warnings cannot enter this scoped package. The package still preserves strict hashes, exact item ownership, included parent-content reference evidence, and the normal `UNSUPPORTED_WILDCARD` warning; incomplete family inventory, missing or duplicate API names, detail failures, or ownership drift block publication.
-
-This bulk command is also the delegation target for tools such as `sf-plugin-mcnext` that need a complete CMS workspace handoff without duplicating CMS export logic; no `sf-plugin-mcnext` changes are required.
-
-Export layout:
-
-```text
-cms/
-└── Main Site/
-    ├── manifest.json
-    └── items/
-        └── <variant-id>.json
-```
-
-`manifest.json` records the source workspace, search provenance, counts, warnings, rejected IDs, failed IDs, and the exact item-file mapping. Each item file contains one observed variant representation. Treat the package as best-effort evidence from that run, not as a guaranteed backup.
-
-### `sf cms import workspace`
-
-Plans or applies a create-only import from an export package. Dry-run is the default: the command validates the complete local package before authenticating, resolves the destination org and workspace, and requires an exact workspace ID plus nonempty `defaultLanguage` and `rootFolderId`. The default profile checks every planned source content key for conflicts without sending mutations. The opt-in native-copy profile below instead requests server-generated keys.
+The following historical option names and commented input examples describe retained engine boundaries only; they are not accepted public commands or a supported JavaScript API. The former wrapper planned or applied a create-only import from an export package. Dry-run is the default: the command validates the complete local package before authenticating, resolves the destination org and workspace, and requires an exact workspace ID plus nonempty `defaultLanguage` and `rootFolderId`. The default profile checks every planned source content key for conflicts without sending mutations. The opt-in native-copy profile below instead requests server-generated keys.
 
 Safe dry run:
 
 ```sh
-sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source"
-sf cms import workspace --target-org my-org --workspace-id 0Zu... --source-dir "./cms/Source" --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source"
+# Historical internal-engine inputs (not runnable): --target-org my-org --workspace-id 0Zu... --source-dir "./cms/Source" --contract-version 1 --json
 ```
 
 Explicit apply:
 
 ```sh
-sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source" --apply --report-dir ./cms-import-report
+# Historical internal-engine inputs (not runnable): --target-org my-org --workspace-name "Destination" --source-dir "./cms/Source" --apply --report-dir ./cms-import-report
 ```
 
 Required flags:
@@ -356,8 +395,8 @@ Partial source packages still require explicit `--allow-partial`, including for 
 Save the array outside the source package, for example as `./native-copy-map.json`. Preview first, then explicitly apply with a new report directory:
 
 ```sh
-sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --contract-version 1 --json
-sf cms import workspace --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-native-copy-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org my-org --workspace-name "Destination" --source-dir ./cms/Source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-native-copy-report --contract-version 1 --json
 ```
 
 The native profile omits `contentKey` from CREATE and uses the returned server-generated identity; source keys are not retained as target keys. It submits the selected fresh API/URL names and remaps the email body's `sfdc_cms:urlName`, without modifying source files or existing records. Destination API-name/URL-name availability is not prevalidated: an API-name collision can reject CREATE, while duplicate URLs can create distinct objects. A dry-run neither allocates target identities nor proves that a later apply will succeed.
@@ -393,9 +432,9 @@ Image transfer is an experimental single-workspace workflow built on strict work
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-images --experimental-media --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --apply --report-dir ./cms-image-report --json
+# Prerequisite: an internally prepared experimental-media baseline at ./cms-images.
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-images --image-map ./image-map.json --contract-version 2 --apply --report-dir ./cms-image-report --json
 ```
 
 Every row selects exactly one integrity-verified `cms/image` item by exact API name, with optional source bindings such as workspace, language, server ID, title, or version. Each of the four identity fields has an explicit strategy: `preserve` submits the evidenced source value, `fresh` submits a different map-provided value, and `generated` omits the value for the server to assign. `title` supports only `preserve` or `fresh`. Every explicitly submitted Enhanced CMS target content key must match `^MC[A-Z2-7]{26}$`: the `MC` prefix followed by exactly 26 uppercase base32 characters (`A`–`Z` or `2`–`7`). Image keys supplied through `preserve` or `fresh` follow the same rule. Submitted `urlName` values (`preserve` or `fresh`) must contain only lowercase ASCII letters, digits, and hyphens, be at most 80 characters long, and begin and end with a letter or digit; invalid values fail before transport. The `generated` strategy omits `urlName`, leaving assignment to Salesforce even if the source URL name cannot be submitted. Duplicate source selections and duplicate non-generated target identity tuples are rejected.
@@ -411,8 +450,8 @@ Image import is create-only. It has no update fallback, overwrite, publication, 
 The one-row map has the same four explicit identity-strategy fields as Image, but selects `"source": { "family": "cms", "type": "document", "apiName": "SourceDocument" }`. Optional exact source bindings are title, workspaceId, language, serverId, and version (the managed content version ID). `apiName` and `title` require `preserve` or `fresh`; `contentKey` and `urlName` also permit `generated`. Submitted keys and URL names retain the strict Image validation rules above. For example, use fresh API/title/URL values and a generated content key; no old native file reference is submitted.
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --apply --report-dir ./cms-document-report --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-documents --document-map ./document-map.json --contract-version 2 --apply --report-dir ./cms-document-report --json
 ```
 
 Dry-run performs source-byte and exact destination collision checks without CREATE; byte proof remains unavailable. Apply requires a new report directory outside the source package, persists a pending intent and exact multipart request hash before one no-retry CREATE, and immediately rechecks destination and source evidence. Success requires independent exact parent/variant/key/workspace/native Document identity and unpublished Draft readback, followed by created-variant-bound downloaded bytes equal to the submitted bytes, SHA-256, MD5, and size. It returns the existing major-2 result contract with `byteProof: passed`, not a widened definition or results contract. Any attempted CREATE failure or incomplete readback remains ownership-uncertain; reconcile the retained journal before another apply. There is no overwrite, update, delete, publication, activation, rollback, or automatic retry.
@@ -428,7 +467,7 @@ Export one or many `sfdc_cms__emailFragment` components by exact API name. The s
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-email-fragments --email-fragment-map ./email-fragments.json --json
+# Prerequisite: an internally prepared Email Fragment baseline at ./cms-email-fragments.
 ```
 
 For import, `--email-fragment-map <json-file>` opts into the experimental first Phase 4 profile. It supports only dependency-free `sfdc_cms__emailFragment` content whose body exactly matches the evidenced root-content-block → one section → one empty column shape, including the exact accepted layout attributes and empty provider, expression, attachment, and variant arrays. It is not general reusable-block or workspace restoration support.
@@ -456,8 +495,8 @@ Each row must select exactly one integrity-verified `sfdc_cms__emailFragment` by
 Preview first, then apply once with a new report directory:
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --apply --report-dir ./cms-email-fragment-create-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --email-fragment-map ./email-fragment-map.json --apply --report-dir ./cms-email-fragment-create-report --contract-version 1 --json
 ```
 
 Apply performs fresh create-only import under the destination root folder. It creates only the destination-default-language parent and leaves it Draft and unpublished. It preserves the source body, title, and URL name while replacing only the mapped `contentKey` and `apiName`; it does not modify the source package. No update, overwrite, publication, activation, send, child-language creation, or automatic retry is supported.
@@ -473,7 +512,7 @@ Export one or many `sfdc_cms__webFragment` components by exact API name with a J
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-web-fragments --web-fragment-map ./web-fragments.json --json
+# Prerequisite: an internally prepared Web Fragment baseline at ./cms-web-fragments.
 ```
 
 Import uses a nonempty JSON array with exact typed source selection, fresh target identities, and one explicit row for every source Data Graph provider. Preserve names by repeating them, or map both the developer name and data-space developer name explicitly.
@@ -503,8 +542,8 @@ Import uses a nonempty JSON array with exact typed source selection, fresh targe
 ```
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --apply --report-dir ./cms-web-fragment-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-web-fragments --web-fragment-map ./web-fragment-map.json --apply --report-dir ./cms-web-fragment-report --contract-version 1 --json
 ```
 
 Dry-run proves fresh content-key and API-name availability, then resolves each exact target Data Graph with a named Connect GET at `/services/data/v{version}/ssot/data-graphs/{encodedDeveloperName}` using the connection-selected API version. A prerequisite qualifies only when the response is a non-array object whose nonempty `name` and `dataspaceName` exactly and case-sensitively match the mapped target pair, and whose nonblank status is `ready` or `active` case-insensitively. Apply repeats API-name and Data Graph validation immediately before each CREATE, creates sequentially, and journals every prerequisite mapping, validation result, and mutation in `workspace-import-run.json`. Duplicate target pairs share one request within each validation pass, but dry-run and apply revalidation remain separate. Request failures and malformed, missing, mismatched, or non-ready responses block creation; there is no SOQL, metadata/list fallback, data-space query-parameter reliance, or default Data Graph substitution. The profile creates Draft content only: no update fallback, overwrite, publication, activation, or send is performed. Deploy referenced CMS images before dependent fragments. The bounded packed installed-host acceptance matrix includes fresh Draft CREATE and independent readback for this exact profile; broader web-fragment shapes remain unsupported.
@@ -518,7 +557,7 @@ Export one or many `sfdc_cms__landingPageTemplate` components by exact API name.
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-templates --landing-page-template-map ./landing-page-templates.json --json
+# Prerequisite: an internally prepared Landing Page Template baseline at ./cms-landing-templates.
 ```
 
 Import uses exact typed source selection, fresh create identities, explicit mappings for every captured CMS image/web-fragment reference, and explicit mappings for every Data Graph provider. Salesforce derives the template Label as `<target.apiName>--sfdc_cms__landingPageTemplate` and limits it to 80 characters, so `target.apiName` is limited to 49 characters. `targetTitle` is optional and is used only when the exact target API-name lookup succeeds with zero matches; fallback remains exact, type-qualified, workspace-scoped, and must resolve uniquely.
@@ -556,8 +595,8 @@ Import uses exact typed source selection, fresh create identities, explicit mapp
 ```
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --apply --report-dir ./cms-landing-template-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-templates --landing-page-template-map ./landing-page-template-map.json --apply --report-dir ./cms-landing-template-report --contract-version 1 --json
 ```
 
 Dry-run verifies the complete package, fresh destination content key/API name, each exact Data Graph identity, and each exact typed CMS prerequisite. Apply repeats all checks immediately before each sequential CREATE, rewrites only the mapped CMS content keys and bound media URLs, and records CMS/Data Graph prerequisite resolution plus mutation evidence in `workspace-import-run.json`. Any lookup error, missing/ambiguous API name, missing/ambiguous title fallback, wrong type/workspace, unsupported reference shape, or drift blocks creation. Templates remain Draft and unpublished; there is no update, overwrite, upsert, publication, activation, send, or landing-page creation. Deploy images and web fragments first. The bounded packed installed-host acceptance matrix includes fresh Draft CREATE and independent readback for this exact template profile, with prerequisite revalidation and drift checks.
@@ -571,7 +610,7 @@ Export one or more `sfdc_cms__preferencePage` records by exact, case-sensitive A
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-preference-pages --preference-page-map ./preference-pages.json --json
+# Prerequisite: an internally prepared Preference Page baseline at ./cms-preference-pages.
 ```
 
 This profile writes both the unchanged raw source item under `items/` and a typed `sf-cms-preference-page-read-report@1` normalization under `reports/preference-pages/`. Engagement-channel and communication-subchannel IDs remain explicit unresolved source references in the typed report. That exact report-bound evidence intentionally makes the export partial, emits warnings, and sets exit status `2` while preserving the unchanged three-field single-export JSON result: `destination`, `manifest`, and `manifestSha256`.
@@ -587,7 +626,7 @@ Export one or more exact, case-sensitive `sfdc_cms__brand` API names from a sele
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brands --brand-map ./brands.json --json
+# Prerequisite: an internally prepared Brand baseline at ./cms-brands.
 ```
 
 The read-only profile preserves every raw Brand item unchanged under `items/` and writes a strict `sf-cms-brand-read-report@1` report under `reports/brands/`. The typed report separates portable Brand semantics from source content, variant, and workspace provenance. It accepts only the retained Draft/unpublished content and variant envelopes and evidenced typography, color, spacing, button, provider, title, Einstein-brand, and empty variant structures. The retained body contains no external identifiers, so an otherwise complete Brand selection remains complete; unknown fields or shapes fail closed before publication.
@@ -610,7 +649,7 @@ Example mapping:
 ```
 
 ```sh
-sf cms import workspace --target-org target-org --workspace-id 0ZuTARGET --source-dir ./cms-brands --brand-map ./brand-import-map.json --json
+# Historical internal-engine inputs (not runnable): --target-org target-org --workspace-id 0ZuTARGET --source-dir ./cms-brands --brand-map ./brand-import-map.json --json
 ```
 
 #### Evidence-qualified Forms (`--form-map`)
@@ -647,7 +686,7 @@ Use this export-only compatibility baseline when a landing page declares a Landi
 The page selector is its exact API name. The expected template path is its exact human title/label because the relationship value can be opaque or unreadable. Title lookup is strict: zero or multiple exact matches fail closed, and lookup errors are never treated as zero matches. An optional `template.apiName` may corroborate a separately known API name, but the command never parses, compares, or asks the user to enter the opaque relationship value as a selector.
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-page-pairs --landing-page-pair-map ./landing-page-pairs.json --json
+# Prerequisite: an internally prepared paired baseline at ./cms-landing-page-pairs.
 ```
 
 The bounded export retrieves complete exact-type inventories for `sfdc_cms__landingPage` and `sfdc_cms__landingPageTemplate` in the selected workspace, exports only the selected pages and resolved templates, and records deterministic `landingPageTemplatePairs` metadata. Each row binds the requested template title to the resolved canonical template API name, content key, and variant ID, plus the page API name/content key/variant ID. Compatibility is structural: each selected page must contain exactly one declared Landing Page Template relationship descriptor. The descriptor remains retained as a generic unsupported relationship; this baseline does not claim historical provenance and does not parse or compare the opaque relationship value. Multiple pages may bind the same exported template. No import mapping, destination lookup, body rewrite, journaling, or mutation is implemented by this flag.
@@ -661,7 +700,7 @@ Export one or many `sfdc_cms__landingPage` components by exact API name. The sel
 ```
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-landing-pages --landing-page-map ./landing-pages.json --json
+# Prerequisite: an internally prepared Landing Page baseline at ./cms-landing-pages.
 ```
 
 The bounded import profile consumes the paired export evidence above. Source template selection is title-first; the independently retained canonical template API name/content key/variant ID and normalized page/template body hashes prove structural compatibility, not historical provenance. The opaque relationship descriptor is bound only through that declared pair; any additional unsupported relationship remains blocking. The outgoing page body receives no template-reference field injection.
@@ -700,8 +739,8 @@ The supported page shape retains the exact top-level body fields, the `sfdc_cms_
 ```
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --apply --report-dir ./cms-landing-page-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-landing-pages --landing-page-map ./landing-page-map.json --apply --report-dir ./cms-landing-page-report --contract-version 1 --json
 ```
 
 Destination template resolution uses the explicitly requested content key, or exact API name with exact-title fallback only after a successful zero-match API-name lookup. The resolved template must remain the same exact type/workspace, Draft, unpublished identity and body at preflight and immediately before CREATE. Image resolution is exact API name first within the destination workspace and `sfdc_cms__image` type; `targetTitle` is considered only after that lookup completes successfully with zero matches. Data Graph developer-name/data-space identity and target page identity are also revalidated.
@@ -713,7 +752,7 @@ Dry-run creates no report and performs no mutation, but returns the same `templa
 For local HTML editing, keep two separate directories: the unchanged workspace export is the integrity/provenance baseline, and an opt-in companion contains literal HTML beside its variant metadata. Export with both explicit destinations:
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-baseline --editable-dir ./cms-editable --json
+# Prerequisite: an internal baseline at ./cms-baseline and editable companion at ./cms-editable.
 ```
 
 Replace the example org aliases and workspace IDs with your own. `--editable-dir` is single-workspace only, cannot be combined with `--all`, and requires explicit `--output-dir`. Both destinations must be new, disjoint directories: neither may contain the other. Unsafe paths and symlink/junction routes are rejected before org access. The baseline is published first; if companion creation fails (including when there are no eligible variants), the command fails with a **baseline retained / editable output unavailable** message. Keep that baseline: this is not a two-directory transaction, and a successful baseline is not deleted on companion failure.
@@ -736,13 +775,13 @@ The companion includes only `sfdc_cms__email` / `sfdc_cms__emailTemplate` varian
 3. Preview the reconstructed HTML with the default dry-run:
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --contract-version 1 --json
 ```
 
 4. Review the result, then explicitly request fresh CREATE with a new report directory outside both input directories:
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-editable-create-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-baseline --editable-dir ./cms-editable --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-editable-create-report --contract-version 1 --json
 ```
 
 For a partial baseline, add `--allow-partial` to both import commands only after accepting its recorded omissions. A `partial` result can exit `2` with usable data; inspect the result and diagnostics rather than treating dry-run as apply readiness. No `--dry-run` flag is needed. Import `--editable-dir` requires `--native-copy-map`, and `--source-dir` always points to the original baseline, never the companion. CREATE generates new target keys; this is not UPDATE or publication, and destination name availability is not guaranteed by dry-run.
@@ -782,7 +821,7 @@ Email and Email Template support qualified export, bounded existing JSON string-
 Export requires explicit `--output-dir` for the immutable baseline and a new, disjoint `--definition-dir`; neither directory may contain the other. Definition mode is single-workspace/single-family and mutually exclusive with `--editable-dir`, bulk export, and experimental media. For a selected Email Template baseline, use the existing exact API-name string-array selection file:
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-template-baseline --email-template-map ./email-templates.json --definition-dir ./cms-source --json
+# Prerequisite: an internal Template baseline at ./cms-template-baseline and source at ./cms-source.
 ```
 
 The definition directory is the source-tree root. Example files beneath it are:
@@ -809,8 +848,8 @@ Do not rename, add, or remove files or fields. Portable identity/API name, contr
 For Email/Template, save the existing four-field native-copy mapping outside both directories. Select the original baseline content key and exact language and provide fresh target API/URL names. `--source-dir` always points to the unchanged baseline; `--definition-dir` points to the separate source tree, never replaces the baseline, and cannot be combined with `--editable-dir`.
 
 ```sh
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-source-create-report --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --workspace-id 0ZuTARGET --source-dir ./cms-template-baseline --definition-dir ./cms-source --native-copy-map ./native-copy-map.json --apply --report-dir ./cms-source-create-report --contract-version 1 --json
 ```
 
 Dry-run is the default. Import requires proven root placement and the exact source language equal to the destination workspace's default language; it does not resolve non-root folders or substitute languages. It verifies the complete baseline and exact definition file set, proves complete workspace-wide API-name/title/URL-name collision absence across content families during planning and before each CREATE (missing or contradictory name evidence blocks), and repeats candidate JSON, HTML, baseline, destination, journal, and request-hash validation after destination acquisition immediately before mutation. Apply uses a new report directory, durably records ordered intents before CREATE, stops on final drift, never retries, and requires independent Draft/unpublished readback. Ambiguous mutation ownership remains `ownership-uncertain`: preserve the journal and reconcile exact recorded identities read-only before any new apply. There is no UPDATE, overwrite, publish, rollback, or resume.
@@ -824,9 +863,9 @@ Projection or source publication failure does not erase a successfully published
 Export exact Brand API names using the existing nonempty string-array selection and two new, disjoint directories:
 
 ```sh
-sf cms export workspace --target-org source-org --workspace-id 0ZuSOURCE --output-dir ./cms-brand-baseline --brand-map ./brands.json --definition-dir ./cms-brand-source --json
-sf cms import workspace --target-org destination-org --source-org source-org --workspace-id 0ZuTARGET --source-dir ./cms-brand-baseline --definition-dir ./cms-brand-source --brand-map ./brand-import-map.json --contract-version 1 --json
-sf cms import workspace --target-org destination-org --source-org source-org --workspace-id 0ZuTARGET --source-dir ./cms-brand-baseline --definition-dir ./cms-brand-source --brand-map ./brand-import-map.json --apply --report-dir ./cms-brand-source-report --contract-version 1 --json
+# Prerequisite: an internal Brand baseline at ./cms-brand-baseline and source at ./cms-brand-source.
+# Historical internal-engine inputs (not runnable): --target-org destination-org --source-org source-org --workspace-id 0ZuTARGET --source-dir ./cms-brand-baseline --definition-dir ./cms-brand-source --brand-map ./brand-import-map.json --contract-version 1 --json
+# Historical internal-engine inputs (not runnable): --target-org destination-org --source-org source-org --workspace-id 0ZuTARGET --source-dir ./cms-brand-baseline --definition-dir ./cms-brand-source --brand-map ./brand-import-map.json --apply --report-dir ./cms-brand-source-report --contract-version 1 --json
 ```
 
 Use the existing typed Brand source/target mapping shown above. Brand source JSON is semantically immutable against its original projection: no body/title/URL, identity, language, folder, field, or structure edits. JSON formatting/key order may differ, with exact bytes hashed separately. Destination API name, title, and URL come only from the fresh explicit map. There is no Brand HTML companion or bounded JSON-leaf edit profile.
@@ -838,6 +877,10 @@ Both dry-run and apply require explicit `--source-org`, resolved and authenticat
 CREATE is root-only and exact destination-default-language only in a canonical Marketing workspace. Target collision inventory is exhaustive across content families, validates each page's `count` against that page's item length (not a global total), rejects duplicate/missing/contradictory identity evidence, and terminates on the bounded short/empty page rather than trusting `nextPageUri`. Target API-name/title/URL absence is repeated immediately before CREATE. Apply durably records ordered intents and source-refresh/hash evidence, creates sequentially without retry, omits `contentKey` for server generation, and requires independent Draft/unpublished content-key and variant readback. Ownership ambiguity stops later writes and requires read-only journal reconciliation. No UPDATE, publish, workspace-default Brand assignment, dependent-content mutation, rollback, or resume is added.
 
 Controlled service/command and packed CLI tests are retained evidence for the `0.11.0` baseline's bounded source mode. **Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.** A fresh packed run completed export, dry-run and one non-retried CREATE, with independent Draft/unpublished parent and variant readback, one canonical sibling, completed journal with final source-refresh proof, unchanged baseline/definition bytes and four unchanged source snapshots. The native body matched the submitted body and original source except the explicit map-owned embedded title replacement. This qualifies only that bounded source path, not full B or the installed published package; historical generic Brand CREATE is separate evidence. Image replacement, folder hierarchy/non-root placement, non-default language, and full B remain open.
+
+</details>
+
+## Additional public lifecycle commands
 
 ### `sf cms publish content`
 
@@ -887,29 +930,12 @@ sf cms delete content --target-org my-org --workspace-id 0Zu... --api-name Welco
 
 Before mutation, the command proves exact org/workspace/family/API-name/language/content/variant/request ownership, one selected variant, a single-variant parent, exact Draft/unpublished lifecycle, and an unchanged canonical semantic/body hash against the accepted CREATE baseline. Email Template v2 additionally reloads the journal's source workspace export with integrity verification and blocks missing or changed artifacts, partial or failed exports, dependencies, unresolved or unsupported external references, warnings other than `UNSUPPORTED_WILDCARD`, unsafe raw HTML, or a CREATE body that differs from the selected safe source body except for fresh destination identity fields. It writes `content-delete-run.json` with durable pending intent before exactly one non-retried `DELETE /connect/cms/contents/variants/{variantId}` request. There is no cascade, name-only authorization, parent DELETE fallback, or published-content deletion. Completion first requires a complete stable Email inventory with zero rows matching the exact API name and language, then an exact variant GET failure with HTTP 404, one error entry, and `VARIANT_NOT_FOUND`. Only after those two proofs may an exact parent GET failure with HTTP 404, one error entry, and `NOT_FOUND` be recorded as empirical `parentBehavior: "not-found"`; a retained, identity-matching parent is recorded as `present`. Generic 404s, wrong codes, multiple entries, and transport failures remain ownership-uncertain. The first controlled live Email DELETE is reconciled with this exact absence shape and is public/live-verified. Never retry an ambiguous DELETE until the recorded IDs are reconciled read-only.
 
-### `sf cms update content`
+<details>
+<summary>Retained internal update engine and historical import recovery notes</summary>
 
-Previews or applies one exact Email-family `contentBody.rawHtml` edit from an editable companion. Omitted `--content-type` preserves `sfdc_cms__email` contract v1 behavior. Email Template requires explicit `--content-type sfdc_cms__emailTemplate --contract-version 2`. Selection requires an exact `--workspace-id`, exact `--api-name`, and exactly one of `--language` or `--default-language`. Both the unchanged export baseline (`--source-dir`) and its strict editable companion (`--editable-dir`) are required. Template v2 additionally requires a complete integrity-verified package with no rejected or failed items, dependencies, unresolved or unsupported references, or warnings other than `UNSUPPORTED_WILDCARD`.
+### Internal Draft HTML update engine
 
-Dry-run is the default:
-
-```sh
-sf cms update content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --source-dir ./cms-baseline --editable-dir ./cms-editable --json
-```
-
-Template v2 preview is explicit:
-
-```sh
-sf cms update content --target-org my-org --contract-version 2 --content-type sfdc_cms__emailTemplate --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --source-dir ./cms-baseline --editable-dir ./cms-editable --json
-```
-
-Apply requires a new nonexisting report directory:
-
-```sh
-sf cms update content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --source-dir ./cms-baseline --editable-dir ./cms-editable --apply --report-dir ./cms-update-report --json
-```
-
-The command supports only an unpublished Draft Email or the accepted raw-HTML Email Template shape and changes only `rawHtml`. It reloads and reprepares immediately for apply, verifies the independent parent, selected variant, complete sibling inventory, and lifecycle, then atomically persists pending intent before exactly one non-retried variant PUT. Template discovery uses wildcard family search cross-checked against the complete wildcard workspace inventory, with exact per-page count semantics, duplicate rejection, and exact inventory equivalence. Successful apply writes `content-update-run.json` with `completed` evidence (`sf-cms-email-update-run` for Email or `sf-cms-email-template-update-run` for Template). Transport or readback ambiguity writes or retains `ownership-uncertain`/pending evidence with the exact workspace, content ID, variant ID, and payload hash required for read-only reconciliation. Never issue a second PUT until that identity is reconciled. Other families and shapes remain unsupported; there is no upsert or implicit publish/unpublish operation.
+The former `update content` public wrapper has been removed without an alias. The internal Email/Template update engine and its baseline-conflict, sibling-inventory, journal-before-PUT, and readback tests remain. This removal does not wire that engine into `deploy content` or promise an equivalent deployment workflow.
 
 #### Run reports and recovery
 
@@ -944,6 +970,8 @@ Recovery guidance:
 
 In JSON mode the command returns exactly one structured command result. Human plan lines are suppressed; warnings and failures remain structured Salesforce CLI output, and transport errors redact authorization, cookies, tokens, and signed URL parameters.
 
+</details>
+
 ## Common flags and output
 
 - `--target-org <username-or-alias>` / `-o <username-or-alias>` selects the authenticated org. There is no implicit default for org-backed CMS commands.
@@ -954,24 +982,24 @@ In JSON mode the command returns exactly one structured command result. Human pl
 Use `sf <command> --help` to inspect the installed command's current flags, for example:
 
 ```sh
-sf cms get content --help
+sf cms retrieve content --help
 ```
 
 ## Versioned machine contracts
 
 ### Integration boundary and ownership
 
-The supported v0.12.0 integration boundary is the Salesforce CLI subprocess. A consumer such as an MCN orchestrator should:
+The supported integration boundary is the Salesforce CLI subprocess. Automation should:
 
-1. Run `sf cms info --json`, require the needed capability, and choose a mutually supported command-result major.
-2. Run bulk export or workspace import with `--contract-version 1 --json`.
-3. Consume the returned CMS mappings and rewrite only fields owned by that consumer.
+1. Run `sf cms info --json` and require the needed public capability. Info has one current contract, `sf-cms-info@1`; its `internalRegistry` is not public operation support.
+2. Invoke only a retained public command and its documented `--contract-version` and `--json` options. Bulk export and workspace import no longer have public wrappers.
+3. Consume only the documented results of those retained public commands. Do not expect workspace-import mappings, import ordering or general reference resolution from retrieve/deploy.
 
-CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, and CMS-internal reference rewriting. General dependency discovery and closure are unavailable in v0.12.0: default exports preserve only evidenced opaque identity inventory and do not expose a general dependency graph. The bounded web-fragment, landing-page-template, and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in their maps and evidenced by their supported shapes. Consumers must not inspect package payloads to reconstruct CMS identity, infer dependencies or mappings, or rewrite CMS-owned references. No public JavaScript API is part of v0.12.0; the CLI JSON boundary is sufficient and avoids a second integration surface.
+The retained **internal export/import engines** own their artifact identities, source-to-target mappings, import ordering and CMS-internal reference rewriting. Their default exports preserve evidenced opaque identity inventory, not a general dependency graph. Their bounded web-fragment, landing-page-template and landing-page profiles resolve only the exact CMS and Data Graph prerequisites declared in internal maps and evidenced by their supported shapes. These are internal-engine contracts and historical evidence, **not public fragment/page deployment or mapping support**. Public automation must not treat those package payloads or internal profiles as an additional integration route. No public JavaScript API is promised; use only the retained CLI commands and their documented JSON results.
 
 ### Authoritative envelope
 
-`sf cms info --json`, aggregate `sf cms export workspace --all --json`, and `sf cms import workspace --json` return exactly these top-level fields:
+`sf cms info --json` returns exactly these top-level fields. Historical workspace import/bulk-export envelope contracts remain available internally, but neither has a public CLI route:
 
 ```json
 {
@@ -979,7 +1007,7 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
   "contractVersion": "1.0.0",
   "status": "success",
   "metadata": {
-    "operation": "<cms.info|workspace.export.bulk|workspace.import>",
+    "operation": "<cms.info|content.retrieve|content.deploy|images.upload>",
     "plugin": { "name": "sf-plugin-cms", "version": "0.12.0" },
     "apiVersion": "67.0"
   },
@@ -995,27 +1023,21 @@ CMS owns CMS artifact identity, source-to-target CMS mappings, import ordering, 
 }
 ```
 
-Statuses are `success`, `partial`, `failed`, or `blocked`. Diagnostics contain bounded, redacted entries shaped as `{ code, message, scope?, reference?, retryable? }`. `result` is `null` only when a failed or blocked command has no usable operation result. Aggregate export provenance additionally contains deterministic `exportSetId`.
+Statuses are `success`, `partial`, `failed`, or `blocked`. Diagnostics contain bounded, redacted entries shaped as `{ code, message, scope?, reference?, retryable? }`. `result` is `null` only when a failed or blocked command has no usable operation result. Retained internal aggregate export provenance additionally contains deterministic `exportSetId`.
 
-The `--contract-version <major>` flag selects the command envelope/result major and defaults to `1`; it does not select the independently declared package-manifest version. Unsupported command-result majors block with `UNSUPPORTED_CONTRACT_VERSION` before org access. Import also validates the package-declared manifest major before org access and blocks unsupported packages with `UNSUPPORTED_PACKAGE_VERSION`.
+Where exposed by a retained command, `--contract-version <major>` selects its envelope/result major and defaults to `1`. Info supports only its refreshed current major `1`; retrieve/deploy emit fixed major `1` envelopes without that flag. Independently versioned workspace manifests and their validation remain internal-engine contracts, not public import compatibility.
 
 ### Exact operation results
 
-`sf-cms-info@1` reports plugin/API versions, supported command results, supported package manifests, result-to-manifest compatibility, and these capability IDs:
+`sf-cms-info@1` reports plugin/API versions, `commands`, `contracts.commandResults`, public `capabilities`, and the separately scoped `internalRegistry`.
 
-- `workspace.export.bulk` — `implemented`, contract `sf-cms-workspace-export-set@1`.
-- `workspace.export.dependency-closure` — `unavailable`; v0.12.0 does not provide general relationship discovery or traversal.
-- `workspace.export.external-reference-correlation` — `experimental`, embedded contract `sf-cms-external-reference-correlations@1`.
-- `workspace.export.experimental-media` — `experimental`, contract `sf-cms-workspace-export@2`; available only for a single workspace with explicit `--experimental-media`.
-- `content.delete.email` — `experimental`, contract `sf-cms-content-delete@1`; public/live-verified for one exact run-owned single-variant Draft Email.
-- `content.delete.email-template` — `experimental`, contract `sf-cms-content-delete@2`; bounded local/package acceptance is implemented, while a live org mutation remains a future roadmap validation step.
-- `content.publish.email` — `experimental`, contract `sf-cms-content-publish@1`.
-- `content.unpublish.email` — `experimental`, contract `sf-cms-content-unpublish@1`; local code/package qualification and a one-shot live Published-to-Draft parent-scoped transition are complete.
-- `content.update.email-raw-html` — `experimental`, contract `sf-cms-content-update@1`.
-- `content.update.email-template-raw-html` — `experimental`, contract `sf-cms-content-update@2`; live-qualified for one exact retained Draft/unpublished Email Template after a ready public preview and exactly one completed non-retried PUT.
-- `workspace.import.email-fragment-create` — `experimental`, contract `sf-cms-workspace-import@1`.
-- `workspace.import.image-create` — `experimental`, contract `sf-cms-workspace-import@2`.
-- `workspace.import.mapping` — `experimental`, contract `sf-cms-workspace-import@1`.
+- `content.retrieve.email`, `content.retrieve.email-template`, `content.retrieve.image` — `experimental`, contract `sf-cms-content-retrieve@1`.
+- `content.deploy.email.create|update|unchanged` and `content.deploy.email-template.create|update|unchanged` — six separate `unqualified` capabilities, contract `sf-cms-content-deploy@1`.
+- `images.upload.create` — `unqualified`, contract `sf-cms-images-upload@1`; loose files only, not portable Image deploy.
+- `content.delete.email` and `content.delete.email-template` — `experimental`, contracts `sf-cms-content-delete@1` and `@2` respectively; existing operation-specific qualification is unchanged.
+- `content.publish.email` and `content.unpublish.email` — `experimental`, contracts `sf-cms-content-publish@1` and `sf-cms-content-unpublish@1`.
+
+The following workspace export/import formats describe **retained internal engines**, not public CLI result contracts or source formats newly accepted by retrieve/deploy.
 
 `sf-cms-workspace-export-set@1` contains `workspaceType`, a portable `outputDirectory`, selection and summary counts, `externalReferenceCorrelations`, and deterministic per-workspace entries. Workspace entries include canonical source identity, `success|partial|failed` status, relative artifact/manifest paths and hashes when finalized, and structured diagnostics. Any finalized omission or unresolved/unsupported reference makes that workspace and aggregate partial.
 
@@ -1033,11 +1055,13 @@ The correlation table exists only at `result.externalReferenceCorrelations`. Eac
 
 `sourceReference` is serialized unchanged and matched by exact string equality only—no trimming, case folding, decoding, hashing, or fuzzy matching. Rows bind to a canonical CMS reference, source workspace, and verified package manifest. Envelope provenance binds the entire set to its producer, source org, plugin version, and export-set identity. Duplicate or conflicting correlations block the contract. Unresolved and unsupported values appear only as diagnostics/references and never as correlation rows or resolved mappings.
 
-`sf-cms-workspace-import@1` contains the verified source package identity, explicit target org/workspace, integrity counts, deterministic mappings, and unresolved/unsupported references. A resolved mapping supplies `target.targetReference`; consumers must use that value rather than derive one from IDs. Rewriting is limited to the evidenced CMS-owned `contentBody.*.ref.contentKey` shape. `cmsReferencesRewritten: true` is reported only when every required target mapping was available before the outgoing mutation and inspection of the exact outgoing parent and variant payloads proves that no relevant source key remains. Forward, self, and unknown references stay unresolved or unsupported. Dry-run remains truthful and does not claim target resolution that requires a mutation.
+`sf-cms-workspace-import@1` contains the verified source package identity, explicit target org/workspace, integrity counts, deterministic mappings, and unresolved/unsupported references. An internal resolved mapping supplies `target.targetReference`; internal engine consumers use that value rather than derive one from IDs. This is not a mapping result promised by a retained public command. Rewriting is limited to the evidenced CMS-owned `contentBody.*.ref.contentKey` shape. `cmsReferencesRewritten: true` is reported only when every required target mapping was available before the outgoing mutation and inspection of the exact outgoing parent and variant payloads proves that no relevant source key remains. Forward, self, and unknown references stay unresolved or unsupported. Dry-run remains truthful and does not claim target resolution that requires a mutation.
 
-### Package layout and integrity
+### Internal-engine package layout and integrity
 
-A workspace export package contains `manifest.json` plus regular item files. Packages without Image, Document, Audio, or Video candidates use manifest v1. Paired landing-page exports can additionally contain deterministic `landingPageTemplatePairs` rows that bind each selected page item to a title-resolved canonical template item while retaining the page's generic unsupported relationship descriptor. Image, Document, Audio, and Video candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful Image, admitted `text/plain` Document, admitted `audio/x-wav` Audio, and admitted `video/mp4` Video downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
+This subsection documents retained export/import engine formats only. These packages, mapping/reference contracts and historical media options are not accepted public retrieve/deploy inputs or additional public capabilities.
+
+An internal workspace export package contains `manifest.json` plus regular item files. Packages without Image, Document, Audio, or Video candidates use manifest v1. Paired landing-page exports can additionally contain deterministic `landingPageTemplatePairs` rows that bind each selected page item to a title-resolved canonical template item while retaining the page's generic unsupported relationship descriptor. Image, Document, Audio, and Video candidates without `--experimental-media` remain JSON entries in a strict v2 manifest with an empty `media` array, no media binary files, a `MEDIA_EXPORT_FAILED` warning, and `partial` completeness. With explicit `--experimental-media`, successful Image, admitted `text/plain` Document, admitted `audio/x-wav` Audio, and admitted `video/mp4` Video downloads use the same strict v2 manifest and add bijectively matched `media` descriptors and `cms.media` items. `manifest.json` is the sole package control file and the sole regular file excluded from `items[]`. Every other regular file must occur exactly once in `items[]`; directories are excluded, while symlinks and other special filesystem entries are rejected. Paths are relative POSIX-style paths.
 
 Each item records exactly `{ path, sha256, kind, referenceId? }`, with lowercase SHA-256 calculated over the finalized exact file bytes. Import independently validates the manifest major, enumerates the package, rejects missing, substituted, duplicate-path, or unlisted files, and verifies every item hash. Only after the listed set and hashes are verified does it hash the exact `manifest.json` bytes and use that hash as package identity.
 
@@ -1053,6 +1077,18 @@ Opaque reference descriptors remain CMS-owned identity inventory. Their portable
 Automation should parse stdout JSON and inspect the process exit code. It must not infer status by scraping stderr. Human and JSON modes report the same status, counts, and artifact paths.
 
 ## Development
+
+For contributor work from this repository's plugin directory:
+
+```sh
+npm install --no-workspaces
+npm run compile --no-workspaces
+sf plugins link .
+```
+
+Linked ESM plugins use compiled files. Compile again after source edits, or use `npm run compile --no-workspaces -- --watch`.
+
+Contributor scratch directories belong under the operating system temp directory and use `cms-<purpose>-` or `sf-plugin-cms-<purpose>-` prefixes. On this Windows development machine, verify that process-local `TEMP`, Node's `os.tmpdir()`, and any configured `TMP` / `TMPDIR` resolve to `F:\Temp` before running tests; correct only the current process environment if needed. Run verification suites one at a time. Recursive fixture cleanup is limited to registered descendants of newly created, marked run roots; never sweep old temp directories. Destination-adjacent atomic publication staging is output-in-progress, not a scratch root, and remains beside its destination to preserve same-volume publication.
 
 The [demo project](test/demo-project) depicts an **imaginary result of a future retrieve-all operation**, not a shipped command's output or an import-ready export. Its external test-only [inventory](test/fixtures/demo-project-inventory.json) distinguishes current portable Email, Email Template, and immutable Brand shapes from **proposed, not implemented** Image, landing page/template, fragment, form/handler, and consent banner source formats. The fictional campaign uses flat `cms/Demo_Workspace/<family>/<apiName>.cms-<token>` files, same-stem HTML/media companions, inline structured content, and metadata-only logical `folderPath` values. Current-contract examples use root folders and the demo's default language; proposed examples illustrate logical hierarchy without adding physical folder, language, or variant directories.
 
@@ -1071,15 +1107,17 @@ npm test
 npm run validate:package
 ```
 
-## Contributor notes: experimental workspace export
+## Contributor notes: retained internal experimental workspace export
 
-The experimental export uses the v67 `GET /connect/cms/items/search` operation. The API description requires a non-wildcard `queryTerm`; runtime probing found that `queryTerm=*` returned workspace inventories of 6 and 115 variants, including Draft, Published, and Revised records. This behavior is undocumented and must be retested rather than treated as a stable listing contract.
+These notes describe retained internal export/import services and historical evidence, not a public export command or extra retrieve/deploy support. Their mappings, reference handling and guards remain internal implementation contracts.
+
+The internal experimental export uses the v67 `GET /connect/cms/items/search` operation. The API description requires a non-wildcard `queryTerm`; runtime probing found that `queryTerm=*` returned workspace inventories of 6 and 115 variants, including Draft, Published, and Revised records. This behavior is undocumented and must be retested rather than treated as a stable listing contract.
 
 String-array query values such as `contentSpaceOrFolderIds` and `languages` are serialized as repeated keys. Pagination reconstructs each request from the original filters instead of trusting `nextPageUri`, which was observed to remain present after an empty page. Delivery responses do not prove workspace ownership and exclude drafts. SOQL omitted a known record that remained readable through Connect REST, and CMS `9Pu` folders exposed no child-enumeration operation, so none of those alternatives establishes a complete inventory.
 
-Current shipped export guards include an explicit single-workspace mode and a strict bulk preflight. Workspace enumeration is zero-based with `pageSize=250`; a requested Marketing or Content bulk export is filtered server-side with `spaceType`, preventing unrelated workspace families from entering that preflight. Enumeration deduplicates exact IDs, rejects conflicting recognized types for the same ID during bulk preflight, ignores advertised totals as a termination signal, and continues until an empty page. It fails closed on repeated pages, no progress, malformed IDs, case/Unicode-equivalent IDs, or the 1,000-page cap. Bulk preflight canonicalizes every returned workspace with a GET, validates canonical ID and name, prefers recognized canonical `spaceType`, and uses recognized list type evidence only when the canonical detail type is absent and the exact ID matches. It rejects present malformed, null, or unsupported canonical type evidence, filters an explicit contradictory type, sorts by canonical ID, and rejects unsafe or colliding destinations before any export starts.
+Retained internal export-engine guards include an explicit single-workspace mode and a strict bulk preflight. Workspace enumeration is zero-based with `pageSize=250`; a requested Marketing or Content bulk export is filtered server-side with `spaceType`, preventing unrelated workspace families from entering that preflight. Enumeration deduplicates exact IDs, rejects conflicting recognized types for the same ID during bulk preflight, ignores advertised totals as a termination signal, and continues until an empty page. It fails closed on repeated pages, no progress, malformed IDs, case/Unicode-equivalent IDs, or the 1,000-page cap. Bulk preflight canonicalizes every returned workspace with a GET, validates canonical ID and name, prefers recognized canonical `spaceType`, and uses recognized list type evidence only when the canonical detail type is absent and the exact ID matches. It rejects present malformed, null, or unsupported canonical type evidence, filters an explicit contradictory type, sorts by canonical ID, and rejects unsafe or colliding destinations before any export starts.
 
-Per-workspace variant export remains atomic and best-effort: it verifies `managedContentSpaceId` in search rows and `contentSpace.id` in variant details, records ownership rejections and detail failures, refuses an existing destination, writes stable JSON to a temporary sibling directory, retains staging after a write or publication failure, and renames staging only after all output is written. Bulk execution continues across workspace failures and emits a deterministic complete aggregate in both human and JSON modes.
+Within that retained internal engine, per-workspace variant export remains atomic and best-effort: it verifies `managedContentSpaceId` in search rows and `contentSpace.id` in variant details, records ownership rejections and detail failures, refuses an existing destination, writes stable JSON to a temporary sibling directory, retains staging after a write or publication failure, and renames staging only after all output is written. Bulk execution continues across workspace failures and emits a deterministic complete aggregate in both human and JSON modes.
 
 Failed baseline and editable-companion writes leave their hidden sibling staging directories (`.<destination-name>.tmp-<generated-suffix>`) beside the requested destination for inspection; they are not qualified exports and must not be imported as such. Check that parent directory when recovering from a failure. If baseline publication succeeded but the editable companion failed, the published baseline remains intact and the failed companion staging is retained. Preserve this evidence, reconcile any existing destination, and use new, separate output paths for a fresh export rather than overwriting or treating retained staging as a resume mechanism. The service can attach `stagingPath` to an error when possible, but this diagnostic is not a guaranteed CLI JSON field.
 

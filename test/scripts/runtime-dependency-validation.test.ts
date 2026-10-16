@@ -44,7 +44,7 @@ describe('packed runtime dependency validation', () => {
   });
 
   it('rejects incompatible engines and non-optional npm-ls problems', async () => {
-    const run = await createRunOwnedTemp('runtime-tree-test');
+    const run = await createRunOwnedTemp('cms-runtime-tree-test');
     const temporaryRoot = await createRunOwnedDirectory(run, 'fixture');
     try {
       const jsforcePath = await writePackage(

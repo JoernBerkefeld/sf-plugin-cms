@@ -6,46 +6,136 @@ import {
   METADATA_CAPABILITY_VERSION,
   type CapabilityRegistryFixture,
 } from './capability-registry.js';
-import { assertExactKeys, assertIdentifier, assertNonemptyString } from './shared.js';
-import { EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT } from './workspace-export.js';
+import { assertExactKeys, assertNonemptyString } from './shared.js';
 
 export const CMS_INFO_CONTRACT = 'sf-cms-info' as const;
-export const CMS_CAPABILITY_STATES = ['implemented', 'experimental', 'unavailable'] as const;
+export const CMS_CAPABILITY_STATES = [
+  'implemented',
+  'experimental',
+  'unqualified',
+  'unavailable',
+] as const;
 export const CMS_CAPABILITY_TRANSPORT = 'cli-json' as const;
 
+// Only commands with a CMS-owned envelope have a command-result contract.
+export const CMS_PUBLIC_COMMAND_RESULTS = {
+  info: ['1.0.0'],
+  contentRetrieve: ['1.0.0'],
+  contentDeploy: ['1.0.0'],
+  imagesUpload: ['1.0.0'],
+  contentDelete: ['1.0.0', '2.0.0'],
+  contentPublish: ['1.0.0'],
+  contentUnpublish: ['1.0.0'],
+} as const;
+
+export const CMS_PUBLIC_COMMANDS = [
+  'cms info',
+  'cms list workspace',
+  'cms list channel',
+  'cms retrieve content',
+  'cms deploy content',
+  'cms upload images',
+  'cms delete content',
+  'cms publish content',
+  'cms unpublish content',
+] as const;
+
 export type CmsCapability = {
-  id:
-    | 'workspace.export.bulk'
-    | 'workspace.export.dependency-closure'
-    | 'workspace.export.external-reference-correlation'
-    | 'workspace.export.experimental-media'
-    | 'content.delete.email'
-    | 'content.delete.email-template'
-    | 'content.publish.email'
-    | 'content.unpublish.email'
-    | 'content.update.email-raw-html'
-    | 'content.update.email-template-raw-html'
-    | 'workspace.import.email-fragment-create'
-    | 'workspace.import.image-create'
-    | 'workspace.import.mapping';
+  id: string;
   state: (typeof CMS_CAPABILITY_STATES)[number];
   transport: typeof CMS_CAPABILITY_TRANSPORT;
-  contract:
-    | 'unavailable'
-    | 'sf-cms-workspace-export-set@1'
-    | 'sf-cms-workspace-export@2'
-    | 'sf-cms-content-delete@1'
-    | 'sf-cms-content-delete@2'
-    | 'sf-cms-content-publish@1'
-    | 'sf-cms-content-unpublish@1'
-    | 'sf-cms-content-update@1'
-    | 'sf-cms-content-update@2'
-    | typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT
-    | 'sf-cms-workspace-import@1'
-    | 'sf-cms-workspace-import@2';
+  contract: string;
 };
 
+export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
+  {
+    id: 'content.retrieve.email',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-retrieve@1',
+  },
+  {
+    id: 'content.retrieve.email-template',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-retrieve@1',
+  },
+  {
+    id: 'content.retrieve.image',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-retrieve@1',
+  },
+  {
+    id: 'content.deploy.email.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email.update',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email.unchanged',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email-template.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email-template.update',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email-template.unchanged',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'images.upload.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-images-upload@1',
+  },
+  {
+    id: 'content.delete.email',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-delete@1',
+  },
+  {
+    id: 'content.delete.email-template',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-delete@2',
+  },
+  {
+    id: 'content.publish.email',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-publish@1',
+  },
+  {
+    id: 'content.unpublish.email',
+    state: 'experimental',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-unpublish@1',
+  },
+];
+
 export type CmsCapabilityRegistryResult = {
+  scope: 'internal-engine-only';
   contract: typeof METADATA_CAPABILITY_CONTRACT;
   version: typeof METADATA_CAPABILITY_VERSION;
   fixtureSha256: typeof METADATA_CAPABILITY_FIXTURE_SHA256;
@@ -53,51 +143,23 @@ export type CmsCapabilityRegistryResult = {
 };
 
 export type CmsInfoResult = {
-  plugin: {
-    name: 'sf-plugin-cms';
-    version: string;
-  };
+  plugin: { name: 'sf-plugin-cms'; version: string };
   api: {
     defaultVersion: typeof DEFAULT_API_VERSION | typeof FALLBACK_API_VERSION;
     testedVersions: [typeof FALLBACK_API_VERSION];
   };
-  contracts: {
-    commandResults: {
-      info: ['1.0.0'];
-      contentDelete: ['1.0.0', '2.0.0'];
-      contentPublish: ['1.0.0'];
-      contentUnpublish: ['1.0.0'];
-      contentUpdate: ['1.0.0', '2.0.0'];
-      workspaceExportSet: ['1.0.0'];
-      workspaceImport: ['1.0.0', '2.0.0'];
-    };
-    packageManifests: {
-      workspaceExport: ['1.0.0', '2.0.0'];
-    };
-    embeddedResults: {
-      externalReferenceCorrelations: [typeof EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT];
-    };
-    compatibility: {
-      'workspaceExportSet@1': {
-        workspaceExportManifestMajors: [1];
-      };
-      'workspaceImport@1': {
-        workspaceExportManifestMajors: [1];
-      };
-      'workspaceImport@2': {
-        workspaceExportManifestMajors: [2];
-      };
-    };
-  };
+  commands: Array<(typeof CMS_PUBLIC_COMMANDS)[number]>;
+  contracts: { commandResults: { [K in keyof typeof CMS_PUBLIC_COMMAND_RESULTS]: string[] } };
   capabilities: CmsCapability[];
-};
-
-export type CmsInfoResultV2 = CmsInfoResult & {
-  registry: CmsCapabilityRegistryResult;
+  internalRegistry: CmsCapabilityRegistryResult;
 };
 
 export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoResult {
-  assertExactKeys(value, ['plugin', 'api', 'contracts', 'capabilities'], 'result');
+  assertExactKeys(
+    value,
+    ['plugin', 'api', 'commands', 'contracts', 'capabilities', 'internalRegistry'],
+    'result',
+  );
   assertExactKeys(value.plugin, ['name', 'version'], 'result.plugin');
   if (value.plugin.name !== 'sf-plugin-cms') throw new TypeError('result.plugin.name is invalid');
   assertNonemptyString(value.plugin.version, 'result.plugin.version');
@@ -105,159 +167,51 @@ export function assertCmsInfoResult(value: unknown): asserts value is CmsInfoRes
   if (
     (value.api.defaultVersion !== DEFAULT_API_VERSION &&
       value.api.defaultVersion !== FALLBACK_API_VERSION) ||
-    !isExactArray(value.api.testedVersions, [FALLBACK_API_VERSION])
+    !isExact(value.api.testedVersions, [FALLBACK_API_VERSION])
   ) {
     throw new TypeError('result.api is invalid');
   }
-  assertExactKeys(
-    value.contracts,
-    ['commandResults', 'packageManifests', 'embeddedResults', 'compatibility'],
-    'result.contracts',
-  );
+  if (!isExact(value.commands, CMS_PUBLIC_COMMANDS))
+    throw new TypeError('result.commands is invalid');
+  assertExactKeys(value.contracts, ['commandResults'], 'result.contracts');
   assertExactKeys(
     value.contracts.commandResults,
-    [
-      'info',
-      'contentDelete',
-      'contentPublish',
-      'contentUnpublish',
-      'contentUpdate',
-      'workspaceExportSet',
-      'workspaceImport',
-    ],
+    Object.keys(CMS_PUBLIC_COMMAND_RESULTS),
     'result.contracts.commandResults',
   );
-  for (const key of ['info', 'contentPublish', 'contentUnpublish', 'workspaceExportSet'] as const) {
-    if (!isExactArray(value.contracts.commandResults[key], ['1.0.0'])) {
+  for (const [key, versions] of Object.entries(CMS_PUBLIC_COMMAND_RESULTS)) {
+    if (!isExact(value.contracts.commandResults[key], versions))
       throw new TypeError(`result.contracts.commandResults.${key} is invalid`);
-    }
   }
-  if (!isExactArray(value.contracts.commandResults.contentUpdate, ['1.0.0', '2.0.0'])) {
-    throw new TypeError('result.contracts.commandResults.contentUpdate is invalid');
-  }
-  if (!isExactArray(value.contracts.commandResults.contentDelete, ['1.0.0', '2.0.0'])) {
-    throw new TypeError('result.contracts.commandResults.contentDelete is invalid');
-  }
-  if (!isExactArray(value.contracts.commandResults.workspaceImport, ['1.0.0', '2.0.0'])) {
-    throw new TypeError('result.contracts.commandResults.workspaceImport is invalid');
-  }
+  if (!isExact(value.capabilities, CMS_PUBLIC_CAPABILITIES))
+    throw new TypeError('result.capabilities does not match public support');
   assertExactKeys(
-    value.contracts.packageManifests,
-    ['workspaceExport'],
-    'result.contracts.packageManifests',
+    value.internalRegistry,
+    ['scope', 'contract', 'version', 'fixtureSha256', 'declarations'],
+    'result.internalRegistry',
   );
-  if (!isExactArray(value.contracts.packageManifests.workspaceExport, ['1.0.0', '2.0.0'])) {
-    throw new TypeError('result.contracts.packageManifests.workspaceExport is invalid');
-  }
-  assertExactKeys(
-    value.contracts.embeddedResults,
-    ['externalReferenceCorrelations'],
-    'result.contracts.embeddedResults',
-  );
-  if (
-    !isExactArray(value.contracts.embeddedResults.externalReferenceCorrelations, [
-      EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT,
-    ])
-  ) {
-    throw new TypeError(
-      'result.contracts.embeddedResults.externalReferenceCorrelations is invalid',
-    );
-  }
-  assertExactKeys(
-    value.contracts.compatibility,
-    ['workspaceExportSet@1', 'workspaceImport@1', 'workspaceImport@2'],
-    'result.contracts.compatibility',
-  );
-  const compatibility = value.contracts.compatibility as Record<
-    'workspaceExportSet@1' | 'workspaceImport@1' | 'workspaceImport@2',
-    { workspaceExportManifestMajors?: unknown }
-  >;
-  for (const key of ['workspaceExportSet@1', 'workspaceImport@1', 'workspaceImport@2'] as const) {
-    assertExactKeys(
-      compatibility[key],
-      ['workspaceExportManifestMajors'],
-      `result.contracts.compatibility.${key}`,
-    );
-  }
-  if (
-    !isExactArray(compatibility['workspaceExportSet@1'].workspaceExportManifestMajors, [1]) ||
-    !isExactArray(compatibility['workspaceImport@1'].workspaceExportManifestMajors, [1]) ||
-    !isExactArray(compatibility['workspaceImport@2'].workspaceExportManifestMajors, [2])
-  ) {
-    throw new TypeError('result.contracts.compatibility is invalid');
-  }
-  if (!Array.isArray(value.capabilities))
-    throw new TypeError('result.capabilities must be an array');
-  const seen = new Set<string>();
-  for (const [index, capability] of value.capabilities.entries()) {
-    const label = `result.capabilities[${index}]`;
-    assertExactKeys(capability, ['id', 'state', 'transport', 'contract'], label);
-    assertIdentifier(capability.id, `${label}.id`);
-    if (seen.has(capability.id)) throw new TypeError(`duplicate capability: ${capability.id}`);
-    seen.add(capability.id);
-    if (!CMS_CAPABILITY_STATES.includes(capability.state as CmsCapability['state'])) {
-      throw new TypeError(`${label}.state is invalid`);
-    }
-    if (capability.transport !== CMS_CAPABILITY_TRANSPORT)
-      throw new TypeError(`${label}.transport is invalid`);
-    const expectedContracts = new Map([
-      ['workspace.export.bulk', 'sf-cms-workspace-export-set@1'],
-      ['workspace.export.dependency-closure', 'unavailable'],
-      ['workspace.export.external-reference-correlation', EXTERNAL_REFERENCE_CORRELATIONS_CONTRACT],
-      ['workspace.export.experimental-media', 'sf-cms-workspace-export@2'],
-      ['content.delete.email', 'sf-cms-content-delete@1'],
-      ['content.delete.email-template', 'sf-cms-content-delete@2'],
-      ['content.publish.email', 'sf-cms-content-publish@1'],
-      ['content.unpublish.email', 'sf-cms-content-unpublish@1'],
-      ['content.update.email-raw-html', 'sf-cms-content-update@1'],
-      ['content.update.email-template-raw-html', 'sf-cms-content-update@2'],
-      ['workspace.import.email-fragment-create', 'sf-cms-workspace-import@1'],
-      ['workspace.import.image-create', 'sf-cms-workspace-import@2'],
-      ['workspace.import.mapping', 'sf-cms-workspace-import@1'],
-    ]);
-    if (capability.contract !== expectedContracts.get(capability.id)) {
-      throw new TypeError(`${label}.contract does not match its capability ID`);
-    }
-  }
-}
-
-export function assertCmsInfoResultV2(value: unknown): asserts value is CmsInfoResultV2 {
-  assertExactKeys(value, ['plugin', 'api', 'contracts', 'capabilities', 'registry'], 'result');
-  const base = value as Record<string, unknown>;
-  assertCmsInfoResult({
-    plugin: base.plugin,
-    api: base.api,
-    contracts: base.contracts,
-    capabilities: base.capabilities,
-  });
-  assertExactKeys(
-    base.registry,
-    ['contract', 'version', 'fixtureSha256', 'declarations'],
-    'result.registry',
-  );
-  if (base.registry.contract !== METADATA_CAPABILITY_CONTRACT)
-    throw new TypeError('result.registry.contract is invalid');
-  if (base.registry.version !== METADATA_CAPABILITY_VERSION)
-    throw new TypeError('result.registry.version is invalid');
-  if (base.registry.fixtureSha256 !== METADATA_CAPABILITY_FIXTURE_SHA256)
-    throw new TypeError('result.registry.fixtureSha256 is invalid');
+  const registry = value.internalRegistry;
+  if (registry.scope !== 'internal-engine-only')
+    throw new TypeError('result.internalRegistry.scope is invalid');
+  if (registry.fixtureSha256 !== METADATA_CAPABILITY_FIXTURE_SHA256)
+    throw new TypeError('result.internalRegistry.fixtureSha256 is invalid');
   assertCapabilityRegistryFixture({
-    contract: base.registry.contract,
-    version: base.registry.version,
-    declarations: base.registry.declarations,
+    contract: registry.contract,
+    version: registry.version,
+    declarations: registry.declarations,
   });
   if (
-    (base.registry.declarations as CapabilityRegistryFixture['declarations']).some(
+    (registry.declarations as CapabilityRegistryFixture['declarations']).some(
       (declaration) =>
         declaration.identity.provider !== 'sf-plugin-cms' ||
         declaration.providerContract.name !== 'sf-plugin-cms' ||
         declaration.identity.family !== 'cms',
     )
   ) {
-    throw new TypeError('result.registry provider provenance is invalid');
+    throw new TypeError('result.internalRegistry provider provenance is invalid');
   }
 }
 
-function isExactArray(value: unknown, expected: readonly unknown[]): boolean {
-  return Array.isArray(value) && JSON.stringify(value) === JSON.stringify(expected);
+function isExact(value: unknown, expected: unknown): boolean {
+  return JSON.stringify(value) === JSON.stringify(expected);
 }

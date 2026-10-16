@@ -1,6 +1,5 @@
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
-import GetContent from '../../src/commands/cms/get/content.js';
 import ListWorkspace from '../../src/commands/cms/list/workspace.js';
 
 function fakeConnection(request: ReturnType<TestContext['SANDBOX']['stub']>): unknown {
@@ -44,66 +43,6 @@ describe('CMS read command execution', () => {
       method: 'GET',
       url: '/connect/cms/spaces?nameFragment=Main&page=1&pageSize=20',
     });
-  });
-
-  it('returns get results, maps descriptor queries, and renders human output once', async () => {
-    const command = Object.create(GetContent.prototype) as GetContent;
-    const record = { id: 'content', title: 'News' };
-    const request = $$.SANDBOX.stub().returns(
-      Object.assign(Promise.resolve(record), {
-        stream: () => ({ destroy: $$.SANDBOX.stub() }),
-      }),
-    );
-    const styledJSON = $$.SANDBOX.stub();
-    Object.assign(command, {
-      parse: $$.SANDBOX.stub().resolves({
-        flags: {
-          'target-org': 'my-org',
-          'api-version': '67.0',
-          'content-key-or-id': 'news',
-          language: 'en_US',
-          version: 'draft',
-        },
-      }),
-      getConnection: $$.SANDBOX.stub().resolves(fakeConnection(request)),
-      jsonEnabled: $$.SANDBOX.stub().returns(false),
-      styledJSON,
-    });
-
-    const result = await command.run();
-
-    expect(result).to.deep.equal(record);
-    expect(styledJSON.calledOnceWithExactly(record)).to.equal(true);
-    expect(request.firstCall.args[0]).to.deep.equal({
-      method: 'GET',
-      url: '/connect/cms/contents/news?language=en_US&version=draft',
-    });
-  });
-
-  it('suppresses raw get output when SfCommand JSON output is enabled', async () => {
-    const command = Object.create(GetContent.prototype) as GetContent;
-    const record = { id: 'content', title: 'News' };
-    const request = $$.SANDBOX.stub().returns(
-      Object.assign(Promise.resolve(record), {
-        stream: () => ({ destroy: $$.SANDBOX.stub() }),
-      }),
-    );
-    const styledJSON = $$.SANDBOX.stub();
-    Object.assign(command, {
-      parse: $$.SANDBOX.stub().resolves({
-        flags: {
-          'target-org': 'my-org',
-          'api-version': '67.0',
-          'content-key-or-id': 'news',
-        },
-      }),
-      getConnection: $$.SANDBOX.stub().resolves(fakeConnection(request)),
-      jsonEnabled: $$.SANDBOX.stub().returns(true),
-      styledJSON,
-    });
-
-    expect(await command.run()).to.deep.equal(record);
-    expect(styledJSON.notCalled).to.equal(true);
   });
 
   it('propagates normalized request errors', async () => {

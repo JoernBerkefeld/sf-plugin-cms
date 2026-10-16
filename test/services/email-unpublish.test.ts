@@ -137,7 +137,7 @@ describe('Email unpublish service', () => {
 
   it('writes pending intent then unpublishes only the selected variant', async () => {
     const current = fixture();
-    const run = await createRunOwnedTemp('sf-cms-unpublish');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
@@ -186,7 +186,7 @@ describe('Email unpublish service', () => {
       .returns(
         Object.assign(Promise.reject(new Error('timeout')), { stream: () => new PassThrough() }),
       );
-    const run = await createRunOwnedTemp('sf-cms-unpublish-uncertain');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-uncertain');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.relative(process.cwd(), path.join(parent, 'report'));
     try {
@@ -241,7 +241,7 @@ describe('Email unpublish service', () => {
         { stream: () => new PassThrough() },
       ),
     );
-    const run = await createRunOwnedTemp('sf-cms-unpublish-rejected');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-rejected');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {
@@ -286,7 +286,7 @@ describe('Email unpublish service', () => {
         { stream: () => new PassThrough() },
       ),
     );
-    const run = await createRunOwnedTemp('sf-cms-unpublish-conflict');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-conflict');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const failure = await captureFailure(
@@ -311,7 +311,7 @@ describe('Email unpublish service', () => {
   it('prevents POST when pending report persistence fails', async () => {
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request');
-    const run = await createRunOwnedTemp('sf-cms-unpublish-pending');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-pending');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {
@@ -333,7 +333,7 @@ describe('Email unpublish service', () => {
 
   it('retains deployment ownership when the completed report write fails', async () => {
     const current = fixture();
-    const run = await createRunOwnedTemp('sf-cms-unpublish-final');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-final');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
@@ -377,7 +377,7 @@ describe('Email unpublish service', () => {
 
   it('allows delayed convergence within five read attempts and performs one POST', async () => {
     const current = fixture();
-    const run = await createRunOwnedTemp('sf-cms-unpublish-delayed');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-delayed');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon
@@ -431,7 +431,7 @@ describe('Email unpublish service', () => {
 
   it('stops after five non-converged read attempts and performs one POST', async () => {
     const current = fixture();
-    const run = await createRunOwnedTemp('sf-cms-unpublish-bounded');
+    const run = await createRunOwnedTemp('sf-plugin-cms-unpublish-bounded');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon

@@ -5,7 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assertCmsInfoResult,
-  assertCmsInfoResultV2,
+  CMS_PUBLIC_CAPABILITIES,
+  CMS_PUBLIC_COMMAND_RESULTS,
+  CMS_PUBLIC_COMMANDS,
   type CmsInfoResult,
 } from '../../src/contracts/info.js';
 import { assertContentDeleteResult } from '../../src/contracts/content-delete.js';
@@ -1211,12 +1213,12 @@ describe('CMS contract foundation', () => {
     expect(() => assertWorkspaceImportResult(result)).to.throw('conflicting target');
   });
 
-  it('keeps v1 strict against v2-only registry data', async () => {
+  it('rejects obsolete alternate registry output', async () => {
     const { value } = await loadFixture<CmsInfoResult>('success-info.json');
     expect(() => assertCmsInfoResult({ ...value.result!, registry: {} })).to.throw('exactly');
   });
 
-  it('validates strict v2 registry keys and CMS provenance', async () => {
+  it('validates strict internal registry keys and CMS provenance', async () => {
     const { value } = await loadFixture<CmsInfoResult>('success-info.json');
     const declaration = {
       dependencyExtractorVersion: 'cms-email-dependencies@1',
@@ -1242,22 +1244,23 @@ describe('CMS contract foundation', () => {
     } as const;
     const v2 = {
       ...value.result!,
-      registry: {
+      internalRegistry: {
+        scope: 'internal-engine-only',
         contract: 'sf-metadata-capability-v1',
         version: '1.0.0',
         fixtureSha256: METADATA_CAPABILITY_FIXTURE_SHA256,
         declarations: [declaration],
       },
     };
-    expect(() => assertCmsInfoResultV2(v2)).not.to.throw();
+    expect(() => assertCmsInfoResult(v2)).not.to.throw();
     expect(() =>
-      assertCmsInfoResultV2({ ...v2, registry: { ...v2.registry, extra: true } }),
+      assertCmsInfoResult({ ...v2, internalRegistry: { ...v2.internalRegistry, extra: true } }),
     ).to.throw('exactly');
     expect(() =>
-      assertCmsInfoResultV2({
+      assertCmsInfoResult({
         ...v2,
-        registry: {
-          ...v2.registry,
+        internalRegistry: {
+          ...v2.internalRegistry,
           declarations: [
             { ...declaration, identity: { ...declaration.identity, provider: 'sf-plugin-mcnext' } },
           ],
@@ -1268,88 +1271,35 @@ describe('CMS contract foundation', () => {
 
   it('freezes the exact info result contract', async () => {
     const { value } = await loadFixture<CmsInfoResult>('success-info.json');
-    expect(value.result!.contracts.embeddedResults.externalReferenceCorrelations).to.deep.equal([
-      'sf-cms-external-reference-correlations@1',
-    ]);
-    expect(value.result!.capabilities).to.deep.equal([
+    expect(value.result!.commands).to.deep.equal(CMS_PUBLIC_COMMANDS);
+    expect(value.result!.contracts.commandResults).to.deep.equal(CMS_PUBLIC_COMMAND_RESULTS);
+    expect(value.result!.capabilities).to.deep.equal(CMS_PUBLIC_CAPABILITIES);
+    for (const stale of [
       {
-        id: 'workspace.export.bulk',
-        state: 'implemented',
-        transport: 'cli-json',
-        contract: 'sf-cms-workspace-export-set@1',
+        contracts: {
+          ...value.result!.contracts,
+          commandResults: { ...value.result!.contracts.commandResults, contentUpdate: ['1.0.0'] },
+        },
       },
       {
-        id: 'workspace.export.dependency-closure',
-        state: 'unavailable',
-        transport: 'cli-json',
-        contract: 'unavailable',
+        capabilities: [
+          ...value.result!.capabilities,
+          {
+            id: 'content.deploy.image.create',
+            state: 'implemented',
+            transport: 'cli-json',
+            contract: 'sf-cms-content-deploy@1',
+          },
+        ],
       },
       {
-        id: 'workspace.export.external-reference-correlation',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-external-reference-correlations@1',
+        capabilities: value.result!.capabilities.map((entry) =>
+          entry.id.startsWith('content.deploy.') ? { ...entry, state: 'implemented' } : entry,
+        ),
       },
-      {
-        id: 'workspace.export.experimental-media',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-workspace-export@2',
-      },
-      {
-        id: 'content.delete.email',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-delete@1',
-      },
-      {
-        id: 'content.delete.email-template',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-delete@2',
-      },
-      {
-        id: 'content.publish.email',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-publish@1',
-      },
-      {
-        id: 'content.unpublish.email',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-unpublish@1',
-      },
-      {
-        id: 'content.update.email-raw-html',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-update@1',
-      },
-      {
-        id: 'content.update.email-template-raw-html',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-content-update@2',
-      },
-      {
-        id: 'workspace.import.email-fragment-create',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-workspace-import@1',
-      },
-      {
-        id: 'workspace.import.image-create',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-workspace-import@2',
-      },
-      {
-        id: 'workspace.import.mapping',
-        state: 'experimental',
-        transport: 'cli-json',
-        contract: 'sf-cms-workspace-import@1',
-      },
-    ]);
+      { internalRegistry: { ...value.result!.internalRegistry, scope: 'public' } },
+    ]) {
+      expect(() => assertCmsInfoResult({ ...value.result!, ...stale })).to.throw();
+    }
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "sf-plugin-cms",
   "version": "0.13.0",
-  "description": "Salesforce CLI plugin for bounded Marketing Cloud CMS export, import, and Email lifecycle operations",
+  "description": "Salesforce CLI plugin for bounded CMS retrieve, deploy, image upload, and Email lifecycle operations",
   "author": {
     "name": "Jörn Berkefeld",
     "email": "joern.berkefeld@gmail.com"

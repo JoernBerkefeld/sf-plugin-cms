@@ -344,7 +344,7 @@ async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
 
 describe('Email delete service', () => {
   it('previews one exact CREATE-owned Draft Email Template from strict artifacts', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-preview');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-preview');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -365,7 +365,7 @@ describe('Email delete service', () => {
   });
 
   it('accepts per-page count semantics for a complete workspace inventory page', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-page-count');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-page-count');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -418,7 +418,7 @@ describe('Email delete service', () => {
   });
 
   it('paginates complete Template inventories and rejects duplicate variant IDs', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-pagination');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-pagination');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -465,7 +465,7 @@ describe('Email delete service', () => {
   });
 
   it('blocks Template delete when family search disagrees with workspace family inventory', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-inventory');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-inventory');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -515,7 +515,7 @@ describe('Email delete service', () => {
   });
 
   it('writes pending intent, deletes one Template variant, and proves exact absence', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-apply');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-apply');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = templateFixture();
     const reportDirectory = path.join(parent, 'report');
@@ -559,7 +559,7 @@ describe('Email delete service', () => {
   });
 
   it('blocks Email ownership reports for Email Template deletion', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-cross-family');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-cross-family');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -579,7 +579,7 @@ describe('Email delete service', () => {
   });
 
   it('blocks changed Template source artifacts and unsafe references', async () => {
-    const run = await createRunOwnedTemp('sf-cms-template-delete-artifact');
+    const run = await createRunOwnedTemp('sf-plugin-cms-template-delete-artifact');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = templateFixture();
@@ -601,7 +601,7 @@ describe('Email delete service', () => {
   });
 
   it('previews one exact owned Draft variant without mutation', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-preview');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-preview');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     try {
       const current = fixture();
@@ -618,7 +618,7 @@ describe('Email delete service', () => {
   });
 
   it('writes pending intent, deletes once, and proves variant plus inventory absence', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-apply');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-apply');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const reportDirectory = path.join(parent, 'report');
@@ -659,7 +659,7 @@ describe('Email delete service', () => {
   });
 
   it('accepts exact parent NOT_FOUND only after variant and inventory absence are proven', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-parent-absent');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-parent-absent');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
@@ -697,7 +697,7 @@ describe('Email delete service', () => {
     { label: 'parent NOT_FOUND without HTTP status', errorCode: 'NOT_FOUND', errorEntryCount: 1 },
   ]) {
     it(`keeps ${invalid.label} ownership-uncertain`, async () => {
-      const run = await createRunOwnedTemp('sf-cms-delete-parent-invalid');
+      const run = await createRunOwnedTemp('sf-plugin-cms-delete-parent-invalid');
       const parent = await createRunOwnedDirectory(run, 'fixture');
       const current = fixture();
       const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
@@ -738,7 +738,7 @@ describe('Email delete service', () => {
   }
 
   it('keeps a parent transport failure ownership-uncertain', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-parent-transport');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-parent-transport');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
@@ -770,7 +770,7 @@ describe('Email delete service', () => {
   });
 
   it('blocks a changed semantic body before DELETE', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-drift');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-drift');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     current.variants['variant-en'].contentBody = { rawHtml: '&lt;p&gt;Changed&lt;/p&gt;' };
@@ -787,7 +787,7 @@ describe('Email delete service', () => {
   });
 
   it('keeps a generic post-delete 404 ownership-uncertain', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-generic-404');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-generic-404');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     current.request.callsFake(({ url }: { url: string }) => {
@@ -854,7 +854,7 @@ describe('Email delete service', () => {
   });
 
   it('classifies an explicit 403 response as rejected before mutation', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-rejected');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-rejected');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').returns(
@@ -892,7 +892,7 @@ describe('Email delete service', () => {
   });
 
   it('never retries an ambiguous DELETE', async () => {
-    const run = await createRunOwnedTemp('sf-cms-delete-uncertain');
+    const run = await createRunOwnedTemp('sf-plugin-cms-delete-uncertain');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const current = fixture();
     const mutation = sinon

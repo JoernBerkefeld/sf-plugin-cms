@@ -103,7 +103,7 @@ describe('cms unpublish content command', () => {
   });
 
   it('returns sanitized evidence for a definite parser rejection', async () => {
-    const parent = await createFixture('sf-cms-unpublish-command-rejected');
+    const parent = await createFixture('sf-plugin-cms-unpublish-command-rejected');
     const reportDirectory = path.join(parent, 'report');
     const variants: Record<string, Record<string, unknown>> = {
       'variant-en': {
@@ -207,7 +207,7 @@ describe('cms unpublish content command', () => {
   });
 
   it('uses only service-resolved identity and report path in the ambiguity envelope', async () => {
-    const parent = await createFixture('sf-cms-unpublish-command');
+    const parent = await createFixture('sf-plugin-cms-unpublish-command');
     const reportDirectory = path.relative(process.cwd(), path.join(parent, 'relative-report'));
     const variants: Record<string, Record<string, unknown>> = {
       'variant-en': {

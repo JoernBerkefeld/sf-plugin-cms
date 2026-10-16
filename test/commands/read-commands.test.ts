@@ -1,25 +1,18 @@
+import { Plugin } from '@oclif/core';
 import { expect } from 'chai';
-import GetChannel from '../../src/commands/cms/get/channel.js';
-import GetContent from '../../src/commands/cms/get/content.js';
-import GetVariant from '../../src/commands/cms/get/variant.js';
-import GetWorkspace from '../../src/commands/cms/get/workspace.js';
 import ListChannel from '../../src/commands/cms/list/channel.js';
 import ListWorkspace from '../../src/commands/cms/list/workspace.js';
 
-const commands = [GetWorkspace, GetChannel, GetContent, GetVariant, ListChannel, ListWorkspace];
+const commands = [ListChannel, ListWorkspace];
 
 describe('CMS read command definitions', () => {
-  it('requires explicit target-org on every command', () => {
+  it('requires explicit target-org on every retained list command', () => {
     for (const command of commands) {
       expect(command.flags['target-org'].required, command.name).to.equal(true);
     }
   });
 
-  it('requires resource selectors for get commands and channel listing', () => {
-    expect(GetWorkspace.flags['workspace-id'].required).to.equal(true);
-    expect(GetChannel.flags['channel-id'].required).to.equal(true);
-    expect(GetContent.flags['content-key-or-id'].required).to.equal(true);
-    expect(GetVariant.flags['variant-id'].required).to.equal(true);
+  it('requires the workspace selector for channel listing', () => {
     expect(ListChannel.flags['workspace-id'].required).to.equal(true);
   });
 
@@ -38,14 +31,46 @@ describe('CMS read command definitions', () => {
       'page',
       'page-size',
     ]);
-    expect(Object.keys(GetContent.flags)).to.have.members([
-      'target-org',
-      'api-version',
-      'content-key-or-id',
-      'content-version',
-      'language',
-      'variant-version',
-      'version',
+  });
+
+  it('discovers retained commands without any public get route or alias', async () => {
+    const plugin = new Plugin({ root: process.cwd() });
+    await plugin.load();
+    expect(plugin.commandIDs).to.include.members([
+      'cms:info',
+      'cms:list:workspace',
+      'cms:list:channel',
+      'cms:retrieve:content',
+      'cms:deploy:content',
+      'cms:upload:images',
+      'cms:publish:content',
+      'cms:unpublish:content',
+      'cms:delete:content',
+    ]);
+    expect(plugin.commandIDs.filter((id) => id.split(':').includes('get'))).to.deep.equal([]);
+    expect(plugin.commandIDs.filter((id) => id.split(':').includes('export'))).to.deep.equal([]);
+    expect(plugin.commandIDs.filter((id) => id.split(':').includes('import'))).to.deep.equal([]);
+    expect(plugin.commandIDs.filter((id) => id.split(':').includes('update'))).to.deep.equal([]);
+    expect(await plugin.findCommand('cms:update:content')).to.equal(undefined);
+    expect(plugin.commands.flatMap((command) => command.aliases ?? [])).not.to.include(
+      'cms:update:content',
+    );
+    expect(await plugin.findCommand('cms:import:workspace')).to.equal(undefined);
+    expect(plugin.commands.flatMap((command) => command.aliases ?? [])).not.to.include(
+      'cms:import:workspace',
+    );
+    expect(await plugin.findCommand('cms:export:workspace')).to.equal(undefined);
+    expect(plugin.commands.flatMap((command) => command.aliases ?? [])).not.to.include(
+      'cms:export:workspace',
+    );
+    for (const resource of ['workspace', 'channel', 'content', 'variant']) {
+      expect(await plugin.findCommand(`cms:get:${resource}`)).to.equal(undefined);
+    }
+    expect(plugin.commands.flatMap((command) => command.aliases ?? [])).not.to.include.members([
+      'cms:get:workspace',
+      'cms:get:channel',
+      'cms:get:content',
+      'cms:get:variant',
     ]);
   });
 });

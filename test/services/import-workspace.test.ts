@@ -2688,6 +2688,46 @@ describe('workspace import core', () => {
     expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(0);
   });
 
+  for (const statusCode of [400, 503]) {
+    it(`preserves definitive versus uncertain Form CREATE state for HTTP ${statusCode}`, async () => {
+      const sourceDirectory = await exportFormPackage(root);
+      const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form' });
+      const reportDirectory = path.join(root, `form-create-${statusCode}`);
+      const request = sinon
+        .stub()
+        .callsFake(({ method }: { method: string }) =>
+          method === 'POST'
+            ? failedRequest(statusCode, 'Form CREATE rejected')
+            : fakeRequest({ items: [], total: 0 }),
+        );
+      const failure = await executeWorkspaceImport({
+        connection: { request },
+        destinationOrgId: '00D-org-id',
+        destinationWorkspace: workspace('en_US'),
+        formMappings: [
+          {
+            source: { family: 'cms', type: 'form', apiName: 'source_form_api' },
+            target: { apiName: 'target_form_api', title: 'Target form', urlName: 'target-form' },
+          },
+        ],
+        loadedSource: source,
+        reportDirectory,
+        sourceDirectory,
+        workspaceId: 'destination-space',
+      }).then(
+        () => expect.fail('expected Form CREATE rejection'),
+        (error: unknown) => error,
+      );
+      expect(failure).to.be.instanceOf(Error);
+      expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+      const report = JSON.parse(
+        await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+      ) as WorkspaceImportRunReport;
+      expect(report.state).to.equal(statusCode === 503 ? 'ownership-uncertain' : 'failed');
+      expect(report.createdParents).to.have.length(0);
+    });
+  }
+
   it('repeats Form Handler collision inventory and preserves uncertain ownership after one CREATE', async () => {
     const sourceDirectory = await exportFormHandlerPackage(root);
     const source = await loadWorkspaceExport(sourceDirectory, { profile: 'form-handler' });

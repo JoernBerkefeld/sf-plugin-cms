@@ -1,4 +1,13 @@
-import { lstat, mkdir, readFile, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rmdir,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const { dirname, join, parse } = path;
@@ -21,6 +30,16 @@ async function rejected(action: Promise<unknown>): Promise<void> {
 }
 
 describe('run-owned OS-temp cleanup', () => {
+  it('rejects unscoped and path-like prefixes before creating a run root', async () => {
+    for (const prefix of ['', 'relative', 'sf-cms-test', 'cms-', '../cms-test', 'cms-test/path']) {
+      await rejected(createRunOwnedTemp(prefix));
+    }
+    for (const prefix of ['cms-prefix-test', 'sf-plugin-cms-prefix-test']) {
+      const run = await createRunOwnedTemp(prefix);
+      expect(dirname(run.root)).to.equal(await realpath(tmpdir()));
+      expect(path.basename(run.root)).to.match(new RegExp(`^${prefix}-[A-Za-z0-9]+$`, 'u'));
+    }
+  });
   it('creates separate marked roots and deletes only created registered descendants', async () => {
     const run = await createRunOwnedTemp('cms-cleanup-test');
     const other = await createRunOwnedTemp('cms-cleanup-test');

@@ -22,7 +22,8 @@ export type RunOwnedTemp = Readonly<{ root: string }>;
 const owners = new WeakMap<RunOwnedTemp, { marker: string; registered: Set<string> }>();
 
 export async function createRunOwnedTemp(prefix: string): Promise<RunOwnedTemp> {
-  if (!/^[A-Za-z0-9-]+$/u.test(prefix)) throw new Error('Invalid temporary prefix');
+  if (!/^(?:cms|sf-plugin-cms)-[A-Za-z0-9-]+$/u.test(prefix))
+    throw new Error('Invalid temporary prefix');
   const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), `${prefix}-`)));
   const marker = randomUUID();
   await writeFile(join(root, markerName), marker, { flag: 'wx' });

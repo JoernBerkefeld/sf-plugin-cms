@@ -1,6 +1,5 @@
 import type { Connection } from '@salesforce/core';
 import sinon from 'sinon';
-import ImportWorkspace from '../../src/commands/cms/import/workspace.js';
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
@@ -276,7 +275,6 @@ describe('Brand source export canonical persistence', () => {
 
   for (const mode of [
     'apply',
-    'command',
     'auth',
     'source-drift',
     'file-drift',
@@ -374,70 +372,37 @@ describe('Brand source export canonical persistence', () => {
         };
       }
       const reportDirectory = path.join(root, 'apply-report');
-      if (mode === 'command') {
-        const map = path.join(root, 'brand-map.json');
-        await writeFile(map, JSON.stringify(planned.brandMappings));
-        const context = sinon.stub();
-        context.onFirstCall().resolves({ connection: target, orgId: 'target-org' });
-        context.onSecondCall().resolves({ connection: live.connection, orgId });
-        const command = Object.create(ImportWorkspace.prototype) as ImportWorkspace;
-        Object.assign(command, {
-          parse: sinon.stub().resolves({
-            flags: {
-              'target-org': 'target-alias',
-              'source-org': 'source-alias',
-              'api-version': '67.0',
-              'source-dir': baseline,
-              'definition-dir': definitions,
-              'brand-map': map,
-              'workspace-id': planned.workspaceId,
-              apply: true,
-              'report-dir': reportDirectory,
-            },
-          }),
-          getOrgContext: context,
-          jsonEnabled: () => true,
-        });
-        const result = await command.run();
-        process.exitCode = undefined;
-        expect(result.status, JSON.stringify(result.diagnostics)).to.equal('success');
-        expect(context.firstCall.args).to.deep.equal(['target-alias', '67.0']);
-        expect(context.secondCall.args).to.deep.equal(['source-alias', '67.0']);
-      } else {
-        const operation = executeWorkspaceImport({
-          ...planned,
-          sourceDirectory: baseline,
-          loadedSource: planned.source,
-          connection: target,
-          destinationOrgId: 'target-org',
-          reportDirectory,
-          ...(mode === 'journal-file-drift'
-            ? {
-                reportPersistence: {
-                  rewrite: async (file: string, report: unknown) => {
-                    await writeFile(file, JSON.stringify(report));
-                    const value = report as { brandSource?: { acquiredAt: string } };
-                    if (value.brandSource && live.calls.length === 18) {
-                      // Source refresh is complete; changing files during the last awaited journal write must block POST.
-                      await writeFile(
-                        path.join(
-                          definitions,
-                          'cms/Default_Content_Workspace/brand/Phase_5_Discovery_Brand.cms-brand.json',
-                        ),
-                        '{}',
-                      );
-                    }
-                  },
+      const operation = executeWorkspaceImport({
+        ...planned,
+        sourceDirectory: baseline,
+        loadedSource: planned.source,
+        connection: target,
+        destinationOrgId: 'target-org',
+        reportDirectory,
+        ...(mode === 'journal-file-drift'
+          ? {
+              reportPersistence: {
+                rewrite: async (file: string, report: unknown) => {
+                  await writeFile(file, JSON.stringify(report));
+                  const value = report as { brandSource?: { acquiredAt: string } };
+                  if (value.brandSource && live.calls.length === 18) {
+                    // Source refresh is complete; changing files during the last awaited journal write must block POST.
+                    await writeFile(
+                      path.join(
+                        definitions,
+                        'cms/Default_Content_Workspace/brand/Phase_5_Discovery_Brand.cms-brand.json',
+                      ),
+                      '{}',
+                    );
+                  }
                 },
-              }
-            : {}),
-        });
-        await (mode === 'apply' ? operation : failure(operation));
-      }
-      expect(posts).to.equal(
-        ['apply', 'command', 'readback-root', 'uncertain'].includes(mode) ? 1 : 0,
-      );
-      if (mode === 'apply' || mode === 'command') {
+              },
+            }
+          : {}),
+      });
+      await (mode === 'apply' ? operation : failure(operation));
+      expect(posts).to.equal(['apply', 'readback-root', 'uncertain'].includes(mode) ? 1 : 0);
+      if (mode === 'apply') {
         expect(posted!.contentSpaceOrFolderId).to.equal(
           (planned.destinationWorkspace as Native).rootFolderId,
         );

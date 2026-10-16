@@ -4,18 +4,14 @@ Show offline CMS contract and capability information.
 
 # description
 
-Reports the versioned CLI JSON contracts, package compatibility, tested API baseline, and truthfully evidenced CMS capabilities without contacting an org.
+Reports the current public command inventory, result contracts, operation-specific support, and tested API baseline without contacting an org. Portable Email and Email Template deploy and loose-image upload remain unqualified. Retained family registry declarations are labelled internal-engine-only: they do not advertise public retrieve/deploy availability. Image deployment and deferred baseline/sibling integration are not supported public capabilities.
 
 # examples
 
-- Show the installed plugin's offline capability envelope:
+- Show the installed plugin's current offline capability envelope:
 
   <%= config.bin %> <%= command.id %> --json
 
-- Explicitly select supported command-result major 1:
-
-  <%= config.bin %> <%= command.id %> --contract-version 1 --json
-
 # flags.contract-version.summary
 
-Machine contract major version (supported: 1).
+Current machine contract major (supported: 1).

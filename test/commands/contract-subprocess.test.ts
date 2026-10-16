@@ -95,24 +95,6 @@ function expectPluginVersion(envelope: Record<string, unknown>, version: string)
   }
 }
 
-async function expectInstalledManifestVersion(
-  envelope: Record<string, unknown>,
-  version: string,
-): Promise<void> {
-  expect(envelope.contract).to.equal('sf-cms-workspace-export-set');
-  const result = envelope.result as {
-    workspaces: Array<{ artifact: { manifestPath: string } | null }>;
-  };
-  const manifestPath = result.workspaces[0].artifact?.manifestPath;
-  expect(manifestPath).to.be.a('string');
-  const manifest = JSON.parse(
-    await readFile(path.resolve(isolatedDataDirectory, manifestPath!), 'utf8'),
-  ) as {
-    provenance: { pluginVersion: string };
-  };
-  expect(manifest.provenance.pluginVersion).to.equal(version);
-}
-
 function parseEnvelope(result: ProcessResult): Record<string, unknown> {
   expect(result.stdout.trim()).not.to.equal('');
   let envelope: Record<string, unknown>;
@@ -241,38 +223,6 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   for (const [title, command, contractCase, expectedStatus, expectedExit] of [
     ['success', ['cms', 'info', '--json'], undefined, 'success', 0],
-    [
-      'aggregate export success',
-      ['cms', 'export', 'workspace', '--target-org', 'unused', '--all', '--json'],
-      'export-success',
-      'success',
-      0,
-    ],
-    [
-      'aggregate export partial',
-      ['cms', 'export', 'workspace', '--target-org', 'unused', '--all', '--json'],
-      'partial',
-      'partial',
-      2,
-    ],
-    [
-      'command-owned failure',
-      [
-        'cms',
-        'import',
-        'workspace',
-        '--target-org',
-        'unused',
-        '--source-dir',
-        '.',
-        '--workspace-id',
-        'unused',
-        '--json',
-      ],
-      'failed',
-      'failed',
-      1,
-    ],
   ] as const) {
     it(`emits one exact seven-key envelope for ${title} and exits ${expectedExit}`, async () => {
       const result = await runSf([...command], contractCase);
@@ -281,9 +231,6 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(result.exitCode).to.equal(expectedExit);
       expect(envelope.status).to.equal(expectedStatus);
       expectPluginVersion(envelope, installedPackageVersion);
-      if (contractCase === 'export-success') {
-        await expectInstalledManifestVersion(envelope, installedPackageVersion);
-      }
       expect(result.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
     });
   }
@@ -341,20 +288,45 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
-  it('negotiates the installed candidate registry using real package provenance without changing v1', async () => {
-    const response = await runSf(['cms', 'info', '--contract-version', '2', '--json']);
+  it('reports current installed public support separately from internal registry provenance', async () => {
+    const response = await runSf(['cms', 'info', '--json']);
     expect(response.exitCode).to.equal(0);
     const envelope = parseEnvelope(response);
     expectPluginVersion(envelope, installedPackageVersion);
-    expect(envelope.contractVersion).to.equal('2.0.0');
+    expect(envelope.contractVersion).to.equal('1.0.0');
     const result = envelope.result as {
-      registry: {
+      commands: string[];
+      capabilities: Array<{ id: string; state: string }>;
+      internalRegistry: {
+        scope: string;
         version: string;
         declarations: Array<{ providerContract: { minVersion: string; maxVersion: string } }>;
       };
     };
-    expect(result.registry.version).to.equal('1.0.0');
-    for (const declaration of result.registry.declarations) {
+    expect(result.commands).to.deep.equal([
+      'cms info',
+      'cms list workspace',
+      'cms list channel',
+      'cms retrieve content',
+      'cms deploy content',
+      'cms upload images',
+      'cms delete content',
+      'cms publish content',
+      'cms unpublish content',
+    ]);
+    expect(
+      result.capabilities.some(({ id }) =>
+        /workspace\.(?:export|import)|content\.update\.|deploy\.image/u.test(id),
+      ),
+    ).to.equal(false);
+    expect(
+      result.capabilities
+        .filter(({ id }) => id.startsWith('content.deploy.'))
+        .every(({ state }) => state === 'unqualified'),
+    ).to.equal(true);
+    expect(result.internalRegistry.scope).to.equal('internal-engine-only');
+    expect(result.internalRegistry.version).to.equal('1.0.0');
+    for (const declaration of result.internalRegistry.declarations) {
       expect(
         compare(installedPackageVersion, declaration.providerContract.minVersion),
       ).to.be.at.least(0);
@@ -362,50 +334,25 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         compare(installedPackageVersion, declaration.providerContract.maxVersion),
       ).to.be.at.most(0);
     }
-    const legacy = parseEnvelope(await runSf(['cms', 'info', '--contract-version', '1', '--json']));
-    expect(legacy.contractVersion).to.equal('1.0.0');
-    expect(legacy.result).not.to.have.property('registry');
+    const obsolete = await runSf(['cms', 'info', '--contract-version', '2', '--json']);
+    expect(obsolete.exitCode).to.equal(1);
+    expect(parseEnvelope(obsolete)).to.deep.include({ status: 'blocked', result: null });
   });
 
-  for (const completeness of ['complete', 'partial'] as const) {
-    it(`executes a real single-workspace ${completeness} export with actual provenance`, async () => {
-      const result = await runSf(
-        [
-          'cms',
-          'export',
-          'workspace',
-          '--target-org',
-          'unused',
-          '--workspace-id',
-          'space',
-          '--output-dir',
-          `single-${completeness}`,
-          '--json',
-        ],
-        `single-${completeness}`,
+  for (const [topic, resource] of [
+    ['export', 'workspace'],
+    ['import', 'workspace'],
+    ['update', 'content'],
+  ]) {
+    it(`does not install a public ${topic} ${resource} route or alias`, async () => {
+      const help = await runSf(['cms', '--help']);
+      expect(help.exitCode, help.stderr).to.equal(0);
+      expect(help.stdout).not.to.match(new RegExp(String.raw`cms[ :]+${topic}\b`, 'u'));
+      const removed = await runSf(['cms', topic, resource, '--help']);
+      expect(removed.exitCode).not.to.equal(0);
+      expect(removed.stdout + removed.stderr).to.match(
+        /not (?:a .*command|found)|not recognized/iu,
       );
-      const output = JSON.parse(result.stdout) as {
-        destination: string;
-        manifest: {
-          completeness: string;
-          provenance: { sourceOrgId: string };
-          warnings: unknown[];
-        };
-        manifestSha256: string;
-      };
-      expect(result.exitCode).to.equal(completeness === 'partial' ? 2 : 0);
-      expect(output.manifest.completeness).to.equal(completeness);
-      expect(output.manifest.provenance.sourceOrgId).to.equal('00DControlledSource');
-      expect(output.manifest.warnings).to.have.length(completeness === 'partial' ? 3 : 1);
-      expect(output.manifestSha256).to.match(/^[a-f\d]{64}$/u);
-      expect(
-        JSON.parse(
-          await readFile(
-            path.join(isolatedDataDirectory, output.destination, 'manifest.json'),
-            'utf8',
-          ),
-        ),
-      ).to.deep.equal(output.manifest);
     });
   }
 
@@ -799,40 +746,51 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('previews one installed packed Email HTML update from its strict export baseline', async function () {
     this.timeout(300_000);
-    const help = await runSf(['cms', 'update', 'content', '--help']);
-    expect(help.exitCode, help.stderr).to.equal(0);
-    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
-    expect(normalizedHelp).to.include('sf cms update content');
-    expect(normalizedHelp).to.include('--workspace-id');
-    expect(normalizedHelp).to.include('--api-name');
-    expect(normalizedHelp).to.include('--language');
-    expect(normalizedHelp).to.include('--source-dir');
-    expect(normalizedHelp).to.include('--editable-dir');
-    expect(normalizedHelp).to.include('Dry-run is the default');
+    const runUpdate = async (apply = false, reportDirectory?: string) => {
+      const output = await execFileAsync(executable, [fileURLToPath(harness)], {
+        cwd: isolatedDataDirectory,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SF_PLUGIN_CMS_CONTRACT_CASE: 'email-update-preview',
+          SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+          SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+          SF_PLUGIN_CMS_EMAIL_UPDATE_OPTIONS: JSON.stringify({ apply, reportDirectory }),
+        },
+        windowsHide: true,
+      });
+      return JSON.parse(output.stdout) as {
+        status: string;
+        message?: string;
+        evidence: { baselineHash: string; changedFields: string[]; payloadHash: string };
+        blockers: Array<{ code: string; message: string }>;
+      };
+    };
 
-    const exported = await runSf(
-      [
-        'cms',
-        'export',
-        'workspace',
-        '--target-org',
-        'unused',
-        '--workspace-id',
-        'space',
-        '--output-dir',
-        'email-update-baseline',
-        '--editable-dir',
-        'email-update-editable',
-        '--json',
-      ],
-      'email-update-preview',
-    );
-    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+      cwd: isolatedDataDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'email-update-fixture',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+        SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+      },
+      windowsHide: true,
+    });
     const exportOutput = JSON.parse(exported.stdout) as {
       manifest: { completeness: string; provenance: { pluginVersion: string } };
     };
     expect(exportOutput.manifest.completeness).to.equal('complete');
     expect(exportOutput.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
+    const fixtureEvents = JSON.parse(
+      await readFile(file('email-update-fixture-transport.json'), 'utf8'),
+    ) as Array<{ method: string; url: string }>;
+    expect(fixtureEvents.length).to.be.greaterThan(0);
+    expect(fixtureEvents.every(({ method }) => method === 'GET')).to.equal(true);
+    expect(fixtureEvents.filter(({ url }) => url.includes('/contents/variants/'))).to.deep.equal([
+      { method: 'GET', url: '/connect/cms/contents/variants/variant-en' },
+    ]);
     expect(await readdir(file('email-update-baseline'))).to.deep.equal(['items', 'manifest.json']);
     expect(await readdir(file('email-update-editable'))).to.deep.equal(['editable.json', 'items']);
     expect(await readFile(file('email-update-editable/items/variant-en.html'), 'utf8')).to.equal(
@@ -843,53 +801,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       '<p>Installed preview edit</p>',
     );
 
-    const preview = await runSf(
-      [
-        'cms',
-        'update',
-        'content',
-        '--target-org',
-        'unused',
-        '--api-version',
-        '67.0',
-        '--workspace-id',
-        'space',
-        '--api-name',
-        'pilot_email',
-        '--language',
-        'en_US',
-        '--source-dir',
-        'email-update-baseline',
-        '--editable-dir',
-        'email-update-editable',
-        '--json',
-      ],
-      'email-update-preview',
-    );
-    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
-    const envelope = parseEnvelope(preview);
-    expect(envelope).to.deep.include({
-      contract: 'sf-cms-content-update',
-      contractVersion: '1.0.0',
-      status: 'success',
+    const result = await runUpdate();
+    expect(result.status).to.equal('ready');
+    expect(result.blockers).to.deep.equal([]);
+    expect(result.evidence).to.deep.include({
+      workspaceId: 'space',
+      apiName: 'pilot_email',
+      language: 'en_US',
+      contentId: 'parent-email',
+      variantId: 'variant-en',
     });
-    expectPluginVersion(envelope, installedPackageVersion);
-    expect((envelope.provenance as { command: string }).command).to.equal('sf cms update content');
-    expect(envelope.result).to.deep.include({
-      mode: 'dry-run',
-      outcome: 'ready',
-      target: {
-        workspaceId: 'space',
-        apiName: 'pilot_email',
-        language: 'en_US',
-        contentId: 'parent-email',
-        variantId: 'variant-en',
-      },
-      blockers: [],
-    });
-    const result = envelope.result as {
-      evidence: { baselineHash: string; changedFields: string[]; payloadHash: string };
-    };
     expect(result.evidence.changedFields).to.deep.equal(['contentBody.rawHtml']);
     expect(result.evidence.baselineHash).to.match(/^[a-f\d]{64}$/u);
     expect(result.evidence.payloadHash).to.match(/^[a-f\d]{64}$/u);
@@ -908,49 +829,18 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     await writeFile(file('email-update-editable/editable.json'), '{ malformed');
     for (const mode of ['dry-run', 'apply'] as const) {
       const reportDirectory = 'malformed-email-update-report';
-      const blocked = await runSf(
-        [
-          'cms',
-          'update',
-          'content',
-          '--target-org',
-          'unused',
-          '--api-version',
-          '67.0',
-          '--workspace-id',
-          'space',
-          '--api-name',
-          'pilot_email',
-          '--language',
-          'en_US',
-          '--source-dir',
-          'email-update-baseline',
-          '--editable-dir',
-          'email-update-editable',
-          ...(mode === 'apply' ? ['--apply', '--report-dir', reportDirectory] : []),
-          '--json',
-        ],
-        'email-update-preview',
-      );
-      expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
-      const blockedEnvelope = parseEnvelope(blocked);
-      expect(blockedEnvelope).to.deep.include({
-        contract: 'sf-cms-content-update',
-        contractVersion: '1.0.0',
-        status: 'blocked',
-      });
-      expect(blockedEnvelope.result).to.deep.equal({
-        mode,
-        outcome: 'blocked',
-        target: { workspaceId: 'space', apiName: 'pilot_email', language: 'en_US' },
-        evidence: { changedFields: [] },
-        blockers: [
+      const blocked = await runUpdate(mode === 'apply', reportDirectory);
+      expect(blocked.status).to.equal('blocked');
+      if (mode === 'apply') {
+        expect(blocked.message).to.equal('Editable descriptor must contain valid JSON');
+      } else {
+        expect(blocked.blockers).to.deep.equal([
           {
             code: 'EMAIL_UPDATE_PREFLIGHT_BLOCKED',
             message: 'Editable descriptor must contain valid JSON',
           },
-        ],
-      });
+        ]);
+      }
       const blockedEvents = JSON.parse(
         await readFile(file('email-update-preview-transport.json'), 'utf8'),
       ) as Array<{ method?: string }>;
@@ -962,48 +852,35 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   it('previews and applies one installed packed bounded Email Template update v2', async function () {
     this.timeout(300_000);
     // Harness exports create these destinations; leave them nonexistent.
-    const base = [
-      'cms',
-      'update',
-      'content',
-      '--target-org',
-      'unused',
-      '--api-version',
-      '67.0',
-      '--contract-version',
-      '2',
-      '--content-type',
-      'sfdc_cms__emailTemplate',
-      '--workspace-id',
-      'space',
-      '--api-name',
-      'pilot_template',
-      '--language',
-      'en_US',
-    ];
-    const preview = await runSf(
-      [
-        ...base,
-        '--source-dir',
-        'email-template-update-preview-source',
-        '--editable-dir',
-        'email-template-update-preview-editable',
-        '--json',
-      ],
-      'email-template-update-preview',
-    );
-    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
-    const previewEnvelope = parseEnvelope(preview);
-    expect(previewEnvelope).to.deep.include({
-      contract: 'sf-cms-content-update',
-      contractVersion: '2.0.0',
-      status: 'success',
-    });
-    expect(previewEnvelope.result).to.deep.include({
+    const runUpdate = async (contractCase: string) => {
+      const output = await execFileAsync(executable, [fileURLToPath(harness)], {
+        cwd: isolatedDataDirectory,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SF_PLUGIN_CMS_CONTRACT_CASE: contractCase,
+          SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+          SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+        },
+        windowsHide: true,
+      });
+      return JSON.parse(output.stdout);
+    };
+    const preview = await runUpdate('email-template-update-preview');
+    expect(preview.status).to.equal('ready');
+    expect(preview.blockers).to.deep.equal([]);
+    expect(preview.evidence).to.deep.include({
       contentType: 'sfdc_cms__emailTemplate',
-      mode: 'dry-run',
-      outcome: 'ready',
+      workspaceId: 'space',
+      apiName: 'pilot_template',
+      language: 'en_US',
+      contentId: 'parent-template',
+      variantId: 'template-en',
     });
+    expect(preview.evidence.changedFields).to.deep.equal(['contentBody.rawHtml']);
+    expect(preview.evidence.baselineHash).to.match(/^[a-f\d]{64}$/u);
+    expect(preview.evidence.payloadHash).to.match(/^[a-f\d]{64}$/u);
+    expect(preview.evidence.payloadHash).not.to.equal(preview.evidence.baselineHash);
     const previewEvents = JSON.parse(
       await readFile(file('email-template-update-preview-transport.json'), 'utf8'),
     );
@@ -1011,32 +888,20 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       false,
     );
 
-    const applied = await runSf(
-      [
-        ...base,
-        '--source-dir',
-        'email-template-update-apply-source',
-        '--editable-dir',
-        'email-template-update-apply-editable',
-        '--apply',
-        '--report-dir',
-        'email-template-update-apply-report',
-        '--json',
-      ],
-      'email-template-update-apply',
+    expect(previewEvents[0]).to.deep.equal({ phase: 'org' });
+    expect(
+      previewEvents.slice(1).every(({ method }: { method?: string }) => method === 'GET'),
+    ).to.equal(true);
+    expect(await readdir(isolatedDataDirectory)).not.to.include(
+      'email-template-update-preview-report',
     );
-    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(1);
-    const applyEnvelope = parseEnvelope(applied);
-    expect(applyEnvelope).to.deep.include({
-      contract: 'sf-cms-content-update',
-      contractVersion: '2.0.0',
-      status: 'failed',
+    const applied = await runUpdate('email-template-update-apply');
+    expect(applied).to.deep.include({
+      status: 'ownership-uncertain',
+      contentId: 'parent-template',
+      variantId: 'template-en',
     });
-    expect(applyEnvelope.result).to.deep.include({
-      contentType: 'sfdc_cms__emailTemplate',
-      mode: 'apply',
-      outcome: 'ownership-uncertain',
-    });
+    expect(applied.payloadHash).to.equal(preview.evidence.payloadHash);
     const applyEvents = JSON.parse(
       await readFile(file('email-template-update-apply-transport.json'), 'utf8'),
     );
@@ -1058,50 +923,20 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   it('runs installed editable export, literal edits, native CREATE and encoded readback for both types', async function () {
-    // Ten sequential CLI starts take over four minutes on this Windows host.
+    // The baseline and import both execute internal services from the installed tarball.
     this.timeout(600_000);
     const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-    for (const command of ['export', 'import']) {
-      const help = await runSf(['cms', command, 'workspace', '--help']);
-      expect(help.exitCode, help.stderr).to.equal(0);
-      const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
-      expect(normalizedHelp).to.include('--editable-dir');
-      expect(normalizedHelp).to.include(
-        'not resolved, rewritten, sanitized, or scanned through Phase 7',
-      );
-      if (command === 'export') {
-        expect(normalizedHelp).to.include(
-          '--output-dir ./cms-baseline --editable-dir ./cms-editable',
-        );
-        expect(normalizedHelp).to.match(/baseline is (?:published first and )?retained/iu);
-      } else {
-        expect(normalizedHelp).to.include('--native-copy-map');
-        expect(normalizedHelp).to.include('--image-map');
-        expect(normalizedHelp).to.include('--image-map ./image-map.json --contract-version 2');
-        expect(normalizedHelp).to.include('complete server conflict validation');
-        expect(normalizedHelp).to.include(
-          '--native-copy-map ./native-copy-map.json --editable-dir ./cms-editable',
-        );
-      }
-    }
-    const exported = await runSf(
-      [
-        'cms',
-        'export',
-        'workspace',
-        '--target-org',
-        'unused',
-        '--workspace-id',
-        'space',
-        '--output-dir',
-        'editable-baseline',
-        '--editable-dir',
-        'editable-source',
-        '--json',
-      ],
-      'editable-export',
-    );
-    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+      cwd: isolatedDataDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'editable-export-fixture',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+        SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+      },
+      windowsHide: true,
+    });
     const output = JSON.parse(exported.stdout);
     expect(Object.keys(output).toSorted()).to.deep.equal([
       'destination',
@@ -1109,6 +944,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       'manifestSha256',
     ]);
     expect(output.manifest.completeness).to.equal('complete');
+    expect(output.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
+    const fixtureEvents = JSON.parse(
+      await readFile(file('editable-export-fixture-transport.json'), 'utf8'),
+    ) as Array<{ method: string; url: string }>;
+    expect(fixtureEvents.length).to.be.greaterThan(0);
+    expect(fixtureEvents.every(({ method }) => method === 'GET')).to.equal(true);
+    expect(fixtureEvents.filter(({ url }) => url.includes('/contents/variants/'))).to.deep.equal([
+      { method: 'GET', url: '/connect/cms/contents/variants/email' },
+      { method: 'GET', url: '/connect/cms/contents/variants/template' },
+    ]);
     expect(await readdir(file('editable-baseline'))).to.deep.equal(['items', 'manifest.json']);
     const preserved = new Map<string, Buffer>();
     for (const name of [
@@ -1143,26 +988,31 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         })),
       ),
     );
-    const arguments_ = [
-      'cms',
-      'import',
-      'workspace',
-      '--target-org',
-      'unused',
-      '--workspace-id',
-      'space',
-      '--source-dir',
-      'editable-baseline',
-      '--editable-dir',
-      'editable-source',
-      '--native-copy-map',
-      'editable-copies.json',
-      '--json',
-    ];
-    const dryRun = await runSf(arguments_, 'editable-import');
+    const runImport = async (apply: boolean, local = false): Promise<ProcessResult> => {
+      try {
+        const result = await execFileAsync(executable, [fileURLToPath(harness)], {
+          cwd: isolatedDataDirectory,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            SF_PLUGIN_CMS_CONTRACT_CASE: local ? 'editable-local' : 'editable-import',
+            SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+            SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+            SF_PLUGIN_CMS_EDITABLE_IMPORT_OPTIONS: JSON.stringify({ apply }),
+          },
+          windowsHide: true,
+        });
+        return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
+      } catch (error) {
+        const failed = error as Error & { code: number; stderr: string; stdout: string };
+        return { exitCode: failed.code, stderr: failed.stderr, stdout: failed.stdout };
+      }
+    };
+    const dryRun = await runImport(false);
     expect(dryRun.exitCode, dryRun.stdout + dryRun.stderr).to.equal(0);
-    const dryEnvelope = parseEnvelope(dryRun);
-    expect(JSON.stringify(dryEnvelope.diagnostics)).to.include(
+    const dryResult = JSON.parse(dryRun.stdout);
+    expect(dryResult.dryRun).to.equal(true);
+    expect(JSON.stringify(dryResult.diagnostics)).to.include(
       '2 selected HTML modification(s) planned',
     );
     const dryEvents = JSON.parse(await readFile(file('editable-import-transport.json'), 'utf8'));
@@ -1170,15 +1020,12 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       undefined,
       'GET',
     ]);
-    const applied = await runSf(
-      [...arguments_, '--apply', '--report-dir', 'editable-report'],
-      'editable-import',
-    );
+    const applied = await runImport(true);
     expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
-    const envelope = parseEnvelope(applied);
-    expect(envelope.status).to.equal('success');
-    expectPluginVersion(envelope, installedPackageVersion);
-    expect(JSON.stringify(envelope.diagnostics)).to.include(
+    const execution = JSON.parse(applied.stdout);
+    expect(execution.dryRun).to.equal(false);
+    expect(execution.report.state).to.equal('completed');
+    expect(JSON.stringify(execution.diagnostics)).to.include(
       '2 selected HTML modification(s) applied',
     );
     const events = JSON.parse(await readFile(file('editable-import-transport.json'), 'utf8'));
@@ -1230,13 +1077,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     for (const [name, bytes] of preserved) expect(await readFile(file(name))).to.deep.equal(bytes);
 
     // Installed local failures must never reach even org acquisition, much less transport.
-    const localCases: Array<{ args?: string[]; file?: string; bytes?: string; message: RegExp }> = [
-      {
-        args: arguments_.filter(
-          (value) => !['--native-copy-map', 'editable-copies.json'].includes(value),
-        ),
-        message: /native-copy-map/u,
-      },
+    // Missing CLI profile flags belong to the command-only suite, not this engine seam.
+    const localCases: Array<{ file: string; bytes: string; message: RegExp }> = [
       { file: 'editable-source/items/email.json', bytes: '{}', message: /metadata/iu },
       { file: 'editable-source/editable.json', bytes: '{}', message: /descriptor/iu },
       {
@@ -1249,10 +1091,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       const before = scenario.file === undefined ? undefined : await readFile(file(scenario.file));
       try {
         if (scenario.file !== undefined) await writeFile(file(scenario.file), scenario.bytes!);
-        const failed = await runSf(scenario.args ?? arguments_, 'editable-local');
-        expect(failed.exitCode, failed.stdout + failed.stderr).to.equal(
-          scenario.args === undefined ? 1 : 2,
-        );
+        const failed = await runImport(false, true);
+        expect(failed.exitCode, failed.stdout + failed.stderr).to.equal(1);
         expect(failed.stdout + failed.stderr).to.match(scenario.message);
         expect(await readdir(isolatedDataDirectory)).not.to.include(
           'editable-local-transport.json',
@@ -1263,35 +1103,21 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
-  it('runs installed flat definition export and rejects incompatible flags before org access', async function () {
+  it('runs the installed flat definition export engine with canonical admission evidence', async function () {
     this.timeout(300_000);
-    const args = [
-      'cms',
-      'export',
-      'workspace',
-      '--target-org',
-      'unused',
-      '--workspace-id',
-      'space',
-      '--definition-dir',
-      'definition-source',
-      '--json',
-    ];
-    for (const extra of [
-      [],
-      ['--output-dir', 'definition-source/inside'],
-      ['--output-dir', 'definition-base', '--editable-dir', 'other'],
-      ['--output-dir', 'definition-base', '--experimental-media'],
-      ['--output-dir', 'definition-base', '--all'],
-    ]) {
-      const rejected = await runSf([...args, ...extra], 'definition-local');
-      expect(rejected.exitCode).not.to.equal(0);
-      expect(rejected.stdout + rejected.stderr).not.to.include('Unexpected org access');
-      expect(await readdir(isolatedDataDirectory)).not.to.include('definition-source');
-    }
-    const exported = await runSf([...args, '--output-dir', 'definition-base'], 'definition-export');
-    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+      cwd: isolatedDataDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'definition-export-fixture',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+        SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+      },
+      windowsHide: true,
+    });
     const output = JSON.parse(exported.stdout);
+    expect(output.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
     expect(output).to.have.all.keys('destination', 'manifest', 'manifestSha256');
     expect(output.manifest.completeness).to.equal('complete');
     const evidencePath = 'evidence/source-admission.v1.json';
@@ -1321,15 +1147,6 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   it('runs packed source B Email/Template JSON and HTML edits, dry-plan and journal-bound root CREATE', async function () {
     this.timeout(900_000);
     const hash = sourceAcceptanceHash;
-    const help = await runSf(['cms', 'import', 'workspace', '--help']);
-    expect(help.exitCode, help.stderr).to.equal(0);
-    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
-    expect(normalizedHelp).to.include('bounded existing JSON string-leaf edits');
-    expect(normalizedHelp).to.include('immutable identity/structure');
-    expect(normalizedHelp).to.include('complete workspace API/title/URL collision proof');
-    expect(normalizedHelp).to.include(
-      'Changed source URL must equal the explicit mapped target URL',
-    );
     for (const family of ['email', 'emailTemplate']) {
       const prefix = `source-a-${family}`;
       const raw = {
@@ -1355,25 +1172,33 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         },
       };
       await writeFile(file('source-a-fixture.json'), JSON.stringify(raw));
-      const exported = await runSf(
-        [
-          'cms',
-          'export',
-          'workspace',
-          '--target-org',
-          'unused',
-          '--workspace-id',
-          'space',
-          '--output-dir',
-          `${prefix}-base`,
-          '--definition-dir',
-          `${prefix}-definitions`,
-          '--json',
-        ],
-        'source-a-export',
-      );
-      expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+      const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+        cwd: isolatedDataDirectory,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SF_PLUGIN_CMS_CONTRACT_CASE: 'source-b-export-fixture',
+          SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+          SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+        },
+        windowsHide: true,
+      });
       const output = JSON.parse(exported.stdout);
+      expect(Object.keys(output).toSorted()).to.deep.equal([
+        'destination',
+        'manifest',
+        'manifestSha256',
+      ]);
+      const fixtureEvents = JSON.parse(
+        await readFile(file(`${prefix}-fixture-transport.json`), 'utf8'),
+      ) as Array<{ method: string; url: string }>;
+      expect(fixtureEvents.length).to.be.greaterThan(0);
+      expect(fixtureEvents.every(({ method }) => method === 'GET')).to.equal(true);
+      // Definition admission re-reads the variant to bind its source proof.
+      expect(fixtureEvents.filter(({ url }) => url.includes('/contents/variants/'))).to.deep.equal([
+        { method: 'GET', url: '/connect/cms/contents/variants/email' },
+        { method: 'GET', url: '/connect/cms/contents/variants/email' },
+      ]);
       expect(output.manifest.completeness).to.equal('complete');
       expect(output.manifest.provenance.pluginVersion).to.equal(installedPackageVersion);
       const token = family === 'email' ? 'email' : 'email-template';
@@ -1414,48 +1239,48 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           { sourceContentKey: 'key', language: 'en_US', apiName: 'Fresh', urlName: 'fresh' },
         ]),
       );
-      const args = [
-        'cms',
-        'import',
-        'workspace',
-        '--target-org',
-        'unused',
-        '--workspace-id',
-        'space',
-        '--source-dir',
-        `${prefix}-base`,
-        '--definition-dir',
-        `${prefix}-definitions`,
-        '--native-copy-map',
-        'source-a-copies.json',
-        '--json',
-      ];
-      const dry = await runSf(args, 'source-a-import');
+      // eslint-disable-next-line unicorn/consistent-function-scoping -- Keep installed import execution with this per-family fixture and its mappings.
+      async function runImport(
+        scenario = 'source-a-import',
+        reportDirectory?: string,
+      ): Promise<ProcessResult> {
+        try {
+          const result = await execFileAsync(executable, [fileURLToPath(harness)], {
+            cwd: isolatedDataDirectory,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              SF_PLUGIN_CMS_CONTRACT_CASE: scenario,
+              SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+              SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+              SF_PLUGIN_CMS_SOURCE_IMPORT_OPTIONS: JSON.stringify({
+                prefix,
+                apply: reportDirectory !== undefined,
+                reportDirectory,
+              }),
+            },
+            windowsHide: true,
+          });
+          return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
+        } catch (error) {
+          const failed = error as Error & { code: number; stderr: string; stdout: string };
+          return { exitCode: failed.code, stderr: failed.stderr, stdout: failed.stdout };
+        }
+      }
+      const dry = await runImport();
       expect(dry.exitCode, dry.stdout + dry.stderr).to.equal(0);
-      const preview = parseEnvelope(dry);
-      expect(preview).to.deep.include({
-        contract: 'sf-cms-workspace-import',
-        contractVersion: '1.0.0',
-        status: 'success',
-      });
-      expectPluginVersion(preview, installedPackageVersion);
+      expect(JSON.parse(dry.stdout).dryRun).to.equal(true);
       const dryEvents = JSON.parse(await readFile(file('source-a-import-transport.json'), 'utf8'));
       expect(
         dryEvents
           .filter((event: { method?: string }) => event.method !== undefined)
           .every((event: { method: string }) => event.method === 'GET'),
       ).to.equal(true);
-      const applied = await runSf(
-        [...args, '--apply', '--report-dir', 'source-a-report'],
-        'source-a-import',
-      );
+      const applied = await runImport('source-a-import', 'source-a-report');
       expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
-      const envelope = parseEnvelope(applied);
-      expect(envelope).to.deep.include({
-        contract: 'sf-cms-workspace-import',
-        contractVersion: '1.0.0',
-        status: 'success',
-      });
+      const execution = JSON.parse(applied.stdout);
+      expect(execution.dryRun).to.equal(false);
+      expect(execution.report.state).to.equal('completed');
       const events = JSON.parse(await readFile(file('source-a-import-transport.json'), 'utf8'));
       const posts = events.filter((event: { method?: string }) => event.method === 'POST');
       expect(posts).to.have.length(1);
@@ -1549,10 +1374,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         const before = await readFile(file(scenario.relative));
         try {
           await writeFile(file(scenario.relative), scenario.bytes);
-          const blocked = await runSf(
-            [...args, '--apply', '--report-dir', 'source-a-invalid-report'],
-            'source-a-import',
-          );
+          const blocked = await runImport('source-a-import', 'source-a-invalid-report');
           expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
           expect(blocked.stdout + blocked.stderr).to.match(scenario.message);
           const rejectedEvents = JSON.parse(
@@ -1569,10 +1391,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       for (const scenario of ['title-collision', 'url-collision', 'json-drift']) {
         const reportDirectory = `source-a-${scenario}-report`;
         try {
-          const blocked = await runSf(
-            [...args, '--apply', '--report-dir', reportDirectory],
-            `source-a-${scenario}`,
-          );
+          const blocked = await runImport(`source-a-${scenario}`, reportDirectory);
           expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
           expect(blocked.stdout + blocked.stderr, blocked.stdout + blocked.stderr).to.match(
             scenario === 'json-drift' ? /changed after planning/iu : /collision/iu,
@@ -1611,7 +1430,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           }),
         );
         await rename(file(evidencePath), file('source-a-saved-evidence.json'));
-        const old = await runSf(args, 'source-a-import');
+        const old = await runImport();
         expect(old.exitCode, old.stdout + old.stderr).to.equal(1);
         expect(old.stdout + old.stderr).to.match(/re-export.*--definition-dir/iu);
         expect(
@@ -1623,17 +1442,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         await writeFile(file(manifestPath), manifestBytes);
         await rename(file('source-a-saved-evidence.json'), file(evidencePath));
       }
-      const excluded = await runSf(
-        [...args, '--editable-dir', `${prefix}-definitions`],
-        'source-a-local',
-      );
-      expect(excluded.exitCode).not.to.equal(0);
-      expect(excluded.stdout + excluded.stderr).not.to.include('Unexpected org access');
-      expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-local-transport.json');
-      const drift = await runSf(
-        [...args, '--apply', '--report-dir', 'source-a-drift-report'],
-        'source-a-drift',
-      );
+      const drift = await runImport('source-a-drift', 'source-a-drift-report');
       expect(drift.exitCode, drift.stdout + drift.stderr).to.equal(1);
       expect(drift.stdout + drift.stderr, drift.stdout + drift.stderr).to.match(
         /changed after planning/iu,
@@ -1666,7 +1475,6 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       folder: null,
     };
     await writeFile(file('brand-source-fixture.json'), JSON.stringify(raw));
-    await writeFile(file('brand-source-export-map.json'), JSON.stringify([raw.apiName]));
     await writeFile(
       file('brand-source-copy-map.json'),
       JSON.stringify([
@@ -1676,29 +1484,34 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         },
       ]),
     );
-    const exported = await runSf(
-      [
-        'cms',
-        'export',
-        'workspace',
-        '--target-org',
-        'brand-source-alias',
-        '--api-version',
-        '67.0',
-        '--workspace-id',
-        raw.contentSpace.id,
-        '--brand-map',
-        'brand-source-export-map.json',
-        '--output-dir',
-        'brand-source-base',
-        '--definition-dir',
-        'brand-source-definitions',
-        '--json',
-      ],
-      'brand-source-export',
-    );
-    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+      cwd: isolatedDataDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'brand-source-fixture',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+        SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+      },
+      windowsHide: true,
+    });
     const output = JSON.parse(exported.stdout);
+    expect(Object.keys(output).toSorted()).to.deep.equal([
+      'destination',
+      'manifest',
+      'manifestSha256',
+      'phase5Report',
+    ]);
+    const fixtureEvents = JSON.parse(
+      await readFile(file('brand-source-fixture-transport.json'), 'utf8'),
+    ) as Array<{ method?: string; alias: string }>;
+    expect(fixtureEvents.length).to.be.greaterThan(1);
+    expect(fixtureEvents.every(({ alias }) => alias === 'brand-source-alias')).to.equal(true);
+    expect(
+      fixtureEvents
+        .filter(({ method }) => method !== undefined)
+        .every(({ method }) => method === 'GET'),
+    ).to.equal(true);
     expect(output.manifest.completeness).to.equal('complete');
     expect(output.manifest.warnings.map(({ code }: { code: string }) => code)).to.deep.equal([
       'UNSUPPORTED_WILDCARD',
@@ -1736,31 +1549,40 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       ...output.manifest.items.map(({ path: itemPath }: { path: string }) => itemPath),
     ])
       preserved.set(relative, await readFile(file(`brand-source-base/${relative}`)));
-    const args = [
-      'cms',
-      'import',
-      'workspace',
-      '--target-org',
-      'brand-target-alias',
-      '--source-org',
-      'brand-source-alias',
-      '--api-version',
-      '67.0',
-      '--workspace-id',
-      '0Zufj000006rx4wCAA',
-      '--source-dir',
-      'brand-source-base',
-      '--definition-dir',
-      'brand-source-definitions',
-      '--brand-map',
-      'brand-source-copy-map.json',
-      '--json',
-    ];
     const eventsFor = async (scenario: string) =>
       JSON.parse(await readFile(file(`${scenario}-transport.json`), 'utf8'));
-    const dry = await runSf(args, 'brand-source-preview');
+
+    async function runBrandImport(
+      scenario: string,
+      reportDirectory?: string,
+      generic = false,
+    ): Promise<ProcessResult> {
+      try {
+        const result = await execFileAsync(executable, [fileURLToPath(harness)], {
+          cwd: isolatedDataDirectory,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            SF_PLUGIN_CMS_CONTRACT_CASE: scenario,
+            SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+            SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+            SF_PLUGIN_CMS_BRAND_IMPORT_OPTIONS: JSON.stringify({
+              apply: reportDirectory !== undefined,
+              reportDirectory,
+              generic,
+            }),
+          },
+          windowsHide: true,
+        });
+        return { exitCode: 0, stderr: result.stderr, stdout: result.stdout };
+      } catch (error) {
+        const failed = error as Error & { code: number; stderr: string; stdout: string };
+        return { exitCode: failed.code, stderr: failed.stderr, stdout: failed.stdout };
+      }
+    }
+    const dry = await runBrandImport('brand-source-preview');
     expect(dry.exitCode, dry.stdout + dry.stderr).to.equal(0);
-    expect(parseEnvelope(dry).status).to.equal('success');
+    expect(JSON.parse(dry.stdout).dryRun).to.equal(true);
     const previewEvents = await eventsFor('brand-source-preview');
     expect(
       previewEvents
@@ -1772,14 +1594,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         .filter(({ method }: { method?: string }) => method !== undefined)
         .every(({ method }: { method: string }) => method === 'GET'),
     ).to.equal(true);
-    const applied = await runSf(
-      [...args, '--apply', '--report-dir', 'brand-source-apply-report'],
-      'brand-source-apply',
-    );
+    const applied = await runBrandImport('brand-source-apply', 'brand-source-apply-report');
     expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
-    const envelope = parseEnvelope(applied);
-    expect(envelope.status).to.equal('success');
-    expectPluginVersion(envelope, installedPackageVersion);
+    const execution = JSON.parse(applied.stdout);
+    expect(execution.dryRun).to.equal(false);
+    expect(execution.report.state).to.equal('completed');
     const events = await eventsFor('brand-source-apply');
     const posts = events.filter(({ method }: { method?: string }) => method === 'POST');
     expect(posts).to.have.length(1);
@@ -1866,9 +1685,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ]) {
       try {
         const name = `brand-source-${scenario}`;
-        const blocked = await runSf([...args, '--apply', '--report-dir', `${name}-report`], name);
+        const blocked = await runBrandImport(name, `${name}-report`);
         expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
-        expect(parseEnvelope(blocked).status).to.equal('failed');
+        expect(blocked.stderr).not.to.equal('');
         const blockedEvents = await eventsFor(name);
         expect(blockedEvents.some(({ method }: { method?: string }) => method === 'POST')).to.equal(
           false,
@@ -1881,7 +1700,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       const edited = JSON.parse(definitionBytes.toString('utf8'));
       edited.contentBody.baseFontFamily = 'Not immutable';
       await writeFile(file(definitionFile), JSON.stringify(edited));
-      const immutable = await runSf(args, 'brand-source-immutable');
+      const immutable = await runBrandImport('brand-source-immutable');
       expect(immutable.exitCode, immutable.stdout + immutable.stderr).to.equal(1);
       expect(immutable.stdout + immutable.stderr).to.match(/Brand|reprojection/iu);
       const immutableEvents = await eventsFor('brand-source-immutable');
@@ -1906,7 +1725,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         file(`brand-source-base/${proofItem.path}`),
         file('brand-source-saved-proof.json'),
       );
-      const missing = await runSf(args, 'brand-source-missing-proof');
+      const missing = await runBrandImport('brand-source-missing-proof');
       expect(missing.exitCode, missing.stdout + missing.stderr).to.equal(1);
       expect(missing.stdout + missing.stderr).to.match(
         /inventory evidence unavailable.*re-export/iu,
@@ -1922,31 +1741,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       );
     }
     // The generic Brand profile still rejects warning-bearing exports; SOURCE is not a global waiver.
-    const generic = await runSf(
-      args.filter(
-        (value) =>
-          ![
-            '--source-org',
-            'brand-source-alias',
-            '--definition-dir',
-            'brand-source-definitions',
-          ].includes(value),
-      ),
-      'brand-source-local',
-    );
+    const generic = await runBrandImport('brand-source-local', undefined, true);
     expect(generic.exitCode, generic.stdout + generic.stderr).to.equal(1);
     expect(generic.stdout + generic.stderr).to.match(/no warnings/iu);
-    for (const omitted of [
-      ['--brand-map', 'brand-source-copy-map.json'],
-      ['--definition-dir', 'brand-source-definitions'],
-    ]) {
-      const misuse = await runSf(
-        args.filter((value) => !omitted.includes(value)),
-        'brand-source-local',
-      );
-      expect(misuse.exitCode).not.to.equal(0);
-      expect(misuse.stdout + misuse.stderr).not.to.include('Unexpected org access');
-    }
     expect(await readdir(isolatedDataDirectory)).not.to.include(
       'brand-source-local-transport.json',
     );
@@ -1955,7 +1752,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(await readFile(file(`brand-source-base/${relative}`))).to.deep.equal(bytes);
   });
 
-  it('keeps packed source Brand export honest and Image import blocked', async function () {
+  it('keeps packed internal Brand export provenance and definition layout honest', async function () {
     this.timeout(300_000);
     const brand = {
       ...brandDetail('email', 'Welcome', 'space'),
@@ -1963,99 +1760,39 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       folder: null,
     };
     await writeFile(file('source-a-fixture.json'), JSON.stringify(brand));
-    const exported = await runSf(
-      [
-        'cms',
-        'export',
-        'workspace',
-        '--target-org',
-        'unused',
-        '--workspace-id',
-        'space',
-        '--output-dir',
-        'source-a-brand-base',
-        '--definition-dir',
-        'source-a-brand-definitions',
-        '--json',
-      ],
-      'source-a-export',
-    );
-    expect(exported.exitCode, exported.stdout + exported.stderr).to.equal(0);
+    const exported = await execFileAsync(executable, [fileURLToPath(harness)], {
+      cwd: isolatedDataDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'brand-export-fixture',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+        SF_PLUGIN_CMS_INSTALLED_VERSION: installedPackageVersion,
+      },
+      windowsHide: true,
+    });
+    const output = JSON.parse(exported.stdout);
+    expect(Object.keys(output).toSorted()).to.deep.equal([
+      'destination',
+      'manifest',
+      'manifestSha256',
+    ]);
+    expect(output.manifest.completeness).to.equal('complete');
+    expect(output.manifest.provenance).to.include({
+      sourceOrgId: '00DControlledSource',
+      pluginVersion: installedPackageVersion,
+    });
+    const fixtureEvents = JSON.parse(
+      await readFile(file('source-a-brand-fixture-transport.json'), 'utf8'),
+    ) as Array<{ method: string; url: string }>;
+    expect(fixtureEvents.length).to.be.greaterThan(0);
+    expect(fixtureEvents.every(({ method }) => method === 'GET')).to.equal(true);
+    expect(
+      fixtureEvents.some(({ url }) => url === '/connect/cms/contents/variants/email'),
+    ).to.equal(true);
     expect(await readdir(file('source-a-brand-definitions/cms/Controlled/brand'))).to.deep.equal([
       'Welcome.cms-brand.json',
     ]);
-    await writeFile(
-      file('source-a-brand-map.json'),
-      JSON.stringify([
-        {
-          source: { family: 'cms', type: 'brand', apiName: 'Welcome' },
-          target: { apiName: 'Fresh', title: 'Fresh', urlName: 'fresh' },
-        },
-      ]),
-    );
-    const args = [
-      'cms',
-      'import',
-      'workspace',
-      '--target-org',
-      'unused',
-      '--workspace-id',
-      'space',
-      '--source-dir',
-      'source-a-brand-base',
-      '--definition-dir',
-      'source-a-brand-definitions',
-      '--json',
-    ];
-    const blocked = await runSf(
-      [...args, '--brand-map', 'source-a-brand-map.json'],
-      'source-a-local',
-    );
-    expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
-    expect(blocked.stdout + blocked.stderr).to.include('--source-org is required');
-    expect(blocked.stdout + blocked.stderr).not.to.include('Unexpected org access');
-    await writeFile(file('source-a-image-map.json'), '[]');
-    const image = await runSf(
-      [...args, '--image-map', 'source-a-image-map.json', '--contract-version', '2'],
-      'source-a-local',
-    );
-    expect(image.exitCode).not.to.equal(0);
-    expect(image.stdout + image.stderr).not.to.include('Unexpected org access');
-    expect(await readdir(isolatedDataDirectory)).not.to.include('source-a-local-transport.json');
-  });
-
-  it('rejects installed editable export flag and overlap boundaries before org access', async () => {
-    for (const extra of [
-      [],
-      ['--all', '--output-dir', 'new-base'],
-      ['--output-dir', 'new-edit/inside'],
-      ['--output-dir', '.'],
-      ['--output-dir', '../escape'],
-    ]) {
-      const result = await runSf(
-        [
-          'cms',
-          'export',
-          'workspace',
-          '--target-org',
-          'unused',
-          '--workspace-id',
-          'space',
-          '--editable-dir',
-          'new-edit',
-          ...extra,
-          '--json',
-        ],
-        'editable-local',
-      );
-      expect(result.exitCode, result.stdout + result.stderr).to.equal(
-        extra.length === 0 || extra.includes('--all') ? 2 : 10,
-      );
-      expect(result.stdout + result.stderr).not.to.include('Unexpected org access');
-      expect(await readdir(isolatedDataDirectory)).not.to.include('editable-local-transport.json');
-      expect(await readdir(isolatedDataDirectory)).not.to.include('new-edit');
-      expect(await readdir(isolatedDataDirectory)).not.to.include('new-base');
-    }
   });
 
   it('emits the exact blocked info envelope and exits 1', async () => {
@@ -2064,52 +1801,5 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
     expect(result.exitCode).to.equal(1);
     expect(envelope).to.deep.include({ contract: 'sf-cms-info', status: 'blocked', result: null });
-  });
-
-  it('emits the exact blocked export envelope and exits 1 before org access', async () => {
-    const result = await runSf([
-      'cms',
-      'export',
-      'workspace',
-      '--target-org',
-      'unused',
-      '--all',
-      '--contract-version',
-      '2',
-      '--json',
-    ]);
-    const envelope = parseEnvelope(result);
-
-    expect(result.exitCode).to.equal(1);
-    expect(envelope).to.deep.include({
-      contract: 'sf-cms-workspace-export-set',
-      status: 'blocked',
-      result: null,
-    });
-  });
-
-  it('emits the exact blocked import envelope and exits 1 before org access', async () => {
-    const result = await runSf([
-      'cms',
-      'import',
-      'workspace',
-      '--target-org',
-      'unused',
-      '--source-dir',
-      '.',
-      '--workspace-id',
-      'unused',
-      '--contract-version',
-      '2',
-      '--json',
-    ]);
-    const envelope = parseEnvelope(result);
-
-    expect(result.exitCode).to.equal(1);
-    expect(envelope).to.deep.include({
-      contract: 'sf-cms-workspace-import',
-      status: 'blocked',
-      result: null,
-    });
   });
 });

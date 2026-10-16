@@ -2,5 +2,11 @@
   "tabWidth": 2,
   "printWidth": 100,
   "singleQuote": true,
-  "endOfLine": "lf"
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "test/contracts/fixtures/success-info.json",
+      "options": { "parser": "json-stringify" }
+    }
+  ]
 }

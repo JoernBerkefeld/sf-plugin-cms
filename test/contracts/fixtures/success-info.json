@@ -6,7 +6,7 @@
     "operation": "cms.info",
     "plugin": {
       "name": "sf-plugin-cms",
-      "version": "0.3.0"
+      "version": "0.13.0"
     },
     "apiVersion": null
   },
@@ -17,24 +17,44 @@
   "provenance": {
     "producer": "sf-plugin-cms",
     "sourceOrgId": "offline",
-    "pluginVersion": "0.3.0",
+    "pluginVersion": "0.13.0",
     "command": "sf cms info",
-    "generatedAt": "2026-09-13T18:00:00.000Z"
+    "generatedAt": "2026-10-16T18:00:00.000Z"
   },
   "result": {
     "plugin": {
       "name": "sf-plugin-cms",
-      "version": "0.3.0"
+      "version": "0.13.0"
     },
     "api": {
-      "defaultVersion": "67.0",
+      "defaultVersion": "latest",
       "testedVersions": [
         "67.0"
       ]
     },
+    "commands": [
+      "cms info",
+      "cms list workspace",
+      "cms list channel",
+      "cms retrieve content",
+      "cms deploy content",
+      "cms upload images",
+      "cms delete content",
+      "cms publish content",
+      "cms unpublish content"
+    ],
     "contracts": {
       "commandResults": {
         "info": [
+          "1.0.0"
+        ],
+        "contentRetrieve": [
+          "1.0.0"
+        ],
+        "contentDeploy": [
+          "1.0.0"
+        ],
+        "imagesUpload": [
           "1.0.0"
         ],
         "contentDelete": [
@@ -46,72 +66,69 @@
         ],
         "contentUnpublish": [
           "1.0.0"
-        ],
-        "contentUpdate": [
-          "1.0.0",
-          "2.0.0"
-        ],
-        "workspaceExportSet": [
-          "1.0.0"
-        ],
-        "workspaceImport": [
-          "1.0.0",
-          "2.0.0"
         ]
-      },
-      "packageManifests": {
-        "workspaceExport": [
-          "1.0.0",
-          "2.0.0"
-        ]
-      },
-      "embeddedResults": {
-        "externalReferenceCorrelations": [
-          "sf-cms-external-reference-correlations@1"
-        ]
-      },
-      "compatibility": {
-        "workspaceExportSet@1": {
-          "workspaceExportManifestMajors": [
-            1
-          ]
-        },
-        "workspaceImport@1": {
-          "workspaceExportManifestMajors": [
-            1
-          ]
-        },
-        "workspaceImport@2": {
-          "workspaceExportManifestMajors": [
-            2
-          ]
-        }
       }
     },
     "capabilities": [
       {
-        "id": "workspace.export.bulk",
-        "state": "implemented",
-        "transport": "cli-json",
-        "contract": "sf-cms-workspace-export-set@1"
-      },
-      {
-        "id": "workspace.export.dependency-closure",
-        "state": "unavailable",
-        "transport": "cli-json",
-        "contract": "unavailable"
-      },
-      {
-        "id": "workspace.export.external-reference-correlation",
+        "id": "content.retrieve.email",
         "state": "experimental",
         "transport": "cli-json",
-        "contract": "sf-cms-external-reference-correlations@1"
+        "contract": "sf-cms-content-retrieve@1"
       },
       {
-        "id": "workspace.export.experimental-media",
+        "id": "content.retrieve.email-template",
         "state": "experimental",
         "transport": "cli-json",
-        "contract": "sf-cms-workspace-export@2"
+        "contract": "sf-cms-content-retrieve@1"
+      },
+      {
+        "id": "content.retrieve.image",
+        "state": "experimental",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-retrieve@1"
+      },
+      {
+        "id": "content.deploy.email.create",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "content.deploy.email.update",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "content.deploy.email.unchanged",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "content.deploy.email-template.create",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "content.deploy.email-template.update",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "content.deploy.email-template.unchanged",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-content-deploy@1"
+      },
+      {
+        "id": "images.upload.create",
+        "state": "unqualified",
+        "transport": "cli-json",
+        "contract": "sf-cms-images-upload@1"
       },
       {
         "id": "content.delete.email",
@@ -136,37 +153,54 @@
         "state": "experimental",
         "transport": "cli-json",
         "contract": "sf-cms-content-unpublish@1"
-      },
-      {
-        "id": "content.update.email-raw-html",
-        "state": "experimental",
-        "transport": "cli-json",
-        "contract": "sf-cms-content-update@1"
-      },
-      {
-        "id": "content.update.email-template-raw-html",
-        "state": "experimental",
-        "transport": "cli-json",
-        "contract": "sf-cms-content-update@2"
-      },
-      {
-        "id": "workspace.import.email-fragment-create",
-        "state": "experimental",
-        "transport": "cli-json",
-        "contract": "sf-cms-workspace-import@1"
-      },
-      {
-        "id": "workspace.import.image-create",
-        "state": "experimental",
-        "transport": "cli-json",
-        "contract": "sf-cms-workspace-import@2"
-      },
-      {
-        "id": "workspace.import.mapping",
-        "state": "experimental",
-        "transport": "cli-json",
-        "contract": "sf-cms-workspace-import@1"
       }
-    ]
+    ],
+    "internalRegistry": {
+      "scope": "internal-engine-only",
+      "contract": "sf-metadata-capability-v1",
+      "version": "1.0.0",
+      "fixtureSha256": "557e9007ddaeea4c58807d9fc246fc62be646148591123d4398d5d00fa7f6f1b",
+      "declarations": [
+        {
+          "dependencyExtractorVersion": "cms-email-dependencies@1",
+          "identity": {
+            "provider": "sf-plugin-cms",
+            "family": "cms",
+            "type": "Email",
+            "profile": "dependency-free"
+          },
+          "nativeScope": {
+            "kind": "marketing-workspace",
+            "root": "email"
+          },
+          "operations": [
+            "retrieve"
+          ],
+          "preflight": {
+            "completionProof": "exact workspace, API-name, and language match",
+            "hardBounds": {
+              "maxCalls": 5,
+              "maxItems": 1,
+              "maxPages": 1
+            },
+            "strategy": "targeted"
+          },
+          "providerContract": {
+            "maxVersion": "0.13.0",
+            "minVersion": "0.10.0",
+            "name": "sf-plugin-cms"
+          },
+          "retrieval": {
+            "completionProof": "complete bounded family inventory",
+            "hardBounds": {
+              "maxCalls": 20,
+              "maxItems": 500,
+              "maxPages": 10
+            },
+            "strategy": "filtered"
+          }
+        }
+      ]
+    }
   }
 }

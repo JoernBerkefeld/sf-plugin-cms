@@ -116,7 +116,7 @@ describe('Email publish service', () => {
 
   it('writes pending intent then publishes only the selected variant', async () => {
     const current = fixture();
-    const run = await createRunOwnedTemp('sf-cms-publish');
+    const run = await createRunOwnedTemp('sf-plugin-cms-publish');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
@@ -169,7 +169,7 @@ describe('Email publish service', () => {
       .returns(
         Object.assign(Promise.reject(new Error('timeout')), { stream: () => new PassThrough() }),
       );
-    const run = await createRunOwnedTemp('sf-cms-publish-uncertain');
+    const run = await createRunOwnedTemp('sf-plugin-cms-publish-uncertain');
     const parent = await createRunOwnedDirectory(run, 'fixture');
     const reportDirectory = path.join(parent, 'report');
     try {

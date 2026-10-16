@@ -846,6 +846,36 @@ describe('workspace export service', () => {
     expect(await readdir(root)).to.deep.equal(['existing', 'file', 'link']);
   });
 
+  it('publishes eligible literal HTML while retaining partial diagnostics and service provenance', async () => {
+    const parent = await createFixture('cms-partial-editable-export');
+    const editable = path.join(parent, 'editable');
+    const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+      if (url === '/connect/cms/spaces/space') return fakeRequest({ id: 'space' });
+      if (url.startsWith('/connect/cms/items/search'))
+        return fakeRequest({ items: [row('variant')], total: 2 });
+      return fakeRequest(
+        detail('variant', 'space', {
+          contentType: 'sfdc_cms__email',
+          contentBody: { rawHtml: '<p>literal</p>' },
+        }),
+      );
+    });
+    const result = await exportWorkspace({ request }, 'space', path.join(parent, 'baseline'), {
+      editableDirectory: editable,
+      sourceOrgId: '00DControlledSource',
+    });
+    expect(Object.keys(result)).to.have.members(['destination', 'manifest', 'manifestSha256']);
+    expect(result.manifest.completeness).to.equal('partial');
+    expect(result.manifest.provenance.sourceOrgId).to.equal('00DControlledSource');
+    expect(result.manifestSha256).to.match(/^[a-f\d]{64}$/u);
+    expect(await readFile(path.join(editable, 'items/variant.html'), 'utf8')).to.equal(
+      '<p>literal</p>',
+    );
+    expect(
+      JSON.parse(await readFile(path.join(result.destination, 'manifest.json'), 'utf8')),
+    ).to.deep.equal(result.manifest);
+  });
+
   it('retains the valid baseline when no editable variants exist', async () => {
     const request = sinon.stub().returns(fakeRequest({ items: [], total: 0 }));
     let failure: unknown;
@@ -2639,7 +2669,10 @@ describe('workspace export service', () => {
     const makeTemporaryDirectory = sinon
       .stub()
       .callsFake(async (prefix: string): Promise<string> => {
-        const temporary = await mkdtemp(prefix);
+        // Publication staging must remain beside its destination inside this owned fixture.
+        expect(path.isAbsolute(prefix)).to.equal(true);
+        expect(path.dirname(prefix)).to.equal(root);
+        const temporary = await mkdtemp(path.join(root, path.basename(prefix)));
         await writeFile(path.join(temporary, 'items'), 'staged write blocker', { flag: 'wx' });
         return temporary;
       });
