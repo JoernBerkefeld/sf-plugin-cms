@@ -108,7 +108,7 @@ describe('item-local incremental source writer', () => {
     expect(await snapshot(folder)).to.deep.equal(before);
     const receipt = await writeEditableItemSource(project, directory, next, true);
     expect(receipt.updated).to.have.length(2);
-    expect(receipt.removed).to.deep.equal([path.join(folder, 'Welcome.cms-email.textContent.txt')]);
+    expect(receipt.removed).to.deep.equal([path.join(folder, 'Welcome.cms-email.txt')]);
     expect(await readFile(path.join(folder, 'Other.textContent.txt'), 'utf8')).to.equal('keep');
     const repeated = await writeEditableItemSource(project, directory, next, true);
     expect(repeated.unchanged).to.have.length(2);
@@ -121,7 +121,7 @@ describe('item-local incremental source writer', () => {
       await mkdir(folder, { recursive: true });
       const item = projection(false);
       if (prior !== undefined) await writeFile(path.join(folder, item.definitionName), prior);
-      await writeFile(path.join(folder, 'Welcome.cms-email.textContent.txt'), 'unknown owner');
+      await writeFile(path.join(folder, 'Welcome.cms-email.txt'), 'unknown owner');
       const before = await snapshot(folder);
       await failure(
         writeEditableItemSource(project, directory, item, true),
@@ -206,6 +206,20 @@ describe('item-local incremental source writer', () => {
 
   it('rejects case aliases, directory files, and hard links without touching other selected files', async () => {
     for (const kind of ['alias', 'directory', 'hardlink']) {
+  it('rejects old companion bindings before overwriting any selected file', async () => {
+    const project = await root();
+    const folder = path.join(project, directory);
+    const item = projection();
+    await writeEditableItemSource(project, directory, item, false);
+    const prior = structuredClone(item.definition);
+    prior.companions[0].path = 'Welcome.cms-email.rawHtml.html';
+    await writeFile(path.join(folder, item.definitionName), JSON.stringify(prior));
+    await writeFile(path.join(folder, prior.companions[0].path), 'Old local HTML');
+    const before = await snapshot(folder);
+    await failure(writeEditableItemSource(project, directory, item, true), /same-stem/u);
+    expect(await snapshot(folder)).to.deep.equal(before);
+  });
+
       const project = await root();
       const folder = path.join(project, directory);
       await mkdir(folder, { recursive: true });

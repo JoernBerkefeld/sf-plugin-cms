@@ -100,7 +100,7 @@ export async function writeEditableItemSource(
       throw new TypeError('Prior selected-item definition has an identity/type/language conflict');
   }
   // The only currently optional companion has one exact recognized filename.
-  const textName = `${base}.textContent.txt`;
+  const textName = `${base}.txt`;
   const obsolete: string[] = [];
   if (!files.has(textName)) {
     const bytes = await existing(destination, textName);

@@ -57,6 +57,12 @@ describe('versioned editable Email components', () => {
         ...original.contentBody,
         rawHtml: html,
       });
+      const base = `Welcome.cms-${template ? 'email-template' : 'email'}`;
+      expect(projection.definitionName).to.equal(`${base}.json`);
+      expect(projection.definition.companions).to.deep.equal([
+        { role: 'rawHtml', path: `${base}.html` },
+        { role: 'textContent', path: `${base}.txt` },
+      ]);
       expect(projection.definition.contentBody).not.to.have.property('textContent');
       expect(projection.definition.contentBody).not.to.have.property('rawHtml');
       expect(projection.companions.map(({ role }) => role)).to.deep.equal([
@@ -94,6 +100,23 @@ describe('versioned editable Email components', () => {
       const loaded = await loadEditableItemSourceV2(json);
       expect(loaded.contentBody.messagePurpose).to.equal('Promotional');
       expect(loaded.definition.language).to.equal('de_DE');
+    });
+  }
+
+  for (const template of [false, true]) {
+    it(`rejects old role-suffixed filenames for ${template ? 'Template' : 'Email'} without migration`, async () => {
+      const projection = extractEditableItemSourceV2(definition(template), '<p>Hello</p>');
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-old-companion-name-'));
+      const json = path.join(directory, projection.definitionName);
+      for (const role of ['rawHtml', 'textContent']) {
+        const candidate = structuredClone(projection.definition);
+        const companion = candidate.companions.find((entry) => entry.role === role)!;
+        const extension = role === 'rawHtml' ? 'html' : 'txt';
+        companion.path = companion.path.replace(`.${extension}`, `.${role}.${extension}`);
+        expect(() => assertEditableItemDefinitionV2(candidate)).to.throw(/same-stem/u);
+        await writeFile(json, JSON.stringify(candidate));
+        await failure(loadEditableItemSourceV2(json), /same-stem/u);
+      }
     });
   }
 

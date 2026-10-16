@@ -588,8 +588,8 @@ describe('read-only editable Email acquisition', () => {
     expect(projection.definitionName).to.equal('Welcome.cms-email.json');
     expect(projection.definition.folderPath).to.deep.equal([]);
     expect(projection.companions.map(({ path }) => path)).to.deep.equal([
-      'Welcome.cms-email.rawHtml.html',
-      'Welcome.cms-email.textContent.txt',
+      'Welcome.cms-email.html',
+      'Welcome.cms-email.txt',
     ]);
     expect(projection.companions[0].bytes.toString()).to.equal('<p>Café &amp; 世界</p>');
     const body = reassembleEditableItemSourceV2(

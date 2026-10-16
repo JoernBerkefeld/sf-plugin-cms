@@ -204,10 +204,7 @@ describe('local deploy source selection', () => {
     for (const v2 of [false, true]) {
       const root = await temporary();
       const file = await fixture(root, definition(), v2);
-      const companion = path.join(
-        root,
-        v2 ? 'Welcome.cms-email.textContent.txt' : 'Welcome.cms-email.html',
-      );
+      const companion = path.join(root, v2 ? 'Welcome.cms-email.txt' : 'Welcome.cms-email.html');
       await unlink(companion);
       await failure(selectDeploySources({ 'source-dir': [root] }), /missing/u);
       await writeFile(file, '{broken');

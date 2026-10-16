@@ -82,7 +82,7 @@ export function assertEditableItemDefinitionV2(
       throw new TypeError('Invalid or duplicate editable v2 companion role');
     roles.add(companion.role);
     const extension = companion.role === 'rawHtml' ? 'html' : 'txt';
-    if (companion.path !== `${base}.${companion.role}.${extension}`)
+    if (companion.path !== `${base}.${extension}`)
       throw new TypeError('Editable v2 companion must use its exact same-stem role/path');
   }
   if (!roles.has('rawHtml')) throw new TypeError('Editable v2 rawHtml companion is required');
@@ -106,13 +106,13 @@ export function extractEditableItemSourceV2(
   };
   const base = stem(candidate);
   const companions: EditableItemProjectionV2['companions'] = [
-    { role: 'rawHtml', path: `${base}.rawHtml.html`, bytes: Buffer.from(literalHtml, 'utf8') },
+    { role: 'rawHtml', path: `${base}.html`, bytes: Buffer.from(literalHtml, 'utf8') },
   ];
   const textContent = candidate.contentBody.textContent;
   if (typeof textContent === 'string') {
     companions.push({
       role: 'textContent',
-      path: `${base}.textContent.txt`,
+      path: `${base}.txt`,
       bytes: Buffer.from(textContent, 'utf8'),
     });
     delete candidate.contentBody.textContent;
