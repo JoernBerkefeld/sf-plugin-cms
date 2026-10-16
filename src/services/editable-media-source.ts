@@ -195,7 +195,13 @@ export function extractEditableMediaSource(
   fields(contentBody, ['sfdc_cms:media']);
   const native = contentBody['sfdc_cms:media'];
   fields(native, ['source', 'url']);
-  fields(native.source, ['type', 'ref', 'size', 'mimeType'], ['type', 'size', 'mimeType']);
+  fields(
+    native.source,
+    ['type', 'ref', 'size', 'fileSize', 'mimeType'],
+    ['type', 'size', 'mimeType'],
+  );
+  if (Object.hasOwn(native.source, 'fileSize') && native.source.fileSize !== native.source.size)
+    throw new TypeError('Native media fileSize/size disagreement');
   if (
     native.source.type !== 'file' ||
     !Number.isSafeInteger(native.source.size) ||

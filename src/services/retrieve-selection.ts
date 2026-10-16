@@ -1,4 +1,4 @@
-export type RetrieveContentType = 'sfdc_cms__email' | 'sfdc_cms__emailTemplate';
+export type RetrieveContentType = 'sfdc_cms__email' | 'sfdc_cms__emailTemplate' | 'sfdc_cms__image';
 
 /** The actual repeatable CLI flag shapes; unrelated command flags are not consumed. */
 export interface RetrieveSelectionFlags {
@@ -27,7 +27,11 @@ export interface RetrieveSelection {
 function qualifiedType(value: string): RetrieveContentType {
   if (value === 'email' || value === 'emailTemplate')
     throw new TypeError('Retrieve requires qualified content types, not unqualified families');
-  if (value !== 'sfdc_cms__email' && value !== 'sfdc_cms__emailTemplate')
+  if (
+    value !== 'sfdc_cms__email' &&
+    value !== 'sfdc_cms__emailTemplate' &&
+    value !== 'sfdc_cms__image'
+  )
     throw new TypeError('Retrieve requires a supported qualified content type');
   return value;
 }

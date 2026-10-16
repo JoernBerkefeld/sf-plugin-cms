@@ -14,6 +14,8 @@ import path from 'node:path';
 import type { SourceDefinition } from '../../src/contracts/source-definition.js';
 import { extractEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
 import { writeEditableItemSource } from '../../src/services/write-item-source.js';
+import { extractEditableMediaSource } from '../../src/services/editable-media-source.js';
+import { createHash } from 'node:crypto';
 
 const directory = 'cms/Marketing/email';
 function projection(text = true, html = '<p>Hello</p>') {
@@ -62,7 +64,124 @@ async function snapshot(folder: string) {
   );
 }
 
+function mediaProjection(binary = true, jpeg = false) {
+  const bytes = jpeg
+    ? Buffer.from([255, 216, 255, 42])
+    : Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 42]);
+  return extractEditableMediaSource(
+    {
+      identity: {
+        family: 'cms',
+        type: 'Image',
+        apiName: 'Hero',
+        context: { workspaceApiName: 'Marketing' },
+      },
+      contentType: 'sfdc_cms__image',
+      language: 'en_US',
+      folderPath: [],
+    },
+    {
+      'sfdc_cms:media': {
+        source: { type: 'file', size: bytes.length, mimeType: jpeg ? 'image/jpeg' : 'image/png' },
+        url: `/cms/media/key?fileName=hero.${jpeg ? 'jpg' : 'png'}&version=1.1&fileHash=${createHash('md5').update(bytes).digest('hex')}`,
+      },
+    },
+    binary ? bytes : undefined,
+  );
+}
+
 describe('item-local incremental source writer', () => {
+  for (const prior of ['missing', 'url-only', 'other-extension'] as const) {
+    it(`rejects differing undeclared media targets before any write with ${prior} ownership`, async () => {
+      const project = await root();
+      const mediaDirectory = 'cms/Marketing/image';
+      const folder = path.join(project, mediaDirectory);
+      await mkdir(folder, { recursive: true });
+      if (prior !== 'missing')
+        await writeEditableItemSource(
+          project,
+          mediaDirectory,
+          mediaProjection(prior !== 'url-only', prior === 'other-extension'),
+          false,
+        );
+      const item = mediaProjection();
+      await writeFile(path.join(folder, item.companions[0].path), 'unowned local media');
+      const before = await snapshot(folder);
+      for (const overwrite of [false, true]) {
+        await failure(
+          writeEditableItemSource(project, mediaDirectory, item, overwrite),
+          /ownership/u,
+        );
+        expect(await snapshot(folder)).to.deep.equal(before);
+      }
+    });
+  }
+  it('allows an owned media replacement and a transition to an absent destination', async () => {
+    const project = await root();
+    const mediaDirectory = 'cms/Marketing/image';
+    const folder = path.join(project, mediaDirectory);
+    const item = mediaProjection();
+    await writeEditableItemSource(project, mediaDirectory, item, false);
+    await writeFile(path.join(folder, item.companions[0].path), 'owned local edit');
+    const replacement = await writeEditableItemSource(project, mediaDirectory, item, true);
+    expect(replacement.updated).to.deep.equal([path.join(folder, item.companions[0].path)]);
+    expect(await readFile(path.join(folder, item.companions[0].path))).to.deep.equal(
+      item.companions[0].bytes,
+    );
+    const next = mediaProjection(true, true);
+    const transition = await writeEditableItemSource(project, mediaDirectory, next, true);
+    expect(transition.created).to.deep.equal([path.join(folder, next.companions[0].path)]);
+    expect(transition.removed).to.deep.equal([path.join(folder, item.companions[0].path)]);
+  });
+  it('writes media independently, protects edits, and removes only a prior declared companion', async () => {
+    const project = await root();
+    const folder = path.join(project, 'cms/Marketing/image');
+    const item = mediaProjection();
+    const first = await writeEditableItemSource(project, 'cms/Marketing/image', item, false);
+    expect(first.created).to.have.length(2);
+    await writeFile(path.join(folder, 'Other.media.png'), 'unrelated');
+    const before = await snapshot(folder);
+    const repeated = await writeEditableItemSource(project, 'cms/Marketing/image', item, false);
+    expect(repeated.unchanged).to.have.length(2);
+    expect(await snapshot(folder)).to.deep.equal(before);
+    await writeFile(path.join(folder, item.companions[0].path), 'local edit');
+    await failure(
+      writeEditableItemSource(project, 'cms/Marketing/image', item, false),
+      /overwrite/u,
+    );
+    await writeEditableItemSource(project, 'cms/Marketing/image', item, true);
+    const url = mediaProjection(false);
+    await failure(
+      writeEditableItemSource(project, 'cms/Marketing/image', url, false),
+      /overwrite/u,
+    );
+    const converted = await writeEditableItemSource(project, 'cms/Marketing/image', url, true);
+    expect(converted.removed).to.deep.equal([path.join(folder, item.companions[0].path)]);
+    expect(await readFile(path.join(folder, 'Other.media.png'), 'utf8')).to.equal('unrelated');
+  });
+  it('rejects media directory, projection and ownership disagreement without broadening Email admission', async () => {
+    const project = await root();
+    const item = mediaProjection();
+    await failure(writeEditableItemSource(project, directory, item, true), /directory/u);
+    const bad = structuredClone(item);
+    bad.companions[0].path = 'Other.png';
+    await failure(writeEditableItemSource(project, 'cms/Marketing/image', bad, true), /bindings/u);
+    await writeEditableItemSource(project, 'cms/Marketing/image', item, false);
+    const prior = structuredClone(item.definition);
+    prior.language = 'de_DE';
+    await writeFile(
+      path.join(project, 'cms/Marketing/image', item.definitionName),
+      JSON.stringify(prior),
+    );
+    await failure(writeEditableItemSource(project, 'cms/Marketing/image', item, true), /language/u);
+    const wrongFamily = projection();
+    (wrongFamily.definition as unknown as Record<string, unknown>).contract = 'sf-cms-media-source';
+    wrongFamily.definitionBytes = Buffer.from(JSON.stringify(wrongFamily.definition));
+    await failure(
+      writeEditableItemSource(project, directory, wrongFamily, true),
+      /fields|contract/u,
+    );
+  });
   it('preserves unrelated project files and unchanged bytes and mtimes', async () => {
     const project = await root();
     const folder = path.join(project, directory);
@@ -129,6 +248,20 @@ describe('item-local incremental source writer', () => {
       );
       expect(await snapshot(folder)).to.deep.equal(before);
     }
+  });
+
+  it('rejects old companion bindings before overwriting any selected file', async () => {
+    const project = await root();
+    const folder = path.join(project, directory);
+    const item = projection();
+    await writeEditableItemSource(project, directory, item, false);
+    const prior = structuredClone(item.definition);
+    prior.companions[0].path = 'Welcome.cms-email.rawHtml.html';
+    await writeFile(path.join(folder, item.definitionName), JSON.stringify(prior));
+    await writeFile(path.join(folder, prior.companions[0].path), 'Old local HTML');
+    const before = await snapshot(folder);
+    await failure(writeEditableItemSource(project, directory, item, true), /same-stem/u);
+    expect(await snapshot(folder)).to.deep.equal(before);
   });
 
   it('blocks prior filename/type/language identity conflicts before writes', async () => {
@@ -206,20 +339,6 @@ describe('item-local incremental source writer', () => {
 
   it('rejects case aliases, directory files, and hard links without touching other selected files', async () => {
     for (const kind of ['alias', 'directory', 'hardlink']) {
-  it('rejects old companion bindings before overwriting any selected file', async () => {
-    const project = await root();
-    const folder = path.join(project, directory);
-    const item = projection();
-    await writeEditableItemSource(project, directory, item, false);
-    const prior = structuredClone(item.definition);
-    prior.companions[0].path = 'Welcome.cms-email.rawHtml.html';
-    await writeFile(path.join(folder, item.definitionName), JSON.stringify(prior));
-    await writeFile(path.join(folder, prior.companions[0].path), 'Old local HTML');
-    const before = await snapshot(folder);
-    await failure(writeEditableItemSource(project, directory, item, true), /same-stem/u);
-    expect(await snapshot(folder)).to.deep.equal(before);
-  });
-
       const project = await root();
       const folder = path.join(project, directory);
       await mkdir(folder, { recursive: true });

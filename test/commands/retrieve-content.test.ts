@@ -252,7 +252,7 @@ describe('cms retrieve content command', () => {
     { 'target-org': '' },
     { 'output-dir': '' },
     { 'api-name': [' '] },
-    { 'content-type': ['sfdc_cms__image'] },
+    { 'content-type': ['sfdc_cms__document'] },
     { 'content-type': ['email'] },
     { 'content-type': ['sfdc_cms__email', 'sfdc_cms__emailTemplate'] },
     { metadata: ['sfdc_cms__email:Welcome'] },
@@ -269,6 +269,29 @@ describe('cms retrieve content command', () => {
       expect(subject.writeSource.notCalled).to.equal(true);
     });
   }
+
+  it('admits a standalone Image selector through preparation and local writing', async () => {
+    const subject = command({
+      'content-type': ['sfdc_cms__image'],
+      'api-name': ['Hero'],
+    });
+    subject.resolution.variants = [row('image', 'Hero', 'sfdc_cms__image')];
+    subject.resolution.inventory.contentTypes = ['sfdc_cms__image'];
+    const result = await subject.instance.run();
+    expect(result.status).to.equal('success');
+    expect(process.exitCode).to.equal(0);
+    expect(subject.getOrgContext.calledOnce).to.equal(true);
+    expect(subject.prepareSources.firstCall.args[1].selection.groups).to.deep.equal([
+      { contentType: 'sfdc_cms__image', all: false, apiNames: ['Hero'], contentKeysOrIds: [] },
+    ]);
+    expect(subject.acquire.calledOnceWithExactly('image')).to.equal(true);
+    expect(subject.writeSource.calledOnce).to.equal(true);
+    expect(result.result!.items[0].identity).to.deep.equal({
+      contentType: 'sfdc_cms__image',
+      apiName: 'Hero',
+      language: 'en_US',
+    });
+  });
 
   it('normalizes duplicate names without cross products or repeated writes', async () => {
     const subject = command({
@@ -347,6 +370,52 @@ describe('cms retrieve content command', () => {
     expect(result.status).to.equal('blocked');
     expect(process.exitCode).to.equal(1);
     expect(subject.acquire.notCalled).to.equal(true);
+  });
+
+  it('routes mixed Email/Image results independently and stops after fatal Image reads', async () => {
+    for (const fatal of [false, true]) {
+      const subject = command({
+        'api-name': undefined,
+        'content-type': undefined,
+        metadata: ['sfdc_cms__email:Welcome', 'sfdc_cms__image:Hero', 'sfdc_cms__image:Later'],
+      });
+      subject.resolution.variants = [
+        row(),
+        row('image', 'Hero', 'sfdc_cms__image'),
+        row('later', 'Later', 'sfdc_cms__image'),
+      ];
+      subject.acquire
+        .onSecondCall()
+        .rejects(Object.assign(new Error('Image unavailable'), { statusCode: fatal ? 401 : 404 }));
+      const result = await subject.instance.run();
+      expect(result.status).to.equal('partial');
+      expect(result.result!.summary).to.include({
+        retrieved: fatal ? 1 : 2,
+        blocked: 1,
+        unattempted: fatal ? 1 : 0,
+      });
+      expect(result.result!.items[1].identity.contentType).to.equal('sfdc_cms__image');
+      expect(result.result!.items[1].diagnostics).to.deep.equal(['RETRIEVE_SOURCE_BLOCKED']);
+      expect(subject.writeSource.callCount).to.equal(fatal ? 1 : 2);
+    }
+  });
+
+  it('blocks Image portable collisions before acquisition while allowing a same-name Email', async () => {
+    const subject = command({
+      'api-name': undefined,
+      'content-type': ['sfdc_cms__image', 'sfdc_cms__email'],
+      all: true,
+    });
+    subject.resolution.variants = [
+      row('a', 'Hero', 'sfdc_cms__image'),
+      row('b', 'Hero', 'sfdc_cms__image'),
+      row('email', 'Hero'),
+    ];
+    const result = await subject.instance.run();
+    expect(result.status).to.equal('partial');
+    expect(result.result!.summary).to.include({ retrieved: 1, blocked: 2 });
+    expect(subject.acquire.args).to.deep.equal([['email']]);
+    expect(subject.writeSource.calledOnce).to.equal(true);
   });
 
   it('accepts complete empty all-of-type selection with exit zero and scoped proof', async () => {

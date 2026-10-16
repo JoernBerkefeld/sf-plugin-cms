@@ -49,6 +49,17 @@ async function failure(operation: Promise<unknown>, pattern: RegExp) {
 }
 
 describe('standalone editable native media source', () => {
+  it('admits only agreeing observed fileSize duplicates and still rejects unknown source fields', () => {
+    const native = body(PNG);
+    Object.assign(native['sfdc_cms:media'].source, { fileSize: PNG.length });
+    expect(
+      extractEditableMediaSource(metadata(), native, PNG).companions[0].bytes.equals(PNG),
+    ).to.equal(true);
+    Object.assign(native['sfdc_cms:media'].source, { fileSize: 1 });
+    expect(() => extractEditableMediaSource(metadata(), native, PNG)).to.throw(/fileSize\/size/u);
+    Object.assign(native['sfdc_cms:media'].source, { fileSize: PNG.length, unknown: true });
+    expect(() => extractEditableMediaSource(metadata(), native, PNG)).to.throw(/fields/u);
+  });
   for (const document of [false, true]) {
     it(`roundtrips and edits ${document ? 'Document' : 'Image'} bytes without native locators or a baseline`, async () => {
       const bytes = document ? DOCUMENT : PNG;

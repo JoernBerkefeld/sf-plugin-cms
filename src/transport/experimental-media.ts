@@ -203,7 +203,10 @@ export async function downloadExperimentalCmsMedia(
     current = target;
   }
   if (response === undefined || !response.ok || response.body === null) {
-    throw new TypeError(`Experimental media request failed with status ${response?.status ?? 0}`);
+    throw Object.assign(
+      new TypeError(`Experimental media request failed with status ${response?.status ?? 0}`),
+      { status: response?.status },
+    );
   }
   const responseType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
   if (responseType === undefined || responseType === 'text/html' || responseType.includes('json')) {

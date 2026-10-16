@@ -10,6 +10,24 @@ import {
 import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { readStableRegularFile } from './import-workspace.js';
 import { strictSourceJson } from './source-definition-import.js';
+import {
+  assertEditableMediaDefinition,
+  reassembleEditableMediaSource,
+} from './editable-media-source.js';
+import type { EditableMediaProjection } from './retrieve-media-source.js';
+
+function validate(value: unknown) {
+  if ((value as { contract?: unknown })?.contract === 'sf-cms-media-source') {
+    assertEditableMediaDefinition(value);
+    return value;
+  }
+  assertEditableItemDefinitionV2(value);
+  return value;
+}
+function bindings(value: ReturnType<typeof validate>) {
+  if (value.contract !== 'sf-cms-media-source') return value.companions;
+  return value.media.representation === 'binary' ? [value.media.companion] : [];
+}
 
 export type ItemSourceWriteReceipt = {
   definitionPath: string;
@@ -50,17 +68,21 @@ async function existing(directory: string, name: string): Promise<Buffer | undef
 export async function writeEditableItemSource(
   projectRoot: string,
   directory: string,
-  projection: EditableItemProjectionV2,
+  projection: EditableItemProjectionV2 | EditableMediaProjection,
   overwrite: boolean,
 ): Promise<ItemSourceWriteReceipt> {
   // Detach inputs before the first asynchronous filesystem operation.
-  const definition = strictSourceJson(projection.definitionBytes, 'Selected item JSON');
-  assertEditableItemDefinitionV2(definition);
+  const parsed = strictSourceJson(projection.definitionBytes, 'Selected item JSON');
+  const definition = validate(parsed);
   if (!isDeepStrictEqual(definition, projection.definition))
     throw new TypeError('Selected item projection definition/bytes disagree');
-  const profile = SOURCE_EMAIL_PROFILES.find(
-    (entry) => entry.contentType === definition.contentType,
-  )!;
+  const profile =
+    definition.contract === 'sf-cms-media-source'
+      ? {
+          token: definition.contentType === 'sfdc_cms__image' ? 'image' : 'document',
+          directory: definition.contentType === 'sfdc_cms__image' ? 'image' : 'document',
+        }
+      : SOURCE_EMAIL_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
   const base = `${definition.identity.apiName}.cms-${profile.token}`;
   if (
     directory !== `cms/${definition.identity.context.workspaceApiName}/${profile.directory}` ||
@@ -70,7 +92,7 @@ export async function writeEditableItemSource(
   if (
     !isDeepStrictEqual(
       projection.companions.map(({ role, path: name }) => ({ role, path: name })),
-      definition.companions,
+      bindings(definition),
     )
   )
     throw new TypeError('Selected item projection companion bindings disagree');
@@ -78,10 +100,10 @@ export async function writeEditableItemSource(
     [projection.definitionName, Buffer.from(projection.definitionBytes)],
     ...projection.companions.map(({ path: name, bytes }) => [name, Buffer.from(bytes)] as const),
   ]);
-  reassembleEditableItemSourceV2(
-    definition,
-    new Map([...files].filter(([name]) => name !== projection.definitionName)),
-  );
+  const companions = new Map([...files].filter(([name]) => name !== projection.definitionName));
+  if (definition.contract === 'sf-cms-media-source')
+    reassembleEditableMediaSource(definition, companions);
+  else reassembleEditableItemSourceV2(definition, companions);
   await assertEditableDirectoryPath(projectRoot, false);
   const destination = path.join(path.resolve(projectRoot), ...directory.split('/'));
   await assertEditableDirectoryPath(destination, false);
@@ -90,8 +112,11 @@ export async function writeEditableItemSource(
   const previousBytes = before.get(projection.definitionName);
   let previous;
   if (previousBytes !== undefined) {
-    previous = strictSourceJson(previousBytes, 'Prior selected-item ownership definition');
-    assertEditableItemDefinitionV2(previous);
+    previous = validate(
+      strictSourceJson(previousBytes, 'Prior selected-item ownership definition'),
+    );
+    if (previous.contract !== definition.contract)
+      throw new TypeError('Prior selected-item family conflict');
     if (
       !isDeepStrictEqual(previous.identity, definition.identity) ||
       previous.contentType !== definition.contentType ||
@@ -102,14 +127,36 @@ export async function writeEditableItemSource(
   // The only currently optional companion has one exact recognized filename.
   const textName = `${base}.txt`;
   const obsolete: string[] = [];
-  if (!files.has(textName)) {
+  if (definition.contract !== 'sf-cms-media-source' && !files.has(textName)) {
     const bytes = await existing(destination, textName);
     if (bytes !== undefined) {
-      if (!previous?.companions.some((entry) => entry.path === textName))
+      if (!previous || !bindings(previous).some((entry) => entry.path === textName))
         throw new TypeError(`Ambiguous obsolete companion ownership: ${textName}`);
       before.set(textName, bytes);
       obsolete.push(textName);
     }
+  }
+  if (definition.contract === 'sf-cms-media-source' && previous) {
+    for (const { path: name } of bindings(previous)) {
+      if (!files.has(name)) {
+        const bytes = await existing(destination, name);
+        if (bytes !== undefined) {
+          before.set(name, bytes);
+          obsolete.push(name);
+        }
+      }
+    }
+  }
+  for (const [name, bytes] of files) {
+    const prior = before.get(name);
+    if (
+      definition.contract === 'sf-cms-media-source' &&
+      name !== projection.definitionName &&
+      prior !== undefined &&
+      !prior.equals(bytes) &&
+      (!previous || !bindings(previous).some((entry) => entry.path === name))
+    )
+      throw new TypeError(`Ambiguous selected media companion ownership: ${name}`);
   }
   for (const [name, bytes] of files) {
     const prior = before.get(name);

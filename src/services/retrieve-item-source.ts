@@ -13,6 +13,10 @@ import {
 } from './editable-item-source-v2.js';
 import { getContent, getVariant, getWorkspace } from './read.js';
 import {
+  acquireEditableMediaSource,
+  type AcquiredEditableMediaSource,
+} from './retrieve-media-source.js';
+import {
   resolveNativeRetrieveSelection,
   type NativeRetrieveResolution,
   type ResolveNativeRetrieveInput,
@@ -20,7 +24,9 @@ import {
 import { projectSourceDefinitions } from './source-definition.js';
 import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-identity.js';
 
-type RequestConnection = Pick<Connection, 'request'> & Partial<Pick<Connection, 'version'>>;
+type RequestConnection = Pick<Connection, 'request'> &
+  Partial<Pick<Connection, 'version' | 'accessToken' | 'instanceUrl'>>;
+export type AcquiredEditableSource = AcquiredEditableEmailSource | AcquiredEditableMediaSource;
 export type AcquireEditableEmailSourceInput = {
   readonly workspaceId: string;
   readonly apiName: string;
@@ -242,7 +248,7 @@ export type PreparedEditableSourceSelection = {
   /** Detached observations, including explicit selectors that could not be resolved. */
   readonly resolution: NativeRetrieveResolution;
   /** Only IDs in the internally resolved selection are admitted; no inventory/proof input exists. */
-  readonly acquire: (variantId: string) => Promise<AcquiredEditableEmailSource>;
+  readonly acquire: (variantId: string) => Promise<AcquiredEditableSource>;
 };
 
 /**
@@ -282,6 +288,25 @@ export async function prepareEditableSourceSelection(
         )
       )
         throw new TypeError('Native selection scope disagreement');
+      if (row.ContentTypeFullyQualifiedName === 'sfdc_cms__image') {
+        const source = await acquireEditableMediaSource(
+          nativeConnection,
+          {
+            workspaceId,
+            language: selected.language,
+            apiName: nonempty(row.ManagedContent.ApiName, 'Image API name'),
+            contentType: 'sfdc_cms__image',
+          },
+          options,
+        );
+        if (
+          source.evidence.variantId !== row.Id ||
+          source.evidence.contentId !== row.ManagedContentId ||
+          source.projection.definition.identity.context.workspaceApiName !== workspace.apiName
+        )
+          throw new TypeError('Resolved Image identity/workspace changed during acquisition');
+        return source;
+      }
       const raw = await bindNativeDetail(connection, row, options);
       return acquireBoundSource(connection, nativeConnection, workspace, row, raw, options);
     },
