@@ -45,6 +45,8 @@ This is a plugin for the Salesforce `sf` command-line tool. It is **not a comple
 | WhatsApp Session Message                   | Not verified                    | Planned             | Planned              | Planned                | Not supported                |
 | WhatsApp Template Message                  | Not verified                    | Planned             | Planned              | Planned                | Not supported                |
 
+Image retrieval supports PNG, JPEG, GIF and WebP within the current retrieval limits. Portable Image deploy currently supports PNG CREATE and PNG bytes-only UPDATE, not those other formats. This is a current plugin limitation; no format-specific Salesforce blocker has been demonstrated. Full-format Image support remains pending, so Image is not fully complete. The next Image rollout will target platform-supported formats unless a concrete blocker is established; this is planned work, not available deploy support.
+
 Current operation limits:
 
 - Retrieve admits only supported root-level, single-variant Email, Email Template and Image shapes in an explicitly selected workspace and language. Images can have downloaded native media or external URL-only evidence; retrieving them does not make them deployable.
