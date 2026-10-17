@@ -47,7 +47,9 @@ export async function preflightDeployImageUpdate(
   const binary = source.source.binary;
   // Preserve the unchanged title using the documented binary UPDATE field, not apiName/name.
   const payload = { title: desired.title };
-  buildImageUpdateMultipart(payload, binary.fileName, binary.bytes);
+  buildImageUpdateMultipart(payload, binary.fileName, binary.bytes, {
+    mimeType: binary.mimeType,
+  });
   const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
   if (
     workspace.id !== selected.workspaceId ||

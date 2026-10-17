@@ -1,5 +1,7 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { randomBytes } from 'node:crypto';
+import { constants as bufferConstants } from 'node:buffer';
+import { assertMediaMimeType } from '../services/editable-media-source.js';
 import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
 import { CmsRequestError, type JsonRequestOptions } from './json-request.js';
@@ -23,6 +25,8 @@ export type ManagedContentDocumentBinding = {
 };
 
 export type MultipartImageCreateOptions = JsonRequestOptions & {
+  /** Explicit native MIME for the binary part; omitted callers retain the legacy envelope. */
+  mimeType?: string;
   boundaryFactory?: () => string;
   maxBoundaryAttempts?: number;
 };
@@ -116,7 +120,9 @@ function validateInput(input: ImageCreateInput): void {
 
 function validateFilename(filename: string): void {
   if (
+    typeof filename !== 'string' ||
     filename.length === 0 ||
+    filename.length > bufferConstants.MAX_LENGTH ||
     filename === '.' ||
     filename === '..' ||
     filename.includes('/') ||
@@ -163,8 +169,16 @@ export function buildImageCreateMultipart(
   input: ImageCreateInput,
   filename: string,
   image: Uint8Array,
-  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> = {},
+  options: Pick<
+    MultipartImageCreateOptions,
+    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
+  > = {},
 ): MultipartParts {
+  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
+  validateFilename(filename);
+  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
+    throw new CmsRequestError(OPERATION_KEY, 'Image filename must contain only ASCII characters');
+  }
   return buildFileCreateMultipart(input, filename, image, 'sfdc_cms__image', options);
 }
 
@@ -193,7 +207,10 @@ function buildFileCreateMultipart(
   filename: string,
   image: Uint8Array,
   contentType: 'sfdc_cms__image' | 'sfdc_cms__document',
-  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'>,
+  options: Pick<
+    MultipartImageCreateOptions,
+    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
+  >,
 ): MultipartParts {
   validateInput(input);
   validateFilename(filename);
@@ -203,7 +220,10 @@ function buildFileCreateMultipart(
   if (image.byteLength === 0) {
     throw new CmsRequestError(OPERATION_KEY, 'Image data must not be empty');
   }
-  if (image.byteLength > MAX_IMAGE_BYTES) {
+  if (!Number.isSafeInteger(image.byteLength) || image.byteLength > bufferConstants.MAX_LENGTH) {
+    throw new CmsRequestError(OPERATION_KEY, 'Binary size cannot be represented by a Buffer');
+  }
+  if (contentType === 'sfdc_cms__document' && image.byteLength > MAX_IMAGE_BYTES) {
     throw new CmsRequestError(OPERATION_KEY, `Image exceeds ${MAX_IMAGE_BYTES} byte limit`);
   }
 
@@ -227,15 +247,20 @@ function buildFileCreateMultipart(
   const binaryContentType =
     contentType === 'sfdc_cms__document'
       ? 'text/plain'
-      : 'application/octet-stream; charset=ISO-8859-1';
+      : (options.mimeType ?? 'application/octet-stream; charset=ISO-8859-1');
   const secondHeader = Buffer.from(
     `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: ${binaryContentType}\r\n\r\n`,
     'ascii',
   );
   const closing = Buffer.from(`\r\n--${boundary}--\r\n`, 'ascii');
 
+  const parts = [firstHeader, json, secondHeader, binary, closing];
+  const length = parts.reduce((total, part) => total + part.byteLength, 0);
+  if (!Number.isSafeInteger(length) || length > bufferConstants.MAX_LENGTH) {
+    throw new CmsRequestError(OPERATION_KEY, 'Multipart size cannot be represented by a Buffer');
+  }
   return {
-    body: Buffer.concat([firstHeader, json, secondHeader, binary, closing]),
+    body: Buffer.concat(parts, length),
     boundary,
     input: managedContentInput,
   };

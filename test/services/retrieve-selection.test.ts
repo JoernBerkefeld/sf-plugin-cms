@@ -31,21 +31,24 @@ describe('pure retrieve selector normalization', () => {
     });
   });
 
-  it('admits Image exact, native, all and mixed metadata selectors without admitting Document', () => {
-    const image = 'sfdc_cms__image';
-    expect(
-      normalizeRetrieveSelection({ 'content-type': [image], 'api-name': ['Hero'] }).groups,
-    ).to.deep.equal([group(image, false, ['Hero'])]);
-    expect(
-      normalizeRetrieveSelection({ 'content-type': [image], 'content-key-or-id': ['key'] }).groups,
-    ).to.deep.equal([group(image, false, [], ['key'])]);
-    expect(
-      normalizeRetrieveSelection({ 'content-type': [email, image], all: true }).groups,
-    ).to.deep.equal([group(email, true), group(image, true)]);
-    expect(
-      normalizeRetrieveSelection({ metadata: [image, `${image}:Hero`, `${email}:Welcome`] }).groups,
-    ).to.deep.equal([group(image, true, ['Hero']), group(email, false, ['Welcome'])]);
-  });
+  for (const image of ['sfdc_cms__image', 'sfdc_cms__document']) {
+    it(`admits ${image} exact, native, all and mixed metadata selectors`, () => {
+      expect(
+        normalizeRetrieveSelection({ 'content-type': [image], 'api-name': ['Hero'] }).groups,
+      ).to.deep.equal([group(image, false, ['Hero'])]);
+      expect(
+        normalizeRetrieveSelection({ 'content-type': [image], 'content-key-or-id': ['key'] })
+          .groups,
+      ).to.deep.equal([group(image, false, [], ['key'])]);
+      expect(
+        normalizeRetrieveSelection({ 'content-type': [email, image], all: true }).groups,
+      ).to.deep.equal([group(email, true), group(image, true)]);
+      expect(
+        normalizeRetrieveSelection({ metadata: [image, `${image}:Hero`, `${email}:Welcome`] })
+          .groups,
+      ).to.deep.equal([group(image, true, ['Hero']), group(email, false, ['Welcome'])]);
+    });
+  }
 
   it('keeps native selectors exact and deduplicates only identical values', () => {
     expect(
@@ -138,7 +141,7 @@ describe('pure retrieve selector normalization', () => {
     'unknown',
     'email',
     'emailTemplate',
-    'sfdc_cms__document',
+    'sfdc_cms__audio',
     'sfdc_cms__Email',
     ` ${email}`,
     `${email} `,

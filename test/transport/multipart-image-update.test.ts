@@ -1,5 +1,6 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
@@ -39,6 +40,79 @@ async function rejects(action: () => Promise<unknown>, message?: string): Promis
 
 describe('private multipart Image UPDATE transport', () => {
   afterEach(() => sinon.restore());
+
+  it('threads generic MIME and opaque bytes above 10 MiB with exact framing and no replay', async () => {
+    for (const mimeType of ['image/avif', 'image/svg+xml', 'application/x-future-format']) {
+      const backing = Buffer.alloc(MAX_IMAGE_BYTES + 3, 255);
+      const image = backing.subarray(1, -1);
+      image.set([0, 13, 10, 128]);
+      const selected = { ...options, mimeType };
+      const built = buildImageUpdateMultipart(input, 'opaque.bin', image, selected);
+      const header = Buffer.from(`Content-Type: ${mimeType}\r\n\r\n`, 'ascii');
+      const start = built.body.indexOf(header) + header.length;
+      expect(start).to.be.greaterThan(header.length);
+      expect(
+        createHash('sha256')
+          .update(built.body.subarray(start, start + image.byteLength))
+          .digest('hex'),
+      ).to.equal(createHash('sha256').update(image).digest('hex'));
+      expect(built.body.subarray(start + image.byteLength).toString('ascii')).to.equal(
+        '\r\n--safe--\r\n',
+      );
+      expect(built.body.includes(Buffer.from('charset=ISO-8859-1'))).to.equal(false);
+      const request = sinon.stub().returns(fakeRequest(Promise.resolve(response)));
+      await updateImageContent({ request }, 'variant', input, 'opaque.bin', image, selected);
+      expect(request.calledOnce).to.equal(true);
+      expect(request.firstCall.args[0].body.equals(built.body)).to.equal(true);
+      expect(request.firstCall.args[1].retry).to.deep.equal({ maxRetries: 0 });
+    }
+  });
+
+  it('rejects unrepresentable binary lengths before boundary generation', () => {
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const byteLength of [Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY]) {
+      const image = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
+      expect(() =>
+        buildImageUpdateMultipart(input, 'opaque.bin', image, { boundaryFactory }),
+      ).to.throw(CmsRequestError, 'represented by a Buffer');
+    }
+    expect(boundaryFactory.called).to.equal(false);
+  });
+
+  it('rejects unknown unsafe MIME values before framing or requests', async () => {
+    const request = sinon.stub();
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const mimeType of [
+      null,
+      42,
+      {},
+      '',
+      'image',
+      '/png',
+      'image/',
+      ' image/png',
+      'image/png ',
+      'image/png; charset=UTF-8',
+      'image/png\r\nX-Evil: yes',
+      'image/\0png',
+      'image/\u007Fpng',
+      'image/\u010Dpng',
+    ]) {
+      const selected = { boundaryFactory, mimeType: mimeType as string };
+      expect(() => buildImageUpdateMultipart(input, 'opaque.bin', bytes, selected)).to.throw(
+        TypeError,
+        'safe ASCII type/subtype',
+      );
+      try {
+        await updateImageContent({ request }, 'variant', input, 'opaque.bin', bytes, selected);
+        expect.fail('expected MIME rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(TypeError);
+      }
+    }
+    expect(boundaryFactory.called).to.equal(false);
+    expect(request.called).to.equal(false);
+  });
 
   it('builds exact UPDATE-only JSON, two ordered parts and binary view bytes', () => {
     const backing = Buffer.concat([Buffer.from([9]), bytes, Buffer.from([8])]);
@@ -145,8 +219,8 @@ describe('private multipart Image UPDATE transport', () => {
     }
   });
 
-  it('enforces binary caps and boundary validation with bounded collision handling', () => {
-    for (const value of [Buffer.alloc(0), Buffer.alloc(MAX_IMAGE_BYTES + 1), 'text']) {
+  it('enforces binary validity and boundary validation with bounded collision handling', () => {
+    for (const value of [Buffer.alloc(0), 'text']) {
       expect(() => buildImageUpdateMultipart(input, 'a.png', value as Uint8Array)).to.throw(
         CmsRequestError,
       );

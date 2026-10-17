@@ -115,7 +115,7 @@ export async function executeDeployImageCreate(
       fresh.payload,
       binary.fileName,
       binary.bytes,
-      requestOptions,
+      { ...requestOptions, mimeType: binary.mimeType },
     );
     const created = {
       contentId: response.managedContentId,

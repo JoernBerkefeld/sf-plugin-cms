@@ -54,9 +54,9 @@ export type RetrieveContentResult = {
 
 export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveContentResult>> {
   public static readonly summary =
-    'Retrieve selected editable Emails, Email Templates and Images into an explicit local project.';
+    'Retrieve selected editable Emails, Email Templates, Images and Documents into an explicit local project.';
   public static readonly description =
-    'Select Email, Email Template or Image types by exact API names, native content keys/parent IDs, all-of-type, or repeatable metadata Type[:ApiName]. Metadata is exclusive of separate selectors. Resolves complete native inventory before local writes; each supported root-level, single-variant item is acquired independently. Writes portable Email JSON and HTML/text companions or media JSON with downloaded Image bytes. External media remains explicitly URL-only. Differing local files require --overwrite. Retrieval never mutates the org. Portable Image deployment supports only the narrow binary PNG profile; URL-only and other retrieved shapes are not deployable.';
+    'Select Email, Email Template, Image or Document types by exact API names, native content keys/parent IDs, all-of-type, or repeatable metadata Type[:ApiName]. Metadata is exclusive of separate selectors. Resolves complete native inventory before local writes; each supported root-level, single-variant item is acquired independently. Writes portable Email JSON and HTML/text companions or media JSON with downloaded Image or UTF-8 text/plain Document bytes. Document deployment remains blocked. External media remains explicitly URL-only. Differing local files require --overwrite. Retrieval never mutates the org. Portable Image deployment admits binary Image sources with safe MIME and paths; Salesforce determines format and size acceptance, with live qualification pending. URL-only sources and Documents are not deployable.';
   public static readonly examples = [
     '<%= config.bin %> cms retrieve content -o my-org -W Marketing -t sfdc_cms__email -n Welcome -L -d ./project --json',
     '<%= config.bin %> cms retrieve content -o my-org -w 0ZuSOURCE -t sfdc_cms__email -i CONTENT_KEY -l en_US -d ./project -x',
@@ -77,7 +77,8 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
       char: 't',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'sfdc_cms__email, sfdc_cms__emailTemplate or sfdc_cms__image; repeat for --all.',
+      summary:
+        'sfdc_cms__email, sfdc_cms__emailTemplate, sfdc_cms__image or sfdc_cms__document; repeat for --all.',
     }),
     'api-name': Flags.string({
       char: 'n',
@@ -203,7 +204,7 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
       return finish(
         'blocked',
         'RETRIEVE_SELECTION_INVALID',
-        'Specify an explicit org/output, one workspace ID/name and one language/default-language choice. Use supported Email/Email Template/Image types with exactly one selection mode; metadata is exclusive of separate selectors.',
+        'Specify an explicit org/output, one workspace ID/name and one language/default-language choice. Use supported Email/Email Template/Image/Document types with exactly one selection mode; metadata is exclusive of separate selectors.',
       );
     }
     result.selection = {

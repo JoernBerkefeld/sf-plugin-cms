@@ -100,12 +100,8 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
   }
   if ((candidate as { contract?: string })?.contract === 'sf-cms-media-source') {
     assertEditableMediaDefinition(candidate);
-    if (
-      candidate.contentType !== 'sfdc_cms__image' ||
-      candidate.media.representation !== 'binary' ||
-      candidate.media.mimeType !== 'image/png'
-    )
-      throw new TypeError('Image deploy requires the supported binary Image PNG profile');
+    if (candidate.contentType !== 'sfdc_cms__image' || candidate.media.representation !== 'binary')
+      throw new TypeError('Image deploy requires a binary Image source');
     return candidate;
   }
   assertSourceDefinition(candidate);
@@ -161,9 +157,10 @@ export async function selectDeploySources(
         : undefined;
     if (
       media &&
-      (media.source.representation !== 'binary' || media.source.binary.mimeType !== 'image/png')
+      (media.definition.contentType !== 'sfdc_cms__image' ||
+        media.source.representation !== 'binary')
     )
-      throw new TypeError('Image deploy requires the supported binary Image PNG profile');
+      throw new TypeError('Image deploy requires a binary Image source');
     let email:
       | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
       | Awaited<ReturnType<typeof loadEditableItemSource>>

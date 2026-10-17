@@ -288,14 +288,17 @@ export async function prepareEditableSourceSelection(
         )
       )
         throw new TypeError('Native selection scope disagreement');
-      if (row.ContentTypeFullyQualifiedName === 'sfdc_cms__image') {
+      if (
+        row.ContentTypeFullyQualifiedName === 'sfdc_cms__image' ||
+        row.ContentTypeFullyQualifiedName === 'sfdc_cms__document'
+      ) {
         const source = await acquireEditableMediaSource(
           nativeConnection,
           {
             workspaceId,
             language: selected.language,
-            apiName: nonempty(row.ManagedContent.ApiName, 'Image API name'),
-            contentType: 'sfdc_cms__image',
+            apiName: nonempty(row.ManagedContent.ApiName, 'Media API name'),
+            contentType: row.ContentTypeFullyQualifiedName,
           },
           options,
         );
@@ -304,7 +307,7 @@ export async function prepareEditableSourceSelection(
           source.evidence.contentId !== row.ManagedContentId ||
           source.projection.definition.identity.context.workspaceApiName !== workspace.apiName
         )
-          throw new TypeError('Resolved Image identity/workspace changed during acquisition');
+          throw new TypeError('Resolved media identity/workspace changed during acquisition');
         return source;
       }
       const raw = await bindNativeDetail(connection, row, options);

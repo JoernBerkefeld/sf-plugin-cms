@@ -136,7 +136,7 @@ export async function executeDeployImageUpdate(
       fresh.payload,
       binary.fileName,
       binary.bytes,
-      requestOptions,
+      { ...requestOptions, mimeType: binary.mimeType },
       async (raw) => {
         const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
         operation.result = {

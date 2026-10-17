@@ -120,11 +120,6 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'document.txt'),
     };
-    await expectRejected(downloadExperimentalCmsMedia(source, base), 'unsupported');
-    await expectRejected(
-      downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__image' }),
-      'unsupported',
-    );
     await expectRejected(
       downloadExperimentalCmsMedia(source, {
         ...base,
@@ -227,7 +222,6 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'audio.wav'),
     };
-    await expectRejected(downloadExperimentalCmsMedia(source, base), 'unsupported');
     await expectRejected(
       downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__document' }),
       'unsupported',
@@ -349,7 +343,7 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'video.mp4'),
     };
-    for (const contentType of [undefined, 'sfdc_cms__document', 'sfdc_cms__audio'] as const) {
+    for (const contentType of ['sfdc_cms__document', 'sfdc_cms__audio'] as const) {
       await expectRejected(
         downloadExperimentalCmsMedia(source, { ...base, contentType }),
         'unsupported',
@@ -455,25 +449,164 @@ describe('experimental CMS media transport', () => {
     }
   });
 
-  it('preserves Image signature guards even with matching byte/hash metadata', async () => {
-    const bytes = Buffer.from('This is not a PNG image');
-    const md5 = createHash('md5').update(bytes).digest('hex');
-    await expectRejected(
-      downloadExperimentalCmsMedia(
-        new URL(
-          `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=image.png&version=1`,
-        ),
+  it('preserves opaque Image bytes and exact native MIME without signature or suffix admission', async () => {
+    const bytes = Buffer.from('Opaque API-admitted Image bytes');
+    for (const [index, mimeType] of [
+      'image/png',
+      'image/x-unfamiliar+native',
+      'Application/X-Native',
+    ].entries()) {
+      const md5 = createHash('md5').update(bytes).digest('hex');
+      const outputFile = path.join(root, `opaque-${index}.bin`);
+      const result = await downloadExperimentalCmsMedia(
+        new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.unfamiliar'),
         {
           accessToken: 'synthetic-token',
           expectedMd5: md5,
-          expectedMimeType: 'image/png',
+          expectedMimeType: mimeType,
           expectedSize: bytes.length,
-          fetch: async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }),
           instanceUrl: 'https://tenant.my.salesforce.com',
-          outputFile: path.join(root, 'false-image.png'),
+          outputFile,
+          fetch: async () =>
+            new Response(bytes, {
+              headers: { 'content-type': index === 2 ? 'application/octet-stream' : mimeType },
+            }),
         },
-      ),
-      'signature does not match',
+      );
+      expect(result).to.include({
+        mimeType,
+        bytes: bytes.length,
+        md5,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      });
+      expect(await readFile(outputFile)).to.deep.equal(bytes);
+    }
+  });
+
+  for (const responseType of [
+    'image/svg+xml; charset=utf-8',
+    'IMAGE/SVG+XML; charset="utf-8"',
+    'application/octet-stream; charset=ISO-8859-1',
+    'APPLICATION/OCTET-STREAM; charset="ISO-8859-1"',
+  ]) {
+    it(`accepts parameterized Image HTTP Content-Type ${responseType} without changing native MIME`, async () => {
+      const bytes = Buffer.from('<svg/>');
+      const outputFile = path.join(
+        root,
+        `parameterized-${responseType.toLowerCase().startsWith('image') ? 'native' : 'generic'}-${responseType.includes('"') ? 'quoted' : 'token'}.svg`,
+      );
+      const result = await downloadExperimentalCmsMedia(
+        new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.svg'),
+        {
+          accessToken: 'synthetic-token',
+          expectedMd5: createHash('md5').update(bytes).digest('hex'),
+          expectedMimeType: 'Image/Svg+Xml',
+          expectedSize: bytes.length,
+          instanceUrl: 'https://tenant.my.salesforce.com',
+          outputFile,
+          fetch: async () => new Response(bytes, { headers: { 'content-type': responseType } }),
+        },
+      );
+      expect(result.mimeType).to.equal('Image/Svg+Xml');
+      expect(await readFile(outputFile)).to.deep.equal(bytes);
+    });
+  }
+
+  it('downloads Images above 10 MiB while retaining the Document cap', async () => {
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61);
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    const base = {
+      accessToken: 'synthetic-token',
+      expectedMd5: md5,
+      expectedSize: bytes.length,
+      expectedMimeType: 'image/x-native',
+      instanceUrl: 'https://tenant.my.salesforce.com',
+      outputFile: path.join(root, 'large.bin'),
+      fetch: async () =>
+        new Response(bytes, {
+          headers: { 'content-type': 'image/x-native', 'content-length': String(bytes.length) },
+        }),
+    };
+    const source = new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.bin');
+    const downloaded = await downloadExperimentalCmsMedia(source, base);
+    expect(downloaded.bytes).to.equal(bytes.length);
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, {
+        ...base,
+        contentType: 'sfdc_cms__document',
+        expectedMimeType: 'text/plain',
+        maxBytes: Number.MAX_SAFE_INTEGER,
+        fetch: async () =>
+          new Response(bytes, {
+            headers: { 'content-type': 'text/plain', 'content-length': String(bytes.length) },
+          }),
+      }),
+      'exceeds the cap',
+    );
+  });
+
+  it('rejects malformed Image MIME, unsafe sizes, empty bytes and integrity mismatches', async () => {
+    const bytes = Buffer.from('opaque');
+    const source = new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.bin');
+    const base = {
+      accessToken: 'synthetic-token',
+      expectedMd5: createHash('md5').update(bytes).digest('hex'),
+      expectedMimeType: 'image/x-native',
+      expectedSize: bytes.length,
+      instanceUrl: 'https://tenant.my.salesforce.com',
+      outputFile: path.join(root, 'invalid.bin'),
+      fetch: async () => new Response(bytes, { headers: { 'content-type': 'image/x-native' } }),
+    };
+    for (const expectedMimeType of [
+      'image/png;evil=x',
+      'image/png\r\nx-header: injected',
+      'image/é',
+      'image',
+      '',
+    ]) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, { ...base, expectedMimeType }),
+        'safe ASCII',
+      );
+    }
+    for (const responseType of [
+      'image/é',
+      'image',
+      'image/x-native; charset',
+      'image/x-native; charset=',
+      'image/x-native; charset="unterminated',
+      'image/x-native, image/png',
+      '',
+    ]) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, {
+          ...base,
+          fetch: async () => new Response(bytes, { headers: { 'content-type': responseType } }),
+        }),
+        'safe ASCII',
+      );
+    }
+    for (const expectedSize of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await expectRejected(
+        downloadExperimentalCmsMedia(source, { ...base, expectedSize }),
+        'positive safe Buffer length',
+      );
+    }
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, { ...base, expectedSize: bytes.length + 1 }),
+      'authoring metadata',
+    );
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, { ...base, expectedMd5: '0'.repeat(32) }),
+      'MD5 differs',
+    );
+    await expectRejected(
+      downloadExperimentalCmsMedia(source, {
+        ...base,
+        fetch: async () =>
+          new Response(Buffer.alloc(0), { headers: { 'content-type': 'image/x-native' } }),
+      }),
+      'authoring metadata',
     );
   });
 

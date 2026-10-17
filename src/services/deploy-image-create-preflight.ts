@@ -61,6 +61,7 @@ export async function preflightDeployImageCreate(
     { ...metadata, contentSpaceOrFolderId: selected.workspaceId },
     binary.fileName,
     binary.bytes,
+    { mimeType: binary.mimeType },
   );
   const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
   if (

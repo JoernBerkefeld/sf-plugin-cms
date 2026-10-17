@@ -115,12 +115,12 @@ const INVENTORY_EXACT_API_NAME_TYPES = new Set([
   CONSENT_BANNER_TYPE,
 ]);
 
-function mediaByteCap(value: number | undefined, maximum: number, label: string): number {
-  const configured = value ?? maximum;
+function mediaByteCap(value: number | undefined, defaultValue: number, label: string): number {
+  const configured = value ?? defaultValue;
   if (!Number.isSafeInteger(configured) || configured <= 0) {
     throw new TypeError(`${label} must be a positive safe integer`);
   }
-  return Math.min(configured, maximum);
+  return configured;
 }
 
 export type WorkspaceExportWarning = {
@@ -484,12 +484,12 @@ export async function exportWorkspace(
       : {
           perImageBytes: mediaByteCap(
             options.experimentalMedia.perImageBytes,
-            EXPERIMENTAL_MEDIA_POLICY.perImageBytes,
+            Number.MAX_SAFE_INTEGER,
             'Experimental media per-image byte cap',
           ),
           totalBytes: mediaByteCap(
             options.experimentalMedia.totalBytes,
-            EXPERIMENTAL_MEDIA_POLICY.totalBytes,
+            Number.MAX_SAFE_INTEGER,
             'Experimental media total byte cap',
           ),
         };
@@ -1347,10 +1347,20 @@ export async function exportWorkspace(
     if (mediaCandidates.length > 0 && options.experimentalMedia !== undefined) {
       await mkdir(path.join(temporary, 'media'));
       let totalBytes = 0;
+      let otherMediaBytes = 0;
       for (const { variantId, evidence } of mediaCandidates) {
         const mediaPath = `media/${variantId}-${evidence.fileName}`;
         try {
-          const remainingTotal = mediaCaps!.totalBytes - totalBytes;
+          const isImage = evidence.contentType === 'sfdc_cms__image';
+          const remainingTotal = Math.min(
+            mediaCaps!.totalBytes - totalBytes,
+            isImage
+              ? Number.MAX_SAFE_INTEGER
+              : EXPERIMENTAL_MEDIA_POLICY.totalBytes - otherMediaBytes,
+          );
+          const perFileBytes = isImage
+            ? mediaCaps!.perImageBytes
+            : Math.min(mediaCaps!.perImageBytes, EXPERIMENTAL_MEDIA_POLICY.perImageBytes);
           if (!Number.isSafeInteger(remainingTotal) || remainingTotal <= 0) {
             throw new TypeError('Experimental media total byte cap is exhausted');
           }
@@ -1364,14 +1374,15 @@ export async function exportWorkspace(
               expectedSize: evidence.size,
               fetch: options.experimentalMedia.fetch,
               instanceUrl: options.experimentalMedia.instanceUrl,
-              maxBytes: Math.min(mediaCaps!.perImageBytes, remainingTotal),
+              maxBytes: Math.min(perFileBytes, remainingTotal),
               outputFile: path.join(temporary, mediaPath),
             },
           );
-          if (downloaded.bytes > mediaCaps!.totalBytes - totalBytes) {
+          if (downloaded.bytes > remainingTotal) {
             throw new TypeError('Experimental media total byte accounting exceeded the cap');
           }
           totalBytes += downloaded.bytes;
+          if (!isImage) otherMediaBytes += downloaded.bytes;
           const current = mediaEvidence(await getVariant(connection, variantId, options));
           if (current === undefined || JSON.stringify(current) !== JSON.stringify(evidence)) {
             throw new TypeError('Experimental media authoring metadata changed during export');

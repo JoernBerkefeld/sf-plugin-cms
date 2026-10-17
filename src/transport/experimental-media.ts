@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { constants as bufferConstants } from 'node:buffer';
+import { assertMediaMimeType } from '../services/editable-media-source.js';
 import { domainToASCII } from 'node:url';
 import { open, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -7,19 +9,6 @@ import { redactSecrets } from './redact-secrets.js';
 
 const MEDIA_SUFFIX = 'file.force.com';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const IMAGE_SIGNATURES = new Map<string, readonly number[]>([
-  ['image/gif', [0x47, 0x49, 0x46, 0x38]],
-  ['image/jpeg', [255, 216, 255]],
-  ['image/png', [137, 80, 78, 71, 13, 10, 26, 10]],
-  ['image/webp', [0x52, 0x49, 0x46, 0x46]],
-]);
-const MIME_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
-  'image/gif': ['gif'],
-  'image/jpeg': ['jpeg', 'jpg'],
-  'image/png': ['png'],
-  'image/webp': ['webp'],
-};
-
 export const EXPERIMENTAL_MEDIA_POLICY = {
   approvedRedirectSuffix: MEDIA_SUFFIX,
   maxRedirects: 3,
@@ -123,34 +112,23 @@ function extension(fileName: string): string {
   return last;
 }
 
-function assertImageEvidence(bytes: Buffer, mimeType: string, fileName: string): void {
-  const allowed = MIME_EXTENSIONS[mimeType];
-  const signature = IMAGE_SIGNATURES.get(mimeType);
-  if (allowed === undefined || signature === undefined) {
-    throw new TypeError(`Experimental media MIME type is unsupported: ${mimeType}`);
-  }
-  const fileExtension = extension(fileName);
-  if (fileExtension.length > 0 && !allowed.includes(fileExtension)) {
-    throw new TypeError('Experimental media filename extension does not match MIME type');
-  }
-  if (!signature.every((byte, index) => bytes[index] === byte)) {
-    throw new TypeError('Experimental media signature does not match MIME type');
-  }
-  if (mimeType === 'image/webp' && bytes.subarray(8, 12).toString('ascii') !== 'WEBP') {
-    throw new TypeError('Experimental media WebP signature is invalid');
-  }
-}
-
 export async function downloadExperimentalCmsMedia(
   source: URL,
   options: ExperimentalMediaDownloadOptions,
 ): Promise<ExperimentalMediaDownload> {
   const contentType = options.contentType ?? 'sfdc_cms__image';
+  assertMediaMimeType(options.expectedMimeType);
+  if (
+    !Number.isSafeInteger(options.expectedSize) ||
+    options.expectedSize <= 0 ||
+    options.expectedSize > bufferConstants.MAX_LENGTH
+  ) {
+    throw new TypeError('Experimental media expected size must be a positive safe Buffer length');
+  }
   if (
     (contentType === 'sfdc_cms__document' && options.expectedMimeType !== 'text/plain') ||
     (contentType === 'sfdc_cms__audio' && options.expectedMimeType !== 'audio/x-wav') ||
     (contentType === 'sfdc_cms__video' && options.expectedMimeType !== 'video/mp4') ||
-    (contentType === 'sfdc_cms__image' && !IMAGE_SIGNATURES.has(options.expectedMimeType)) ||
     (contentType !== 'sfdc_cms__image' &&
       contentType !== 'sfdc_cms__document' &&
       contentType !== 'sfdc_cms__audio' &&
@@ -208,20 +186,43 @@ export async function downloadExperimentalCmsMedia(
       { status: response?.status },
     );
   }
-  const responseType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
-  if (responseType === undefined || responseType === 'text/html' || responseType.includes('json')) {
+  const responseHeader = response.headers.get('content-type');
+  // HTTP parameters describe the response, not the parameter-free native/upload MIME.
+  const responseType = responseHeader?.split(';', 1)[0].trim().toLowerCase();
+  if (
+    responseHeader === null ||
+    !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+(?:[\t ]*;[\t ]*[A-Za-z0-9!#$%&'*+.^_`|~-]+=(?:[A-Za-z0-9!#$%&'*+.^_`|~-]+|"(?:[\t !#-[\]-~]|\\[\t -~])*"))*[\t ]*$/u.test(
+      responseHeader,
+    ) ||
+    responseType === undefined
+  ) {
+    throw new TypeError(
+      'Experimental media response Content-Type must be safe ASCII HTTP media type',
+    );
+  }
+  const sameMime = responseType.toLowerCase() === options.expectedMimeType.toLowerCase();
+  if (!sameMime && (responseType === 'text/html' || responseType.includes('json'))) {
     throw new TypeError('Experimental media response is not binary image content');
   }
-  if (responseType !== options.expectedMimeType) {
+  if (
+    !sameMime &&
+    !(
+      contentType === 'sfdc_cms__image' && responseType.toLowerCase() === 'application/octet-stream'
+    )
+  ) {
     throw new TypeError('Experimental media response MIME type changed');
   }
   const declaredLengthText = response.headers.get('content-length');
   const declaredLength = declaredLengthText === null ? undefined : Number(declaredLengthText);
-  const configuredLimit = options.maxBytes ?? EXPERIMENTAL_MEDIA_POLICY.perImageBytes;
+  const familyLimit =
+    contentType === 'sfdc_cms__image'
+      ? bufferConstants.MAX_LENGTH
+      : EXPERIMENTAL_MEDIA_POLICY.perImageBytes;
+  const configuredLimit = options.maxBytes ?? familyLimit;
   if (!Number.isSafeInteger(configuredLimit) || configuredLimit <= 0) {
     throw new TypeError('Experimental media byte cap must be a positive safe integer');
   }
-  const limit = Math.min(configuredLimit, EXPERIMENTAL_MEDIA_POLICY.perImageBytes);
+  const limit = Math.min(configuredLimit, familyLimit);
   if (
     declaredLength !== undefined &&
     (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > limit)
@@ -306,7 +307,8 @@ export async function downloadExperimentalCmsMedia(
         break;
       }
       default: {
-        assertImageEvidence(Buffer.concat(prefix), options.expectedMimeType, fileName);
+        // Image format admission belongs to the API, not a local signature inventory.
+        break;
       }
     }
     closeAttempted = true;

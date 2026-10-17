@@ -1,5 +1,6 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
@@ -120,6 +121,18 @@ describe('multipart Document create transport', () => {
     expect(request.called).to.equal(false);
   });
 
+  it('keeps Document text/plain framing even when Image MIME options are supplied', () => {
+    const options = { boundaryFactory: constantBoundary('safe'), mimeType: 'image/avif' };
+    const built = buildDocumentCreateMultipart(
+      input,
+      'owned.txt',
+      Buffer.from('document'),
+      options,
+    );
+    expect(built.body.toString('ascii')).to.include('Content-Type: text/plain\r\n\r\n');
+    expect(built.body.toString('ascii')).not.to.include('image/avif');
+  });
+
   it('preserves caps and bounded boundary collision rejection', () => {
     for (const bytes of [Buffer.alloc(0), Buffer.alloc(MAX_IMAGE_BYTES + 1)]) {
       expect(() => buildDocumentCreateMultipart(input, 'owned.txt', bytes)).to.throw(
@@ -175,6 +188,91 @@ describe('multipart Document create transport', () => {
 });
 
 describe('multipart image create transport', () => {
+  it('threads generic MIME and opaque bytes above 10 MiB without changing binary hashes', async () => {
+    for (const mimeType of ['image/avif', 'image/svg+xml', 'application/x-future-format']) {
+      const backing = Buffer.alloc(MAX_IMAGE_BYTES + 3, 255);
+      const image = backing.subarray(1, -1);
+      image.set([0, 13, 10, 128]);
+      const options = { boundaryFactory: constantBoundary('safe'), mimeType };
+      const built = buildImageCreateMultipart(input, 'opaque.bin', image, options);
+      const header = Buffer.from(`Content-Type: ${mimeType}\r\n\r\n`, 'ascii');
+      const start = built.body.indexOf(header) + header.length;
+      const binary = built.body.subarray(start, start + image.byteLength);
+      expect(start).to.be.greaterThan(header.length);
+      expect(createHash('sha256').update(binary).digest('hex')).to.equal(
+        createHash('sha256').update(image).digest('hex'),
+      );
+      expect(built.body.subarray(start + image.byteLength).toString('ascii')).to.equal(
+        '\r\n--safe--\r\n',
+      );
+      expect(built.body.includes(Buffer.from('charset=ISO-8859-1'))).to.equal(false);
+      const binding = {
+        contentKey: 'key',
+        managedContentId: 'parent',
+        managedContentVariantId: 'variant',
+      };
+      const request = sinon.stub().returns(fakeRequest(Promise.resolve(binding)));
+      await createImageContent({ request }, input, 'opaque.bin', image, options);
+      expect(request.calledOnce).to.equal(true);
+      expect(request.firstCall.args[0].body.equals(built.body)).to.equal(true);
+      expect(request.firstCall.args[1].retry).to.deep.equal({ maxRetries: 0 });
+    }
+  });
+
+  it('rejects unknown unsafe MIME values before framing or requests', async () => {
+    const request = sinon.stub();
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const mimeType of [
+      null,
+      42,
+      {},
+      '',
+      'image',
+      '/png',
+      'image/',
+      ' image/png',
+      'image/png ',
+      'image/png; charset=UTF-8',
+      'image/png\r\nX-Evil: yes',
+      'image/\0png',
+      'image/\u007Fpng',
+      'image/\u010Dpng',
+    ]) {
+      const options = { boundaryFactory, mimeType: mimeType as string };
+      expect(() =>
+        buildImageCreateMultipart(input, 'opaque.bin', Buffer.from([1]), options),
+      ).to.throw(TypeError, 'safe ASCII type/subtype');
+      try {
+        await createImageContent({ request }, input, 'opaque.bin', Buffer.from([1]), options);
+        expect.fail('expected MIME rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(TypeError);
+      }
+    }
+    expect(boundaryFactory.called).to.equal(false);
+    expect(request.called).to.equal(false);
+  });
+
+  it('rejects unrepresentable binary lengths before boundary generation', () => {
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const byteLength of [Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const image = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
+      expect(() =>
+        buildImageCreateMultipart(input, 'opaque.bin', image, { boundaryFactory }),
+      ).to.throw(CmsRequestError, 'represented by a Buffer');
+    }
+    expect(boundaryFactory.called).to.equal(false);
+  });
+
+  it('rejects non-ASCII create filenames before lossy header serialization', () => {
+    for (const filename of ['caf\u00E9.bin', 'a\u010D.bin', 'a\u010A.bin', 'a\u0122.bin']) {
+      expect(() => buildImageCreateMultipart(input, filename, Buffer.from([1]))).to.throw(
+        CmsRequestError,
+        'Image filename must contain only ASCII characters',
+      );
+    }
+  });
+
   it('builds exactly two ordered parts with exact headers and CRLF framing', () => {
     const image = Buffer.from([0, 1, 13, 10, 127, 128, 255]);
     const result = buildImageCreateMultipart(input, 'hero.png', image, {
@@ -248,7 +346,7 @@ describe('multipart image create transport', () => {
     ).to.throw(CmsRequestError, 'Unable to generate collision-free multipart boundary');
   });
 
-  it('rejects invalid boundaries, zero bytes, oversized bytes, and non-binary input', () => {
+  it('rejects invalid boundaries, zero bytes, and non-binary input', () => {
     expect(() =>
       buildImageCreateMultipart(input, 'image.png', Buffer.from([1]), {
         boundaryFactory: constantBoundary('bad boundary'),
@@ -260,18 +358,13 @@ describe('multipart image create transport', () => {
       }),
     ).to.throw(CmsRequestError, 'Image data must not be empty');
     expect(() =>
-      buildImageCreateMultipart(input, 'image.png', Buffer.alloc(MAX_IMAGE_BYTES + 1), {
-        boundaryFactory: constantBoundary('safe'),
-      }),
-    ).to.throw(CmsRequestError, `Image exceeds ${MAX_IMAGE_BYTES} byte limit`);
-    expect(() =>
       buildImageCreateMultipart(input, 'image.png', 'not-binary' as unknown as Uint8Array, {
         boundaryFactory: constantBoundary('safe'),
       }),
     ).to.throw(CmsRequestError, 'Image data must be binary');
   });
 
-  it('accepts the locked cap and preserves a sliced view without adjacent bytes', () => {
+  it('accepts the former cap and preserves a sliced view without adjacent bytes', () => {
     const backing = Buffer.from([9, 0, 128, 255, 8]);
     const image = backing.subarray(1, 4);
     const result = buildImageCreateMultipart(input, 'image.png', image, {

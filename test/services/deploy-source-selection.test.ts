@@ -64,6 +64,58 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
+  it('admits binary Images without a format gate but rejects unsafe MIME/path, URL-only and Documents', async () => {
+    const root = await temporary();
+    const file = path.join(root, 'Hero.cms-image.json');
+    const candidate = {
+      contract: 'sf-cms-media-source',
+      contractVersion: '1.0.0',
+      identity: {
+        family: 'cms',
+        type: 'Image',
+        apiName: 'Hero',
+        context: { workspaceApiName: 'Source' },
+      },
+      contentType: 'sfdc_cms__image',
+      language: 'en_US',
+      folderPath: [],
+      media: {
+        representation: 'binary',
+        mimeType: 'image/svg+xml',
+        companion: { role: 'media', path: 'Hero.cms-image.media.svg' },
+      },
+    };
+    await writeFile(file, JSON.stringify(candidate));
+    await writeFile(path.join(root, candidate.media.companion.path), '<svg/>');
+    const selected = await selectDeploySources({ 'source-dir': [root] });
+    expect(selected.items).to.have.length(1);
+    for (const patch of [
+      { media: { ...candidate.media, mimeType: 'image/svg+xml\r\nX-Evil: yes' } },
+      {
+        media: {
+          ...candidate.media,
+          companion: { role: 'media', path: '../Hero.cms-image.media.svg' },
+        },
+      },
+      { media: { representation: 'url-only', address: 'https://example.invalid/image' } },
+      {
+        identity: { ...candidate.identity, type: 'Document' },
+        contentType: 'sfdc_cms__document',
+        media: {
+          ...candidate.media,
+          mimeType: 'text/plain',
+          companion: { role: 'media', path: 'Hero.cms-document.media.txt' },
+        },
+      },
+    ]) {
+      await writeFile(file, JSON.stringify({ ...candidate, ...patch }));
+      await failure(
+        selectDeploySources({ 'definition-file': [file] }),
+        /MIME|same-stem|binary Image/u,
+      );
+    }
+  });
+
   it('loads explicit v1/v2 sources, preserving workspace and literal components without writes', async () => {
     const root = await temporary();
     const file = await fixture(path.join(root, 'first'));

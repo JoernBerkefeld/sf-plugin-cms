@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
+import { constants as bufferConstants } from 'node:buffer';
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { BigIntStats } from 'node:fs';
@@ -18,8 +19,9 @@ import type {
   PlannedImageUploadFile,
 } from '../contracts/image-upload.js';
 import {
-  MAX_IMAGE_BYTES,
+  buildImageCreateMultipart,
   createImageContent,
+  type MultipartImageCreateOptions,
   type ManagedContentDocumentBinding,
 } from '../transport/multipart-image-create.js';
 import { rewriteAtomic } from './import-workspace.js';
@@ -51,8 +53,8 @@ function nonempty(value: unknown): value is string {
 }
 
 /**
- * Full ASCII filename, extension included; separator runs collapse, without truncation or suffixing.
- * @param {string} filename - Safe full basename including extension.
+ * Full ASCII filename, preserving any extension; separator runs collapse without suffixing.
+ * @param {string} filename - Safe full basename, with or without an extension.
  * @returns {{title: string, apiName: string, urlName: string}} Deterministic image names.
  */
 export function imageUploadNames(filename: string): {
@@ -61,7 +63,8 @@ export function imageUploadNames(filename: string): {
   urlName: string;
 } {
   if (
-    !/^[A-Za-z0-9][A-Za-z0-9 ._-]*\.(?:png|jpe?g|gif|webp)$/iu.test(filename) ||
+    !/^[A-Za-z0-9][A-Za-z0-9 ._-]*(?![\s\S])/u.test(filename) ||
+    /[ .]$/u.test(filename) ||
     filename.includes('..') ||
     /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(filename)
   ) {
@@ -134,7 +137,8 @@ function mediaType(bytes: Buffer): PlannedImageUploadFile['mediaType'] {
     bytes.subarray(8, 12).toString('ascii') === 'WEBP'
   )
     return 'image/webp';
-  throw new TypeError('Unsupported image signature');
+  // Signatures are MIME hints only; Salesforce decides whether these bytes are an Image.
+  return 'application/octet-stream';
 }
 
 async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
@@ -142,15 +146,21 @@ async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
   const names = imageUploadNames(filename);
   await assertPlainPath(filePath);
   const before = await lstat(filePath, { bigint: true });
-  if (!before.isFile() || before.size <= 0n || before.size > BigInt(MAX_IMAGE_BYTES)) {
-    throw new TypeError('Image must be a regular nonempty file at most 10 MiB');
+  if (!before.isFile() || before.size <= 0n) {
+    throw new TypeError('Image must be a regular nonempty file');
+  }
+  if (
+    before.size > BigInt(Number.MAX_SAFE_INTEGER) ||
+    before.size > BigInt(bufferConstants.MAX_LENGTH)
+  ) {
+    throw new TypeError('Image size cannot be represented by a Buffer');
   }
   const handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const opened = await handle.stat({ bigint: true });
     if (!sameIdentity(before, opened)) throw new TypeError('Image changed before reading');
-    // Bounded read, even if the file grows after the size check.
-    const buffer = Buffer.alloc(MAX_IMAGE_BYTES + 1);
+    // Read exactly the proven size, never a format-specific allocation or an unbounded read.
+    const buffer = Buffer.alloc(Number(before.size));
     let length = 0;
     while (length < buffer.length) {
       const result = await handle.read(buffer, length, buffer.length - length, length);
@@ -167,12 +177,8 @@ async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
     ) {
       throw new TypeError('Image changed during reading');
     }
-    const bytes = Buffer.from(buffer.subarray(0, length));
+    const bytes = buffer;
     const detected = mediaType(bytes);
-    const extension = path.extname(filename).toLowerCase();
-    const expected =
-      extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
-    if (detected !== expected) throw new TypeError('Image signature does not match extension');
     return {
       path: filePath,
       filename,
@@ -476,6 +482,19 @@ export async function applyImageUpload(
       const remaining = { ...preparation, intents: preparation.intents.slice(index) };
       const fresh = await revalidateUpload(remaining, options.services);
       const intent = fresh.intents[0];
+      const boundary = `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
+      const createOptions: MultipartImageCreateOptions = {
+        ...options.createOptions,
+        mimeType: intent.file.mediaType,
+        boundaryFactory: () => boundary,
+      };
+      const multipart = buildImageCreateMultipart(
+        intent.input,
+        intent.file.filename,
+        intent.file.bytes,
+        createOptions,
+      );
+      operation.requestSha256 = createHash('sha256').update(multipart.body).digest('hex');
       operation.state = 'pending';
       report.state = 'ownership-uncertain';
       await rewrite();
@@ -485,7 +504,7 @@ export async function applyImageUpload(
         intent.input,
         intent.file.filename,
         intent.file.bytes,
-        options.createOptions,
+        createOptions,
       );
       operation.binding = binding;
       await rewrite();

@@ -5,7 +5,8 @@ import type { Duplex } from 'node:stream';
 import { inheritCmsApiSelection } from '../api-policy.js';
 import type { UpdatedVariant } from '../services/lifecycle-foundation.js';
 import { CmsRequestError, type JsonRequestOptions } from './json-request.js';
-import { MAX_IMAGE_BYTES } from './multipart-image-create.js';
+import { constants as bufferConstants } from 'node:buffer';
+import { assertMediaMimeType } from '../services/editable-media-source.js';
 import { redactSecrets } from './redact-secrets.js';
 
 export type ImageUpdateInput = {
@@ -15,6 +16,8 @@ export type ImageUpdateInput = {
 };
 
 export type MultipartImageUpdateOptions = JsonRequestOptions & {
+  /** Explicit native MIME for the binary part; omitted callers retain the legacy envelope. */
+  mimeType?: string;
   boundaryFactory?: () => string;
   maxBoundaryAttempts?: number;
 };
@@ -48,8 +51,12 @@ export function buildImageUpdateMultipart(
   input: ImageUpdateInput,
   filename: string,
   image: Uint8Array,
-  options: Pick<MultipartImageUpdateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> = {},
+  options: Pick<
+    MultipartImageUpdateOptions,
+    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
+  > = {},
 ): { body: Buffer; boundary: string; input: Readonly<Record<string, unknown>> } {
+  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
   if (!isRecord(input)) {
     throw new CmsRequestError(OPERATION_KEY, 'Image update input must be an object');
   }
@@ -65,6 +72,7 @@ export function buildImageUpdateMultipart(
   if (
     typeof filename !== 'string' ||
     filename.length === 0 ||
+    filename.length > bufferConstants.MAX_LENGTH ||
     filename === '.' ||
     filename === '..' ||
     hasControlCharacter(filename) ||
@@ -81,8 +89,8 @@ export function buildImageUpdateMultipart(
   if (!image.byteLength) {
     throw new CmsRequestError(OPERATION_KEY, 'Image data must not be empty');
   }
-  if (image.byteLength > MAX_IMAGE_BYTES) {
-    throw new CmsRequestError(OPERATION_KEY, `Image exceeds ${MAX_IMAGE_BYTES} byte limit`);
+  if (!Number.isSafeInteger(image.byteLength) || image.byteLength > bufferConstants.MAX_LENGTH) {
+    throw new CmsRequestError(OPERATION_KEY, 'Binary size cannot be represented by a Buffer');
   }
   const managedContentVariantInput = {
     ...input,
@@ -106,23 +114,24 @@ export function buildImageUpdateMultipart(
     ) {
       continue;
     }
-    return {
-      boundary,
-      input: managedContentVariantInput,
-      body: Buffer.concat([
-        Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="ManagedContentVariantInputParam"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
-          'ascii',
-        ),
-        json,
-        Buffer.from(
-          `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: application/octet-stream; charset=ISO-8859-1\r\n\r\n`,
-          'ascii',
-        ),
-        binary,
-        Buffer.from(`\r\n--${boundary}--\r\n`, 'ascii'),
-      ]),
-    };
+    const parts = [
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="ManagedContentVariantInputParam"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+        'ascii',
+      ),
+      json,
+      Buffer.from(
+        `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: ${options.mimeType ?? 'application/octet-stream; charset=ISO-8859-1'}\r\n\r\n`,
+        'ascii',
+      ),
+      binary,
+      Buffer.from(`\r\n--${boundary}--\r\n`, 'ascii'),
+    ];
+    const length = parts.reduce((total, part) => total + part.byteLength, 0);
+    if (!Number.isSafeInteger(length) || length > bufferConstants.MAX_LENGTH) {
+      throw new CmsRequestError(OPERATION_KEY, 'Multipart size cannot be represented by a Buffer');
+    }
+    return { boundary, input: managedContentVariantInput, body: Buffer.concat(parts, length) };
   }
   throw new CmsRequestError(OPERATION_KEY, 'Unable to generate collision-free multipart boundary');
 }

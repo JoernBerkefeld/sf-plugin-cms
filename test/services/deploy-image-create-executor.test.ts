@@ -7,8 +7,11 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { executeDeployImageCreate } from '../../src/services/deploy-image-create-executor.js';
+import { buildImageCreateMultipart } from '../../src/transport/multipart-image-create.js';
 import { executeDeployImage } from '../../src/services/deploy-image-executor.js';
 import { executeDeployBatch } from '../../src/services/deploy-batch-executor.js';
+import { selectDeploySources } from '../../src/services/deploy-source-selection.js';
+import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 const TEST_IMAGE_SCOPE = {
   orgId: '00D000000000071AAA',
   workspaceId: '0Zu000000000071AAA',
@@ -24,13 +27,16 @@ const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(apiName = 'Hero') {
+async function fixture(
+  apiName = 'Hero',
+  mimeType = 'image/png',
+  bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]),
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-image-executor-'));
   const definitionFile = path.join(directory, `${apiName}.cms-image.json`);
   const reportFile = path.join(directory, 'run.json');
-  const fileName = `${apiName}.cms-image.media.png`;
+  const fileName = `${apiName}.cms-image.media.${mimeType === 'image/svg+xml' ? 'svg' : 'png'}`;
   const companion = path.join(directory, fileName);
-  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
   const definition = {
     contract: 'sf-cms-media-source',
     contractVersion: '1.0.0',
@@ -47,7 +53,7 @@ async function fixture(apiName = 'Hero') {
     urlName: 'hero-image',
     media: {
       representation: 'binary',
-      mimeType: 'image/png',
+      mimeType,
       companion: { role: 'media', path: fileName },
     },
   };
@@ -88,7 +94,7 @@ async function fixture(apiName = 'Hero') {
     status: { status: 'Draft' },
     contentBody: {
       'sfdc_cms:media': {
-        source: { type: 'file', size: bytes.length, mimeType: 'image/png' },
+        source: { type: 'file', size: bytes.length, mimeType },
         url: `/cms/media/MCGENERATED?version=1&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=${fileName}`,
       },
     },
@@ -127,6 +133,26 @@ async function fixture(apiName = 'Hero') {
           expect(intent.operations[0].requestIdentity)
             .to.include(fileName)
             .and.include(intent.sourceManifestSha256);
+          const operation = intent.operations[0];
+          expect(operation.requestSha256).to.equal(
+            createHash('sha256').update(operation.requestIdentity).digest('hex'),
+          );
+          expect(operation.requestIdentity).to.include(JSON.stringify(mimeType));
+          const payload = JSON.parse(operation.requestIdentity.split('\u0000')[3]);
+          const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
+          const expected = buildImageCreateMultipart(
+            {
+              apiName: payload.apiName,
+              title: payload.title,
+              urlName: payload.urlName,
+              contentSpaceOrFolderId: payload.contentSpaceOrFolderId,
+            },
+            fileName,
+            bytes,
+            { mimeType, boundaryFactory: () => boundary },
+          );
+          expect(input.body!.equals(expected.body)).to.equal(true);
+          expect(input.body!.includes(Buffer.from(`Content-Type: ${mimeType}\r\n`))).to.equal(true);
           expect(input.body!.includes(bytes)).to.equal(true);
           if (lost) throw new Error('Lost response');
           return structuredClone(response);
@@ -174,6 +200,7 @@ async function fixture(apiName = 'Hero') {
     connection,
     input,
     bytes,
+    mimeType,
     companion,
     row,
     detail,
@@ -214,7 +241,7 @@ async function failure(operation: Promise<unknown>, pattern: RegExp) {
 async function downloaded(f: Awaited<ReturnType<typeof fixture>>, bytes = f.bytes) {
   return sinon
     .stub(globalThis, 'fetch')
-    .callsFake(async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }));
+    .callsFake(async () => new Response(bytes, { headers: { 'content-type': f.mimeType } }));
 }
 describe('journaled portable binary Image CREATE executor', () => {
   afterEach(() => sinon.restore());
@@ -271,6 +298,74 @@ describe('journaled portable binary Image CREATE executor', () => {
       if (drift.startsWith('root-'))
         expect(result.report.blockedReasons.join(';')).to.match(/workspace.*root/u);
     });
+  it('selects, plans and executes an unfamiliar truthful Image MIME above 10 MiB without conversion', async () => {
+    const bytes = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg"><!--${' '.repeat(10 * 1024 * 1024)}--></svg>`,
+    );
+    const f = await fixture('Hero', 'image/svg+xml', bytes);
+    await downloaded(f);
+    const sources = { 'definition-file': [f.input.definitionFile] };
+    const selection = await selectDeploySources(sources);
+    expect(selection.items[0].mediaSha256).to.equal(
+      createHash('sha256').update(bytes).digest('hex'),
+    );
+    const plan = await preflightDeployBatch(f.connection, {
+      ...f.input,
+      sources,
+      expectedSelection: selection,
+    });
+    expect(plan.eligible).to.equal(true);
+    expect(plan.items[0].proposed).to.equal('create');
+    expect(f.posts()).to.equal(0);
+    const result = await executeDeployBatch(
+      f.connection,
+      {
+        ...f.input,
+        sources,
+        expectedSelection: selection,
+        reportFile: path.join(path.dirname(f.input.reportFile), 'batch.json'),
+      },
+      {},
+      {
+        rewrite: rewriteAtomic,
+        item: {
+          rewrite: async (file, report) => {
+            f.input.reportFile = file;
+            await rewriteAtomic(file, report);
+          },
+        },
+      },
+    );
+    expect(result.report.state).to.equal('completed');
+    expect(result.report.summary.created).to.equal(1);
+    expect(f.posts()).to.equal(1);
+    // The fixture verifies durable request hash, exact multipart bytes/MIME, and native readback.
+    expect(await readFile(f.companion)).to.deep.equal(bytes);
+  });
+  for (const responseType of [
+    'IMAGE/SVG+XML; charset=utf-8',
+    'Application/Octet-Stream; charset=ISO-8859-1',
+  ]) {
+    it(`completes CREATE ownership readback with parameterized HTTP ${responseType}`, async () => {
+      const f = await fixture('Hero', 'image/svg+xml', Buffer.from('<svg/>'));
+      const fetcher = sinon
+        .stub(globalThis, 'fetch')
+        .callsFake(
+          async () => new Response(f.bytes, { headers: { 'content-type': responseType } }),
+        );
+      const result = await f.run();
+      expect(result.report.state).to.equal('completed');
+      expect(f.posts()).to.equal(1);
+      expect(fetcher.calledOnce).to.equal(true);
+    });
+  }
+  it('preserves opaque native MIME through hashed intent, multipart send and readback', async () => {
+    const f = await fixture('Hero', 'application/x-native-image');
+    await downloaded(f);
+    const result = await f.run();
+    expect(result.report.state).to.equal('completed');
+    expect(f.posts()).to.equal(1);
+  });
   it('routes explicit private CREATE through the journaled engine', async () => {
     const f = await fixture();
     await downloaded(f);
@@ -307,7 +402,7 @@ describe('journaled portable binary Image CREATE executor', () => {
     expect(boundary.calledOnce).to.equal(true);
     expect(f.posts()).to.equal(1);
   });
-  for (const change of ['reject', 'bytes', 'journal', 'cancel'])
+  for (const change of ['reject', 'bytes', 'mime', 'journal', 'cancel'])
     it(`blocks CREATE transport when the dispatched boundary causes ${change}`, async () => {
       const f = await fixture();
       const controller = new AbortController();
@@ -324,6 +419,11 @@ describe('journaled portable binary Image CREATE executor', () => {
             if (change === 'reject') throw new Error('Batch selection drift');
             if (change === 'bytes')
               await writeFile(f.companion, Buffer.concat([f.bytes, Buffer.from([3])]));
+            if (change === 'mime') {
+              const definition = JSON.parse(await readFile(f.input.definitionFile, 'utf8'));
+              definition.media.mimeType = 'application/x-native-image';
+              await writeFile(f.input.definitionFile, JSON.stringify(definition));
+            }
             if (change === 'journal') await writeFile(f.input.reportFile, '{}');
             if (change === 'cancel') controller.abort();
           },

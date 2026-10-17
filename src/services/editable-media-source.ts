@@ -53,14 +53,28 @@ function stem(metadata: EditableMediaMetadata): string {
   return `${metadata.identity.apiName}.cms-${metadata.contentType === 'sfdc_cms__image' ? 'image' : 'document'}`;
 }
 
-function mediaExtension(metadata: EditableMediaMetadata, mimeType: unknown): string {
+/**
+ * Require an ASCII media type safe for later header serialization, without format admission policy.
+ * @param {unknown} value - Declared or native media type, without parameters.
+ */
+export function assertMediaMimeType(value: unknown): asserts value is string {
   if (
-    typeof mimeType !== 'string' ||
-    !Object.hasOwn(extensions, mimeType) ||
-    (metadata.contentType === 'sfdc_cms__document') !== (mimeType === 'text/plain')
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+$/u.test(value)
   )
-    throw new TypeError('Unsupported media MIME type for Image/Document');
-  return extensions[mimeType];
+    throw new TypeError('Media MIME type must be a safe ASCII type/subtype without parameters');
+}
+
+function mediaExtension(metadata: EditableMediaMetadata, mimeType: unknown, filename = ''): string {
+  assertMediaMimeType(mimeType);
+  if (metadata.contentType === 'sfdc_cms__document') {
+    if (mimeType !== 'text/plain') throw new TypeError('Unsupported Document MIME type');
+    return 'txt';
+  }
+  // Keep existing canonical names; unfamiliar types use filename evidence, never MIME-derived paths.
+  if (Object.hasOwn(extensions, mimeType) && mimeType !== 'text/plain') return extensions[mimeType];
+  const suffix = path.extname(filename).slice(1);
+  return /^[A-Za-z0-9]+$/u.test(suffix) ? suffix : 'bin';
 }
 
 function assertAddress(address: unknown): asserts address is string {
@@ -133,31 +147,29 @@ export function assertEditableMediaDefinition(
     fields(media, ['representation', 'mimeType', 'companion']);
     fields(media.companion, ['role', 'path']);
     const definition = value as unknown as EditableMediaDefinition;
-    const extension = mediaExtension(definition, media.mimeType);
+    assertMediaMimeType(media.mimeType);
+    const prefix = `${stem(definition)}.media.`;
+    const companion = media.companion.path;
     if (
       media.companion.role !== 'media' ||
-      media.companion.path !== `${stem(definition)}.media.${extension}`
+      typeof companion !== 'string' ||
+      !companion.startsWith(prefix) ||
+      !/^[A-Za-z0-9]+$/u.test(companion.slice(prefix.length)) ||
+      (definition.contentType === 'sfdc_cms__document' &&
+        (media.mimeType !== 'text/plain' || companion !== `${prefix}txt`))
     )
       throw new TypeError('Media companion must use exact same-stem role/path');
   } else throw new TypeError('Unsupported media representation');
 }
 
-function validateBytes(bytes: Buffer, mimeType: string): void {
-  if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024)
-    throw new TypeError('Media bytes must be nonempty and at most 10 MiB');
-  const signatures: Record<string, number[]> = {
-    'image/png': [137, 80, 78, 71, 13, 10, 26, 10],
-    'image/jpeg': [255, 216, 255],
-    'image/gif': [71, 73, 70, 56],
-    'image/webp': [82, 73, 70, 70],
-  };
-  if (mimeType === 'text/plain') {
+function validateBytes(bytes: Buffer, contentType: EditableMediaMetadata['contentType']): void {
+  // A Buffer is already runtime-representable; Image format validity belongs to Salesforce.
+  if (bytes.length === 0) throw new TypeError('Media bytes must be nonempty');
+  if (contentType === 'sfdc_cms__document') {
+    if (bytes.length > 10 * 1024 * 1024)
+      throw new TypeError('Document bytes must be at most 10 MiB');
     new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } else if (
-    !signatures[mimeType]?.every((byte, index) => bytes[index] === byte) ||
-    (mimeType === 'image/webp' && bytes.subarray(8, 12).toString('ascii') !== 'WEBP')
-  )
-    throw new TypeError('Media signature does not match MIME type');
+  }
 }
 
 function canonical(value: unknown): unknown {
@@ -218,20 +230,22 @@ export function extractEditableMediaSource(
     media: { representation: 'url-only', address: native.url },
   };
   assertEditableMediaDefinition(definition);
-  const extension = mediaExtension(metadata, native.source.mimeType);
+  const url = new URL(native.url, 'https://local.invalid');
+  const filename = url.searchParams.get('fileName') ?? '';
+  const extension = mediaExtension(metadata, native.source.mimeType, filename);
   const companions: Array<{ role: 'media'; path: string; bytes: Buffer }> = [];
   if (bytes !== undefined) {
     const binary = Buffer.from(bytes);
-    validateBytes(binary, native.source.mimeType as string);
-    const url = new URL(native.url, 'https://local.invalid');
-    const filename = url.searchParams.get('fileName') ?? '';
-    const allowedExtensions = extension === 'jpg' ? ['jpg', 'jpeg'] : [extension];
+    validateBytes(binary, metadata.contentType);
     if (
       !/^\/cms\/media\/[^/]+$/u.test(url.pathname) ||
       [...url.searchParams.keys()].toSorted().join(',') !== 'fileHash,fileName,version' ||
       !url.searchParams.get('version') ||
+      !filename ||
+      filename === '.' ||
+      filename === '..' ||
       /[^\u0020-\u007E]|[/\\]/u.test(filename) ||
-      !allowedExtensions.includes(filename.split('.').at(-1)!) ||
+      (metadata.contentType === 'sfdc_cms__document' && !filename.endsWith('.txt')) ||
       binary.length !== native.source.size ||
       createHash('md5').update(binary).digest('hex') !==
         url.searchParams.get('fileHash')?.toLowerCase()
@@ -276,7 +290,7 @@ export function reassembleEditableMediaSource(
   const selected = files.get(media.companion.path);
   if (!selected) throw new TypeError(`Media companion is missing: ${media.companion.path}`);
   const bytes = Buffer.from(selected);
-  validateBytes(bytes, media.mimeType);
+  validateBytes(bytes, value.contentType);
   return {
     representation: 'binary',
     contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },

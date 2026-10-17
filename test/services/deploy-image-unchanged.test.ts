@@ -248,7 +248,7 @@ describe('private portable binary Image unchanged admission', () => {
     ['image/gif', 'gif', Buffer.from('GIF89a')],
     ['image/webp', 'webp', Buffer.from('RIFF0000WEBP')],
   ] as const)
-    it(`rejects ordinary ${mimeType} selection before destination reads`, async () => {
+    it(`admits ordinary ${mimeType} selection before destination reads`, async () => {
       const f = await fixture();
       const companionName = `Hero.cms-image.media.${extension}`;
       f.definition.media.mimeType = mimeType;
@@ -258,8 +258,13 @@ describe('private portable binary Image unchanged admission', () => {
       for (const flags of [
         { 'definition-file': [f.input.definitionFile] },
         { 'source-dir': [f.directory], metadata: ['sfdc_cms__image:Hero'] },
-      ])
-        await failure(selectDeploySources(flags), /binary Image PNG profile/u);
+      ]) {
+        const selected = await selectDeploySources(flags);
+        expect(selected.items[0].mediaSha256).to.equal(
+          createHash('sha256').update(bytes).digest('hex'),
+        );
+        expect(selected.items[0].definition).to.deep.equal(f.definition);
+      }
       expect(f.methods).to.deep.equal([]);
     });
   it('blocks changed selected binary snapshots without accepting a new plan', async () => {

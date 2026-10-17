@@ -27,6 +27,7 @@ import {
   type WorkspaceImportItem,
 } from './import-workspace.js';
 import { getContent, getVariant, getWorkspace } from './read.js';
+import { assertMediaMimeType } from './editable-media-source.js';
 import {
   buildImageCreateMultipart,
   createImageContent,
@@ -123,12 +124,6 @@ type DestinationImageCandidate = {
 const IMAGE_TYPE = 'sfdc_cms__image';
 const SEARCH_PAGE_SIZE = 250;
 const SEARCH_PAGE_CAP = 1000;
-const IMAGE_MIME_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
-  'image/gif': ['gif'],
-  'image/jpeg': ['jpg', 'jpeg'],
-  'image/png': ['png'],
-  'image/webp': ['webp'],
-};
 const IMAGE_MIME_DEFAULT_EXTENSION: Readonly<Record<string, string>> = {
   'image/gif': 'gif',
   'image/jpeg': 'jpg',
@@ -136,18 +131,26 @@ const IMAGE_MIME_DEFAULT_EXTENSION: Readonly<Record<string, string>> = {
   'image/webp': 'webp',
 };
 
+/**
+ * Preserve a safe native filename without treating MIME as a path or admission policy.
+ * @param {string} fileName - Native basename, never a path.
+ * @param {string} mimeType - Truthful declared MIME type, without parameters.
+ * @returns {string} Header-safe filename with a known suffix or neutral .bin fallback.
+ */
 export function normalizeImageMultipartFilename(fileName: string, mimeType: string): string {
-  const allowed = IMAGE_MIME_EXTENSIONS[mimeType];
-  const defaultExtension = IMAGE_MIME_DEFAULT_EXTENSION[mimeType];
-  if (allowed === undefined || defaultExtension === undefined) {
-    throw new TypeError(`Image import MIME type is unsupported: ${mimeType}`);
-  }
-  const extension = path.extname(fileName).slice(1).toLowerCase();
-  if (extension.length === 0) return `${fileName}.${defaultExtension}`;
-  if (!allowed.includes(extension)) {
-    throw new TypeError('Image import filename extension does not match MIME type');
-  }
-  return fileName;
+  assertMediaMimeType(mimeType);
+  if (
+    !/^[\u0020-\u007E]+$/u.test(fileName) ||
+    fileName === '.' ||
+    fileName === '..' ||
+    /[/\\":]/u.test(fileName)
+  )
+    throw new TypeError('Image import filename must be a safe ASCII basename');
+  if (path.extname(fileName).length > 1) return fileName;
+  const extension = Object.hasOwn(IMAGE_MIME_DEFAULT_EXTENSION, mimeType)
+    ? IMAGE_MIME_DEFAULT_EXTENSION[mimeType]
+    : 'bin';
+  return `${fileName}.${extension}`;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -764,19 +767,25 @@ export async function applyImageImports(
       const input = createInput(plan, options.destinationWorkspaceId);
       const filename = normalizeImageMultipartFilename(plan.media.fileName, plan.media.mimeType);
       const boundary = `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
-      const multipart = buildImageCreateMultipart(input, filename, bytes, {
+      const createOptions: MultipartImageCreateOptions = {
+        ...options.createOptions,
+        mimeType: plan.media.mimeType,
         boundaryFactory: () => boundary,
-      });
+      };
+      const multipart = buildImageCreateMultipart(input, filename, bytes, createOptions);
       const requestSha256 = createHash('sha256').update(multipart.body).digest('hex');
       const operation = mutationOperation(report, plan, requestSha256);
       report.operations.push(operation);
       await rewrite(reportFile, report);
       let binding: ManagedContentDocumentBinding;
       try {
-        binding = await createImageContent(options.connection, input, filename, bytes, {
-          ...options.createOptions,
-          boundaryFactory: () => boundary,
-        });
+        binding = await createImageContent(
+          options.connection,
+          input,
+          filename,
+          bytes,
+          createOptions,
+        );
       } catch (error) {
         operation.error = error instanceof Error ? error.message : String(error);
         report.state = 'ownership-uncertain';

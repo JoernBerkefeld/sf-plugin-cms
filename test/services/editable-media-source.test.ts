@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   assertEditableMediaDefinition,
+  assertMediaMimeType,
   extractEditableMediaSource,
   loadEditableMediaSource,
   reassembleEditableMediaSource,
@@ -155,6 +156,60 @@ describe('standalone editable native media source', () => {
     }
   });
 
+  it('admits arbitrary Image bytes and safe companions without asserting API support', () => {
+    const bytes = Buffer.from('opaque bytes, not a locally recognized image');
+    for (const [mime, filename, suffix] of [
+      ['image/avif', 'hero.avif', 'avif'],
+      ['application/octet-stream', 'hero.unknown', 'unknown'],
+      ['application/x-unfamiliar', 'hero', 'bin'],
+      ['text/plain', 'hero.txt', 'txt'],
+      ['image/png', 'hero.jpg', 'png'],
+    ]) {
+      const projection = extractEditableMediaSource(metadata(), body(bytes, mime, filename), bytes);
+      expect(projection.companions[0].path).to.equal(`Hero.cms-image.media.${suffix}`);
+      const reconstructed = reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, bytes]]),
+      );
+      if (reconstructed.representation !== 'binary') throw new Error('Expected binary');
+      expect(reconstructed.binary.mimeType).to.equal(mime);
+      expect(reconstructed.binary.bytes.equals(bytes)).to.equal(true);
+    }
+    const projection = extractEditableMediaSource(metadata(), body(PNG), PNG);
+    const larger = Buffer.alloc(10 * 1024 * 1024 + 1);
+    expect(() =>
+      reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, larger]]),
+      ),
+    ).not.to.throw();
+    const document = extractEditableMediaSource(
+      metadata(true),
+      body(DOCUMENT, 'text/plain', 'note.txt'),
+      DOCUMENT,
+    );
+    expect(() =>
+      reassembleEditableMediaSource(
+        document.definition,
+        new Map([[document.companions[0].path, larger]]),
+      ),
+    ).to.throw(/10 MiB/u);
+  });
+
+  it('validates MIME framing without a closed format list', () => {
+    for (const mime of ['image/avif', 'application/x-unfamiliar', 'application/octet-stream'])
+      expect(() => assertMediaMimeType(mime)).not.to.throw();
+    for (const mime of [
+      '',
+      'image',
+      'image/png; charset=UTF-8',
+      'image/png\r\nX: yes',
+      'image/π',
+      'image/png\u0000',
+    ])
+      expect(() => assertMediaMimeType(mime)).to.throw(/ASCII/u);
+  });
+
   it('supports evidenced image signatures and deterministic meaningful extensions', () => {
     for (const [mime, extension, bytes] of [
       ['image/gif', 'gif', Buffer.from('GIF89a')],
@@ -207,8 +262,8 @@ describe('standalone editable native media source', () => {
       { ...body(PNG), builder: {} },
       { 'sfdc_cms:media': { ...body(PNG)['sfdc_cms:media'], other: 'unsupported' } },
       body(Buffer.concat([PNG, PNG])),
-      body(PNG, 'image/png', 'hero.jpg'),
-      body(PNG, 'image/svg+xml'),
+      body(PNG, 'image/png', '../hero.png'),
+      body(PNG, 'image/png\r\nInjected: value'),
     ])
       expect(() => extractEditableMediaSource(metadata(), native, PNG)).to.throw();
     expect(() => reassembleEditableMediaSource(projection.definition, new Map())).to.throw(
@@ -217,11 +272,7 @@ describe('standalone editable native media source', () => {
     expect(() =>
       reassembleEditableMediaSource(projection.definition, new Map([['wrong', PNG]])),
     ).to.throw(/missing/u);
-    for (const bytes of [
-      Buffer.alloc(0),
-      Buffer.from('not png'),
-      Buffer.alloc(10 * 1024 * 1024 + 1),
-    ])
+    for (const bytes of [Buffer.alloc(0)])
       expect(() =>
         reassembleEditableMediaSource(
           projection.definition,

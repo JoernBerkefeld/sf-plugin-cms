@@ -166,6 +166,44 @@ describe('cms deploy content command', () => {
       expect((error as Error).message).to.include('image-qualification');
     }
   });
+  it('runs real local unfamiliar Image admission before command planning without mutation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'cms-image-command-'));
+    const file = path.join(root, 'Hero.cms-image.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        contract: 'sf-cms-media-source',
+        contractVersion: '1.0.0',
+        identity: {
+          family: 'cms',
+          type: 'Image',
+          apiName: 'Hero',
+          context: { workspaceApiName: 'Source' },
+        },
+        contentType: 'sfdc_cms__image',
+        language: 'en_US',
+        folderPath: [],
+        media: {
+          representation: 'binary',
+          mimeType: 'image/svg+xml',
+          companion: { role: 'media', path: 'Hero.cms-image.media.svg' },
+        },
+      }),
+    );
+    await writeFile(
+      path.join(root, 'Hero.cms-image.media.svg'),
+      `<svg><!--${' '.repeat(10 * 1024 * 1024)}--></svg>`,
+    );
+    const s = command({ 'definition-file': [file] });
+    const selected = await selectDeploySources({ 'definition-file': [file] });
+    s.preparation.items[0].source = selected.items[0];
+    Object.assign(s.instance, { selectSources: selectDeploySources });
+    const result = await s.instance.run();
+    expect(result.status).to.equal('success');
+    expect(result.result!.selection!.items[0].mediaSha256).to.match(/^[a-f0-9]{64}$/u);
+    expect(s.preflightBatch.calledOnce).to.equal(true);
+    expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
+  });
   it('forwards ordinary Image selection without private admission options', async () => {
     const s = command();
     s.selectSources.resolves({

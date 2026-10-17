@@ -252,7 +252,7 @@ describe('cms retrieve content command', () => {
     { 'target-org': '' },
     { 'output-dir': '' },
     { 'api-name': [' '] },
-    { 'content-type': ['sfdc_cms__document'] },
+    { 'content-type': ['sfdc_cms__audio'] },
     { 'content-type': ['email'] },
     { 'content-type': ['sfdc_cms__email', 'sfdc_cms__emailTemplate'] },
     { metadata: ['sfdc_cms__email:Welcome'] },
@@ -270,28 +270,30 @@ describe('cms retrieve content command', () => {
     });
   }
 
-  it('admits a standalone Image selector through preparation and local writing', async () => {
-    const subject = command({
-      'content-type': ['sfdc_cms__image'],
-      'api-name': ['Hero'],
+  for (const contentType of ['sfdc_cms__image', 'sfdc_cms__document'] as const) {
+    it(`admits a standalone ${contentType} selector through preparation and local writing`, async () => {
+      const subject = command({
+        'content-type': [contentType],
+        'api-name': ['Hero'],
+      });
+      subject.resolution.variants = [row('image', 'Hero', contentType)];
+      subject.resolution.inventory.contentTypes = [contentType];
+      const result = await subject.instance.run();
+      expect(result.status).to.equal('success');
+      expect(process.exitCode).to.equal(0);
+      expect(subject.getOrgContext.calledOnce).to.equal(true);
+      expect(subject.prepareSources.firstCall.args[1].selection.groups).to.deep.equal([
+        { contentType, all: false, apiNames: ['Hero'], contentKeysOrIds: [] },
+      ]);
+      expect(subject.acquire.calledOnceWithExactly('image')).to.equal(true);
+      expect(subject.writeSource.calledOnce).to.equal(true);
+      expect(result.result!.items[0].identity).to.deep.equal({
+        contentType,
+        apiName: 'Hero',
+        language: 'en_US',
+      });
     });
-    subject.resolution.variants = [row('image', 'Hero', 'sfdc_cms__image')];
-    subject.resolution.inventory.contentTypes = ['sfdc_cms__image'];
-    const result = await subject.instance.run();
-    expect(result.status).to.equal('success');
-    expect(process.exitCode).to.equal(0);
-    expect(subject.getOrgContext.calledOnce).to.equal(true);
-    expect(subject.prepareSources.firstCall.args[1].selection.groups).to.deep.equal([
-      { contentType: 'sfdc_cms__image', all: false, apiNames: ['Hero'], contentKeysOrIds: [] },
-    ]);
-    expect(subject.acquire.calledOnceWithExactly('image')).to.equal(true);
-    expect(subject.writeSource.calledOnce).to.equal(true);
-    expect(result.result!.items[0].identity).to.deep.equal({
-      contentType: 'sfdc_cms__image',
-      apiName: 'Hero',
-      language: 'en_US',
-    });
-  });
+  }
 
   it('normalizes duplicate names without cross products or repeated writes', async () => {
     const subject = command({
@@ -377,12 +379,12 @@ describe('cms retrieve content command', () => {
       const subject = command({
         'api-name': undefined,
         'content-type': undefined,
-        metadata: ['sfdc_cms__email:Welcome', 'sfdc_cms__image:Hero', 'sfdc_cms__image:Later'],
+        metadata: ['sfdc_cms__email:Welcome', 'sfdc_cms__image:Hero', 'sfdc_cms__document:Later'],
       });
       subject.resolution.variants = [
         row(),
         row('image', 'Hero', 'sfdc_cms__image'),
-        row('later', 'Later', 'sfdc_cms__image'),
+        row('later', 'Later', 'sfdc_cms__document'),
       ];
       subject.acquire
         .onSecondCall()

@@ -1,5 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { assertExactKeys, assertNonemptyString, assertSha256 } from './shared.js';
+import { assertMediaMimeType } from '../services/editable-media-source.js';
 
 export type ImageUploadSummary = {
   readonly action: 'create';
@@ -59,13 +60,12 @@ export function assertImageUploadCommandResult(
     for (const field of ['filename', 'title', 'apiName', 'urlName', 'mediaType'])
       assertNonemptyString(intent[field], field);
     assertSha256(intent.sha256, 'sha256');
+    assertMediaMimeType(intent.mediaType);
     if (
       intent.action !== 'create' ||
       intent.title !== intent.filename ||
       !Number.isSafeInteger(intent.size) ||
-      Number(intent.size) <= 0 ||
-      Number(intent.size) > 10 * 1024 * 1024 ||
-      !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(String(intent.mediaType))
+      Number(intent.size) <= 0
     )
       throw new TypeError('Invalid image intent');
   }
@@ -110,7 +110,7 @@ export type PlannedImageUploadFile = {
   readonly title: string;
   readonly apiName: string;
   readonly urlName: string;
-  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  readonly mediaType: string;
   readonly bytes: Buffer;
   readonly sha256: string;
   readonly identity: ImageUploadFileIdentity;
@@ -147,6 +147,7 @@ export type ImageUploadOperation = {
   readonly input: ImageCreateInput;
   state: 'planned' | 'pending' | 'succeeded';
   binding?: ManagedContentDocumentBinding;
+  requestSha256?: string;
   readonly byteProof: 'unavailable';
 };
 

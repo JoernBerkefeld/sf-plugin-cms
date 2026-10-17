@@ -8,6 +8,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { executeDeployImageUpdate } from '../../src/services/deploy-image-update-executor.js';
+import { buildImageUpdateMultipart } from '../../src/transport/multipart-image-update.js';
 import { executeDeployImage } from '../../src/services/deploy-image-executor.js';
 import { executeDeployBatch } from '../../src/services/deploy-batch-executor.js';
 const TEST_IMAGE_SCOPE = {
@@ -26,7 +27,12 @@ const noAction = () => {};
 const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
-async function fixture(apiName = 'Hero', withCreate = false, createType = 'Image') {
+async function fixture(
+  apiName = 'Hero',
+  withCreate = false,
+  createType = 'Image',
+  mimeType = 'image/png',
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-image-update-executor-'));
   const definitionFile = path.join(directory, `${apiName}.cms-image.json`);
   const reportFile = path.join(directory, 'run.json');
@@ -50,7 +56,7 @@ async function fixture(apiName = 'Hero', withCreate = false, createType = 'Image
     urlName: 'hero-image',
     media: {
       representation: 'binary',
-      mimeType: 'image/png',
+      mimeType,
       companion: { role: 'media', path: fileName },
     },
   };
@@ -149,7 +155,7 @@ async function fixture(apiName = 'Hero', withCreate = false, createType = 'Image
   let lose = false;
   let afterPut: () => void = noAction;
   let nativeName = fileName;
-  let nativeMime = 'image/png';
+  let nativeMime = mimeType;
   let remote = original;
   let downloadOverride: Buffer | undefined;
   let extra = false;
@@ -206,6 +212,21 @@ async function fixture(apiName = 'Hero', withCreate = false, createType = 'Image
           expect(intent.operations[0].requestIdentity)
             .to.include(bytes.toString('base64'))
             .and.include(original.toString('base64'));
+          const operation = intent.operations[0];
+          expect(operation.requestSha256).to.equal(
+            createHash('sha256').update(operation.requestIdentity).digest('hex'),
+          );
+          const evidence = JSON.parse(operation.requestIdentity.split('\u0000')[3]).contentBody;
+          expect(evidence.desired.mimeType).to.equal(mimeType);
+          const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
+          const expected = buildImageUpdateMultipart(
+            evidence.payload,
+            evidence.desired.fileName,
+            Buffer.from(evidence.desired.bytesBase64, 'base64'),
+            { mimeType: evidence.desired.mimeType, boundaryFactory: () => boundary },
+          );
+          expect(input.body!.equals(expected.body)).to.equal(true);
+          expect(input.body!.includes(Buffer.from(`Content-Type: ${mimeType}\r\n`))).to.equal(true);
           expect(input.body!.includes(bytes)).to.equal(true);
           const jsonPart = input.body!.toString('utf8').split('\r\n\r\n')[1].split('\r\n--')[0];
           expect(JSON.parse(jsonPart)).to.deep.equal({
@@ -530,6 +551,19 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
               : /Batch Image UPDATE intent changed/u,
           );
       });
+  it('preserves opaque native MIME through hashed intent, multipart send and readback', async () => {
+    const f = await fixture('Hero', false, 'Image', 'application/x-native-image');
+    const result = await f.run();
+    expect(result.report.state).to.equal('completed');
+    expect(f.puts()).to.equal(1);
+  });
+  it('blocks native MIME disagreement before journaling or PUT', async () => {
+    const f = await fixture();
+    f.changeMime();
+    await failure(f.run(), /MIME|mismatch/u);
+    expect(f.puts()).to.equal(0);
+    await failure(f.journal(), /ENOENT/u);
+  });
   it('routes explicit private UPDATE through the journaled engine', async () => {
     const f = await fixture();
     const rewrite = sinon.spy(rewriteAtomic);
@@ -564,7 +598,7 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
     expect(boundary.calledOnce).to.equal(true);
     expect(f.puts()).to.equal(1);
   });
-  for (const change of ['reject', 'bytes', 'journal', 'cancel'])
+  for (const change of ['reject', 'bytes', 'mime', 'journal', 'cancel'])
     it(`blocks UPDATE transport when the dispatched boundary causes ${change}`, async () => {
       const f = await fixture();
       const controller = new AbortController();
@@ -581,11 +615,16 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
             if (change === 'reject') throw new Error('Batch selection drift');
             if (change === 'bytes')
               await writeFile(f.companion, Buffer.concat([f.bytes, Buffer.from([3])]));
+            if (change === 'mime') {
+              const definition = JSON.parse(await readFile(f.input.definitionFile, 'utf8'));
+              definition.media.mimeType = 'application/x-native-image';
+              await writeFile(f.input.definitionFile, JSON.stringify(definition));
+            }
             if (change === 'journal') await writeFile(f.input.reportFile, '{}');
             if (change === 'cancel') controller.abort();
           },
         ),
-        /Batch selection drift|drifted|intent changed|cancelled|abort/iu,
+        /Batch selection drift|drifted|intent changed|cancelled|abort|mismatch/iu,
       );
       expect(f.puts()).to.equal(0);
       const report = await f.journal();

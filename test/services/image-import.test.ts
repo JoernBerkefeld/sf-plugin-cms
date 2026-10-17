@@ -51,6 +51,7 @@ async function writePackage(
   root: string,
   schemaVersion: 1 | 2 = 2,
   mediaOverrides: { fileName?: string; mimeType?: string } = {},
+  mediaBytes = PNG,
 ) {
   const source = path.join(root, `v${schemaVersion}`);
   await mkdir(path.join(source, 'items'), { recursive: true });
@@ -67,14 +68,14 @@ async function writePackage(
   };
   const itemBytes = Buffer.from(`${JSON.stringify(item)}\n`);
   await writeFile(path.join(source, 'items/variant.json'), itemBytes);
-  if (schemaVersion === 2) await writeFile(path.join(source, 'media/variant.png'), PNG);
+  if (schemaVersion === 2) await writeFile(path.join(source, 'media/variant.png'), mediaBytes);
   const media = {
     variantId: 'variant',
     contentKey: SOURCE_CONTENT_KEY,
     path: 'media/variant.png',
-    sha256: createHash('sha256').update(PNG).digest('hex'),
-    md5: createHash('md5').update(PNG).digest('hex'),
-    bytes: PNG.length,
+    sha256: createHash('sha256').update(mediaBytes).digest('hex'),
+    md5: createHash('md5').update(mediaBytes).digest('hex'),
+    bytes: mediaBytes.length,
     mimeType: mediaOverrides.mimeType ?? 'image/png',
     fileName: mediaOverrides.fileName ?? 'variant.png',
     sourceStatus: 'Draft',
@@ -179,16 +180,90 @@ describe('image import contracts and loader', () => {
     expect(v2.manifest.schemaVersion).to.equal(2);
   });
 
-  it('normalizes safe multipart filenames from validated image MIME types', () => {
+  it('normalizes generic MIME without inventing image extensions or format admission', () => {
     expect(normalizeImageMultipartFilename('variant', 'image/png')).to.equal('variant.png');
     expect(normalizeImageMultipartFilename('variant.PNG', 'image/png')).to.equal('variant.PNG');
     expect(normalizeImageMultipartFilename('photo.jpeg', 'image/jpeg')).to.equal('photo.jpeg');
-    expect(() => normalizeImageMultipartFilename('variant.gif', 'image/png')).to.throw(
-      'filename extension does not match MIME type',
+    expect(normalizeImageMultipartFilename('variant.gif', 'image/png')).to.equal('variant.gif');
+    expect(normalizeImageMultipartFilename('vector.svg', 'image/svg+xml')).to.equal('vector.svg');
+    expect(normalizeImageMultipartFilename('vector', 'image/svg+xml')).to.equal('vector.bin');
+    expect(normalizeImageMultipartFilename('opaque', 'application/octet-stream')).to.equal(
+      'opaque.bin',
     );
-    expect(() => normalizeImageMultipartFilename('variant', 'image/svg+xml')).to.throw(
-      'MIME type is unsupported',
+    expect(normalizeImageMultipartFilename('native.avif', 'IMAGE/AVIF')).to.equal('native.avif');
+    expect(normalizeImageMultipartFilename('native', 'application/x-vendor+custom')).to.equal(
+      'native.bin',
     );
+  });
+
+  it('rejects unsafe MIME and multipart basenames without using MIME as a path', () => {
+    for (const mime of [
+      'image/png\r\nX: injected',
+      'image/png; charset=utf-8',
+      'image/../png',
+      'image/é',
+    ]) {
+      expect(() => normalizeImageMultipartFilename('native', mime)).to.throw(
+        'safe ASCII type/subtype',
+      );
+    }
+    for (const filename of [
+      '',
+      '.',
+      '..',
+      '../image.png',
+      String.raw`dir\image.png`,
+      'C:image.png',
+      'a".png',
+      'a\r\n.png',
+      'é.png',
+    ]) {
+      expect(() => normalizeImageMultipartFilename(filename, 'image/png')).to.throw(
+        'safe ASCII basename',
+      );
+    }
+  });
+
+  it('blocks unsafe MIME and header/path filenames before POST and journals failure', async () => {
+    const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
+    const base = planImageImports(source, [map({ contentKey: { strategy: 'generated' } })])[0];
+    for (const [index, [fileName, mimeType, error]] of [
+      ['variant.svg', 'image/svg+xml\r\nX: injected', 'safe ASCII type/subtype'],
+      ['variant.svg', 'image/svg+xml; charset=utf-8', 'safe ASCII type/subtype'],
+      ['variant.svg', 'image/../svg', 'safe ASCII type/subtype'],
+      ['variant.svg', 'image/é', 'safe ASCII type/subtype'],
+      ['../variant.svg', 'image/svg+xml', 'safe ASCII basename'],
+      [String.raw`dir\variant.svg`, 'image/svg+xml', 'safe ASCII basename'],
+      ['C:variant.svg', 'image/svg+xml', 'safe ASCII basename'],
+      ['variant".svg', 'image/svg+xml', 'safe ASCII basename'],
+      ['variant\r\n.svg', 'image/svg+xml', 'safe ASCII basename'],
+      ['é.svg', 'image/svg+xml', 'safe ASCII basename'],
+    ].entries()) {
+      const request = sinon.stub().callsFake(({ url }: { url: string }) => {
+        if (url === '/connect/cms/spaces/target-space') return fakeRequest({ id: 'target-space' });
+        if (url.startsWith('/connect/cms/items/search'))
+          return fakeRequest({ items: [], total: 0 });
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      expect(
+        await rejectionMessage(
+          applyImageImports({
+            connection: { request },
+            destinationOrgId: '00D-target',
+            destinationWorkspaceId: 'target-space',
+            source,
+            plans: [{ ...base, media: { ...base.media, fileName, mimeType } }],
+            reportDirectory: path.join(root, `report-${index}`),
+          }),
+        ),
+      ).to.include(error);
+      expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
+      const report = JSON.parse(
+        await readFile(path.join(root, `report-${index}`, 'workspace-import-run.json'), 'utf8'),
+      ) as { operations: unknown[]; state: string };
+      expect(report.operations).to.deep.equal([]);
+      expect(report.state).to.equal('failed');
+    }
   });
 
   it('rejects malformed explicit image content keys during planning', async () => {
@@ -652,134 +727,162 @@ describe('image import contracts and loader', () => {
     expect(request.getCalls().every(({ args }) => args[0].method === 'GET')).to.equal(true);
   });
 
-  it('applies extensionless PNG with exact corrected multipart bytes and hash evidence', async () => {
-    const source = await loadWorkspaceExport(await writePackage(root, 2, { fileName: 'variant' }), {
-      profile: 'image',
-    });
-    const plans = planImageImports(source, [
-      map({
-        contentKey: { strategy: 'generated' },
-        urlName: { strategy: 'fresh', value: 'fresh-url' },
-      }),
-    ]);
-    const reportDirectory = path.join(root, 'report');
-    const snapshots: Array<{ operations: Array<{ state: string; requestSha256: string }> }> = [];
-    let searches = 0;
-    let posts = 0;
-    let postedBodySha256 = '';
-    const request = sinon
-      .stub()
-      .callsFake(
-        ({
-          body,
-          headers,
-          method,
-          url,
-        }: {
-          body?: Buffer;
-          headers?: Record<string, string>;
-          method: string;
-          url: string;
-        }) => {
-          if (url === '/connect/cms/spaces/target-space')
-            return fakeRequest({ id: 'target-space' });
-          if (url.startsWith('/connect/cms/items/search')) {
-            searches += 1;
-            return fakeRequest({ items: [], total: 0 });
-          }
-          if (url === '/connect/cms/contents' && method === 'POST') {
-            posts += 1;
-            expect(body).to.be.instanceOf(Buffer);
-            expect(headers?.['content-type']).to.match(/^multipart\/form-data; boundary=/u);
-            const boundary = headers?.['content-type'].split('boundary=')[1];
-            expect(boundary).to.be.a('string').and.not.equal('');
-            const expected = buildImageCreateMultipart(
-              {
-                apiName: 'fresh_api',
-                contentSpaceOrFolderId: 'target-space',
-                title: 'Fresh title',
-                urlName: 'fresh-url',
-              },
-              'variant.png',
-              PNG,
-              { boundaryFactory: () => boundary! },
-            );
-            expect(body!.equals(expected.body)).to.equal(true);
-            expect(body!.toString('latin1')).to.include(
-              'filename="variant.png"\r\nContent-Type: application/octet-stream; charset=ISO-8859-1',
-            );
-            expect(body!.toString('latin1')).not.to.include('name="contentKey"');
-            postedBodySha256 = createHash('sha256').update(body!).digest('hex');
-            return fakeRequest({
-              contentKey: 'generated-key',
-              managedContentId: 'content-created',
-              managedContentVariantId: 'variant-created',
-            });
-          }
-          if (url === '/connect/cms/contents/variants/variant-created') {
-            return fakeRequest({
-              managedContentId: 'content-created',
-              managedContentVariantId: 'variant-created',
-              apiName: 'fresh_api',
-              contentKey: 'generated-key',
-              title: 'Fresh title',
-              urlName: 'fresh-url',
-              contentSpace: { id: 'target-space' },
-              contentType: 'sfdc_cms__image',
-              isPublished: false,
-              status: { status: 'Draft' },
-            });
-          }
-          throw new Error(`Unexpected request: ${method} ${url}`);
+  for (const scenario of [
+    {
+      label: 'extensionless PNG',
+      fileName: 'variant',
+      mimeType: 'image/png',
+      bytes: PNG,
+      filename: 'variant.png',
+    },
+    {
+      label: 'opaque unfamiliar MIME above 25 MiB',
+      fileName: 'opaque',
+      mimeType: 'application/x-vendor+custom',
+      bytes: Buffer.alloc(25 * 1024 * 1024 + 1, 42),
+      filename: 'opaque.bin',
+    },
+    {
+      label: 'native suffix independent of MIME',
+      fileName: 'native.gif',
+      mimeType: 'IMAGE/AVIF',
+      bytes: Buffer.from('opaque native bytes'),
+      filename: 'native.gif',
+    },
+  ]) {
+    it(`applies ${scenario.label} with exact multipart bytes and journal hash evidence`, async () => {
+      const source = await loadWorkspaceExport(
+        await writePackage(root, 2, scenario, scenario.bytes),
+        {
+          profile: 'image',
         },
       );
+      const plans = planImageImports(source, [
+        map({
+          contentKey: { strategy: 'generated' },
+          urlName: { strategy: 'fresh', value: 'fresh-url' },
+        }),
+      ]);
+      const reportDirectory = path.join(root, 'report');
+      const snapshots: Array<{ operations: Array<{ state: string; requestSha256: string }> }> = [];
+      let searches = 0;
+      let posts = 0;
+      let postedBodySha256 = '';
+      const request = sinon
+        .stub()
+        .callsFake(
+          ({
+            body,
+            headers,
+            method,
+            url,
+          }: {
+            body?: Buffer;
+            headers?: Record<string, string>;
+            method: string;
+            url: string;
+          }) => {
+            if (url === '/connect/cms/spaces/target-space')
+              return fakeRequest({ id: 'target-space' });
+            if (url.startsWith('/connect/cms/items/search')) {
+              searches += 1;
+              return fakeRequest({ items: [], total: 0 });
+            }
+            if (url === '/connect/cms/contents' && method === 'POST') {
+              posts += 1;
+              expect(body).to.be.instanceOf(Buffer);
+              expect(headers?.['content-type']).to.match(/^multipart\/form-data; boundary=/u);
+              const boundary = headers?.['content-type'].split('boundary=')[1];
+              expect(boundary).to.be.a('string').and.not.equal('');
+              const expected = buildImageCreateMultipart(
+                {
+                  apiName: 'fresh_api',
+                  contentSpaceOrFolderId: 'target-space',
+                  title: 'Fresh title',
+                  urlName: 'fresh-url',
+                },
+                scenario.filename,
+                scenario.bytes,
+                { boundaryFactory: () => boundary!, mimeType: scenario.mimeType },
+              );
+              expect(body!.equals(expected.body)).to.equal(true);
+              expect(body!.toString('latin1')).to.include(
+                `filename="${scenario.filename}"\r\nContent-Type: ${scenario.mimeType}\r\n`,
+              );
+              expect(body!.toString('latin1')).not.to.include('name="contentKey"');
+              postedBodySha256 = createHash('sha256').update(body!).digest('hex');
+              return fakeRequest({
+                contentKey: 'generated-key',
+                managedContentId: 'content-created',
+                managedContentVariantId: 'variant-created',
+              });
+            }
+            if (url === '/connect/cms/contents/variants/variant-created') {
+              return fakeRequest({
+                managedContentId: 'content-created',
+                managedContentVariantId: 'variant-created',
+                apiName: 'fresh_api',
+                contentKey: 'generated-key',
+                title: 'Fresh title',
+                urlName: 'fresh-url',
+                contentSpace: { id: 'target-space' },
+                contentType: 'sfdc_cms__image',
+                isPublished: false,
+                status: { status: 'Draft' },
+              });
+            }
+            throw new Error(`Unexpected request: ${method} ${url}`);
+          },
+        );
 
-    const result = await applyImageImports({
-      connection: { request },
-      destinationOrgId: '00D-target',
-      destinationWorkspaceId: 'target-space',
-      plans,
-      reportDirectory,
-      reportPersistence: {
-        rewrite: async (file, report) => {
-          snapshots.push(structuredClone(report));
-          await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
+      const result = await applyImageImports({
+        connection: { request },
+        destinationOrgId: '00D-target',
+        destinationWorkspaceId: 'target-space',
+        plans,
+        reportDirectory,
+        createOptions: { mimeType: 'image/jpeg', boundaryFactory: () => 'ignored-caller-boundary' },
+        reportPersistence: {
+          rewrite: async (file, report) => {
+            snapshots.push(structuredClone(report));
+            await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
+          },
         },
-      },
-      source,
-    });
+        source,
+      });
 
-    expect(searches).to.equal(2);
-    expect(posts).to.equal(1);
-    const pending = snapshots.find(({ operations }) => operations.at(-1)?.state === 'pending');
-    expect(pending?.operations.at(-1)?.requestSha256).to.equal(postedBodySha256);
-    expect(result.contractResult.status).to.equal('completed');
-    expect(result.contractResult.assets[0]).to.deep.include({
-      metadataReadback: 'passed',
-      byteProof: 'unavailable',
-      operationStatus: 'succeeded',
-      reportStatus: 'recorded',
+      expect(searches).to.equal(2);
+      expect(posts).to.equal(1);
+      const pending = snapshots.find(({ operations }) => operations.at(-1)?.state === 'pending');
+      expect(pending?.operations.at(-1)?.requestSha256).to.equal(postedBodySha256);
+      expect(result.contractResult.status).to.equal('completed');
+      expect(result.contractResult.assets[0]).to.deep.include({
+        metadataReadback: 'passed',
+        byteProof: 'unavailable',
+        operationStatus: 'succeeded',
+        reportStatus: 'recorded',
+      });
+      expect(result.contractResult.assets[0].mutation).to.deep.include({
+        contentId: 'content-created',
+        variantId: 'variant-created',
+      });
+      expect(result.contractResult.assets[0].mutation?.requestSha256).to.equal(postedBodySha256);
+      expect(result.contractResult.assets[0].identities).to.deep.include({
+        contentKey: {
+          strategy: 'generated',
+          source: SOURCE_CONTENT_KEY,
+          returned: 'generated-key',
+        },
+        apiName: {
+          strategy: 'fresh',
+          source: 'source_api',
+          submitted: 'fresh_api',
+          returned: 'fresh_api',
+        },
+      });
+      expect(JSON.parse(await readFile(result.reportFile, 'utf8'))).to.deep.equal(result.report);
     });
-    expect(result.contractResult.assets[0].mutation).to.deep.include({
-      contentId: 'content-created',
-      variantId: 'variant-created',
-    });
-    expect(result.contractResult.assets[0].mutation?.requestSha256).to.equal(postedBodySha256);
-    expect(result.contractResult.assets[0].identities).to.deep.include({
-      contentKey: {
-        strategy: 'generated',
-        source: SOURCE_CONTENT_KEY,
-        returned: 'generated-key',
-      },
-      apiName: {
-        strategy: 'fresh',
-        source: 'source_api',
-        submitted: 'fresh_api',
-        returned: 'fresh_api',
-      },
-    });
-    expect(JSON.parse(await readFile(result.reportFile, 'utf8'))).to.deep.equal(result.report);
-  });
+  }
 
   it('rejects a canonical managed content variant ID mismatch during image readback', async () => {
     const source = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
@@ -966,6 +1069,73 @@ describe('image import contracts and loader', () => {
     expect(report.state).to.equal('ownership-uncertain');
     expect(report.operations).to.have.length(1);
     expect(report.operations[0]).to.include({ state: 'pending' });
+  });
+
+  it('records an API format rejection without replay or claiming failed ownership', async () => {
+    const source = await loadWorkspaceExport(
+      await writePackage(
+        root,
+        2,
+        { fileName: 'opaque', mimeType: 'application/x-vendor+custom' },
+        Buffer.from('opaque'),
+      ),
+      { profile: 'image' },
+    );
+    const plans = planImageImports(source, [map({ contentKey: { strategy: 'generated' } })]);
+    const reportDirectory = path.join(root, 'api-rejected');
+    let postedHash = '';
+    const request = sinon
+      .stub()
+      .callsFake(
+        (
+          { method, url, body }: { method: string; url: string; body?: Buffer },
+          requestOptions: unknown,
+        ) => {
+          if (url === '/connect/cms/spaces/target-space')
+            return fakeRequest({ id: 'target-space' });
+          if (url.startsWith('/connect/cms/items/search'))
+            return fakeRequest({ items: [], total: 0 });
+          if (url === '/connect/cms/contents' && method === 'POST') {
+            expect(requestOptions).to.deep.include({ retry: { maxRetries: 0 } });
+            expect(body!.toString('ascii')).to.include(
+              'Content-Type: application/x-vendor+custom\r\n',
+            );
+            postedHash = createHash('sha256').update(body!).digest('hex');
+            return failedRequest(
+              Object.assign(new Error('API rejected native media'), { statusCode: 415 }),
+            );
+          }
+          throw new Error(`Unexpected request: ${method} ${url}`);
+        },
+      );
+    const apply = () =>
+      applyImageImports({
+        connection: { request },
+        destinationOrgId: '00D-target',
+        destinationWorkspaceId: 'target-space',
+        plans,
+        source,
+        reportDirectory,
+      });
+    expect(await rejectionMessage(apply())).to.equal('API rejected native media');
+    const report = JSON.parse(
+      await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8'),
+    ) as {
+      state: string;
+      operations: Array<{ state: string; error: string; requestSha256: string }>;
+    };
+    expect(report.state).to.equal('ownership-uncertain');
+    expect(report.operations).to.have.length(1);
+    expect(report.operations[0]).to.include({
+      state: 'pending',
+      error: 'API rejected native media',
+      requestSha256: postedHash,
+    });
+    expect(await rejectionMessage(apply())).to.include('EEXIST');
+    expect(request.getCalls().filter(({ args }) => args[0].method === 'POST')).to.have.length(1);
+    expect(
+      JSON.parse(await readFile(path.join(reportDirectory, 'workspace-import-run.json'), 'utf8')),
+    ).to.deep.equal(report);
   });
 
   it('fails closed on ambiguous exact API-name evidence and workspace/type drift', async () => {

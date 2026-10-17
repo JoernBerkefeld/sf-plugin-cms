@@ -447,47 +447,182 @@ describe('experimental workspace media export', () => {
     }
   }
 
-  it('clamps oversized per-file caps to the locked 10 MiB maximum', async () => {
-    const detail = imageDetail();
-    detail.contentBody['sfdc_cms:media'].source.size = 10 * 1024 * 1024 + 1;
+  for (const explicit of [false, true]) {
+    it(`exports Images above 10 MiB and 50 MiB aggregate with ${explicit ? 'explicit larger' : 'default'} budgets`, async () => {
+      const bytes = Buffer.alloc(11 * 1024 * 1024, 42);
+      const details = Array.from({ length: 5 }, (_, index) => {
+        const detail = imageDetail();
+        detail.id = `variant-${index}`;
+        detail.contentKey = `content-key-${index}`;
+        detail.contentBody['sfdc_cms:media'] = {
+          source: {
+            mimeType: 'image/x-native',
+            ref: 'synthetic-ref',
+            size: bytes.length,
+            type: 'file',
+          },
+          url: `/cms/media/media-key?fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=image.native&version=1`,
+        };
+        return detail;
+      });
+      if (!explicit) {
+        const document = imageDetail();
+        document.id = 'document';
+        document.contentKey = 'document-key';
+        document.contentType = 'sfdc_cms__document';
+        document.contentBody['sfdc_cms:media'].source.mimeType = 'text/plain';
+        document.contentBody['sfdc_cms:media'].url = document.contentBody[
+          'sfdc_cms:media'
+        ].url.replace('image.png', 'document.txt');
+        details.push(document);
+      }
+      const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+        fakeRequest(
+          url.startsWith('/connect/cms/items/search')
+            ? {
+                items: details.map(({ id }) => ({
+                  id,
+                  managedContentSpaceId: 'space',
+                  type: 'ManagedContentVariantSearchResultRepresentation',
+                })),
+                total: details.length,
+              }
+            : details.find(({ id }) => url.includes(id)),
+        ),
+      );
+      const fetcher = sinon.stub().callsFake(async (url: URL) => {
+        const document = url.searchParams.get('fileName') === 'document.txt';
+        return new Response(document ? PNG : bytes, {
+          headers: {
+            'content-type': document ? 'text/plain' : 'image/x-native',
+            'content-length': String(document ? PNG.length : bytes.length),
+          },
+        });
+      });
+      const result = await exportWorkspace({ request }, 'space', path.join(root, 'large-images'), {
+        experimentalMedia: {
+          accessToken: 'synthetic-token',
+          fetch: fetcher,
+          instanceUrl: 'https://tenant.my.salesforce.com',
+          ...(explicit ? { perImageBytes: bytes.length, totalBytes: 5 * bytes.length } : {}),
+        },
+      });
+      expect(result.manifest.media).to.have.length(details.length);
+      expect(result.manifest.media!.reduce((sum, media) => sum + media.bytes, 0)).to.equal(
+        55 * 1024 * 1024 + (explicit ? 0 : PNG.length),
+      );
+      expect(result.manifest.warnings.map(({ code }) => code)).not.to.include(
+        'MEDIA_EXPORT_FAILED',
+      );
+      expect(fetcher.callCount).to.equal(details.length);
+      expect(request.callCount).to.equal(1 + 2 * details.length);
+    });
+  }
+
+  it('enforces an explicit aggregate Image budget across multiple files', async () => {
+    const details = ['first', 'second'].map((id) => ({ ...imageDetail(), id, contentKey: id }));
     const request = sinon.stub().callsFake(({ url }: { url: string }) =>
       fakeRequest(
         url.startsWith('/connect/cms/items/search')
           ? {
-              items: [
-                {
-                  id: 'variant',
-                  managedContentSpaceId: 'space',
-                  type: 'ManagedContentVariantSearchResultRepresentation',
-                },
-              ],
-              total: 1,
+              items: details.map(({ id }) => ({
+                id,
+                managedContentSpaceId: 'space',
+                type: 'ManagedContentVariantSearchResultRepresentation',
+              })),
+              total: 2,
             }
-          : detail,
+          : details.find(({ id }) => url.includes(id)),
       ),
     );
-    const fetcher = sinon.stub().resolves(
-      new Response(PNG, {
-        headers: {
-          'content-length': String(10 * 1024 * 1024 + 1),
-          'content-type': 'image/png',
-        },
-        status: 200,
-      }),
+    const fetcher = sinon.stub().callsFake(
+      async () =>
+        new Response(PNG, {
+          headers: { 'content-length': String(PNG.length), 'content-type': 'image/png' },
+        }),
     );
-    const result = await exportWorkspace({ request }, 'space', path.join(root, 'clamped'), {
-      experimentalMedia: {
-        accessToken: 'synthetic-token',
-        fetch: fetcher,
-        instanceUrl: 'https://tenant.my.salesforce.com',
-        perImageBytes: Number.MAX_SAFE_INTEGER,
-        totalBytes: Number.MAX_SAFE_INTEGER,
+    const result = await exportWorkspace(
+      { request },
+      'space',
+      path.join(root, 'aggregate-budget'),
+      {
+        experimentalMedia: {
+          accessToken: 'synthetic-token',
+          fetch: fetcher,
+          instanceUrl: 'https://tenant.my.salesforce.com',
+          totalBytes: 2 * PNG.length - 1,
+        },
       },
-    });
+    );
+    expect(result.manifest.media).to.have.length(1);
     expect(result.manifest.completeness).to.equal('partial');
     expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
-    expect(fetcher.calledOnce).to.equal(true);
+    expect(fetcher.callCount).to.equal(2);
+    await expectRejectedAccess(path.join(result.destination, 'media/second-image.png'));
   });
+
+  for (const key of ['perImageBytes', 'totalBytes'] as const) {
+    it(`enforces an explicit Image ${key} budget`, async () => {
+      const fetcher = sinon.stub().resolves(
+        new Response(PNG, {
+          headers: { 'content-length': String(PNG.length), 'content-type': 'image/png' },
+        }),
+      );
+      const result = await exportWorkspace(
+        { request: mediaRequest(imageDetail()) },
+        'space',
+        path.join(root, key),
+        {
+          experimentalMedia: {
+            accessToken: 'synthetic-token',
+            fetch: fetcher,
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            [key]: PNG.length - 1,
+          },
+        },
+      );
+      expect(result.manifest.completeness).to.equal('partial');
+      expect(result.manifest.media).to.deep.equal([]);
+      expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
+      await expectRejectedAccess(path.join(result.destination, 'media/variant-image.png'));
+    });
+  }
+
+  for (const [family, mimeType] of [
+    ['document', 'text/plain'],
+    ['audio', 'audio/x-wav'],
+    ['video', 'video/mp4'],
+  ]) {
+    it(`retains the ${family} 10 MiB per-file cap even with larger explicit budgets`, async () => {
+      const detail = imageDetail();
+      detail.contentType = `sfdc_cms__${family}`;
+      detail.contentBody['sfdc_cms:media'].source.mimeType = mimeType;
+      detail.contentBody['sfdc_cms:media'].source.size = 10 * 1024 * 1024 + 1;
+      const fetcher = sinon.stub().resolves(
+        new Response(PNG, {
+          headers: { 'content-length': String(10 * 1024 * 1024 + 1), 'content-type': mimeType },
+        }),
+      );
+      const result = await exportWorkspace(
+        { request: mediaRequest(detail) },
+        'space',
+        path.join(root, family),
+        {
+          experimentalMedia: {
+            accessToken: 'synthetic-token',
+            fetch: fetcher,
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            perImageBytes: Number.MAX_SAFE_INTEGER,
+            totalBytes: Number.MAX_SAFE_INTEGER,
+          },
+        },
+      );
+      expect(result.manifest.completeness).to.equal('partial');
+      expect(result.manifest.media).to.deep.equal([]);
+      expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
+      expect(fetcher.calledOnce).to.equal(true);
+    });
+  }
 
   it('writes a strict v2 media descriptor after byte and immediate source revalidation', async () => {
     const request = sinon.stub().callsFake(({ url }: { url: string }) =>

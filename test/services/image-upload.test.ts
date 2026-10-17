@@ -21,7 +21,7 @@ import {
   planImageUploadFiles,
   prepareImageUpload,
 } from '../../src/services/image-upload.js';
-import { MAX_IMAGE_BYTES } from '../../src/transport/multipart-image-create.js';
+import { assertImageUploadCommandResult } from '../../src/contracts/image-upload.js';
 import { rewriteAtomic } from '../../src/services/import-workspace.js';
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
@@ -112,6 +112,85 @@ describe('no-JSON image upload preparation', () => {
       expect(report.operations[1].state).to.equal('planned');
     });
   }
+
+  it('POSTs opaque bytes with derived MIME and exact durable request hash, preserving API rejection without replay', async () => {
+    const services = { ...reads(), getContent: sinon.stub() };
+    const bytes = Buffer.from('opaque format evidence');
+    const preparation = await prepareImageUpload(
+      { workspaceId: 'space', files: [await file('unknown.avif', bytes)] },
+      services,
+    );
+    const reportDirectory = path.join(directory, 'opaque-report');
+    const request = sinon.stub().callsFake(async (sent: { body: Buffer; method: string }) => {
+      expect(sent.method).to.equal('POST');
+      expect(
+        sent.body.includes(Buffer.from('Content-Type: application/octet-stream\r\n')),
+      ).to.equal(true);
+      expect(sent.body.includes(Buffer.from('filename="unknown.avif"'))).to.equal(true);
+      expect(sent.body.includes(bytes)).to.equal(true);
+      const report = JSON.parse(
+        await readFile(path.join(reportDirectory, 'image-upload-run.json'), 'utf8'),
+      );
+      expect(report.state).to.equal('ownership-uncertain');
+      expect(report.operations[0].file.mediaType).to.equal('application/octet-stream');
+      expect(report.operations[0].requestSha256).to.equal(
+        createHash('sha256').update(sent.body).digest('hex'),
+      );
+      throw Object.assign(new Error('API rejects unsupported Image'), { statusCode: 400 });
+    });
+    await rejected(
+      applyImageUpload({
+        preparation,
+        services,
+        reportDirectory,
+        connection: { request },
+        createOptions: { mimeType: 'image/invented', boundaryFactory: () => 'caller-boundary' },
+      }),
+      'API rejects unsupported Image',
+    );
+    expect(request.calledOnce).to.equal(true);
+    expect(services.getContent.notCalled).to.equal(true);
+    const report = JSON.parse(
+      await readFile(path.join(reportDirectory, 'image-upload-run.json'), 'utf8'),
+    );
+    expect(report.state).to.equal('ownership-uncertain');
+  });
+
+  it('validates safe MIME without a closed format or 10 MiB summary gate', () => {
+    const result = {
+      mode: 'dry-run',
+      outcome: 'ready',
+      target: { workspaceId: 'space', rootFolderId: 'root', isEnhancedSpace: true },
+      byteProof: 'unavailable',
+      reportFile: null,
+      intents: [
+        {
+          action: 'create',
+          filename: 'unknown',
+          title: 'unknown',
+          apiName: 'unknown',
+          urlName: 'unknown',
+          mediaType: 'application/octet-stream',
+          size: 10 * 1024 * 1024 + 1,
+          sha256: 'a'.repeat(64),
+        },
+      ],
+    };
+    expect(() => assertImageUploadCommandResult(result)).not.to.throw();
+    for (const mediaType of [
+      'image/png\r\nInjected: true',
+      'image/é',
+      'image/png; charset=UTF-8',
+      '',
+    ]) {
+      expect(() =>
+        assertImageUploadCommandResult({
+          ...result,
+          intents: [{ ...result.intents[0], mediaType }],
+        }),
+      ).to.throw();
+    }
+  });
 
   it('persists bindings before independent readback and verifies root membership', async () => {
     const options = await execution();
@@ -225,7 +304,9 @@ describe('no-JSON image upload preparation', () => {
   }
 
   for (const failAt of [1, 2, 3]) {
-    it(`stops on journal failure at rewrite ${failAt}`, async () => {
+    it(`stops on journal failure at rewrite ${failAt}`, async function () {
+      // Real Windows file-route guards launch PowerShell during preparation and apply.
+      this.timeout(process.platform === 'win32' ? 60_000 : 10_000);
       const options = await execution();
       let calls = 0;
       const rewrite = sinon.stub().callsFake(async (target: string, report: unknown) => {
@@ -260,11 +341,15 @@ describe('no-JSON image upload preparation', () => {
       '../a.png',
       'a".png',
       'a\n.png',
+      'a.png\n',
       'é.png',
       'a..png',
       'CON.png',
       '1.png',
-      'a.svg',
+      'a.svg ',
+      'a.',
+      'a:b.svg',
+      String.raw`a\b.svg`,
     ]) {
       expect(() => imageUploadNames(name)).to.throw();
     }
@@ -299,7 +384,7 @@ describe('no-JSON image upload preparation', () => {
     });
   }
 
-  it('accepts only matching PNG JPEG GIF WebP signatures', async function () {
+  it('uses known signatures only as MIME hints and admits opaque or mismatched files', async function () {
     // Keep real filesystem guards while allowing the repeated Windows process checks.
     this.timeout(60_000);
     for (const [name, bytes, mediaType] of [
@@ -312,25 +397,32 @@ describe('no-JSON image upload preparation', () => {
       const [planned] = await planImageUploadFiles([await file(name, bytes)]);
       expect(planned.mediaType).to.equal(mediaType);
     }
-    await rejected(planImageUploadFiles([await file('wrong.jpg')]), 'does not match');
-    await rejected(
-      planImageUploadFiles([await file('invalid.png', Buffer.from('not image'))]),
-      'signature',
-    );
+    for (const [name, bytes, expected] of [
+      ['wrong.jpg', png, 'image/png'],
+      ['opaque.png', Buffer.from('not image'), 'application/octet-stream'],
+      ['unfamiliar.avif', Buffer.from('opaque'), 'application/octet-stream'],
+      ['extensionless', Buffer.from('opaque'), 'application/octet-stream'],
+    ] as const) {
+      const [planned] = await planImageUploadFiles([await file(name, bytes)]);
+      expect(planned.filename).to.equal(name);
+      expect(planned.mediaType).to.equal(expected);
+      expect(planned.bytes).to.deep.equal(bytes);
+    }
     await rejected(planImageUploadFiles([await file('empty.png', Buffer.alloc(0))]), 'nonempty');
-    await rejected(
-      planImageUploadFiles([await file('big.png', Buffer.alloc(MAX_IMAGE_BYTES + 1))]),
-      '10 MiB',
-    );
-    const limit = Buffer.alloc(MAX_IMAGE_BYTES);
-    png.copy(limit);
-    const plannedLimit = await planImageUploadFiles([await file('limit.png', limit)]);
-    expect(plannedLimit[0].bytes.length).to.equal(MAX_IMAGE_BYTES);
+  });
+
+  it('reads files above 10 MiB exactly without the legacy cap', async () => {
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 42);
+    const [planned] = await planImageUploadFiles([await file('large.bin', bytes)]);
+    expect(planned.bytes.length).to.equal(bytes.length);
+    expect(planned.identity.size).to.equal(bytes.length);
+    expect(planned.sha256).to.equal(createHash('sha256').update(bytes).digest('hex'));
+    expect(planned.mediaType).to.equal('application/octet-stream');
   });
 
   it('rejects empty batches, directories, duplicate paths and hardlink identities', async () => {
     await rejected(planImageUploadFiles([]), 'at least one');
-    await rejected(planImageUploadFiles([directory]), 'filename');
+    await rejected(planImageUploadFiles([directory]), 'regular nonempty');
     const source = await file('one.png');
     await rejected(planImageUploadFiles([source, source]), 'Duplicate image path');
     const alias = path.join(directory, 'alias.png');
@@ -380,11 +472,11 @@ describe('no-JSON image upload preparation', () => {
       prepareImageUpload(
         {
           workspaceId: 'space',
-          files: [await file('good.png'), await file('bad.png', Buffer.from('bad'))],
+          files: [await file('good.png'), await file('bad.png', Buffer.alloc(0))],
         },
         services,
       ),
-      'signature',
+      'nonempty',
     );
     expect((services.resolveWorkspace as sinon.SinonStub).notCalled).to.equal(true);
   });

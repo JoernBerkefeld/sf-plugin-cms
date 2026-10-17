@@ -1,6 +1,10 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
 import { PassThrough } from 'node:stream';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { writeEditableItemSource } from '../../src/services/write-item-source.js';
 import sinon from 'sinon';
 import { acquireEditableMediaSource } from '../../src/services/retrieve-media-source.js';
 import { prepareEditableSourceSelection } from '../../src/services/retrieve-item-source.js';
@@ -18,14 +22,19 @@ const input = {
   contentType: 'sfdc_cms__image' as const,
 };
 type R = Record<string, unknown>;
-function fixture() {
+const DOCUMENT = Buffer.from('Café & 世界\r\nSecond line\n', 'utf8');
+const documentInput = { ...input, contentType: 'sfdc_cms__document' as const };
+function fixture(document = false) {
+  const bytes = document ? DOCUMENT : PNG;
+  const mime = document ? 'text/plain' : 'image/png';
+  const contentType = document ? documentInput.contentType : input.contentType;
   const raw: R = {
     managedContentVariantId: '9Ps000000000001AAA',
     managedContentId: '20Y000000000001AAA',
     apiName: 'Hero',
     contentKey: 'source-key',
     contentSpace: { id: input.workspaceId },
-    contentType: { fullyQualifiedName: input.contentType },
+    contentType: { fullyQualifiedName: contentType },
     language: 'en_US',
     title: 'Hero',
     urlName: 'hero',
@@ -39,23 +48,23 @@ function fixture() {
         source: {
           type: 'file',
           ref: 'source-ref',
-          size: PNG.length,
-          fileSize: PNG.length,
-          mimeType: 'image/png',
+          size: bytes.length,
+          fileSize: bytes.length,
+          mimeType: mime,
         },
-        url: `/cms/media/source-key?version=1.3&fileHash=${createHash('md5').update(PNG).digest('hex')}&fileName=original.png`,
+        url: `/cms/media/source-key?version=1.3&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=original.${document ? 'txt' : 'png'}`,
       },
     },
   };
   const parent = structuredClone(raw);
-  parent.contentType = { fullyQualifiedName: input.contentType, name: 'Image' };
+  parent.contentType = { fullyQualifiedName: contentType, name: 'Image' };
   parent.contentVersion = 1;
   parent.variantVersion = '1.3';
   const workspace = { id: input.workspaceId, apiName: 'Marketing', rootFolderId: 'root' };
   const row: R = {
     Id: raw.managedContentVariantId,
     ManagedContentId: raw.managedContentId,
-    ContentTypeFullyQualifiedName: input.contentType,
+    ContentTypeFullyQualifiedName: contentType,
     Language: 'en_US',
     IsPublished: true,
     ManagedContentVariantStatus: 'Published',
@@ -189,58 +198,88 @@ describe('native editable media acquisition', () => {
       expect(first.projection.definitionBytes.toString()).not.to.include(locator);
     expect(fetcher.callCount).to.equal(2);
   });
-  for (const selectors of [
-    { 'api-name': ['Hero'] },
-    { 'content-key-or-id': ['source-key'] },
-    { all: true },
+  for (const responseType of [
+    'IMAGE/PNG; charset=utf-8',
+    'Application/Octet-Stream; charset=ISO-8859-1',
   ]) {
-    it(`acquires resolved Image selections with bound binary bytes: ${JSON.stringify(selectors)}`, async () => {
+    it(`acquires exact Image bytes and native MIME from parameterized HTTP ${responseType}`, async () => {
       const f = fixture();
-      const fetcher = sinon
+      sinon
         .stub(globalThis, 'fetch')
-        .callsFake(async () => new Response(PNG, { headers: { 'content-type': 'image/png' } }));
+        .callsFake(async () => new Response(PNG, { headers: { 'content-type': responseType } }));
+      const acquired = await acquireEditableMediaSource(f.connection, input);
+      expect(acquired.projection.definition.media).to.include({ mimeType: 'image/png' });
+      expect(acquired.projection.companions[0].bytes).to.deep.equal(PNG);
+    });
+  }
+  for (const document of [false, true]) {
+    for (const selectors of [
+      { 'api-name': ['Hero'] },
+      { 'content-key-or-id': ['source-key', 'source-key'] },
+      { 'content-key-or-id': ['20Y000000000001AAA'] },
+      { all: true },
+    ]) {
+      it(`acquires resolved ${document ? 'Document' : 'Image'} selections with exact bytes: ${JSON.stringify(selectors)}`, async () => {
+        const f = fixture(document);
+        const selectedInput = document ? documentInput : input;
+        const bytes = document ? DOCUMENT : PNG;
+        const fetcher = sinon.stub(globalThis, 'fetch').callsFake(
+          async () =>
+            new Response(bytes, {
+              headers: { 'content-type': document ? 'text/plain' : 'image/png' },
+            }),
+        );
+        const prepared = await prepareEditableSourceSelection(f.connection, {
+          workspaceId: input.workspaceId,
+          language: input.language,
+          selection: normalizeRetrieveSelection({
+            'content-type': [selectedInput.contentType],
+            ...selectors,
+          }),
+        });
+        const id = prepared.resolution.variants[0].Id;
+        prepared.resolution.variants[0].ManagedContentId = 'forged';
+        const acquired = await prepared.acquire(id);
+        expect(acquired.evidence).to.deep.equal({
+          variantId: f.row.Id,
+          contentId: f.row.ManagedContentId,
+        });
+        expect(acquired.projection.companions[0].bytes.equals(bytes)).to.equal(true);
+        expect(acquired.directory).to.equal(`cms/Marketing/${document ? 'document' : 'image'}`);
+        expect(acquired.projection.definitionName).to.equal(
+          `Hero.cms-${document ? 'document' : 'image'}.json`,
+        );
+        expect(await prepared.acquire(id)).to.deep.equal(acquired);
+        expect(fetcher.calledTwice).to.equal(true);
+        await failure(prepared.acquire('unselected'), /resolved native selection/u);
+      });
+    }
+  }
+
+  for (const document of [false, true]) {
+    it(`blocks a substituted native ${document ? 'Document' : 'Image'} identity after selection and retains missing selectors`, async () => {
+      const f = fixture(document);
+      const contentType = document ? documentInput.contentType : input.contentType;
+      const native = (f.raw.contentBody as R)['sfdc_cms:media'] as R;
+      native.url = 'https://cdn.example/hero.png';
+      f.parent.contentBody = structuredClone(f.raw.contentBody);
       const prepared = await prepareEditableSourceSelection(f.connection, {
         workspaceId: input.workspaceId,
         language: input.language,
         selection: normalizeRetrieveSelection({
-          'content-type': [input.contentType],
-          ...selectors,
+          metadata: [contentType, `${contentType}:Missing`],
         }),
       });
-      const id = prepared.resolution.variants[0].Id;
-      prepared.resolution.variants[0].ManagedContentId = 'forged';
-      const acquired = await prepared.acquire(id);
-      expect(acquired.evidence).to.deep.equal({
-        variantId: f.row.Id,
-        contentId: f.row.ManagedContentId,
+      expect(prepared.resolution.unresolved[0]).to.include({
+        selector: 'Missing',
+        reason: 'missing',
       });
-      expect(acquired.projection.companions[0].bytes.equals(PNG)).to.equal(true);
-      expect(fetcher.calledOnce).to.equal(true);
-      await failure(prepared.acquire('unselected'), /resolved native selection/u);
+      const id = f.row.Id as string;
+      for (const value of [f.raw, f.parent]) value.managedContentVariantId = '9Ps000000000002AAA';
+      f.row.Id = '9Ps000000000002AAA';
+      await failure(prepared.acquire(id), /Resolved media identity/u);
     });
   }
-
-  it('blocks a substituted native Image identity after selection and retains missing selectors', async () => {
-    const f = fixture();
-    const native = (f.raw.contentBody as R)['sfdc_cms:media'] as R;
-    native.url = 'https://cdn.example/hero.png';
-    f.parent.contentBody = structuredClone(f.raw.contentBody);
-    const prepared = await prepareEditableSourceSelection(f.connection, {
-      workspaceId: input.workspaceId,
-      language: input.language,
-      selection: normalizeRetrieveSelection({
-        metadata: [input.contentType, `${input.contentType}:Missing`],
-      }),
-    });
-    expect(prepared.resolution.unresolved[0]).to.include({
-      selector: 'Missing',
-      reason: 'missing',
-    });
-    const id = f.row.Id as string;
-    for (const value of [f.raw, f.parent]) value.managedContentVariantId = '9Ps000000000002AAA';
-    f.row.Id = '9Ps000000000002AAA';
-    await failure(prepared.acquire(id), /Resolved Image identity/u);
-  });
 
   it('retains external and explicitly unretrieved sources as URL-only without fetching', async () => {
     const fetcher = sinon.stub(globalThis, 'fetch');
@@ -257,50 +296,107 @@ describe('native editable media acquisition', () => {
     await acquireEditableMediaSource(f.connection, { ...input, urlOnly: true });
     expect(fetcher.called).to.equal(false);
   });
-  it('rejects native, parent, workspace, sibling, placement and unknown authoring disagreement before fetching', async () => {
+  for (const document of [false, true]) {
+    it(`rejects ${document ? 'Document' : 'Image'} native, parent, workspace, sibling, placement and unknown authoring disagreement before fetching`, async () => {
+      const fetcher = sinon.stub(globalThis, 'fetch');
+      const patches: Array<(f: ReturnType<typeof fixture>) => void> = [
+        (f) => {
+          f.row.ManagedContentKey = 'other';
+        },
+        (f) => {
+          f.parent.title = 'Other';
+        },
+        (f) => {
+          f.workspace.id = 'other';
+        },
+        (f) => {
+          f.parent.folder = { id: 'nonroot' };
+        },
+        (f) => {
+          f.parent.folder = null;
+        },
+        (f) => {
+          f.setSiblings([f.row, { ...f.row, Id: '9Ps000000000002AAA' }]);
+        },
+        (f) => {
+          (f.raw.contentBody as R).unknownAuthoring = true;
+          f.parent.contentBody = structuredClone(f.raw.contentBody);
+        },
+        (f) => {
+          f.raw.unknownAuthoring = true;
+        },
+        (f) => {
+          const source = ((f.raw.contentBody as R)['sfdc_cms:media'] as R).source as R;
+          source.fileSize = 1;
+          f.parent.contentBody = structuredClone(f.raw.contentBody);
+        },
+      ];
+      for (const patch of patches) {
+        const f = fixture(document);
+        patch(f);
+        await failure(
+          acquireEditableMediaSource(f.connection, document ? documentInput : input),
+          /disagreement|sibling|root|fields/u,
+        );
+      }
+      expect(fetcher.called).to.equal(false);
+    });
+  }
+
+  it('writes Document exact bytes stably, protects edits and retains unrelated files', async () => {
+    sinon
+      .stub(globalThis, 'fetch')
+      .callsFake(async () => new Response(DOCUMENT, { headers: { 'content-type': 'text/plain' } }));
+    const prepared = await prepareEditableSourceSelection(fixture(true).connection, {
+      workspaceId: input.workspaceId,
+      language: input.language,
+      selection: normalizeRetrieveSelection({
+        metadata: [documentInput.contentType, `${documentInput.contentType}:Hero`],
+      }),
+    });
+    expect(prepared.resolution.variants).to.have.length(1);
+    const acquired = await prepared.acquire(prepared.resolution.variants[0].Id);
+    const project = await mkdtemp(path.join(os.tmpdir(), 'cms-document-retrieve-'));
+    const unrelated = path.join(project, 'unrelated.txt');
+    await writeFile(unrelated, 'keep');
+    const write = (overwrite = false) =>
+      writeEditableItemSource(project, acquired.directory, acquired.projection, overwrite);
+    const first = await write();
+    const companion = path.join(project, acquired.directory, 'Hero.cms-document.media.txt');
+    expect(await readFile(companion)).to.deep.equal(DOCUMENT);
+    const repeated = await write();
+    expect(repeated.unchanged).to.have.length(2);
+    await writeFile(companion, 'local edit');
+    await failure(write(), /overwrite/u);
+    expect(await readFile(companion, 'utf8')).to.equal('local edit');
+    const overwritten = await write(true);
+    expect(overwritten.updated).to.deep.equal([companion]);
+    expect(await readFile(companion)).to.deep.equal(DOCUMENT);
+    expect(await readFile(unrelated, 'utf8')).to.equal('keep');
+    expect(first.created).to.have.length(2);
+  });
+
+  it('rejects downloaded Document bytes, MIME and invalid UTF-8', async () => {
     const fetcher = sinon.stub(globalThis, 'fetch');
-    const patches: Array<(f: ReturnType<typeof fixture>) => void> = [
-      (f) => {
-        f.row.ManagedContentKey = 'other';
-      },
-      (f) => {
-        f.parent.title = 'Other';
-      },
-      (f) => {
-        f.workspace.id = 'other';
-      },
-      (f) => {
-        f.parent.folder = { id: 'nonroot' };
-      },
-      (f) => {
-        f.parent.folder = null;
-      },
-      (f) => {
-        f.setSiblings([f.row, { ...f.row, Id: '9Ps000000000002AAA' }]);
-      },
-      (f) => {
-        (f.raw.contentBody as R).unknownAuthoring = true;
+    for (const [bytes, mime] of [
+      [Buffer.concat([DOCUMENT, Buffer.from('changed')]), 'text/plain'],
+      [DOCUMENT, 'image/png'],
+      [Buffer.alloc(DOCUMENT.length, 255), 'text/plain'],
+    ] as const) {
+      fetcher.callsFake(async () => new Response(bytes, { headers: { 'content-type': mime } }));
+      const f = fixture(true);
+      if (bytes[0] === 255) {
+        const media = (f.raw.contentBody as R)['sfdc_cms:media'] as R;
+        media.url = `/cms/media/source-key?version=1.3&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=original.txt`;
         f.parent.contentBody = structuredClone(f.raw.contentBody);
-      },
-      (f) => {
-        f.raw.unknownAuthoring = true;
-      },
-      (f) => {
-        const source = ((f.raw.contentBody as R)['sfdc_cms:media'] as R).source as R;
-        source.fileSize = 1;
-        f.parent.contentBody = structuredClone(f.raw.contentBody);
-      },
-    ];
-    for (const patch of patches) {
-      const f = fixture();
-      patch(f);
+      }
       await failure(
-        acquireEditableMediaSource(f.connection, input),
-        /disagreement|sibling|root|fields/u,
+        acquireEditableMediaSource(f.connection, documentInput),
+        /byte count|MIME|UTF|encoded/u,
       );
     }
-    expect(fetcher.called).to.equal(false);
   });
+
   it('rejects downloaded bytes and MIME that disagree with the native evidence', async () => {
     const fetcher = sinon.stub(globalThis, 'fetch');
     for (const [bytes, mime] of [

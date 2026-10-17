@@ -67,10 +67,10 @@ describe('current public documentation', () => {
     expect(readme).to.include('imaginary result of a future retrieve-all operation');
   });
 
-  it('documents narrow PNG deploy without claiming cross-org Image qualification', async () => {
+  it('documents API-led Image admission without claiming live format qualification', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
-      'Available (PNG only)',
+      'Available (API-led)',
       'Available (bytes only)',
       '## Download, edit and save one PNG Image',
       'edit **only the PNG companion bytes**',
@@ -78,7 +78,12 @@ describe('current public documentation', () => {
       'Existing targets must be unpublished primary Drafts with their native filename already exactly `<apiName>.cms-image.media.png`',
       'Retrieval normalizes the companion filename, so retrieval alone does not prove deploy eligibility',
       'A native filename mismatch blocks deploy; filename and metadata updates are unsupported',
-      'URL-only sources, other image formats, nested folders, multiple variants, published targets and metadata-changing UPDATE remain unsupported',
+      'URL-only sources, Documents, nested folders, multiple variants, published targets and metadata-changing UPDATE remain unsupported',
+      'the client does NOT cap at 25 MB',
+      '**Live qualification pending:**',
+      'the exact byte boundary has not been proven',
+      'local admission does not establish that all formats are accepted',
+      'no Image format whitelist, signature-matching requirement or 10 MiB cap',
       '**Cross-org Image acceptance is pending**',
       '75 preexisting items unchanged',
       '`content.deploy.image.create|update|unchanged`',
@@ -89,8 +94,22 @@ describe('current public documentation', () => {
     expect(readme).not.to.include('retrieval-only local implementation');
     expect(DeployContent.description).to.include('bytes-only UPDATE');
     expect(DeployContent.description).to.include('does not establish cross-org qualification');
-    expect(RetrieveContent.description).to.include('narrow binary PNG profile');
+    expect(RetrieveContent.description).to.include(
+      'Salesforce determines format and size acceptance',
+    );
+    expect(DeployContent.description).to.include('no client format whitelist or 25 MB cap');
     expect(RetrieveContent.description).not.to.include('deployment is not supported');
+  });
+
+  it('documents retrieval-only UTF-8 Documents without admitting deploy', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    expect(readme).to.include('**Bounded Document retrieval (retrieval only):**');
+    expect(readme).to.include('Document deploy remains blocked');
+    expect(readme).to.include('UTF-8 contents are not restricted to ASCII');
+    expect(readme).to.include('Document installed qualification remains pending');
+    expect(readme).not.to.include('Document is not admitted by this command');
+    expect(RetrieveContent.description).to.include('Document deployment remains blocked');
+    expect(RetrieveContent.flags['content-type'].summary).to.include('sfdc_cms__document');
   });
 
   it('preserves recovery, qualification, ownership and API interoperability limits', async () => {
