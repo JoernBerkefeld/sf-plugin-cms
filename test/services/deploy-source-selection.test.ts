@@ -106,7 +106,7 @@ describe('local deploy source selection', () => {
     const file = await fixture(nested);
     const second = await fixture(path.join(root, 'email'), definition(true));
     await writeFile(path.join(root, 'receipt.json'), '{not a definition');
-    await writeFile(path.join(root, 'other.cms-image.json'), '{not supported');
+    await writeFile(path.join(root, 'other.cms-document.json'), '{not supported');
     await writeFile(path.join(root, 'Welcome.cms-email.txt'), 'companion');
     const result = await selectDeploySources({ 'source-dir': [nested, root, root] });
     expect(result.mode).to.equal('source-dir');
@@ -153,7 +153,7 @@ describe('local deploy source selection', () => {
       { 'source-dir': ['x'], metadata: [] },
       { 'source-dir': ['x'], 'content-type': [] },
       { 'source-dir': ['x'], 'content-type': ['email'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__image'] },
+      { 'source-dir': ['x'], metadata: ['sfdc_cms__document'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email:'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email: '] },
       { 'source-dir': 'x' as unknown as string[] },

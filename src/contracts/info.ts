@@ -103,6 +103,24 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
     contract: 'sf-cms-content-deploy@1',
   },
   {
+    id: 'content.deploy.image.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.image.update',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.image.unchanged',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
     id: 'images.upload.create',
     state: 'unqualified',
     transport: 'cli-json',

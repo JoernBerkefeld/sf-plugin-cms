@@ -146,7 +146,9 @@ describe('run-owned OS-temp cleanup', () => {
     await removeRunOwnedPath(run, project);
   });
 
-  it('never follows dependency links and keeps ordinary cleanup strict', async () => {
+  it('never follows dependency links and keeps ordinary cleanup strict', async function () {
+    // Several independent real reparse/ancestor checks launch PowerShell on Windows.
+    this.timeout(process.platform === 'win32' ? 30_000 : 10_000);
     const run = await createRunOwnedTemp('cms-cleanup-test');
     const project = await createRunOwnedDirectory(run, 'project');
     const outside = await createRunOwnedDirectory(run, 'outside');

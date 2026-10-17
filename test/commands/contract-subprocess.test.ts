@@ -316,7 +316,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ]);
     expect(
       result.capabilities.some(({ id }) =>
-        /workspace\.(?:export|import)|content\.update\.|deploy\.image/u.test(id),
+        /workspace\.(?:export|import)|content\.update\./u.test(id),
       ),
     ).to.equal(false);
     expect(
@@ -324,6 +324,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         .filter(({ id }) => id.startsWith('content.deploy.'))
         .every(({ state }) => state === 'unqualified'),
     ).to.equal(true);
+    expect(
+      result.capabilities.filter(({ id }) => id.startsWith('content.deploy.image.')),
+    ).to.deep.equal(
+      ['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.image.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
+    );
     expect(result.internalRegistry.scope).to.equal('internal-engine-only');
     expect(result.internalRegistry.version).to.equal('1.0.0');
     for (const declaration of result.internalRegistry.declarations) {

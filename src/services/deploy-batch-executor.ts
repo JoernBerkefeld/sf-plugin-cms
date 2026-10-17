@@ -7,6 +7,11 @@ import type { JsonRequestOptions } from '../transport/json-request.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
 import { executeDeployCreate } from './deploy-create-executor.js';
+import { executeDeployImage } from './deploy-image-executor.js';
+import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
+import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
+import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
+import { enumerateNativeWorkspace, type NativeInventoryRow } from './retrieve-native-inventory.js';
 import { preflightDeployCreate } from './deploy-create-preflight.js';
 import { executeDeployUpdate, preflightDeployUpdate } from './deploy-update-executor.js';
 import { selectDeploySources, type DeployLocalSelection } from './deploy-source-selection.js';
@@ -57,7 +62,7 @@ export type DeployBatchPersistence = {
 
 /**
  * Execute a frozen whole-selection intent sequentially, stopping on the first failure.
- * Internal/unqualified only: no retry, resume, rollback, or public apply authority.
+ * Capability acceptance remains unqualified; no retry, resume, rollback or publication.
  * @param {Connection} connection - Explicit destination connection; UPDATE needs token/instance URL.
  * @param {ExecuteDeployBatchInput} input - Local selectors, exact destination and exclusive batch journal.
  * @param {JsonRequestOptions} options - Timeout/cancellation options only.
@@ -76,6 +81,8 @@ export async function executeDeployBatch(
     throw new TypeError('Batch requires exact destination org ID');
   // Never accept a caller's eligibility, payload, or operation-specific proof.
   const baseline = await preflightDeployBatch(connection, selected, requestOptions);
+  const verifiedCreatedRows: NativeInventoryRow[] = [];
+  const reselect = () => selectDeploySources(selected.sources);
   const reportFile = path.resolve(selected.reportFile);
   const runId = randomUUID();
   const report: DeployBatchReport = {
@@ -132,30 +139,68 @@ export async function executeDeployBatch(
         definitionFile: item.source.definitionPath,
         workspaceId: selected.workspaceId,
         language: selected.language,
+        expectedRootFolderId: baseline.rootFolderId,
       };
       const boundary = async () => {
         if (requestOptions.signal?.aborted) throw new TypeError('Batch cancelled before execution');
-        if (!isDeepStrictEqual(await selectDeploySources(selected.sources), baseline.selection))
+        if (!isDeepStrictEqual(await reselect(), baseline.selection))
           throw new TypeError('Batch selection changed before execution');
         if (
           JSON.stringify(JSON.parse(await readFile(reportFile, 'utf8'))) !== JSON.stringify(report)
         )
           throw new TypeError('Batch durable intent changed before execution');
         const proof = baseline.items[index];
-        const fresh =
-          item.proposed === 'create'
-            ? await preflightDeployCreate(connection, scope, requestOptions)
-            : await preflightDeployUpdate(connection, scope, requestOptions);
-        // Earlier verified CREATEs legitimately change the workspace-wide record count,
-        // not this item's parent/detail/sibling/workspace binding.
-        const comparable = (value: typeof fresh) => {
-          if ('prepared' in value)
-            return { ...value, prepared: { ...value.prepared, inventory: undefined } };
-          return value;
-        };
-        if (!isDeepStrictEqual(comparable(fresh), comparable((proof.create ?? proof.update)!)))
-          throw new TypeError('Batch operation intent changed before execution');
-        if (!isDeepStrictEqual(await selectDeploySources(selected.sources), baseline.selection))
+        if (item.source.definition.contract === 'sf-cms-media-source') {
+          if (item.proposed === 'create') {
+            const fresh = await preflightDeployImageCreate(connection, scope, requestOptions);
+            if (!isDeepStrictEqual(fresh, proof.imageCreate))
+              throw new TypeError('Batch Image CREATE intent changed');
+          } else if (item.proposed === 'update') {
+            const fresh = await preflightDeployImageUpdate(connection, scope, requestOptions);
+            for (const row of verifiedCreatedRows) {
+              if (
+                !isDeepStrictEqual(
+                  fresh.destination.inventory.records.find((candidate) => candidate.Id === row.Id),
+                  row,
+                )
+              )
+                throw new TypeError('Earlier verified CREATE inventory changed');
+            }
+            const normalized = {
+              ...fresh,
+              destination: { ...fresh.destination, inventory: { ...fresh.destination.inventory } },
+            };
+            normalized.destination.inventory.records =
+              normalized.destination.inventory.records.filter(
+                (row) => !verifiedCreatedRows.some((created) => created.Id === row.Id),
+              );
+            // Page request counts can grow at pagination boundaries; complete records remain bound.
+            if (proof.imageUpdate)
+              normalized.destination.inventory.pagesRequested =
+                proof.imageUpdate.destination.inventory.pagesRequested;
+            if (!isDeepStrictEqual(normalized, proof.imageUpdate))
+              throw new TypeError('Batch Image UPDATE intent changed');
+          } else {
+            const fresh = await admitDeployImageUnchanged(connection, scope, requestOptions);
+            if (!isDeepStrictEqual(fresh, proof.imageUnchanged))
+              throw new TypeError('Batch Image unchanged intent changed');
+          }
+        } else {
+          const fresh =
+            item.proposed === 'create'
+              ? await preflightDeployCreate(connection, scope, requestOptions)
+              : await preflightDeployUpdate(connection, scope, requestOptions);
+          // Earlier verified CREATEs legitimately change the workspace-wide record count,
+          // not this item's parent/detail/sibling/workspace binding.
+          const comparable = (value: typeof fresh) => {
+            if ('prepared' in value)
+              return { ...value, prepared: { ...value.prepared, inventory: undefined } };
+            return value;
+          };
+          if (!isDeepStrictEqual(comparable(fresh), comparable((proof.create ?? proof.update)!)))
+            throw new TypeError('Batch operation intent changed before execution');
+        }
+        if (!isDeepStrictEqual(await reselect(), baseline.selection))
           throw new TypeError('Batch selection changed at execution boundary');
         if (requestOptions.signal?.aborted)
           throw new TypeError('Batch cancelled at execution boundary');
@@ -171,7 +216,32 @@ export async function executeDeployBatch(
         destinationOrgId: selected.destinationOrgId,
         reportFile: item.reportFile,
       };
-      if (item.proposed === 'create') {
+      if (item.source.definition.contract === 'sf-cms-media-source') {
+        if (item.proposed === 'blocked') throw new TypeError('Blocked Image operation');
+        const result = await executeDeployImage(
+          connection,
+          { ...itemInput, operation: item.proposed },
+          requestOptions,
+          persistence?.item,
+          boundary,
+        );
+        if ('report' in result) {
+          if (result.report.state !== 'completed') throw new TypeError('Image journal incomplete');
+          if (item.proposed === 'create') {
+            const created = result.report.createdParents[0];
+            item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
+            item.outcome = 'created';
+          } else {
+            const updated = result.report.operations[0].result!;
+            item.target = { contentId: updated.contentId!, variantId: updated.variantId! };
+            item.outcome = 'updated';
+          }
+        } else {
+          await boundary();
+          item.target = { contentId: result.contentId, variantId: result.variantId };
+          item.outcome = 'unchanged';
+        }
+      } else if (item.proposed === 'create') {
         const result = await executeDeployCreate(
           connection,
           itemInput,
@@ -193,6 +263,21 @@ export async function executeDeployBatch(
         item.target = result.target;
         item.outcome = result.outcome;
       }
+      if (item.outcome === 'created') {
+        const inventory = await enumerateNativeWorkspace(
+          connection,
+          selected.workspaceId,
+          requestOptions,
+        );
+        const row = inventory.records.find((candidate) => candidate.Id === item.target!.variantId);
+        if (
+          !row ||
+          row.ManagedContentId !== item.target!.contentId ||
+          row.ManagedContent.ApiName !== item.source.targetIdentity.apiName
+        )
+          throw new TypeError('Verified CREATE inventory binding missing');
+        verifiedCreatedRows.push(structuredClone(row));
+      }
       // Mark verified outcomes before summary persistence: failures must not erase the prefix.
       active = undefined;
       recount();
@@ -208,7 +293,7 @@ export async function executeDeployBatch(
     if (active) {
       active.error = message;
       // Missing/unreadable/pending journals cannot establish that no mutation occurred.
-      active.outcome = 'uncertain';
+      active.outcome = active.proposed === 'unchanged' ? 'failed' : 'uncertain';
       try {
         const journal = JSON.parse(
           await readFile(active.reportFile, 'utf8'),

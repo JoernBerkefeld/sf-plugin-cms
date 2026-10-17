@@ -10,9 +10,15 @@ import {
 import { prepareDeployDestination } from './deploy-destination-preparation.js';
 import { preflightDeployCreate } from './deploy-create-preflight.js';
 import { preflightDeployUpdate } from './deploy-update-executor.js';
+import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
+import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
+import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
+import { getWorkspace } from './read.js';
 
 export type DeployBatchPreflightInput = {
   sources: DeploySourceSelectionFlags;
+  /** Optional root binding for independent reacquisition of a previously observed destination. */
+  expectedRootFolderId?: string;
   workspaceId: string;
   language: string;
   /** Compare the entire planned selection, not only the next item, when acquiring again. */
@@ -20,6 +26,7 @@ export type DeployBatchPreflightInput = {
 };
 export type DeployBatchPreflight = {
   qualification: 'unqualified';
+  rootFolderId?: string;
   selection: DeployLocalSelection;
   preparation: Awaited<ReturnType<typeof prepareDeployDestination>>;
   eligible: boolean;
@@ -30,6 +37,9 @@ export type DeployBatchPreflight = {
     blockedReasons: string[];
     create?: Awaited<ReturnType<typeof preflightDeployCreate>>;
     update?: Awaited<ReturnType<typeof preflightDeployUpdate>>;
+    imageCreate?: Awaited<ReturnType<typeof preflightDeployImageCreate>>;
+    imageUpdate?: Awaited<ReturnType<typeof preflightDeployImageUpdate>>;
+    imageUnchanged?: Awaited<ReturnType<typeof admitDeployImageUnchanged>>;
   }>;
 };
 
@@ -55,13 +65,32 @@ export async function preflightDeployBatch(
     !isDeepStrictEqual(selection, selected.expectedSelection)
   )
     throw new TypeError('Batch selection changed since planning');
+  let rootFolderId = selected.expectedRootFolderId;
+  if (selection.items.some((item) => item.definition.contract === 'sf-cms-media-source')) {
+    const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
+    if (
+      workspace.id !== selected.workspaceId ||
+      typeof workspace.rootFolderId !== 'string' ||
+      !workspace.rootFolderId ||
+      workspace.defaultLanguage !== selected.language ||
+      (rootFolderId !== undefined && workspace.rootFolderId !== rootFolderId)
+    )
+      throw new TypeError('Image destination workspace root or default language changed');
+    rootFolderId = workspace.rootFolderId;
+  }
   const preparation = await prepareDeployDestination(
     connection,
-    { selection, workspaceId: selected.workspaceId, language: selected.language },
+    {
+      selection,
+      workspaceId: selected.workspaceId,
+      language: selected.language,
+      expectedRootFolderId: rootFolderId,
+    },
     requestOptions,
   );
   const result: DeployBatchPreflight = {
     qualification: 'unqualified',
+    rootFolderId,
     selection,
     preparation,
     eligible: false,
@@ -89,8 +118,44 @@ export async function preflightDeployBatch(
         definitionFile: source.definitionPath,
         workspaceId: selected.workspaceId,
         language: selected.language,
+        expectedRootFolderId: rootFolderId,
       };
-      if (prepared.proposed === 'create') {
+      if (source.definition.contract === 'sf-cms-media-source') {
+        if (prepared.proposed === 'create') {
+          const proof = await preflightDeployImageCreate(connection, scope, requestOptions);
+          if (
+            !isDeepStrictEqual(proof.source.definition, source.definition) ||
+            !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths)
+          )
+            throw new TypeError('Batch Image CREATE intent changed');
+          if (
+            titles.has(proof.payload.title!) ||
+            (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
+          )
+            throw new TypeError('Selected CREATE title/URL collision');
+          titles.add(proof.payload.title!);
+          if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
+          item.imageCreate = proof;
+        } else if (prepared.proposed === 'update') {
+          const proof = await preflightDeployImageUpdate(connection, scope, requestOptions);
+          if (
+            !isDeepStrictEqual(proof.source.definition, source.definition) ||
+            proof.mediaSha256 !== source.mediaSha256 ||
+            proof.contentId !== prepared.existing?.contentId ||
+            proof.variantId !== prepared.existing.variantId
+          )
+            throw new TypeError('Batch Image UPDATE intent changed');
+          item.imageUpdate = proof;
+        } else {
+          const proof = await admitDeployImageUnchanged(connection, scope, requestOptions);
+          if (
+            proof.contentId !== prepared.existing?.contentId ||
+            proof.variantId !== prepared.existing.variantId
+          )
+            throw new TypeError('Batch Image unchanged identity changed');
+          item.imageUnchanged = proof;
+        }
+      } else if (prepared.proposed === 'create') {
         const create = await preflightDeployCreate(connection, scope, requestOptions);
         if (
           !isDeepStrictEqual(create.payload.contentBody, source.contentBody) ||

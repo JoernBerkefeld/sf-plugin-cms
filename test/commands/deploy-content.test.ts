@@ -155,6 +155,31 @@ describe('cms deploy content command', () => {
     expect(apply.flags['definition-file']).to.deep.equal(['a']);
   });
 
+  it('has no private Image qualification flag', async () => {
+    expect(DeployContent.flags).not.to.have.property('image-qualification');
+    try {
+      await Parser.parse(['-o', 'destination', '--image-qualification'], {
+        flags: DeployContent.flags,
+      });
+      expect.fail('Removed flag must be rejected');
+    } catch (error) {
+      expect((error as Error).message).to.include('image-qualification');
+    }
+  });
+  it('forwards ordinary Image selection without private admission options', async () => {
+    const s = command();
+    s.selectSources.resolves({
+      mode: 'definition-file',
+      items: [
+        { ...source, targetIdentity: { ...source.targetIdentity, contentType: 'sfdc_cms__image' } },
+      ],
+    });
+    await s.instance.run();
+    expect(s.selectSources.firstCall.args).to.have.length(1);
+    expect(s.preflightBatch.calledOnce).to.equal(true);
+    expect(s.preflightBatch.firstCall.args[1]).not.to.have.property('imageQualificationOrgId');
+    expect(s.preflightBatch.firstCall.args[1]).not.to.have.property('includeUnqualifiedImages');
+  });
   it('blocks apply with missing or unsafe reports before local or org access', async () => {
     for (const extra of [
       { apply: true },

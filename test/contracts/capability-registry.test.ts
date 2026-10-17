@@ -146,23 +146,18 @@ describe('sf-metadata-capability-v1 foundation', () => {
     }
   });
 
-  it('documents qualified batch retrieval without inflating baseline live evidence', async () => {
+  it('documents current public retrieval without inflating qualification evidence', async () => {
     const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
-    expect(readme).to.include('**qualified batch retrieval**');
-    expect(readme).to.include('building on the `v0.11.0` release baseline');
     expect(readme).to.include('not released-package qualification');
-    expect(readme).to.include('"plugin": { "name": "sf-plugin-cms", "version": "0.12.0" }');
-    expect(readme).to.include('"pluginVersion": "0.12.0"');
-    expect(readme).not.to.include('Publication of `0.11.0` is not yet asserted.');
+    expect(readme).to.include(
+      '"plugin": { "name": "sf-plugin-cms", "version": "<installed-plugin-version>" }',
+    );
+    expect(readme).to.include('"pluginVersion": "<installed-plugin-version>"');
     expect(readme).to.include('mixed completion exits `2` with `partial`');
     expect(readme).to.include('RETRIEVE_SOURCE_BLOCKED');
-    expect(readme).to.include('This checkpoint makes **no deployment support claim**.');
     expect(readme).to.include('**no live image upload has been performed**');
-    expect(readme).to.include(
-      '**Immutable Brand SOURCE is live-qualified for one root/default-language Draft CREATE.**',
-    );
-    expect(readme).not.to.include('local, unreleased source mode');
-    expect(readme).not.to.include('v0.9.0');
+    expect(readme).to.include('internalRegistry');
+    expect(readme).not.to.include('## Upgrading to');
   });
 
   it('rejects unknown keys and missing completion, bounds, or extractor fields', async () => {

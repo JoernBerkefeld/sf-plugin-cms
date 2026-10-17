@@ -61,9 +61,9 @@ export type DeployContentResult = {
 
 export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentResult>> {
   public static readonly summary =
-    'Plan or apply unqualified portable Email and Email Template deployment.';
+    'Plan or apply portable Email, Email Template and narrow binary Image deployment.';
   public static readonly description =
-    'Default dry-run reads explicit local sources and destination without writes. --apply requires a new --report-dir, preflights the whole selection and journals sequential CREATE/UPDATE/unchanged execution, stopping on first failure. No retry, rollback, resume or publication. This capability remains unqualified pending installed same-org and cross-org live acceptance; successful execution does not qualify the capability.';
+    'Default dry-run reads explicit local sources and destination without writes. --apply requires a new --report-dir, preflights the whole selection and journals sequential CREATE/UPDATE/unchanged execution, stopping on first failure. Images require root/default-language binary PNG sources; existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
   public static readonly examples = [
     '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --definition-file ./Welcome.cms-email.json --json',
     '<%= config.bin %> cms deploy content -o destination -W Marketing -L -d ./cms -m sfdc_cms__email:Welcome --json',
@@ -104,7 +104,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       char: 't',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Qualified Email/Email Template directory filter; repeat. Exclusive of metadata.',
+      summary: 'Email/Email Template/Image directory filter; repeat. Exclusive of metadata.',
     }),
     metadata: Flags.string({
       char: 'm',
@@ -189,7 +189,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
               message:
                 result.mode === 'dry-run'
                   ? 'Dry-run proposals are unqualified observations only. No mutations or readback were performed.'
-                  : 'Deployment capability is unqualified pending installed same-org and cross-org live acceptance. Inspect batch and per-item journals for actual outcomes.',
+                  : 'Deployment capability remains unqualified; narrow same-org PNG acceptance does not establish cross-org Image qualification. Inspect batch and per-item journals for actual outcomes.',
               retryable: false,
             },
           ],

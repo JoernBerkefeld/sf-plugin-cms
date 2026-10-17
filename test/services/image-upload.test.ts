@@ -148,7 +148,9 @@ describe('no-JSON image upload preparation', () => {
     expect(options.request.notCalled).to.equal(true);
   });
 
-  it('completes ordered multiple uploads', async () => {
+  it('completes ordered multiple uploads', async function () {
+    // Two files are checked before planning, before applying, and again at each write on Windows.
+    this.timeout(process.platform === 'win32' ? 30_000 : 10_000);
     const options = await execution();
     let index = -1;
     options.request.callsFake(async () => {
@@ -387,42 +389,44 @@ describe('no-JSON image upload preparation', () => {
     expect((services.resolveWorkspace as sinon.SinonStub).notCalled).to.equal(true);
   });
 
-  it('fails closed on unknown/nonenhanced/root-invalid eligibility and root drift', async () => {
-    const files = [await file('valid.png')];
-    for (const detail of [
-      { id: 'space', rootFolderId: 'root' },
-      { ...workspace, isEnhancedSpace: false },
-      { ...workspace, isEnhancedSpace: 'true' },
-      { ...workspace, rootFolderId: 'space' },
-      { ...workspace, rootFolderId: '' },
-      { ...workspace, id: 'other' },
-    ]) {
+  for (const detail of [
+    { id: 'space', rootFolderId: 'root' },
+    { ...workspace, isEnhancedSpace: false },
+    { ...workspace, isEnhancedSpace: 'true' },
+    { ...workspace, rootFolderId: 'space' },
+    { ...workspace, rootFolderId: '' },
+    { ...workspace, id: 'other' },
+  ])
+    it(`fails closed on invalid workspace eligibility ${JSON.stringify(detail)}`, async () => {
+      const files = [await file('valid.png')];
       const services = reads();
       (services.resolveWorkspace as sinon.SinonStub).resolves({ id: 'space', workspace: detail });
       await rejected(prepareImageUpload({ files, workspaceId: 'space' }, services), 'evidence');
       expect((services.searchVariants as sinon.SinonStub).notCalled).to.equal(true);
-    }
+    });
+  it('fails closed on root drift', async () => {
+    const files = [await file('valid.png')];
     const services = reads();
     (services.getWorkspace as sinon.SinonStub).resolves({ ...workspace, rootFolderId: 'changed' });
     await rejected(prepareImageUpload({ files, workspaceId: 'space' }, services), 'root changed');
   });
 
-  it('requires complete, count-consistent, unique, exact-workspace inventory with complete details', async () => {
-    const files = [await file('valid.png')];
-    for (const response of [
-      {},
-      { items: [], count: 1 },
-      { items: [], count: 0, total: 1 },
-      { items: [], count: -1 },
-      { items: [{ id: 'v', managedContentSpaceId: 'other' }], count: 1 },
-      {
-        items: [
-          { id: 'v', managedContentSpaceId: 'space' },
-          { id: 'v', managedContentSpaceId: 'space' },
-        ],
-        count: 2,
-      },
-    ]) {
+  for (const response of [
+    {},
+    { items: [], count: 1 },
+    { items: [], count: 0, total: 1 },
+    { items: [], count: -1 },
+    { items: [{ id: 'v', managedContentSpaceId: 'other' }], count: 1 },
+    {
+      items: [
+        { id: 'v', managedContentSpaceId: 'space' },
+        { id: 'v', managedContentSpaceId: 'space' },
+      ],
+      count: 2,
+    },
+  ])
+    it(`rejects incomplete or inconsistent inventory ${JSON.stringify(response)}`, async () => {
+      const files = [await file('valid.png')];
       const services = reads();
       (services.searchVariants as sinon.SinonStub).resolves(response);
       (services.getVariant as sinon.SinonStub).resolves({
@@ -433,11 +437,13 @@ describe('no-JSON image upload preparation', () => {
         urlName: 'other',
       });
       await rejected(prepareImageUpload({ files, workspaceId: 'space' }, services), 'inventory');
-    }
-    for (const detail of [
-      { id: 'v' },
-      { id: 'other', contentSpace: { id: 'space' }, apiName: 'a', title: 'a', urlName: 'a' },
-    ]) {
+    });
+  for (const detail of [
+    { id: 'v' },
+    { id: 'other', contentSpace: { id: 'space' }, apiName: 'a', title: 'a', urlName: 'a' },
+  ])
+    it(`rejects incomplete inventory detail ${JSON.stringify(detail)}`, async () => {
+      const files = [await file('valid.png')];
       const services = reads();
       (services.searchVariants as sinon.SinonStub).resolves({
         count: 1,
@@ -445,8 +451,7 @@ describe('no-JSON image upload preparation', () => {
       });
       (services.getVariant as sinon.SinonStub).resolves(detail);
       await rejected(prepareImageUpload({ files, workspaceId: 'space' }, services), 'incomplete');
-    }
-  });
+    });
 
   it('paginates page-local counts to a short-page completion and rejects incomplete totals and cap', async () => {
     const files = [await file('new.png')];

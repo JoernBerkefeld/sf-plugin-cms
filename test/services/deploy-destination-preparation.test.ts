@@ -266,6 +266,8 @@ describe('read-only deploy destination preparation', () => {
       const f = fixture();
       if (field === 'title' || field === 'urlName') f.source.definition[field] = 'Changed';
       else {
+        if (f.source.definition.contract === 'sf-cms-media-source')
+          throw new Error('Expected Email fixture');
         f.source.definition.contentBody[field] = 'Changed';
         f.source.contentBody[field] = 'Changed';
       }
@@ -336,6 +338,17 @@ describe('read-only deploy destination preparation', () => {
       ).to.be.greaterThan(0);
       expect(result.items.some((item) => item.proposed === 'create')).to.equal(false);
     }
+  });
+  it('rejects a workspace root that differs from the captured batch root', async () => {
+    const f = fixture();
+    f.input.expectedRootFolderId = '9Pu000000000071AAA';
+    f.workspace.rootFolderId = '9Pu000000000072AAA';
+    f.variants[0].folder = { id: f.workspace.rootFolderId };
+    f.parent.folder = { id: f.workspace.rootFolderId };
+    const result = await f.run();
+    expect(result.blockedReasons.join(';')).to.match(/workspace.*root/u);
+    expect(result.items).to.deep.equal([]);
+    expect(f.calls).to.have.length(1);
   });
   it('rejects empty selections and colliding parent names before org reads', async () => {
     for (const empty of [true, false]) {

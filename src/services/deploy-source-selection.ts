@@ -1,4 +1,11 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import {
+  assertEditableMediaDefinition,
+  loadEditableMediaSource,
+  type EditableMediaDefinition,
+} from './editable-media-source.js';
+
 import {
   assertSourceDefinition,
   SOURCE_EMAIL_PROFILES,
@@ -25,7 +32,9 @@ export interface DeploySourceSelectionFlags {
 export interface DeployLocalItem {
   definitionPath: string;
   companionPaths: string[];
-  definition: SourceDefinition | EditableItemDefinitionV2;
+  definition: SourceDefinition | EditableItemDefinitionV2 | EditableMediaDefinition;
+  /** Observed binary binding for Image planning, never apply authority. */
+  mediaSha256?: string;
   contentBody: Record<string, JsonValue>;
   /** Destination-relative identity; source workspace context remains in definition only. */
   targetIdentity: { contentType: string; apiName: string; language: string };
@@ -50,7 +59,10 @@ function values(input: readonly string[] | undefined): string[] | undefined {
 }
 
 function contentType(value: string): string {
-  if (!SOURCE_EMAIL_PROFILES.some((profile) => profile.contentType === value))
+  if (
+    value !== 'sfdc_cms__image' &&
+    !SOURCE_EMAIL_PROFILES.some((profile) => profile.contentType === value)
+  )
     throw new TypeError('Deploy source selection requires a supported qualified content type');
   return value;
 }
@@ -63,17 +75,14 @@ function metadataSelector(value: string): Selector {
   return { contentType: contentType(value.slice(0, colon)), apiName };
 }
 
-function matches(
-  definition: SourceDefinition | EditableItemDefinitionV2,
-  selector: Selector,
-): boolean {
+function matches(definition: DeployLocalItem['definition'], selector: Selector): boolean {
   return (
     definition.contentType === selector.contentType &&
     (selector.apiName === undefined || definition.identity.apiName === selector.apiName)
   );
 }
 
-async function readDefinition(file: string): Promise<SourceDefinition | EditableItemDefinitionV2> {
+async function readDefinition(file: string): Promise<DeployLocalItem['definition']> {
   // Preserve the caller's route spelling for the existing admission guard before resolution.
   await assertEditableDirectoryPath(path.dirname(file), false);
   const candidate = strictSourceJson(
@@ -89,12 +98,22 @@ async function readDefinition(file: string): Promise<SourceDefinition | Editable
     assertEditableItemDefinitionV2(candidate);
     return candidate;
   }
+  if ((candidate as { contract?: string })?.contract === 'sf-cms-media-source') {
+    assertEditableMediaDefinition(candidate);
+    if (
+      candidate.contentType !== 'sfdc_cms__image' ||
+      candidate.media.representation !== 'binary' ||
+      candidate.media.mimeType !== 'image/png'
+    )
+      throw new TypeError('Image deploy requires the supported binary Image PNG profile');
+    return candidate;
+  }
   assertSourceDefinition(candidate);
   return candidate;
 }
 
 /**
- * Select and reconstruct local Email/Template sources without destination or org access.
+ * Select and reconstruct local Email/Template/binary Image sources without org access.
  * @param {DeploySourceSelectionFlags} flags - Explicit files or directories with optional directory filters.
  * @returns {Promise<DeployLocalSelection>} Deterministic admitted sources and destination-relative identities.
  */
@@ -124,7 +143,10 @@ export async function selectDeploySources(
     const root = path.resolve(directory);
     // Reuse the package's no-follow recursive traversal, never a permissive new walker.
     for (const relative of await enumeratePackageFiles(root, root)) {
-      if (/\.cms-email(?:-template)?\.json$/u.test(relative))
+      if (
+        /\.cms-email(?:-template)?\.json$/u.test(relative) ||
+        /\.cms-image\.json$/u.test(relative)
+      )
         candidates.add(path.join(root, relative));
     }
   }
@@ -133,10 +155,30 @@ export async function selectDeploySources(
   for (const file of [...candidates].toSorted()) {
     const definition = await readDefinition(file);
     if (selectors && !selectors.some((selector) => matches(definition, selector))) continue;
-    const loaded =
-      definition.contractVersion === '2.0.0'
-        ? await loadEditableItemSourceV2(file)
-        : await loadEditableItemSource(file);
+    const media =
+      definition.contract === 'sf-cms-media-source'
+        ? await loadEditableMediaSource(file)
+        : undefined;
+    if (
+      media &&
+      (media.source.representation !== 'binary' || media.source.binary.mimeType !== 'image/png')
+    )
+      throw new TypeError('Image deploy requires the supported binary Image PNG profile');
+    let email:
+      | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
+      | Awaited<ReturnType<typeof loadEditableItemSource>>
+      | undefined;
+    if (!media)
+      email =
+        definition.contractVersion === '2.0.0'
+          ? await loadEditableItemSourceV2(file)
+          : await loadEditableItemSource(file);
+    const loaded = media
+      ? {
+          ...media,
+          contentBody: media.source.representation === 'binary' ? media.source.contentBody : {},
+        }
+      : email!;
     // Match the loader's final validated snapshot, not just the initial discovery read.
     if (selectors && !selectors.some((selector) => matches(loaded.definition, selector)))
       throw new TypeError('Deploy source selection changed during loading');
@@ -153,6 +195,9 @@ export async function selectDeploySources(
       definitionPath: loaded.definitionPath,
       definition: loaded.definition,
       contentBody: loaded.contentBody,
+      ...(media?.source.representation === 'binary'
+        ? { mediaSha256: createHash('sha256').update(media.source.binary.bytes).digest('hex') }
+        : {}),
       companionPaths: 'companionPaths' in loaded ? loaded.companionPaths : [loaded.htmlPath],
       targetIdentity,
     });

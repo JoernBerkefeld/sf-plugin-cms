@@ -95,11 +95,15 @@ describe('cms info', () => {
       'content.deploy.email-template.create',
       'content.deploy.email-template.update',
       'content.deploy.email-template.unchanged',
+      'content.deploy.image.create',
+      'content.deploy.image.update',
+      'content.deploy.image.unchanged',
     ]);
+    expect(deploy.every(({ contract }) => contract === 'sf-cms-content-deploy@1')).to.equal(true);
     expect(deploy.every(({ state }) => state === 'unqualified')).to.equal(true);
     expect(
       result?.capabilities.some(({ id }) =>
-        /workspace\.(?:export|import)|content\.update\.|deploy\.image|sibling|baseline/u.test(id),
+        /workspace\.(?:export|import)|content\.update\.|sibling|baseline/u.test(id),
       ),
     ).to.equal(false);
     expect(

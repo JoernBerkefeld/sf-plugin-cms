@@ -1,5 +1,10 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
+import { selectDeploySources } from './deploy-source-selection.js';
+import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
+import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
+import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
 import { sourcePathSegment } from '../contracts/source-definition.js';
 import type { JsonValue } from '../contracts/capability-registry.js';
 import { getCmsApiSelection } from '../api-policy.js';
@@ -23,6 +28,8 @@ export type DeployDestinationInput = {
   selection: DeployLocalSelection;
   workspaceId: string;
   language: string;
+  /** Destination root captured before whole-selection operation admission. */
+  expectedRootFolderId?: string;
 };
 export type DeployPreparedItem = {
   source: DeployLocalItem;
@@ -57,6 +64,8 @@ export type DeployDestinationPreparation = {
 function localBody(item: DeployLocalItem): Record<string, JsonValue> {
   const definition = item.definition;
   const body = item.contentBody;
+  if (definition.contract === 'sf-cms-media-source')
+    throw new TypeError('Image requires independent media admission');
   const reconstructed =
     definition.contractVersion === '2.0.0'
       ? reassembleEditableItemSourceV2(
@@ -120,6 +129,78 @@ async function prepareItem(
     },
   };
   try {
+    if (item.definition.contract === 'sf-cms-media-source') {
+      const bind = async () => {
+        const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
+        if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
+          throw new TypeError('Image planning local snapshot changed');
+      };
+      await bind();
+      const scope = {
+        definitionFile: item.definitionPath,
+        workspaceId: input.workspaceId,
+        language: input.language,
+        ...(input.expectedRootFolderId === undefined
+          ? {}
+          : { expectedRootFolderId: input.expectedRootFolderId }),
+      };
+      const collisions = inventory.records.filter(
+        (row) =>
+          row.ManagedContent.ApiName === item.targetIdentity.apiName ||
+          row.Name === item.definition.title ||
+          (item.definition.urlName !== undefined && row.UrlName === item.definition.urlName),
+      );
+      if (collisions.length === 0) {
+        const proof = await preflightDeployImageCreate(connection, scope, options);
+        if (
+          !isDeepStrictEqual(proof.source.definition, item.definition) ||
+          !isDeepStrictEqual(proof.source.companionPaths, item.companionPaths)
+        )
+          throw new TypeError('Image CREATE selected snapshot disagreement');
+        if (proof.source.source.representation !== 'binary')
+          throw new TypeError('Image CREATE requires binary');
+        if (
+          createHash('sha256').update(proof.source.source.binary.bytes).digest('hex') !==
+          item.mediaSha256
+        )
+          throw new TypeError('Image CREATE selected bytes changed');
+        prepared.proposed = 'create';
+      } else {
+        let proof;
+        try {
+          proof = await admitDeployImageUnchanged(connection, scope, options);
+        } catch {
+          // Rejection is not UPDATE evidence: independently admit the bytes-only replacement.
+          const update = await preflightDeployImageUpdate(connection, scope, options);
+          if (
+            !isDeepStrictEqual(update.source.definition, item.definition) ||
+            !isDeepStrictEqual(update.source.companionPaths, item.companionPaths) ||
+            update.mediaSha256 !== item.mediaSha256 ||
+            !isDeepStrictEqual(update.destination.inventory, inventory)
+          )
+            throw new TypeError('Image UPDATE selected or destination snapshot disagreement');
+          proof = update;
+        }
+        if (
+          collisions.length !== 1 ||
+          proof.variantId !== collisions[0].Id ||
+          proof.contentId !== collisions[0].ManagedContentId ||
+          proof.contentKey !== collisions[0].ManagedContentKey
+        )
+          throw new TypeError('Image planning destination identity changed');
+        prepared.existing = {
+          variantId: proof.variantId,
+          contentId: proof.contentId,
+          contentBody: structuredClone(item.contentBody),
+          title: item.definition.title,
+          urlName: item.definition.urlName,
+        };
+        prepared.proposed = proof.operation;
+        if (proof.operation === 'update') prepared.changedFields = ['media'];
+      }
+      await bind();
+      return prepared;
+    }
     localBody(item);
     const identity = item.targetIdentity;
     if (!['sfdc_cms__email', 'sfdc_cms__emailTemplate'].includes(identity.contentType))
@@ -215,6 +296,9 @@ async function prepareItem(
       prepared.proposed = 'update';
     else throw new TypeError('Unsupported update fields: ' + prepared.changedFields.join(', '));
   } catch (error) {
+    if (item.definition.contract === 'sf-cms-media-source') {
+      prepared.proposed = 'blocked';
+    }
     prepared.blockedReasons.push(
       redactSecrets(error instanceof Error ? error.message : 'Destination preparation failed'),
     );
@@ -252,7 +336,11 @@ export async function prepareDeployDestination(
       throw new TypeError('Deploy source selection is empty');
     const identities = new Set<string>();
     for (const item of selected.selection.items) {
-      localBody(item);
+      if (item.definition.contract === 'sf-cms-media-source') {
+        const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
+        if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
+          throw new TypeError('Image planning local snapshot changed');
+      } else localBody(item);
       const key = item.targetIdentity.apiName;
       if (identities.has(key))
         throw new TypeError('Selected sources collide at destination parent API name');
@@ -260,8 +348,12 @@ export async function prepareDeployDestination(
     }
     result.apiVersion = getCmsApiSelection(connection).effectiveApiVersion;
     const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
-    if (workspace.id !== selected.workspaceId)
-      throw new TypeError('Destination workspace identity mismatch');
+    if (
+      workspace.id !== selected.workspaceId ||
+      (selected.expectedRootFolderId !== undefined &&
+        workspace.rootFolderId !== selected.expectedRootFolderId)
+    )
+      throw new TypeError('Destination workspace identity or root mismatch');
     sourcePathSegment(workspace.apiName);
     await assertCanonicalMarketingWorkspace(
       connection,
