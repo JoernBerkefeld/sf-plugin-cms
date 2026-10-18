@@ -7,7 +7,9 @@ import type { JsonRequestOptions } from '../transport/json-request.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
 import { executeDeployCreate } from './deploy-create-executor.js';
+import { executeDeployAudioCreate } from './deploy-audio-create-executor.js';
 import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
+import { executeDeployAudioUpdate } from './deploy-audio-update-executor.js';
 import { admitDeployAudioUnchanged } from './deploy-audio-unchanged.js';
 import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
 import { executeDeployDocumentCreate } from './deploy-document-create-executor.js';
@@ -415,6 +417,71 @@ export async function executeDeployBatchDocumentItem(
   };
 }
 
+/**
+ * Execute one Audio item using private proofs and durable mutation executors.
+ * @param {Connection} connection - Exact destination connection with media read credentials.
+ * @param {object} input - Bound source, destination and exclusive item journal.
+ * @param {string} operation - Explicit Audio CREATE, bytes-only UPDATE or exact unchanged.
+ * @param {Function} boundary - Awaited whole-batch revalidation before mutation.
+ * @param {JsonRequestOptions} options - Read/cancellation options.
+ * @param {WorkspaceImportReportPersistence} persistence - Existing item persistence seam.
+ * @returns {Promise<object>} Verified item identity/outcome, never uncertain completion.
+ */
+export async function executeDeployBatchAudioItem(
+  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  input: Parameters<typeof executeDeployAudioCreate>[1],
+  operation: DeployBatchReport['items'][number]['proposed'],
+  boundary: () => Promise<void>,
+  options: JsonRequestOptions = {},
+  persistence?: WorkspaceImportReportPersistence,
+): Promise<{
+  target: { contentId: string; variantId: string };
+  outcome: 'created' | 'updated' | 'unchanged';
+}> {
+  if (operation === 'blocked') throw new TypeError('Blocked Audio operation');
+  await boundary();
+  if (operation === 'unchanged') {
+    const result = await admitDeployAudioUnchanged(connection, input, options);
+    await boundary();
+    return {
+      target: { contentId: result.contentId, variantId: result.variantId },
+      outcome: 'unchanged',
+    };
+  }
+  if (operation === 'update') {
+    const result = await executeDeployAudioUpdate(
+      connection,
+      input,
+      options,
+      persistence,
+      boundary,
+    );
+    const updated = result.report.operations[0];
+    if (
+      result.report.state !== 'completed' ||
+      result.report.createdParents.length > 0 ||
+      result.report.operations.length !== 1 ||
+      updated.state !== 'succeeded' ||
+      updated.operationKind !== 'update-variant' ||
+      !updated.result?.contentId ||
+      !updated.result.variantId
+    )
+      throw new TypeError('Audio UPDATE journal incomplete');
+    return {
+      target: { contentId: updated.result.contentId, variantId: updated.result.variantId },
+      outcome: 'updated',
+    };
+  }
+  const result = await executeDeployAudioCreate(connection, input, options, persistence, boundary);
+  if (result.report.state !== 'completed' || result.report.createdParents.length !== 1)
+    throw new TypeError('Audio journal incomplete');
+  const created = result.report.createdParents[0];
+  return {
+    target: { contentId: created.contentId, variantId: created.primaryVariantId },
+    outcome: 'created',
+  };
+}
+
 export type DeployBatchPersistence = {
   rewrite: (file: string, report: DeployBatchReport) => Promise<void>;
   item?: WorkspaceImportReportPersistence;
@@ -554,7 +621,14 @@ export async function executeDeployBatch(
         await checkInventory();
         // A late Audio drift must block even an earlier non-Audio mutation.
         for (const [audioIndex, source] of baseline.selection.items.entries()) {
-          if (source.definition.contentType === 'sfdc_cms__audio')
+          // Earlier completed mutations are now bound by verified inventory rows, not old proofs.
+          if (
+            source.definition.contentType === 'sfdc_cms__audio' &&
+            !(
+              audioIndex < index &&
+              ['created', 'updated'].includes(report.items[audioIndex].outcome)
+            )
+          )
             await revalidateDeployBatchAudioBoundary(
               connection,
               selected,
@@ -581,8 +655,8 @@ export async function executeDeployBatch(
             break;
           }
           case 'sfdc_cms__audio': {
-            // All selected Audio proofs were revalidated above; item routing remains closed.
-            throw new TypeError('Unsupported deploy media content type');
+            // Every selected Audio proof was revalidated above, before any family mutation.
+            break;
           }
           case 'sfdc_cms__image': {
             if (item.proposed === 'create') {
@@ -641,7 +715,9 @@ export async function executeDeployBatch(
       await boundary();
       if (
         item.source.definition.contract === 'sf-cms-media-source' &&
-        !['sfdc_cms__image', 'sfdc_cms__document'].includes(item.source.definition.contentType)
+        !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+          item.source.definition.contentType,
+        )
       )
         throw new TypeError('Unsupported deploy media content type');
       active = item;
@@ -650,63 +726,88 @@ export async function executeDeployBatch(
         destinationOrgId: selected.destinationOrgId,
         reportFile: item.reportFile,
       };
-      if (item.source.definition.contentType === 'sfdc_cms__document') {
-        const result = await executeDeployBatchDocumentItem(
-          connection,
-          itemInput,
-          item.proposed,
-          boundary,
-          requestOptions,
-          persistence?.item,
-        );
-        item.target = result.target;
-        item.outcome = result.outcome;
-      } else if (item.source.definition.contentType === 'sfdc_cms__image') {
-        if (item.proposed === 'blocked') throw new TypeError('Blocked Image operation');
-        const result = await executeDeployImage(
-          connection,
-          { ...itemInput, operation: item.proposed },
-          requestOptions,
-          persistence?.item,
-          boundary,
-        );
-        if ('report' in result) {
-          if (result.report.state !== 'completed') throw new TypeError('Image journal incomplete');
+      switch (item.source.definition.contentType) {
+        case 'sfdc_cms__document': {
+          const result = await executeDeployBatchDocumentItem(
+            connection,
+            itemInput,
+            item.proposed,
+            boundary,
+            requestOptions,
+            persistence?.item,
+          );
+          item.target = result.target;
+          item.outcome = result.outcome;
+
+          break;
+        }
+        case 'sfdc_cms__audio': {
+          const result = await executeDeployBatchAudioItem(
+            connection,
+            itemInput,
+            item.proposed,
+            boundary,
+            requestOptions,
+            persistence?.item,
+          );
+          item.target = result.target;
+          item.outcome = result.outcome;
+
+          break;
+        }
+        case 'sfdc_cms__image': {
+          if (item.proposed === 'blocked') throw new TypeError('Blocked Image operation');
+          const result = await executeDeployImage(
+            connection,
+            { ...itemInput, operation: item.proposed },
+            requestOptions,
+            persistence?.item,
+            boundary,
+          );
+          if ('report' in result) {
+            if (result.report.state !== 'completed')
+              throw new TypeError('Image journal incomplete');
+            if (item.proposed === 'create') {
+              const created = result.report.createdParents[0];
+              item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
+              item.outcome = 'created';
+            } else {
+              const updated = result.report.operations[0].result!;
+              item.target = { contentId: updated.contentId!, variantId: updated.variantId! };
+              item.outcome = 'updated';
+            }
+          } else {
+            await boundary();
+            item.target = { contentId: result.contentId, variantId: result.variantId };
+            item.outcome = 'unchanged';
+          }
+
+          break;
+        }
+        default: {
           if (item.proposed === 'create') {
+            const result = await executeDeployCreate(
+              connection,
+              itemInput,
+              requestOptions,
+              persistence?.item,
+              boundary,
+            );
             const created = result.report.createdParents[0];
             item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
             item.outcome = 'created';
           } else {
-            const updated = result.report.operations[0].result!;
-            item.target = { contentId: updated.contentId!, variantId: updated.variantId! };
-            item.outcome = 'updated';
+            const result = await executeDeployUpdate(
+              connection,
+              itemInput,
+              requestOptions,
+              persistence?.item,
+              boundary,
+            );
+            item.target = result.target;
+            item.outcome = result.outcome;
           }
-        } else {
-          await boundary();
-          item.target = { contentId: result.contentId, variantId: result.variantId };
-          item.outcome = 'unchanged';
         }
-      } else if (item.proposed === 'create') {
-        const result = await executeDeployCreate(
-          connection,
-          itemInput,
-          requestOptions,
-          persistence?.item,
-          boundary,
-        );
-        const created = result.report.createdParents[0];
-        item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
-        item.outcome = 'created';
-      } else {
-        const result = await executeDeployUpdate(
-          connection,
-          itemInput,
-          requestOptions,
-          persistence?.item,
-          boundary,
-        );
-        item.target = result.target;
-        item.outcome = result.outcome;
       }
       if (item.outcome === 'created') {
         const inventory = await enumerateNativeWorkspace(

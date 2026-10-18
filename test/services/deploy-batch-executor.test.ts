@@ -17,7 +17,11 @@ import {
 import type { NativeInventory } from '../../src/services/retrieve-native-inventory.js';
 import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 import { DEPLOY_SOURCE_CONTENT_TYPES } from '../../src/services/deploy-source-selection.js';
-import { buildDocumentCreateMultipart } from '../../src/transport/multipart-image-create.js';
+import {
+  buildAudioCreateMultipart,
+  buildDocumentCreateMultipart,
+} from '../../src/transport/multipart-image-create.js';
+import { buildAudioUpdateMultipart } from '../../src/transport/multipart-audio-update.js';
 import {
   buildDocumentUpdateMultipart,
   type DocumentUpdateInput,
@@ -29,7 +33,7 @@ import {
 
 const workspaceId = '0Zu000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(existing = false, mixed = false, document = false) {
+async function fixture(existing = false, mixed = false, document = false, audio = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-batch-executor-'));
   const reportFile = path.join(directory, 'batch.json');
   const definitions = ['Alpha', 'Beta', 'Gamma'].map((apiName) => ({
@@ -83,10 +87,13 @@ async function fixture(existing = false, mixed = false, document = false) {
     await writeFile(path.join(directory, imageName), imageBytes);
     definitions[2].contentType = 'sfdc_cms__image';
   }
-  const documentBytes = Buffer.from('Grüße 世界\r\nDocument\n');
+  const documentBytes = audio
+    ? Buffer.from([0, 255, 128, 13, 10])
+    : Buffer.from('Grüße 世界\r\nDocument\n');
   let currentDocumentBytes = documentBytes;
   let partialDocumentResponse = false;
-  const documentName = 'Zulu.cms-document.media.txt';
+  const documentName = audio ? 'Zulu.cms-audio.media.bin' : 'Zulu.cms-document.media.txt';
+  const documentMime = audio ? 'application/x-future-audio' : 'text/plain';
   if (document) {
     definitions.push({
       ...definitions[0],
@@ -116,7 +123,7 @@ async function fixture(existing = false, mixed = false, document = false) {
   }
   const mediaBody = (index: number) => {
     const bytes = index === 3 ? currentDocumentBytes : imageBytes;
-    const mimeType = index === 3 ? 'text/plain' : 'image/svg+xml';
+    const mimeType = index === 3 ? documentMime : 'image/svg+xml';
     const name = index === 3 ? documentName : imageName;
     return {
       'sfdc_cms:media': {
@@ -214,7 +221,10 @@ async function fixture(existing = false, mixed = false, document = false) {
             ? input.body!.toString().split('\r\n\r\n')[1].split('\r\n--')[0]
             : String(input.body),
         ) as Row;
-        const name = String(body.apiName);
+        const name = String(
+          body.apiName ??
+            (audio ? details.get(url.pathname.split('/').at(-1)!)?.apiName : undefined),
+        );
         mutations.push(name);
         const batch = JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport;
         const item = batch.items.find((entry) => entry.source.targetIdentity.apiName === name)!;
@@ -228,11 +238,12 @@ async function fixture(existing = false, mixed = false, document = false) {
           if (binary && index === 3) {
             expect((input.body as Buffer).includes(documentBytes)).to.equal(true);
             expect(
-              (input.body as Buffer).includes(Buffer.from('Content-Type: text/plain\r\n')),
+              (input.body as Buffer).includes(Buffer.from(`Content-Type: ${documentMime}\r\n`)),
             ).to.equal(true);
             expect(body).not.to.have.property('contentKey');
             const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
-            const expected = buildDocumentCreateMultipart(
+            const build = audio ? buildAudioCreateMultipart : buildDocumentCreateMultipart;
+            const expected = build(
               {
                 apiName: String(body.apiName),
                 title: String(body.title),
@@ -240,11 +251,13 @@ async function fixture(existing = false, mixed = false, document = false) {
               },
               documentName,
               documentBytes,
-              { boundaryFactory: () => boundary },
+              { boundaryFactory: () => boundary, mimeType: documentMime },
             );
             expect((input.body as Buffer).equals(expected.body)).to.equal(true);
           }
           const detail = add(index, binary ? mediaBody(index) : (body.contentBody as Row));
+          if (binary && audio && partialDocumentResponse)
+            return { managedContentId: detail.managedContentId };
           if (binary)
             return {
               managedContentId: detail.managedContentId,
@@ -263,14 +276,20 @@ async function fixture(existing = false, mixed = false, document = false) {
         if (binary && name === 'Zulu') {
           const desired = await readFile(path.join(directory, documentName));
           const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
-          const expected = buildDocumentUpdateMultipart(
-            body as DocumentUpdateInput,
-            documentName,
-            desired,
-            {
-              boundaryFactory: () => boundary,
-            },
-          );
+          const framing = { boundaryFactory: () => boundary, mimeType: documentMime };
+          const expected = audio
+            ? buildAudioUpdateMultipart(
+                { title: String(body.title) },
+                documentName,
+                desired,
+                framing,
+              )
+            : buildDocumentUpdateMultipart(
+                body as DocumentUpdateInput,
+                documentName,
+                desired,
+                framing,
+              );
           expect((input.body as Buffer).equals(expected.body)).to.equal(true);
           expect(journal.createdParents).to.deep.equal([]);
           currentDocumentBytes = desired;
@@ -334,7 +353,7 @@ async function fixture(existing = false, mixed = false, document = false) {
     sinon.stub(globalThis, 'fetch').callsFake(async (input) => {
       const isDocument = String(input).includes('MCKEY4');
       return new Response(isDocument ? currentDocumentBytes : imageBytes, {
-        headers: { 'content-type': isDocument ? 'text/plain' : 'image/svg+xml' },
+        headers: { 'content-type': isDocument ? documentMime : 'image/svg+xml' },
       });
     });
   const connection = {
@@ -382,7 +401,7 @@ async function fixture(existing = false, mixed = false, document = false) {
 }
 
 async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update') {
-  const f = await fixture(operation !== 'create', true, true);
+  const f = await fixture(operation !== 'create', true, true, true);
   const companion = path.join(f.directory, 'Zulu.cms-audio.media.bin');
   const current = Buffer.from([0, 255, 128, 13, 10]);
   const desired = operation === 'update' ? Buffer.from([255, 0, 129]) : current;
@@ -419,13 +438,12 @@ async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update'
     f.records.find((row) => row.ManagedContentKey === 'MCKEY4')!.ContentTypeFullyQualifiedName =
       'sfdc_cms__audio';
   }
-  (globalThis.fetch as sinon.SinonStub).callsFake(
-    async () => new Response(current, { headers: { 'content-type': definition.media.mimeType } }),
-  );
+  f.definitions[3].contentType = 'sfdc_cms__audio';
+  f.definitions[3].identity.type = 'Audio';
   return { ...f, companion, audioFile, definition };
 }
 
-describe('Audio execution-boundary observations with closed item routing', () => {
+describe('Audio execution-boundary observations and private item routing', () => {
   beforeEach(() => {
     (DEPLOY_SOURCE_CONTENT_TYPES as unknown as string[]).push('sfdc_cms__audio');
   });
@@ -442,6 +460,26 @@ describe('Audio execution-boundary observations with closed item routing', () =>
       await revalidateDeployBatchAudioBoundary(f.connection, f.input, baseline, 1, []);
       expect(f.mutations).to.deep.equal([]);
       expect(f.puts()).to.equal(0);
+    });
+    it(`accounts for completed Audio ${operation} before the next item boundary`, async () => {
+      const f = await audioBoundaryFixture(operation);
+      const definition = {
+        ...f.definitions[0],
+        identity: { ...f.definitions[0].identity, apiName: 'Zzz' },
+        title: 'Zzz',
+        contentBody: { ...f.definitions[0].contentBody, 'sfdc_cms:title': 'Zzz' },
+        companions: { rawHtml: 'Zzz.cms-email.html' },
+      };
+      const file = path.join(f.directory, 'Zzz.cms-email.json');
+      await writeFile(file, JSON.stringify(definition));
+      await writeFile(path.join(f.directory, 'Zzz.cms-email.html'), '<p>Desired</p>');
+      f.definitions.push(definition);
+      Object.assign(f.input, { sources: { 'definition-file': [f.audioFile, file] } });
+      const result = await f.run();
+      expect(result.report.blockedReasons).to.deep.equal([]);
+      expect(result.report.state).to.equal('completed');
+      expect(result.report.summary.completed).to.equal(2);
+      expect(f.mutations).to.deep.equal(operation === 'unchanged' ? ['Zzz'] : ['Zulu', 'Zzz']);
     });
     for (const drift of [
       'bytes',
@@ -498,20 +536,73 @@ describe('Audio execution-boundary observations with closed item routing', () =>
       expect(f.mutations).to.deep.equal([]);
       expect(f.puts()).to.equal(0);
     });
-    it(`keeps Audio ${operation} item execution closed after a verified Email prefix`, async () => {
+    it(`executes private Audio ${operation} after a verified Email prefix`, async () => {
       const f = await audioBoundaryFixture(operation);
       const result = await f.run();
-      expect(result.report.state).to.equal('partial');
-      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
-        'created',
-        'unattempted',
-      ]);
-      expect(result.report.blockedReasons.join('; ')).to.include(
-        'Unsupported deploy media content type',
-      );
-      expect(f.mutations).to.deep.equal(['Alpha']);
-      expect(f.puts()).to.equal(0);
+      const outcomes = { create: 'created', update: 'updated', unchanged: 'unchanged' };
+      const outcome = outcomes[operation];
+      expect(result.report.blockedReasons).to.deep.equal([]);
+      expect(result.report.state).to.equal('completed');
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal(['created', outcome]);
+      expect(result.report.items[1].target).to.deep.equal({
+        contentId: '20Y000000000004AAA',
+        variantId: '9Ps000000000004AAA',
+      });
+      expect(result.report.summary.completed).to.equal(2);
+      expect(f.mutations).to.deep.equal(operation === 'unchanged' ? ['Alpha'] : ['Alpha', 'Zulu']);
+      expect(f.puts()).to.equal(operation === 'update' ? 1 : 0);
+      if (operation !== 'unchanged') {
+        const journal = JSON.parse(
+          await readFile(result.report.items[1].reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('completed');
+        expect(journal.operations[0].state).to.equal('succeeded');
+        expect(journal.operations[0].operationKind).to.equal(
+          operation === 'create' ? 'create-parent' : 'update-variant',
+        );
+        expect(journal.createdParents).to.have.length(operation === 'create' ? 1 : 0);
+      }
     });
+  }
+  for (const operation of ['create', 'update'] as const) {
+    for (const failure of ['intent', 'boundary', 'response', 'partial', 'completion'] as const) {
+      it(`preserves Audio ${operation} accounting after ${failure} failure`, async () => {
+        const f = await audioBoundaryFixture(operation);
+        if (failure === 'response') f.fail('Zulu');
+        if (failure === 'partial') f.partialDocumentResponse();
+        const result = await f.run({
+          rewrite: rewriteAtomic,
+          item: {
+            rewrite: async (file, report) => {
+              const audio =
+                path.basename(report.sourceDirectory) === path.basename(f.directory) &&
+                file.endsWith('.2.json');
+              if (audio && failure === 'intent' && report.state === 'applying')
+                throw new Error('Audio intent unavailable');
+              await rewriteAtomic(file, report);
+              if (audio && failure === 'boundary' && report.state === 'applying')
+                await writeFile(f.companion, 'changed at durable item boundary');
+              if (audio && failure === 'completion' && report.state === 'completed')
+                throw new Error('Audio completion unavailable');
+            },
+          },
+        });
+        const dispatched = !['intent', 'boundary'].includes(failure);
+        expect(result.report.state).to.equal('partial');
+        expect(result.report.items[0].outcome).to.equal('created');
+        expect(result.report.items[1].outcome).to.equal(dispatched ? 'uncertain' : 'failed');
+        expect(result.report.summary.completed).to.equal(1);
+        expect(f.mutations).to.deep.equal(dispatched ? ['Alpha', 'Zulu'] : ['Alpha']);
+        expect(f.puts()).to.equal(
+          dispatched && operation === 'update' && failure !== 'response' ? 1 : 0,
+        );
+        expect(result.report.blockedReasons.join('; ')).not.to.include('secret-token');
+        const journal = JSON.parse(
+          await readFile(result.report.items[1].reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal(dispatched ? 'ownership-uncertain' : 'failed');
+      });
+    }
   }
   for (const drift of [
     'version',
