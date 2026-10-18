@@ -5,6 +5,10 @@ import { selectDeploySources } from './deploy-source-selection.js';
 import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
 import { preflightDeployDocumentCreate } from './deploy-document-create-preflight.js';
 import { admitDeployDocumentUnchanged } from './deploy-document-unchanged.js';
+import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
+import { admitDeployAudioUnchanged } from './deploy-audio-unchanged.js';
+import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
+import { loadEditableMediaSource } from './editable-media-source.js';
 import { preflightDeployDocumentUpdate } from './deploy-document-update-preflight.js';
 import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
 import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
@@ -44,6 +48,10 @@ export type DeployPreparedItem = {
   documentInventory?: NativeInventory;
   /** Private bytes-only UPDATE observation; batch execution remains guarded. */
   documentUpdate?: Awaited<ReturnType<typeof preflightDeployDocumentUpdate>>;
+  /** Detached complete Audio baseline; never mutation authority. */
+  audioInventory?: NativeInventory;
+  /** Private bytes-only Audio UPDATE observation; public admission remains guarded. */
+  audioUpdate?: Awaited<ReturnType<typeof preflightDeployAudioUpdate>>;
   blockedReasons: string[];
   desired: { contentBody: Record<string, JsonValue>; title?: string; urlName?: string };
   existing?: {
@@ -67,6 +75,33 @@ export type DeployDestinationPreparation = {
     pagesRequested: number;
   };
 };
+
+async function bindMediaItem(item: DeployLocalItem): Promise<void> {
+  if (item.definition.contentType !== 'sfdc_cms__audio') {
+    const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
+    if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
+      throw new TypeError('Image planning local snapshot changed');
+    return;
+  }
+  // Use private local admission until the later public source-selection slice opens Audio.
+  const loaded = await loadEditableMediaSource(item.definitionPath);
+  if (loaded.source.representation !== 'binary')
+    throw new TypeError('Audio planning requires a binary source');
+  const fresh: DeployLocalItem = {
+    definitionPath: loaded.definitionPath,
+    definition: loaded.definition,
+    companionPaths: loaded.companionPaths,
+    contentBody: loaded.source.contentBody,
+    mediaSha256: createHash('sha256').update(loaded.source.binary.bytes).digest('hex'),
+    targetIdentity: {
+      contentType: loaded.definition.contentType,
+      apiName: loaded.definition.identity.apiName,
+      language: loaded.definition.language,
+    },
+  };
+  if (!item.mediaSha256 || !isDeepStrictEqual(fresh, item))
+    throw new TypeError('Audio planning local snapshot changed');
+}
 
 function localBody(item: DeployLocalItem): Record<string, JsonValue> {
   const definition = item.definition;
@@ -137,13 +172,13 @@ async function prepareItem(
   };
   try {
     if (item.definition.contract === 'sf-cms-media-source') {
-      if (!['sfdc_cms__image', 'sfdc_cms__document'].includes(item.definition.contentType))
+      if (
+        !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+          item.definition.contentType,
+        )
+      )
         throw new TypeError('Unsupported deploy media content type');
-      const bind = async () => {
-        const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
-        if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
-          throw new TypeError('Image planning local snapshot changed');
-      };
+      const bind = async () => bindMediaItem(item);
       await bind();
       const scope = {
         definitionFile: item.definitionPath,
@@ -159,6 +194,59 @@ async function prepareItem(
           row.Name === item.definition.title ||
           (item.definition.urlName !== undefined && row.UrlName === item.definition.urlName),
       );
+      if (item.definition.contentType === 'sfdc_cms__audio') {
+        prepared.audioInventory = structuredClone(inventory);
+        if (collisions.length === 0) {
+          const proof = await preflightDeployAudioCreate(connection, scope, options);
+          if (
+            !isDeepStrictEqual(proof.source.definition, item.definition) ||
+            !isDeepStrictEqual(proof.source.companionPaths, item.companionPaths) ||
+            proof.mediaSha256 !== item.mediaSha256 ||
+            !isDeepStrictEqual(proof.observations.inventory, inventory)
+          )
+            throw new TypeError('Audio CREATE selected or destination snapshot disagreement');
+          prepared.proposed = 'create';
+        } else {
+          let proof;
+          try {
+            proof = await admitDeployAudioUnchanged(connection, scope, options);
+          } catch {
+            // An unchanged rejection is not UPDATE evidence: acquire independent Audio proof.
+            const update = await preflightDeployAudioUpdate(connection, scope, options);
+            if (
+              !isDeepStrictEqual(update.source.definition, item.definition) ||
+              !isDeepStrictEqual(update.source.companionPaths, item.companionPaths) ||
+              update.mediaSha256 !== item.mediaSha256 ||
+              !isDeepStrictEqual(update.destination.inventory, inventory)
+            )
+              throw new TypeError('Audio UPDATE selected or destination snapshot disagreement');
+            prepared.audioUpdate = update;
+            proof = update;
+          }
+          if (
+            collisions.length !== 1 ||
+            proof.variantId !== collisions[0].Id ||
+            proof.contentId !== collisions[0].ManagedContentId ||
+            proof.contentKey !== collisions[0].ManagedContentKey ||
+            !isDeepStrictEqual(
+              await enumerateNativeWorkspace(connection, input.workspaceId, options),
+              inventory,
+            )
+          )
+            throw new TypeError('Audio planning destination snapshot changed');
+          prepared.existing = {
+            variantId: proof.variantId,
+            contentId: proof.contentId,
+            contentBody: structuredClone(item.contentBody),
+            title: item.definition.title,
+            urlName: item.definition.urlName,
+          };
+          prepared.proposed = proof.operation;
+          if (proof.operation === 'update') prepared.changedFields = ['media'];
+        }
+        await bind();
+        return prepared;
+      }
       if (item.definition.contentType === 'sfdc_cms__document') {
         prepared.documentInventory = structuredClone(inventory);
         if (collisions.length === 0) {
@@ -401,11 +489,13 @@ export async function prepareDeployDestination(
     const identities = new Set<string>();
     for (const item of selected.selection.items) {
       if (item.definition.contract === 'sf-cms-media-source') {
-        if (!['sfdc_cms__image', 'sfdc_cms__document'].includes(item.definition.contentType))
+        if (
+          !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+            item.definition.contentType,
+          )
+        )
           throw new TypeError('Unsupported deploy media content type');
-        const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
-        if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
-          throw new TypeError('Image planning local snapshot changed');
+        await bindMediaItem(item);
       } else localBody(item);
       const key = item.targetIdentity.apiName;
       if (identities.has(key))
@@ -421,7 +511,9 @@ export async function prepareDeployDestination(
     )
       throw new TypeError('Destination workspace identity or root mismatch');
     if (
-      selected.selection.items.some((item) => item.definition.contentType === 'sfdc_cms__document')
+      selected.selection.items.some((item) =>
+        ['sfdc_cms__document', 'sfdc_cms__audio'].includes(item.definition.contentType),
+      )
     ) {
       if (
         workspace.defaultLanguage !== selected.language ||

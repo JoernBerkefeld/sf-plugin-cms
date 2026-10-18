@@ -1,6 +1,15 @@
 import { expect } from 'chai';
 import type { Connection } from '@salesforce/core';
 import { PassThrough } from 'node:stream';
+import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import sinon from 'sinon';
+import {
+  loadEditableMediaSource,
+  type EditableMediaDefinition,
+} from '../../src/services/editable-media-source.js';
 import {
   prepareDeployDestination,
   type DeployDestinationInput,
@@ -159,6 +168,7 @@ function fixture(template = false) {
   };
   return {
     source,
+    connection,
     workspace,
     variants,
     parent,
@@ -171,8 +181,205 @@ function fixture(template = false) {
   };
 }
 
+async function audioFixture(operation: 'create' | 'unchanged' | 'update' = 'unchanged') {
+  const f = fixture();
+  Object.assign(f.connection, {
+    accessToken: 'test-token',
+    instanceUrl: 'https://example.invalid',
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-audio-destination-'));
+  const file = path.join(directory, 'Welcome.cms-audio.json');
+  const fileName = 'Welcome.cms-audio.media.bin';
+  const companion = path.join(directory, fileName);
+  const current = Buffer.from([0, 255, 128, 13, 10, 1]);
+  const bytes = operation === 'update' ? Buffer.from([255, 0, 129]) : current;
+  const definition: EditableMediaDefinition = {
+    contract: 'sf-cms-media-source',
+    contractVersion: '1.0.0',
+    identity: {
+      family: 'cms',
+      type: 'Audio',
+      apiName: 'Welcome',
+      context: { workspaceApiName: 'Source' },
+    },
+    contentType: 'sfdc_cms__audio',
+    language: 'en_US',
+    folderPath: [],
+    title: 'Welcome',
+    media: {
+      representation: 'binary',
+      mimeType: 'application/x-future-audio',
+      companion: { role: 'media', path: fileName },
+    },
+  };
+  await writeFile(file, JSON.stringify(definition));
+  await writeFile(companion, bytes);
+  const loaded = await loadEditableMediaSource(file);
+  if (loaded.source.representation !== 'binary') throw new Error('Expected binary fixture');
+  Object.assign(f.source, {
+    definition: loaded.definition,
+    definitionPath: loaded.definitionPath,
+    companionPaths: loaded.companionPaths,
+    contentBody: loaded.source.contentBody,
+    mediaSha256: createHash('sha256').update(bytes).digest('hex'),
+    targetIdentity: { contentType: definition.contentType, apiName: 'Welcome', language: 'en_US' },
+  });
+  Object.assign(f.variants[0], {
+    contentType: { fullyQualifiedName: definition.contentType },
+    folder: { id: 'root' },
+    contentBody: {
+      'sfdc_cms:media': {
+        source: { type: 'file', size: current.length, mimeType: loaded.source.binary.mimeType },
+        url: `/cms/media/MCWELCOME?version=1&fileHash=${createHash('md5').update(current).digest('hex')}&fileName=${fileName}`,
+      },
+    },
+  });
+  Object.assign(f.parent, structuredClone(f.variants[0]));
+  if (operation === 'create') f.variants.length = 0;
+  const download = sinon
+    .stub(globalThis, 'fetch')
+    .callsFake(
+      async () =>
+        new Response(current, { headers: { 'content-type': 'application/x-future-audio' } }),
+    );
+  return { ...f, companion, file, definition, download };
+}
+
 describe('read-only deploy destination preparation', () => {
-  for (const contentType of ['sfdc_cms__audio', 'sfdc_cms__unknown']) {
+  afterEach(() => sinon.restore());
+  for (const operation of ['create', 'unchanged', 'update'] as const) {
+    it(`prepares unqualified Audio ${operation} using independent private proofs without public admission`, async () => {
+      const f = await audioFixture(operation);
+      const result = await f.run();
+      expect(result.blockedReasons).to.deep.equal([]);
+      const item = result.items[0];
+      expect(item.blockedReasons).to.deep.equal([]);
+      expect(item.proposed).to.equal(operation);
+      expect(item.qualification).to.equal('unqualified');
+      expect(item.changedFields).to.deep.equal(operation === 'update' ? ['media'] : []);
+      expect(item.audioInventory?.complete).to.equal(true);
+      expect(item.audioInventory?.records).to.have.length(operation === 'create' ? 0 : 1);
+      expect(item.documentInventory).to.equal(undefined);
+      expect(item.documentUpdate).to.equal(undefined);
+      if (operation === 'update') {
+        expect(item.audioUpdate?.operation).to.equal('update');
+        expect(item.audioUpdate?.mediaSha256).to.equal(f.source.mediaSha256);
+        expect(item.audioUpdate?.destination.inventory).to.deep.equal(item.audioInventory);
+      } else expect(item.audioUpdate).to.equal(undefined);
+      if (operation !== 'create') expect(item.existing?.variantId).to.equal(variantId);
+      expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
+    });
+  }
+  it('blocks Audio local hash/body/identity/companion disagreement before org reads', async () => {
+    for (const field of ['mediaSha256', 'contentBody', 'targetIdentity', 'companionPaths']) {
+      const f = await audioFixture();
+      switch (field) {
+        case 'mediaSha256': {
+          f.source.mediaSha256 = 'changed';
+          break;
+        }
+        case 'contentBody': {
+          f.source.contentBody.changed = true;
+          break;
+        }
+        case 'targetIdentity': {
+          f.source.targetIdentity.apiName = 'Changed';
+          break;
+        }
+        default: {
+          f.source.companionPaths = [];
+        }
+      }
+      const result = await f.run();
+      expect(result.blockedReasons.join(';')).to.include('local snapshot changed');
+      expect(f.calls).to.have.length(0);
+      sinon.restore();
+    }
+  });
+  it('rejects URL-only Audio before destination reads while public selection remains closed', async () => {
+    const f = await audioFixture('create');
+    f.definition.media = { representation: 'url-only', address: 'https://example.invalid/sound' };
+    await writeFile(f.file, JSON.stringify(f.definition));
+    const result = await f.run();
+    expect(result.blockedReasons).not.to.have.length(0);
+    expect(result.items).to.deep.equal([]);
+    expect(f.calls).to.have.length(0);
+  });
+  it('blocks Audio wrong default language and captured root before inventory', async () => {
+    for (const root of [true, false]) {
+      const f = await audioFixture('create');
+      if (root) f.input.expectedRootFolderId = 'different';
+      else f.workspace.defaultLanguage = 'de';
+      const result = await f.run();
+      expect(result.blockedReasons.join(';')).to.match(/root|default language/u);
+      expect(result.items).to.deep.equal([]);
+      expect(f.calls).to.have.length(1);
+      sinon.restore();
+    }
+  });
+  it('does not convert rejected Audio unchanged metadata into an update proposal', async () => {
+    const f = await audioFixture('update');
+    f.variants[0].title = 'Different';
+    const result = await f.run();
+    expect(result.items[0].proposed).to.equal('blocked');
+    expect(result.items[0].blockedReasons).not.to.have.length(0);
+    expect(result.items[0].audioUpdate).to.equal(undefined);
+  });
+  it('binds Audio CREATE to the original complete inventory rather than a newer snapshot', async () => {
+    const f = await audioFixture('create');
+    let queries = 0;
+    f.patch((rows) => {
+      queries += 1;
+      // Initial empty inventory has four queries; introduce an unrelated row for the proof.
+      if (queries <= 4) return rows;
+      return [
+        {
+          Id: '9Ps000000000002AAA',
+          ManagedContentId: '20Y000000000002AAA',
+          ContentTypeFullyQualifiedName: 'sfdc_cms__other',
+          Language: 'de',
+          IsPublished: true,
+          ManagedContentVariantStatus: 'Published',
+          IsPrimary: true,
+          Name: 'Unrelated',
+          UrlName: null,
+          ManagedContentKey: 'MCOTHER',
+          ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Other' },
+        },
+      ];
+    });
+    const result = await f.run();
+    expect(result.items[0].proposed).to.equal('blocked');
+    expect(result.items[0].blockedReasons.join(';')).to.include('snapshot disagreement');
+  });
+  it('blocks Audio collisions across family, language and lifecycle without mutation', async () => {
+    for (const change of [
+      { contentType: { fullyQualifiedName: 'sfdc_cms__image' } },
+      { language: 'de' },
+      { isPublished: true, status: { status: 'Published' } },
+    ]) {
+      const f = await audioFixture('update');
+      Object.assign(f.variants[0], change);
+      const result = await f.run();
+      expect(result.items[0].proposed).to.equal('blocked');
+      expect(result.items[0].audioUpdate).to.equal(undefined);
+      expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
+      sinon.restore();
+    }
+  });
+  it('blocks Audio source byte drift during destination reads', async () => {
+    const f = await audioFixture();
+    f.download.callsFake(async () => {
+      await writeFile(f.companion, Buffer.from([1, 2, 3]));
+      return new Response(Buffer.from([0, 255, 128, 13, 10, 1]), {
+        headers: { 'content-type': 'application/x-future-audio' },
+      });
+    });
+    const result = await f.run();
+    expect(result.items[0].proposed).to.equal('blocked');
+    expect(result.items[0].blockedReasons).not.to.have.length(0);
+  });
+  for (const contentType of ['sfdc_cms__unknown']) {
     it(`rejects fabricated ${contentType} media before Image admission or org reads`, async () => {
       const f = fixture();
       Object.assign(f.source.definition, { contract: 'sf-cms-media-source', contentType });
