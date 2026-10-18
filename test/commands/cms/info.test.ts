@@ -87,6 +87,7 @@ describe('cms info', () => {
       'content.retrieve.email-template',
       'content.retrieve.image',
       'content.retrieve.document',
+      'content.retrieve.audio',
     ]);
     const deploy = result?.capabilities.filter(({ id }) => id.startsWith('content.deploy.')) ?? [];
     expect(deploy.map(({ id }) => id)).to.deep.equal([
@@ -102,6 +103,9 @@ describe('cms info', () => {
       'content.deploy.document.create',
       'content.deploy.document.update',
       'content.deploy.document.unchanged',
+      'content.deploy.audio.create',
+      'content.deploy.audio.update',
+      'content.deploy.audio.unchanged',
     ]);
     expect(deploy.every(({ contract }) => contract === 'sf-cms-content-deploy@1')).to.equal(true);
     expect(deploy.every(({ state }) => state === 'unqualified')).to.equal(true);
@@ -114,6 +118,20 @@ describe('cms info', () => {
       },
       ...['create', 'update', 'unchanged'].map((operation) => ({
         id: `content.deploy.document.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
+    ]);
+    expect(result?.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([
+      {
+        id: 'content.retrieve.audio',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
+      },
+      ...['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.audio.${operation}`,
         state: 'unqualified',
         transport: 'cli-json',
         contract: 'sf-cms-content-deploy@1',

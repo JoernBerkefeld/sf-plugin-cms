@@ -348,6 +348,20 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         contract: 'sf-cms-content-deploy@1',
       })),
     ]);
+    expect(result.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([
+      {
+        id: 'content.retrieve.audio',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
+      },
+      ...['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.audio.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
+    ]);
     const deployHelp = await runSf(['cms', 'deploy', 'content', '--help']);
     expect(deployHelp.exitCode, deployHelp.stderr).to.equal(0);
     const helpText = deployHelp.stdout.replaceAll(/\s+/gu, ' ');

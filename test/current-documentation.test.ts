@@ -192,6 +192,12 @@ describe('current public documentation', () => {
       'Case and whitespace are not normalized',
       'delete accepts only `email` and `emailTemplate`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
+      '`content.retrieve.audio`',
+      '`content.deploy.audio.create`',
+      '`content.deploy.audio.update`',
+      '`content.deploy.audio.unchanged`',
+      'all **unqualified**; native Audio CREATE/UPDATE and two-org qualification remain pending',
+      'Do not infer native qualification from capability discovery or command availability.',
       '844-byte primary WAV',
       'Native Audio CREATE/UPDATE and two-org qualification remain pending',
       '**0.19.0**',
@@ -216,6 +222,7 @@ describe('current public documentation', () => {
       'Not supported',
     ]);
     expect(readme).not.to.include('Audio deployment is not enabled');
+    expect(readme).not.to.include('not yet listed in the offline capability registry');
     expect(readme).not.to.include('deploy accepts the first four');
     expect(RetrieveContent.description).to.include(
       'native CREATE/UPDATE and two-org qualification remain pending',
