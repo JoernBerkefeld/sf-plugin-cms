@@ -346,6 +346,55 @@ describe('internal whole-selection deploy preflight', () => {
         process.exitCode = undefined;
       }
     });
+  for (const operation of ['create', 'unchanged', 'update'] as const) {
+    it(`preflights public directory-selected Template and Audio ${operation} with mixed canonical/short selectors`, async () => {
+      const f = await audioFixture(operation);
+      f.definitions[0].identity.type = 'Email Template';
+      f.definitions[0].contentType = 'sfdc_cms__emailTemplate';
+      f.definitions[0].companions.rawHtml = 'Alpha.cms-email-template.html';
+      await rename(
+        f.files[0],
+        path.join(path.dirname(f.files[0]), 'Alpha.cms-email-template.json'),
+      );
+      f.files[0] = path.join(path.dirname(f.files[0]), 'Alpha.cms-email-template.json');
+      await f.save(0);
+      await writeFile(
+        path.join(path.dirname(f.files[0]), f.definitions[0].companions.rawHtml),
+        '<p>Desired</p>',
+      );
+      const result = await preflightDeployBatch(f.connection, {
+        ...f.input,
+        sources: {
+          'source-dir': [path.dirname(f.files[0])],
+          'content-type': ['emailTemplate', 'sfdc_cms__audio'],
+        },
+      });
+      expect(result.eligible).to.equal(true);
+      expect(result.blockedReasons).to.deep.equal([]);
+      expect(result.selection.mode).to.equal('source-dir');
+      expect(result.selection.items.map((item) => item.targetIdentity.contentType)).to.deep.equal([
+        'sfdc_cms__emailTemplate',
+        'sfdc_cms__audio',
+      ]);
+      expect(result.items.map((item) => item.proposed)).to.deep.equal(['create', operation]);
+      expect(result.items[0].create?.qualification).to.equal('unqualified');
+      const item = result.items[1];
+      expect((item.audioCreate ?? item.audioUnchanged ?? item.audioUpdate)?.qualification).to.equal(
+        'unqualified',
+      );
+      expect(item.imageCreate ?? item.imageUnchanged ?? item.imageUpdate).to.equal(undefined);
+      expect(item.documentCreate ?? item.documentUnchanged ?? item.documentUpdate).to.equal(
+        undefined,
+      );
+      expect(result.preparation.items[1].audioInventory?.complete).to.equal(true);
+      if (operation === 'update') {
+        expect(result.preparation.items[1].changedFields).to.deep.equal(['media']);
+        expect(item.audioUpdate?.mediaSha256).not.to.equal(
+          item.audioUpdate?.destination.mediaSha256,
+        );
+      }
+    });
+  }
   describe('closed-admission Audio batch integration', () => {
     beforeEach(() => {
       // Exercise future routing without opening production source admission or changing its files.

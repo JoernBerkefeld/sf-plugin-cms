@@ -422,7 +422,7 @@ async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update'
   const audioFile = path.join(f.directory, 'Zulu.cms-audio.json');
   await writeFile(audioFile, JSON.stringify(definition));
   await writeFile(companion, desired);
-  // Explicit files exercise unreachable Audio integration without changing public admission.
+  // Explicit files select Audio instead of the fixture's original Document definition.
   Object.assign(f.input, { sources: { 'definition-file': [f.files[0], audioFile] } });
   const detail = f.details.get('MCKEY4');
   if (detail) {
@@ -659,6 +659,117 @@ describe('Audio execution-boundary observations and private item routing', () =>
       expect(f.puts()).to.equal(0);
     });
   }
+});
+
+async function mixedAudioFixture(operation: 'create' | 'unchanged' | 'update') {
+  const f = await audioBoundaryFixture(operation);
+  const definition = {
+    ...f.definitions[0],
+    identity: { ...f.definitions[0].identity, apiName: 'Zzz' },
+    title: 'Zzz',
+    contentBody: { ...f.definitions[0].contentBody, 'sfdc_cms:title': 'Zzz' },
+    companions: { rawHtml: 'Zzz.cms-email.html' },
+  };
+  const file = path.join(f.directory, 'Zzz.cms-email.json');
+  await writeFile(file, JSON.stringify(definition));
+  await writeFile(path.join(f.directory, definition.companions.rawHtml), '<p>Desired</p>');
+  f.definitions.push(definition);
+  Object.assign(f.input, {
+    sources: { 'definition-file': [...f.files.slice(0, 3), f.audioFile, file] },
+  });
+  if (operation !== 'create')
+    f.details.get('MCKEY2')!.contentBody = {
+      ...f.definitions[1].contentBody,
+      rawHtml: '&lt;p&gt;Original&lt;/p&gt;',
+    };
+  return f;
+}
+
+describe('public Audio mixed-family batch regressions', () => {
+  afterEach(() => sinon.restore());
+
+  for (const operation of ['create', 'unchanged', 'update'] as const) {
+    it(`verifies public Audio ${operation} between mixed-family prefix and following Email CREATE`, async () => {
+      const f = await mixedAudioFixture(operation);
+      const planned = await f.preflight();
+      expect(planned.eligible).to.equal(true);
+      expect(planned.items[3].proposed).to.equal(operation);
+      if (operation === 'update') {
+        const proof = planned.items[3].audioUpdate!;
+        expect(proof.mediaSha256).not.to.equal(proof.destination.mediaSha256);
+        expect(planned.preparation.items[3].changedFields).to.deep.equal(['media']);
+      }
+      const result = await f.run();
+      expect(result.report.blockedReasons).to.deep.equal([]);
+      expect(result.report.state).to.equal('completed');
+      expect(result.qualification).to.equal('unqualified');
+      const audioOutcome = { create: 'created', unchanged: 'unchanged', update: 'updated' };
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+        'created',
+        operation === 'create' ? 'created' : 'updated',
+        operation === 'create' ? 'created' : 'unchanged',
+        audioOutcome[operation],
+        'created',
+      ]);
+      const expectedMutations =
+        operation === 'create' ? ['Alpha', 'Beta', 'Gamma'] : ['Alpha', 'Beta'];
+      if (operation !== 'unchanged') expectedMutations.push('Zulu');
+      expect(f.mutations).to.deep.equal([...expectedMutations, 'Zzz']);
+      expect(f.puts()).to.equal(Number(operation !== 'create') + Number(operation === 'update'));
+      expect(result.report.summary).to.include({ completed: 5, uncertain: 0, unattempted: 0 });
+      for (const item of result.report.items.filter((entry) => entry.outcome !== 'unchanged')) {
+        const journal = JSON.parse(
+          await readFile(item.reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('completed');
+        expect(journal.operations[0].state).to.equal('succeeded');
+        expect(journal.operations[0].result?.contentId).to.equal(item.target?.contentId);
+      }
+      expect(await f.journal()).to.deep.equal(result.report);
+    });
+
+    it(`blocks stale later public Audio ${operation} before any mixed-family write`, async () => {
+      const f = await mixedAudioFixture(operation);
+      let injected = false;
+      const result = await f.run({
+        rewrite: async (file, report) => {
+          await rewriteAtomic(file, report);
+          if (injected) return;
+          injected = true;
+          if (operation === 'update') {
+            f.details.get('MCKEY4')!.managedContentVersionId = 'stale-after-planning';
+          } else {
+            await writeFile(f.companion, Buffer.from([1, 2, 3]));
+          }
+        },
+      });
+      expect(injected).to.equal(true);
+      expect(result.report.state).to.equal('blocked');
+      expect(result.report.blockedReasons).not.to.deep.equal([]);
+      expect(result.report.items.every((item) => item.outcome === 'unattempted')).to.equal(true);
+      expect(result.report.summary).to.include({ completed: 0, unattempted: 5 });
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+  }
+
+  for (const field of ['title', 'mimeType', 'filename'] as const)
+    it(`rejects invalid later Audio UPDATE ${field} before mixed CREATE/UPDATE prefix writes`, async () => {
+      const f = await mixedAudioFixture('update');
+      const detail = f.details.get('MCKEY4')!;
+      const media = (detail.contentBody as Row)['sfdc_cms:media'] as Row;
+      if (field === 'title') detail.title = 'Different';
+      if (field === 'mimeType') (media.source as Row).mimeType = 'audio/other';
+      if (field === 'filename')
+        media.url = String(media.url).replace('Zulu.cms-audio.media.bin', 'Other.bin');
+      const result = await f.run();
+      expect(result.report.state).to.equal('blocked');
+      expect(result.report.blockedReasons).not.to.deep.equal([]);
+      expect(result.report.items.every((item) => item.outcome === 'unattempted')).to.equal(true);
+      expect(result.report.summary).to.include({ completed: 0, unattempted: 5 });
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
 });
 
 describe('verified mixed-family inventory prefix reconciliation', () => {
