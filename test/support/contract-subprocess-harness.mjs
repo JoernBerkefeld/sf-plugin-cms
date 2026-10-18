@@ -246,6 +246,7 @@ if (
   if (pluginVersion === undefined) throw new Error('Installed plugin version is unavailable');
   // Only public command fixtures parse native org flags; service-only fixtures stay offline.
   if (
+    contractCase.startsWith('audio-deploy-') ||
     contractCase.startsWith('image-upload-') ||
     contractCase.startsWith('email-publish-') ||
     contractCase.startsWith('email-unpublish-') ||
@@ -257,6 +258,40 @@ if (
     Org.create = async (options) => ({
       getUsername: () => options?.aliasOrUsername ?? 'controlled-default@example.test',
     });
+  }
+  if (contractCase === 'audio-deploy-preview') {
+    // Real installed parser, selector and CREATE preflight; controlled transport, no org calls.
+    const { default: Command } = await import(
+      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/deploy/content.js'))
+    );
+    const events = [];
+    const evidenceFile = path.resolve('audio-deploy-preview-transport.json');
+    Command.prototype.getOrgContext = async function (username) {
+      events.push({ phase: 'org', username });
+      await writeFile(evidenceFile, JSON.stringify(events));
+      return {
+        orgId: '00D000000000001AAA',
+        connection: {
+          version: '67.0',
+          request: async ({ method, url }) => {
+            events.push({ method, url });
+            await writeFile(evidenceFile, JSON.stringify(events));
+            if (method !== 'GET') throw new Error('Unexpected Audio mutation');
+            if (url.endsWith('/spaces/0Zu000000000001AAA'))
+              return {
+                id: '0Zu000000000001AAA',
+                apiName: 'Destination',
+                defaultLanguage: 'en_US',
+                rootFolderId: 'root',
+                spaceType: { apiName: 'Marketing' },
+              };
+            if (new URL(url, 'https://example.invalid').pathname.endsWith('/query'))
+              return { records: [], totalSize: 0, done: true };
+            throw new Error(`Unexpected Audio read: ${url}`);
+          },
+        },
+      };
+    };
   }
   if (contractCase === 'image-upload-preview' || contractCase === 'image-upload-local') {
     const { default: Command } = await import(
@@ -1227,7 +1262,8 @@ if (
     });
     process.stdout.write(JSON.stringify(result));
   } else {
-    throw new Error(`Unknown contract subprocess case: ${contractCase}`);
+    if (contractCase !== 'audio-deploy-preview')
+      throw new Error(`Unknown contract subprocess case: ${contractCase}`);
   }
 }
 

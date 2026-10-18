@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { lstat, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { brandDetail } from '../fixtures/brand.js';
 import { createHash } from 'node:crypto';
 import {
@@ -371,6 +371,96 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     const obsolete = await runSf(['cms', 'info', '--contract-version', '2', '--json']);
     expect(obsolete.exitCode).to.equal(1);
     expect(parseEnvelope(obsolete)).to.deep.include({ status: 'blocked', result: null });
+  });
+
+  it('routes packed Audio selectors through real CREATE planning with default-org or explicit override', async () => {
+    const sourceDirectory = file('audio-deploy-source');
+    await mkdir(sourceDirectory);
+    const definition = path.join(sourceDirectory, 'Chime.cms-audio.json');
+    const companion = path.join(sourceDirectory, 'Chime.cms-audio.media.bin');
+    const bytes = Buffer.from([0, 255, 128, 13, 10]);
+    await writeFile(
+      definition,
+      JSON.stringify({
+        contract: 'sf-cms-media-source',
+        contractVersion: '1.0.0',
+        identity: {
+          family: 'cms',
+          type: 'Audio',
+          apiName: 'Chime',
+          context: { workspaceApiName: 'Source' },
+        },
+        contentType: 'sfdc_cms__audio',
+        language: 'en_US',
+        title: 'Chime',
+        folderPath: [],
+        media: {
+          representation: 'binary',
+          mimeType: 'application/x-future-audio',
+          companion: { role: 'media', path: path.basename(companion) },
+        },
+      }),
+    );
+    await writeFile(companion, bytes);
+    for (const [selector, override] of [
+      [['-t', 'audio'], false],
+      [['-m', 'sfdc_cms__audio:Chime'], true],
+    ] as const) {
+      const output = await runSf(
+        [
+          'cms',
+          'deploy',
+          'content',
+          '-d',
+          sourceDirectory,
+          ...selector,
+          '--workspace-id',
+          '0Zu000000000001AAA',
+          '-L',
+          '--api-version',
+          '67.0',
+          '--json',
+          ...(override ? ['-o', 'explicit@example.test'] : []),
+        ],
+        'audio-deploy-preview',
+      );
+      expect(output.exitCode, output.stdout + output.stderr).to.equal(0);
+      const envelope = parseEnvelope(output);
+      expectPluginVersion(envelope, installedPackageVersion);
+      expect(envelope.status).to.equal('success');
+      expect(envelope.contract).to.equal('sf-cms-content-deploy');
+      const result = envelope.result as {
+        mode: string;
+        mutationEnabled: boolean;
+        qualification: string;
+        scope: { targetOrg: string; language: string };
+        selection: {
+          items: Array<{ targetIdentity: { contentType: string }; mediaSha256: string }>;
+        };
+        summary: { plannedCreate: number; completed: number };
+        items: Array<{ proposed: string; outcome: string }>;
+      };
+      expect(result.mode).to.equal('dry-run');
+      expect(result.mutationEnabled).to.equal(false);
+      expect(result.qualification).to.equal('unqualified');
+      expect(result.scope.targetOrg).to.equal(
+        override ? 'explicit@example.test' : 'controlled-default@example.test',
+      );
+      expect(result.scope.language).to.equal('en_US');
+      expect(result.summary.plannedCreate).to.equal(1);
+      expect(result.summary.completed).to.equal(0);
+      expect(result.items[0]).to.include({ proposed: 'create', outcome: 'planned' });
+      expect(result.selection.items).to.have.length(1);
+      expect(result.selection.items[0].targetIdentity.contentType).to.equal('sfdc_cms__audio');
+      expect(result.selection.items[0].mediaSha256).to.equal(sourceAcceptanceHash(bytes));
+      const events = JSON.parse(
+        await readFile(file('audio-deploy-preview-transport.json'), 'utf8'),
+      ) as Array<{ phase?: string; username?: string; method?: string; url?: string }>;
+      expect(events[0]).to.deep.equal({ phase: 'org', username: result.scope.targetOrg });
+      expect(events.slice(1).length).to.be.greaterThan(0);
+      expect(events.slice(1).every(({ method }) => method === 'GET')).to.equal(true);
+      expect(await readFile(companion)).to.deep.equal(bytes);
+    }
   });
 
   for (const [topic, resource] of [

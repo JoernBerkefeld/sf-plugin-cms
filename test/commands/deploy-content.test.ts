@@ -137,6 +137,10 @@ describe('cms deploy content command', () => {
       ['-d', './a', '-m', 'sfdc_cms__email:Welcome', '-m', 'sfdc_cms__emailTemplate'],
       ['-d', './a', '-m', 'email:Welcome', '-m', 'emailTemplate'],
       ['-d', './a', '-t', 'email', '-t', 'emailTemplate'],
+      ['-d', './a', '-t', 'audio'],
+      ['-d', './a', '-t', 'sfdc_cms__audio'],
+      ['-d', './a', '-m', 'audio:Chime'],
+      ['-d', './a', '-m', 'sfdc_cms__audio:Chime'],
     ]) {
       const parsed = await Parser.parse(['-o', 'destination', '-W', 'Marketing', '-L', ...args], {
         flags: DeployContent.flags,
@@ -270,6 +274,65 @@ describe('cms deploy content command', () => {
         expect(envelope.result!.summary.plannedCreate).to.equal(0);
       } else expect(envelope.result!.items[0].proposed).to.equal(proposed);
       expect(await readFile(path.join(root, 'Notes.cms-document.media.txt'))).to.deep.equal(bytes);
+    });
+  }
+
+  for (const proposed of ['create', 'unchanged', 'update'] as const) {
+    it(`routes local Audio ${proposed} through the public command without claiming native qualification`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'cms-audio-command-'));
+      const file = path.join(root, 'Chime.cms-audio.json');
+      const companion = path.join(root, 'Chime.cms-audio.media.bin');
+      const bytes = Buffer.from([0, 255, 128, 13, 10]);
+      await writeFile(
+        file,
+        JSON.stringify({
+          contract: 'sf-cms-media-source',
+          contractVersion: '1.0.0',
+          identity: {
+            family: 'cms',
+            type: 'Audio',
+            apiName: 'Chime',
+            context: { workspaceApiName: 'Source' },
+          },
+          contentType: 'sfdc_cms__audio',
+          language: 'en_US',
+          folderPath: [],
+          title: 'Chime',
+          media: {
+            representation: 'binary',
+            mimeType: 'application/x-future-audio',
+            companion: { role: 'media', path: path.basename(companion) },
+          },
+        }),
+      );
+      await writeFile(companion, bytes);
+      for (const type of ['audio', 'sfdc_cms__audio']) {
+        for (const selector of [{ 'content-type': [type] }, { metadata: [`${type}:Chime`] }]) {
+          const s = command({ 'definition-file': undefined, 'source-dir': [root], ...selector });
+          const selected = await selectDeploySources({ 'source-dir': [root], ...selector });
+          const item = preparedItem(proposed);
+          item.source = selected.items[0];
+          item.changedFields = proposed === 'update' ? ['media'] : [];
+          s.preparation.items = [item];
+          Object.assign(s.instance, { selectSources: selectDeploySources });
+          const envelope = await s.instance.run();
+          expect(envelope.status).to.equal('success');
+          expect(envelope.result!.qualification).to.equal('unqualified');
+          expect(envelope.result!.mutationEnabled).to.equal(false);
+          expect(envelope.result!.summary.completed).to.equal(0);
+          expect(envelope.result!.items[0]).to.deep.equal({
+            ...item,
+            outcome: 'planned',
+            readback: null,
+          });
+          expect(envelope.result!.selection!.items[0].targetIdentity.contentType).to.equal(
+            'sfdc_cms__audio',
+          );
+          expect(s.preflightBatch.firstCall.args[1].expectedSelection).to.deep.equal(selected);
+          expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
+          expect(await readFile(companion)).to.deep.equal(bytes);
+        }
+      }
     });
   }
 
