@@ -24,7 +24,8 @@ export default class ListChannel extends CmsCommand<CmsPage> {
 
   public async run(): Promise<CmsPage> {
     const { flags } = await this.parse(ListChannel);
-    const connection = await this.getConnection(flags['target-org'], flags['api-version']);
+    const targetOrg = flags['target-org'].getUsername()!;
+    const connection = await this.getConnection(targetOrg, flags['api-version']);
     const result = await listWorkspaceChannels(connection, flags['workspace-id'], {
       page: flags.page,
       pageSize: flags['page-size'],

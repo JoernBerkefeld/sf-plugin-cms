@@ -1,4 +1,5 @@
 import { Parser } from '@oclif/core';
+import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { mkdtemp, readdir, readFile, writeFile, mkdir, symlink } from 'node:fs/promises';
@@ -14,7 +15,7 @@ import type { DeployLocalItem } from '../../src/services/deploy-source-selection
 import { selectDeploySources } from '../../src/services/deploy-source-selection.js';
 
 const flags = {
-  'target-org': 'destination',
+  'target-org': { getUsername: () => 'destination' },
   'api-version': '67.0',
   'workspace-id': 'destination-space',
   language: 'en_US',
@@ -121,6 +122,7 @@ function command(extra: Record<string, unknown> = {}) {
 
 describe('cms deploy content command', () => {
   beforeEach(() => {
+    sinon.stub(Org, 'create').resolves({ getUsername: () => 'destination' } as Org);
     process.exitCode = undefined;
   });
   afterEach(() => {
@@ -141,7 +143,7 @@ describe('cms deploy content command', () => {
       });
       expect(parsed.flags.apply).to.equal(false);
       expect(parsed.flags['default-language']).to.equal(true);
-      expect(parsed.flags['target-org']).to.equal('destination');
+      expect(parsed.flags['target-org'].getUsername()).to.equal('destination');
     }
     const parsed = await Parser.parse(
       ['-o', 'destination', '--definition-file', 'a', '--definition-file', 'b'],
@@ -457,7 +459,7 @@ describe('cms deploy content command', () => {
       { 'workspace-name': 'ambiguous' },
       { 'default-language': true },
       { language: '' },
-      { 'target-org': ' ' },
+      { 'target-org': { getUsername: () => ' ' } },
     ]) {
       const s = command({ apply: true, 'report-dir': path.join(root, 'reports'), ...extra });
       Object.assign(s.instance, { selectSources: selectDeploySources });
@@ -490,7 +492,7 @@ describe('cms deploy content command', () => {
 
   it('rejects invalid explicit destination/language and dry-run reports before authentication', async () => {
     for (const extra of [
-      { 'target-org': ' ' },
+      { 'target-org': { getUsername: () => ' ' } },
       { 'workspace-id': undefined },
       { 'workspace-name': 'Marketing' },
       { language: undefined },

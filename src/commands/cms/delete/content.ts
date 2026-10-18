@@ -81,6 +81,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
 
   public async run(): Promise<CmsEnvelope<ContentDeleteResult>> {
     const { flags } = await this.parse(DeleteContent);
+    const targetOrg = flags['target-org'].getUsername()!;
     const selectedContentType = normalizeContentTypeAlias(
       flags['content-type'] ?? EMAIL_CONTENT_TYPE,
       DELETE_CONTENT_TYPES,
@@ -153,10 +154,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
           expectedContractVersion,
         ),
       );
-    const { connection, orgId } = await this.getOrgContext(
-      flags['target-org'],
-      flags['api-version'],
-    );
+    const { connection, orgId } = await this.getOrgContext(targetOrg, flags['api-version']);
     if (flags['api-version'] === 'latest')
       flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Flags } from '@salesforce/sf-plugins-core';
 import { getCmsApiSelection } from '../../../api-policy.js';
-import { apiVersionFlag, CmsCommand } from '../../../command-base.js';
+import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 import { type CmsEnvelope, type CmsStatus } from '../../../contracts/shared.js';
 import { prepareEditableSourceSelection } from '../../../services/retrieve-item-source.js';
 import type { NativeRetrieveResolution } from '../../../services/retrieve-native-resolution.js';
@@ -65,7 +65,7 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
     '<%= config.bin %> cms retrieve content -o my-org -W Marketing -m email:Welcome -m emailTemplate:Welcome_Template -L -d ./project --json',
   ];
   public static readonly flags = {
-    'target-org': Flags.requiredOrg(),
+    'target-org': targetOrgFlag,
     'api-version': apiVersionFlag,
     'workspace-id': Flags.string({
       char: 'w',

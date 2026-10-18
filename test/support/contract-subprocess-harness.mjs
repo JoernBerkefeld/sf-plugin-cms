@@ -244,6 +244,20 @@ if (
   const pluginVersion = process.env.SF_PLUGIN_CMS_INSTALLED_VERSION;
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
   if (pluginVersion === undefined) throw new Error('Installed plugin version is unavailable');
+  // Only public command fixtures parse native org flags; service-only fixtures stay offline.
+  if (
+    contractCase.startsWith('image-upload-') ||
+    contractCase.startsWith('email-publish-') ||
+    contractCase.startsWith('email-unpublish-') ||
+    contractCase.startsWith('email-delete-') ||
+    contractCase.startsWith('email-template-delete-')
+  ) {
+    const installedRequire = createRequire(path.join(pluginRoot, 'package.json'));
+    const { Org } = installedRequire('@salesforce/core');
+    Org.create = async (options) => ({
+      getUsername: () => options?.aliasOrUsername ?? 'controlled-default@example.test',
+    });
+  }
   if (contractCase === 'image-upload-preview' || contractCase === 'image-upload-local') {
     const { default: Command } = await import(
       pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/upload/images.js'))

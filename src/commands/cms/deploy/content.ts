@@ -132,6 +132,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
 
   public async run(): Promise<CmsEnvelope<DeployContentResult>> {
     const { flags } = await this.parse(DeployContent);
+    const targetOrg = flags['target-org'].getUsername()!;
     let orgId = 'unresolved-org';
     const result: DeployContentResult = {
       mode: flags.apply ? 'apply' : 'dry-run',
@@ -140,7 +141,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       reportFile: null,
       report: null,
       scope: {
-        targetOrg: flags['target-org'],
+        targetOrg,
         workspaceId: flags['workspace-id'] ?? null,
         workspaceName: flags['workspace-name'] ?? null,
         language: flags.language ?? null,
@@ -231,7 +232,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         workspaceName: flags['workspace-name'],
       });
       if (
-        !flags['target-org'].trim() ||
+        !targetOrg.trim() ||
         flags['workspace-id']?.trim() === '' ||
         flags['workspace-name']?.trim() === '' ||
         (!flags.apply && flags['report-dir'] !== undefined)
@@ -260,7 +261,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       return finish('blocked', 'DEPLOY_SELECTION_INVALID');
     }
     try {
-      const context = await this.getOrgContext(flags['target-org'], flags['api-version']);
+      const context = await this.getOrgContext(targetOrg, flags['api-version']);
       orgId = context.orgId;
       if (flags['api-version'] === 'latest')
         flags['api-version'] = getCmsApiSelection(context.connection).effectiveApiVersion;

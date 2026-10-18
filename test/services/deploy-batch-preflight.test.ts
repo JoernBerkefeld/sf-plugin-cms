@@ -204,7 +204,7 @@ describe('internal whole-selection deploy preflight', () => {
       Object.assign(instance, {
         parse: async () => ({
           flags: {
-            'target-org': 'destination',
+            'target-org': { getUsername: () => 'destination' },
             'api-version': '67.0',
             'workspace-id': workspaceId,
             language: f.input.language,

@@ -23,7 +23,8 @@ export default class ListWorkspace extends CmsCommand<CmsPage> {
 
   public async run(): Promise<CmsPage> {
     const { flags } = await this.parse(ListWorkspace);
-    const connection = await this.getConnection(flags['target-org'], flags['api-version']);
+    const targetOrg = flags['target-org'].getUsername()!;
+    const connection = await this.getConnection(targetOrg, flags['api-version']);
     const result = await listWorkspaces(connection, {
       nameFragment: flags['name-fragment'],
       page: flags.page,

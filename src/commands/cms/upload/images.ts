@@ -62,6 +62,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
 
   public async run(): Promise<CmsEnvelope<ImageUploadCommandResult>> {
     const { flags } = await this.parse(UploadImages);
+    const targetOrg = flags['target-org'].getUsername()!;
     let orgId = 'unresolved-org';
     let result: ImageUploadCommandResult = {
       mode: flags.apply ? 'apply' : 'dry-run',
@@ -142,7 +143,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
       return finish('blocked', 'IMAGE_UPLOAD_LOCAL_VALIDATION_FAILED');
     }
     try {
-      const context = await this.getOrgContext(flags['target-org'], flags['api-version']);
+      const context = await this.getOrgContext(targetOrg, flags['api-version']);
       orgId = context.orgId;
       if (flags['api-version'] === 'latest')
         flags['api-version'] = getCmsApiSelection(context.connection).effectiveApiVersion;

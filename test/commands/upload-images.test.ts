@@ -1,4 +1,5 @@
 import { Parser } from '@oclif/core';
+import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
@@ -25,7 +26,7 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
   Object.assign(instance, {
     parse: sinon.stub().resolves({
       flags: {
-        'target-org': 'unused',
+        'target-org': { getUsername: () => 'unused' },
         'api-version': '67.0',
         'contract-version': 1,
         'workspace-id': 'space',
@@ -44,6 +45,7 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
 describe('cms upload images command', () => {
   let directory: string;
   beforeEach(async () => {
+    sinon.stub(Org, 'create').resolves({ getUsername: () => 'unused' } as Org);
     directory = await mkdtemp(path.join(tmpdir(), 'cms-upload-command-'));
     process.exitCode = undefined;
   });

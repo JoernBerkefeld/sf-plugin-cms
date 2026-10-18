@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { Parser } from '@oclif/core';
 import { DELETE_CONTENT_TYPES } from '../../src/services/email-delete.js';
+import { Org } from '@salesforce/core';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
 import DeleteContent from '../../src/commands/cms/delete/content.js';
@@ -8,6 +9,7 @@ import DeleteContent from '../../src/commands/cms/delete/content.js';
 describe('cms delete content command', () => {
   const context = new TestContext();
   beforeEach(() => {
+    context.SANDBOX.stub(Org, 'create').resolves({ getUsername: () => 'org' } as Org);
     process.exitCode = undefined;
   });
   afterEach(() => {
@@ -86,7 +88,7 @@ describe('cms delete content command', () => {
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'org',
+          'target-org': { getUsername: () => 'org' },
           'api-version': '67.0',
           'contract-version': 1,
           'content-type': 'emailTemplate',
@@ -130,7 +132,7 @@ describe('cms delete content command', () => {
       Object.assign(command, {
         parse: context.SANDBOX.stub().resolves({
           flags: {
-            'target-org': 'org',
+            'target-org': { getUsername: () => 'org' },
             'api-version': '67.0',
             'contract-version': 2,
             'content-type': 'sfdc_cms__emailTemplate',
@@ -159,7 +161,7 @@ describe('cms delete content command', () => {
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'org',
+          'target-org': { getUsername: () => 'org' },
           'api-version': '67.0',
           'contract-version': 1,
           'workspace-id': 'space',
@@ -187,7 +189,7 @@ describe('cms delete content command', () => {
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'org',
+          'target-org': { getUsername: () => 'org' },
           'api-version': '67.0',
           'contract-version': 1,
           'workspace-id': 'space',

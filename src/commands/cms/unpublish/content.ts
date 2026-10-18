@@ -63,6 +63,7 @@ export default class UnpublishContent extends CmsCommand<CmsEnvelope<ContentUnpu
 
   public async run(): Promise<CmsEnvelope<ContentUnpublishResult>> {
     const { flags } = await this.parse(UnpublishContent);
+    const targetOrg = flags['target-org'].getUsername()!;
     if ((flags['contract-version'] ?? 1) !== 1)
       return this.finish(
         blocked(this.pluginVersion, flags['api-version'], 'unresolved-org', {
@@ -96,10 +97,7 @@ export default class UnpublishContent extends CmsCommand<CmsEnvelope<ContentUnpu
           retryable: false,
         }),
       );
-    const { connection, orgId } = await this.getOrgContext(
-      flags['target-org'],
-      flags['api-version'],
-    );
+    const { connection, orgId } = await this.getOrgContext(targetOrg, flags['api-version']);
     if (flags['api-version'] === 'latest')
       flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
     const input = {

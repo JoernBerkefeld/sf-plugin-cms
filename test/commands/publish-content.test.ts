@@ -18,7 +18,7 @@ describe('cms publish content command', () => {
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'org',
+          'target-org': { getUsername: () => 'org' },
           'api-version': '67.0',
           'contract-version': 1,
           'workspace-id': 'space',
@@ -45,7 +45,7 @@ describe('cms publish content command', () => {
     Object.assign(command, {
       parse: context.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'org',
+          'target-org': { getUsername: () => 'org' },
           'api-version': '67.0',
           'contract-version': 1,
           'workspace-id': 'space',

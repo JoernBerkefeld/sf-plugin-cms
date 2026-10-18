@@ -24,7 +24,7 @@ describe('CMS read command execution', () => {
     Object.assign(command, {
       parse: $$.SANDBOX.stub().resolves({
         flags: {
-          'target-org': 'my-org',
+          'target-org': { getUsername: () => 'my-org' },
           'api-version': '67.0',
           'name-fragment': 'Main',
           page: 1,
@@ -55,7 +55,7 @@ describe('CMS read command execution', () => {
     );
     Object.assign(command, {
       parse: $$.SANDBOX.stub().resolves({
-        flags: { 'target-org': 'my-org', 'api-version': '67.0' },
+        flags: { 'target-org': { getUsername: () => 'my-org' }, 'api-version': '67.0' },
       }),
       getConnection: $$.SANDBOX.stub().resolves(fakeConnection(request)),
     });

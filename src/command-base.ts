@@ -15,11 +15,7 @@ import {
   type CmsProvenance,
 } from './contracts/shared.js';
 
-export const targetOrgFlag = Flags.string({
-  char: 'o',
-  required: true,
-  summary: 'Username or alias of the target Salesforce org.',
-});
+export const targetOrgFlag = Flags.requiredOrg();
 
 export const apiVersionFlag = Flags.string({
   default: DEFAULT_API_VERSION,
