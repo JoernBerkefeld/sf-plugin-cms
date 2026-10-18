@@ -64,7 +64,75 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
-  it('admits binary Images without a format gate but rejects unsafe MIME/path, URL-only and Documents', async () => {
+  it('selects binary Documents explicitly and recursively with exact filters and byte bindings', async () => {
+    const root = await temporary();
+    const email = await fixture(root);
+    const directory = path.join(root, 'nested');
+    await mkdir(directory);
+    const file = path.join(directory, 'Guide.cms-document.json');
+    const candidate = {
+      contract: 'sf-cms-media-source',
+      contractVersion: '1.0.0',
+      identity: {
+        family: 'cms',
+        type: 'Document',
+        apiName: 'Guide',
+        context: { workspaceApiName: 'Source' },
+      },
+      contentType: 'sfdc_cms__document',
+      language: 'en_US',
+      title: 'Guide',
+      folderPath: [],
+      media: {
+        representation: 'binary',
+        mimeType: 'text/plain',
+        companion: { role: 'media', path: 'Guide.cms-document.media.txt' },
+      },
+    };
+    await writeFile(file, JSON.stringify(candidate));
+    const companion = path.join(directory, candidate.media.companion.path);
+    await writeFile(companion, 'Résumé 世界\r\nExact bytes\n');
+    const explicit = await selectDeploySources({ 'definition-file': [file] });
+    expect(explicit.items[0].targetIdentity.contentType).to.equal('sfdc_cms__document');
+    expect(explicit.items[0].companionPaths).to.deep.equal([companion]);
+    expect(explicit.items[0].mediaSha256).to.match(/^[a-f0-9]{64}$/u);
+    const mixed = await selectDeploySources({ 'source-dir': [root, directory] });
+    expect(mixed.items.map((item) => item.definitionPath)).to.deep.equal([email, file].toSorted());
+    for (const filter of [
+      { 'content-type': ['sfdc_cms__document'] },
+      { metadata: ['sfdc_cms__document', 'sfdc_cms__document:Guide'] },
+    ]) {
+      const selected = await selectDeploySources({ 'source-dir': [root], ...filter });
+      expect(selected.items).to.deep.equal(explicit.items);
+    }
+    await failure(
+      selectDeploySources({
+        'source-dir': [root],
+        metadata: ['sfdc_cms__document', 'sfdc_cms__document:Missing'],
+      }),
+      /Exact deploy metadata member is missing/u,
+    );
+    await writeFile(companion, 'Changed bytes');
+    const changed = await selectDeploySources({ 'definition-file': [file] });
+    expect(changed.items[0].mediaSha256).not.to.equal(explicit.items[0].mediaSha256);
+    for (const media of [
+      { representation: 'url-only', address: 'https://example.invalid/document' },
+      { ...candidate.media, mimeType: 'application/pdf' },
+      { ...candidate.media, companion: { role: 'media', path: '../escape.txt' } },
+    ]) {
+      await writeFile(file, JSON.stringify({ ...candidate, media }));
+      await failure(
+        selectDeploySources({ 'definition-file': [file] }),
+        /binary source|MIME|same-stem/u,
+      );
+    }
+    await writeFile(file, JSON.stringify(candidate));
+    await unlink(companion);
+    await failure(selectDeploySources({ 'source-dir': [root] }), /missing/u);
+    await writeFile(file, '{broken');
+    await failure(selectDeploySources({ 'source-dir': [root] }), /valid JSON/u);
+  });
+  it('admits binary Images without a format gate but rejects unsafe MIME/path, URL-only and mismatched stems', async () => {
     const root = await temporary();
     const file = path.join(root, 'Hero.cms-image.json');
     const candidate = {
@@ -158,7 +226,7 @@ describe('local deploy source selection', () => {
     const file = await fixture(nested);
     const second = await fixture(path.join(root, 'email'), definition(true));
     await writeFile(path.join(root, 'receipt.json'), '{not a definition');
-    await writeFile(path.join(root, 'other.cms-document.json'), '{not supported');
+    await writeFile(path.join(root, 'other.cms-audio.json'), '{not supported');
     await writeFile(path.join(root, 'Welcome.cms-email.txt'), 'companion');
     const result = await selectDeploySources({ 'source-dir': [nested, root, root] });
     expect(result.mode).to.equal('source-dir');
@@ -205,7 +273,7 @@ describe('local deploy source selection', () => {
       { 'source-dir': ['x'], metadata: [] },
       { 'source-dir': ['x'], 'content-type': [] },
       { 'source-dir': ['x'], 'content-type': ['email'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__document'] },
+      { 'source-dir': ['x'], metadata: ['sfdc_cms__audio'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email:'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email: '] },
       { 'source-dir': 'x' as unknown as string[] },

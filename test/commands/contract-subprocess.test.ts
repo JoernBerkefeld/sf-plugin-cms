@@ -334,6 +334,30 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         contract: 'sf-cms-content-deploy@1',
       })),
     );
+    expect(result.capabilities.filter(({ id }) => id.includes('.document'))).to.deep.equal([
+      {
+        id: 'content.retrieve.document',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
+      },
+      ...['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.document.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
+    ]);
+    const deployHelp = await runSf(['cms', 'deploy', 'content', '--help']);
+    expect(deployHelp.exitCode, deployHelp.stderr).to.equal(0);
+    const helpText = deployHelp.stdout.replaceAll(/\s+/gu, ' ');
+    expect(helpText).to.include('Documents support CREATE, bytes-only UPDATE and exact unchanged');
+    expect(helpText).to.include('unchanged metadata, native filename, MIME, language and type');
+    expect(helpText).to.include(
+      'bounded two-org development-artifact acceptance covers the tested text/plain profile',
+    );
+    expect(helpText).not.to.include('pending current immutable-artifact');
+    expect(helpText).not.to.include('Document UPDATE is unsupported');
     expect(result.internalRegistry.scope).to.equal('internal-engine-only');
     expect(result.internalRegistry.version).to.equal('1.0.0');
     for (const declaration of result.internalRegistry.declarations) {

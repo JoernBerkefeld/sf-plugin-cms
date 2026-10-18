@@ -181,6 +181,31 @@ export async function updateImageContent(
 ): Promise<UpdatedVariant> {
   assertPlainString(variantId, 'variantId');
   const multipart = buildImageUpdateMultipart(input, filename, image, options);
+  return sendVariantUpdateMultipart(connection, variantId, multipart, options, observeResponse);
+}
+
+/**
+ * Send an already validated native variant envelope exactly once without credential replay.
+ * This shared request plumbing does not select or validate a media family.
+ * @param {RequestConnection} connection - Authenticated destination.
+ * @param {string} variantId - Native variant identity.
+ * @param {object} multipart - Detached family-validated multipart body and boundary.
+ * @param {Buffer} multipart.body - Exact validated wire bytes.
+ * @param {string} multipart.boundary - Collision-free boundary.
+ * @param {JsonRequestOptions} options - Timeout and cancellation controls.
+ * @param {Function} observeResponse - Awaited raw response observer before strict validation.
+ * @param {Function} onDispatch - Synchronous marker immediately before request invocation.
+ * @returns {Promise<UpdatedVariant>} Shape-validated response, not independent readback.
+ */
+export async function sendVariantUpdateMultipart(
+  connection: RequestConnection,
+  variantId: string,
+  multipart: { body: Buffer; boundary: string },
+  options: JsonRequestOptions = {},
+  observeResponse?: (data: unknown) => Promise<void>,
+  onDispatch?: () => void,
+): Promise<UpdatedVariant> {
+  assertPlainString(variantId, 'variantId');
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new CmsRequestError(OPERATION_KEY, 'Request timeout must be a positive number');
@@ -188,7 +213,9 @@ export async function updateImageContent(
   if (options.signal?.aborted) {
     throw new CmsRequestError(OPERATION_KEY, 'CMS image update cancelled');
   }
-  const request = withoutRefreshReplay(connection).request<unknown>(
+  const receiver = withoutRefreshReplay(connection);
+  onDispatch?.();
+  const request = receiver.request<unknown>(
     {
       body: multipart.body,
       headers: {

@@ -204,6 +204,71 @@ describe('cms deploy content command', () => {
     expect(s.preflightBatch.calledOnce).to.equal(true);
     expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
   });
+  for (const proposed of ['create', 'update', 'unchanged', 'blocked'] as const) {
+    it(`routes real local Document selection to ${proposed} planning without qualification or mutation`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'cms-document-command-'));
+      const file = path.join(root, 'Notes.cms-document.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          contract: 'sf-cms-media-source',
+          contractVersion: '1.0.0',
+          identity: {
+            family: 'cms',
+            type: 'Document',
+            apiName: 'Notes',
+            context: { workspaceApiName: 'Source' },
+          },
+          contentType: 'sfdc_cms__document',
+          language: 'en_US',
+          folderPath: [],
+          title: 'Notes',
+          media: {
+            representation: 'binary',
+            mimeType: 'text/plain',
+            companion: { role: 'media', path: 'Notes.cms-document.media.txt' },
+          },
+        }),
+      );
+      const bytes = Buffer.from('Unicode café\r\nexact bytes\n');
+      await writeFile(path.join(root, 'Notes.cms-document.media.txt'), bytes);
+      const s = command({
+        'definition-file': undefined,
+        'source-dir': [root],
+        metadata: ['sfdc_cms__document:Notes'],
+      });
+      const selected = await selectDeploySources({
+        'source-dir': [root],
+        metadata: ['sfdc_cms__document:Notes'],
+      });
+      const item = preparedItem(proposed);
+      item.source = selected.items[0];
+      item.changedFields = proposed === 'update' ? ['media'] : [];
+      if (proposed === 'blocked') {
+        item.blockedReasons = ['Document metadata changes are unsupported'];
+        s.preparation.items = [preparedItem(), item];
+        s.preparation.blockedReasons = [...item.blockedReasons];
+      } else s.preparation.items = [item];
+      Object.assign(s.instance, { selectSources: selectDeploySources });
+      const envelope = await s.instance.run();
+      expect(envelope.status).to.equal(proposed === 'blocked' ? 'blocked' : 'success');
+      expect(envelope.result!.qualification).to.equal('unqualified');
+      expect(envelope.result!.mutationEnabled).to.equal(false);
+      expect(envelope.result!.summary.plannedUpdate).to.equal(proposed === 'update' ? 1 : 0);
+      expect(envelope.result!.selection!.items[0]).to.deep.equal(selected.items[0]);
+      expect(envelope.result!.selection!.items[0].mediaSha256).to.match(/^[a-f0-9]{64}$/u);
+      expect(s.preflightBatch.firstCall.args[1].sources.metadata).to.deep.equal([
+        'sfdc_cms__document:Notes',
+      ]);
+      expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
+      if (proposed === 'blocked') {
+        expect(envelope.result!.items.every((entry) => entry.outcome === 'blocked')).to.equal(true);
+        expect(envelope.result!.summary.plannedCreate).to.equal(0);
+      } else expect(envelope.result!.items[0].proposed).to.equal(proposed);
+      expect(await readFile(path.join(root, 'Notes.cms-document.media.txt'))).to.deep.equal(bytes);
+    });
+  }
+
   it('forwards ordinary Image selection without private admission options', async () => {
     const s = command();
     s.selectSources.resolves({

@@ -86,6 +86,7 @@ describe('cms info', () => {
       'content.retrieve.email',
       'content.retrieve.email-template',
       'content.retrieve.image',
+      'content.retrieve.document',
     ]);
     const deploy = result?.capabilities.filter(({ id }) => id.startsWith('content.deploy.')) ?? [];
     expect(deploy.map(({ id }) => id)).to.deep.equal([
@@ -98,9 +99,26 @@ describe('cms info', () => {
       'content.deploy.image.create',
       'content.deploy.image.update',
       'content.deploy.image.unchanged',
+      'content.deploy.document.create',
+      'content.deploy.document.update',
+      'content.deploy.document.unchanged',
     ]);
     expect(deploy.every(({ contract }) => contract === 'sf-cms-content-deploy@1')).to.equal(true);
     expect(deploy.every(({ state }) => state === 'unqualified')).to.equal(true);
+    expect(result?.capabilities.filter(({ id }) => id.includes('.document'))).to.deep.equal([
+      {
+        id: 'content.retrieve.document',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
+      },
+      ...['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.document.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
+    ]);
     expect(
       result?.capabilities.some(({ id }) =>
         /workspace\.(?:export|import)|content\.update\.|sibling|baseline/u.test(id),

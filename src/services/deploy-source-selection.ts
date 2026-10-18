@@ -33,7 +33,7 @@ export interface DeployLocalItem {
   definitionPath: string;
   companionPaths: string[];
   definition: SourceDefinition | EditableItemDefinitionV2 | EditableMediaDefinition;
-  /** Observed binary binding for Image planning, never apply authority. */
+  /** Observed binary binding for media planning, never apply authority. */
   mediaSha256?: string;
   contentBody: Record<string, JsonValue>;
   /** Destination-relative identity; source workspace context remains in definition only. */
@@ -61,6 +61,7 @@ function values(input: readonly string[] | undefined): string[] | undefined {
 function contentType(value: string): string {
   if (
     value !== 'sfdc_cms__image' &&
+    value !== 'sfdc_cms__document' &&
     !SOURCE_EMAIL_PROFILES.some((profile) => profile.contentType === value)
   )
     throw new TypeError('Deploy source selection requires a supported qualified content type');
@@ -100,8 +101,12 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
   }
   if ((candidate as { contract?: string })?.contract === 'sf-cms-media-source') {
     assertEditableMediaDefinition(candidate);
-    if (candidate.contentType !== 'sfdc_cms__image' || candidate.media.representation !== 'binary')
-      throw new TypeError('Image deploy requires a binary Image source');
+    if (candidate.media.representation !== 'binary')
+      throw new TypeError(
+        candidate.contentType === 'sfdc_cms__image'
+          ? 'Image deploy requires a binary Image source'
+          : 'Document deploy selection requires a binary source',
+      );
     return candidate;
   }
   assertSourceDefinition(candidate);
@@ -109,7 +114,7 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
 }
 
 /**
- * Select and reconstruct local Email/Template/binary Image sources without org access.
+ * Select local Email/Template/binary Image/Document sources without apply authority or org access.
  * @param {DeploySourceSelectionFlags} flags - Explicit files or directories with optional directory filters.
  * @returns {Promise<DeployLocalSelection>} Deterministic admitted sources and destination-relative identities.
  */
@@ -141,7 +146,7 @@ export async function selectDeploySources(
     for (const relative of await enumeratePackageFiles(root, root)) {
       if (
         /\.cms-email(?:-template)?\.json$/u.test(relative) ||
-        /\.cms-image\.json$/u.test(relative)
+        /\.cms-(?:image|document)\.json$/u.test(relative)
       )
         candidates.add(path.join(root, relative));
     }
@@ -155,12 +160,12 @@ export async function selectDeploySources(
       definition.contract === 'sf-cms-media-source'
         ? await loadEditableMediaSource(file)
         : undefined;
-    if (
-      media &&
-      (media.definition.contentType !== 'sfdc_cms__image' ||
-        media.source.representation !== 'binary')
-    )
-      throw new TypeError('Image deploy requires a binary Image source');
+    if (media && media.source.representation !== 'binary')
+      throw new TypeError(
+        media.definition.contentType === 'sfdc_cms__image'
+          ? 'Image deploy requires a binary Image source'
+          : 'Document deploy selection requires a binary source',
+      );
     let email:
       | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
       | Awaited<ReturnType<typeof loadEditableItemSource>>

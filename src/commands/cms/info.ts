@@ -21,7 +21,7 @@ import { CmsCommand } from '../../command-base.js';
 export default class Info extends CmsCommand<CmsEnvelope<CmsInfoResult>> {
   public static readonly summary = 'Show offline CMS contract and capability information.';
   public static readonly description =
-    'Reports current public retrieve/deploy/upload and lifecycle support, tested API baseline, and separately labelled internal-engine metadata without contacting an org. Deploy and loose-image upload remain unqualified; internal family profiles do not imply public support.';
+    'Reports current public retrieve/deploy/upload and lifecycle support, tested API baseline, and separately labelled internal-engine metadata without contacting an org. Document retrieval and CREATE/bytes-only UPDATE/exact unchanged deployment remain unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile; metadata, filename, MIME, language and type updates are unsupported. Deploy and loose-image upload remain unqualified; internal family profiles do not imply public support.';
   public static readonly examples = [
     '<%= config.bin %> cms info',
     '<%= config.bin %> cms info --json',

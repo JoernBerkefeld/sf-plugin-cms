@@ -6,11 +6,20 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { createHash } from 'node:crypto';
 import {
   executeDeployBatch,
+  reconcileDeployBatchInventory,
   type DeployBatchPersistence,
   type DeployBatchReport,
 } from '../../src/services/deploy-batch-executor.js';
+import type { NativeInventory } from '../../src/services/retrieve-native-inventory.js';
+import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
+import { buildDocumentCreateMultipart } from '../../src/transport/multipart-image-create.js';
+import {
+  buildDocumentUpdateMultipart,
+  type DocumentUpdateInput,
+} from '../../src/transport/multipart-document-update.js';
 import {
   rewriteAtomic,
   type WorkspaceImportRunReport,
@@ -18,7 +27,7 @@ import {
 
 const workspaceId = '0Zu000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(existing = false) {
+async function fixture(existing = false, mixed = false, document = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-batch-executor-'));
   const reportFile = path.join(directory, 'batch.json');
   const definitions = ['Alpha', 'Beta', 'Gamma'].map((apiName) => ({
@@ -32,13 +41,88 @@ async function fixture(existing = false) {
     contentBody: { 'sfdc_cms:title': apiName, messagePurpose: 'Transactional', subjectLine: 'Hi' },
     companions: { rawHtml: `${apiName}.cms-email.html` },
   }));
-  const files = definitions.map((definition) =>
-    path.join(directory, `${definition.identity.apiName}.cms-email.json`),
+  if (mixed) {
+    definitions[1].identity.type = 'Email Template';
+    definitions[1].contentType = 'sfdc_cms__emailTemplate';
+    definitions[1].companions.rawHtml = 'Beta.cms-email-template.html';
+  }
+  const imageBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
+  const imageName = 'Gamma.cms-image.media.svg';
+  const files = definitions.map((definition, index) =>
+    path.join(
+      directory,
+      `${definition.identity.apiName}.cms-${mixed && index === 1 ? 'email-template' : 'email'}.json`,
+    ),
   );
   for (const [index, definition] of definitions.entries()) {
+    if (mixed && index === 2) continue;
     await writeFile(files[index], JSON.stringify(definition));
     await writeFile(path.join(directory, definition.companions.rawHtml), '<p>Desired</p>');
   }
+  if (mixed) {
+    files[2] = path.join(directory, 'Gamma.cms-image.json');
+    await writeFile(
+      files[2],
+      JSON.stringify({
+        contract: 'sf-cms-media-source',
+        contractVersion: '1.0.0',
+        identity: { ...definitions[2].identity, type: 'Image' },
+        contentType: 'sfdc_cms__image',
+        language: 'en_US',
+        title: 'Gamma',
+        folderPath: [],
+        media: {
+          representation: 'binary',
+          mimeType: 'image/svg+xml',
+          companion: { role: 'media', path: imageName },
+        },
+      }),
+    );
+    await writeFile(path.join(directory, imageName), imageBytes);
+    definitions[2].contentType = 'sfdc_cms__image';
+  }
+  const documentBytes = Buffer.from('Grüße 世界\r\nDocument\n');
+  let currentDocumentBytes = documentBytes;
+  let partialDocumentResponse = false;
+  const documentName = 'Zulu.cms-document.media.txt';
+  if (document) {
+    definitions.push({
+      ...definitions[0],
+      identity: { ...definitions[0].identity, type: 'Document', apiName: 'Zulu' },
+      contentType: 'sfdc_cms__document',
+      title: 'Zulu',
+    });
+    files.push(path.join(directory, 'Zulu.cms-document.json'));
+    await writeFile(
+      files[3],
+      JSON.stringify({
+        contract: 'sf-cms-media-source',
+        contractVersion: '1.0.0',
+        identity: definitions[3].identity,
+        contentType: 'sfdc_cms__document',
+        language: 'en_US',
+        title: 'Zulu',
+        folderPath: [],
+        media: {
+          representation: 'binary',
+          mimeType: 'text/plain',
+          companion: { role: 'media', path: documentName },
+        },
+      }),
+    );
+    await writeFile(path.join(directory, documentName), documentBytes);
+  }
+  const mediaBody = (index: number) => {
+    const bytes = index === 3 ? currentDocumentBytes : imageBytes;
+    const mimeType = index === 3 ? 'text/plain' : 'image/svg+xml';
+    const name = index === 3 ? documentName : imageName;
+    return {
+      'sfdc_cms:media': {
+        source: { type: 'file', size: bytes.length, mimeType },
+        url: `/cms/media/MCKEY${index + 1}?version=1&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=${name}`,
+      },
+    };
+  };
   const records: Row[] = [];
   const details = new Map<string, Row>();
   const workspace = {
@@ -60,7 +144,7 @@ async function fixture(existing = false) {
       apiName: definition.identity.apiName,
       title: definition.title,
       language: 'en_US',
-      contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+      contentType: { fullyQualifiedName: definition.contentType },
       contentSpace: { id: workspaceId },
       folder: { id: 'root' },
       isPublished: false,
@@ -75,7 +159,7 @@ async function fixture(existing = false) {
       Id: variantId,
       ManagedContentId: contentId,
       ManagedContentKey: detail.contentKey,
-      ContentTypeFullyQualifiedName: 'sfdc_cms__email',
+      ContentTypeFullyQualifiedName: definition.contentType,
       Language: 'en_US',
       IsPublished: false,
       ManagedContentVariantStatus: 'Draft',
@@ -90,9 +174,23 @@ async function fixture(existing = false) {
     return detail;
   };
   if (existing) {
-    add(1, { ...definitions[1].contentBody, rawHtml: '&lt;p&gt;Original&lt;/p&gt;' });
-    add(2, { ...definitions[2].contentBody, rawHtml: '&lt;p&gt;Desired&lt;/p&gt;' });
+    add(1, {
+      ...definitions[1].contentBody,
+      rawHtml: mixed ? '&lt;p&gt;Desired&lt;/p&gt;' : '&lt;p&gt;Original&lt;/p&gt;',
+    });
+    add(
+      2,
+      mixed
+        ? {
+            'sfdc_cms:media': {
+              source: { type: 'file', size: imageBytes.length, mimeType: 'image/svg+xml' },
+              url: `/cms/media/MCKEY3?version=1&fileHash=${createHash('md5').update(imageBytes).digest('hex')}&fileName=${imageName}`,
+            },
+          }
+        : { ...definitions[2].contentBody, rawHtml: '&lt;p&gt;Desired&lt;/p&gt;' },
+    );
   }
+  if (existing && document) add(3, mediaBody(3));
   const mutations: string[] = [];
   let puts = 0;
   let invalidFinalReadbackVersion = false;
@@ -100,7 +198,7 @@ async function fixture(existing = false) {
   let failName: string | undefined;
   let onRead: (() => Promise<void>) | undefined;
   const request = function (
-    input: { method: string; url: string; body?: string },
+    input: { method: string; url: string; body?: string | Buffer },
     options?: { retry?: { maxRetries: number } },
   ) {
     requests.push(input.url);
@@ -108,7 +206,12 @@ async function fixture(existing = false) {
       const url = new URL(input.url, 'https://example.invalid');
       if (input.method !== 'GET') {
         expect(options?.retry?.maxRetries).to.equal(0);
-        const body = JSON.parse(input.body!) as Row;
+        const binary = Buffer.isBuffer(input.body);
+        const body = JSON.parse(
+          binary
+            ? input.body!.toString().split('\r\n\r\n')[1].split('\r\n--')[0]
+            : String(input.body),
+        ) as Row;
         const name = String(body.apiName);
         mutations.push(name);
         const batch = JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport;
@@ -119,10 +222,33 @@ async function fixture(existing = false) {
         expect(journal.operations[0].state).to.equal('pending');
         if (name === failName) throw new Error('Authorization: Bearer secret-token');
         if (input.method === 'POST') {
-          const detail = add(
-            definitions.findIndex((definition) => definition.identity.apiName === name),
-            body.contentBody as Row,
-          );
+          const index = definitions.findIndex((definition) => definition.identity.apiName === name);
+          if (binary && index === 3) {
+            expect((input.body as Buffer).includes(documentBytes)).to.equal(true);
+            expect(
+              (input.body as Buffer).includes(Buffer.from('Content-Type: text/plain\r\n')),
+            ).to.equal(true);
+            expect(body).not.to.have.property('contentKey');
+            const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
+            const expected = buildDocumentCreateMultipart(
+              {
+                apiName: String(body.apiName),
+                title: String(body.title),
+                contentSpaceOrFolderId: String(body.contentSpaceOrFolderId),
+              },
+              documentName,
+              documentBytes,
+              { boundaryFactory: () => boundary },
+            );
+            expect((input.body as Buffer).equals(expected.body)).to.equal(true);
+          }
+          const detail = add(index, binary ? mediaBody(index) : (body.contentBody as Row));
+          if (binary)
+            return {
+              managedContentId: detail.managedContentId,
+              managedContentVariantId: detail.managedContentVariantId,
+              contentKey: detail.contentKey,
+            };
           return {
             id: detail.managedContentId,
             contentKey: detail.contentKey,
@@ -132,11 +258,30 @@ async function fixture(existing = false) {
         expect(input.method).to.equal('PUT');
         puts += 1;
         const detail = details.get(url.pathname.split('/').at(-1)!)!;
-        detail.contentBody = {
-          ...(body.contentBody as Row),
-          rawHtml: '&lt;p&gt;Desired&lt;/p&gt;',
-        };
+        if (binary && name === 'Zulu') {
+          const desired = await readFile(path.join(directory, documentName));
+          const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
+          const expected = buildDocumentUpdateMultipart(
+            body as DocumentUpdateInput,
+            documentName,
+            desired,
+            {
+              boundaryFactory: () => boundary,
+            },
+          );
+          expect((input.body as Buffer).equals(expected.body)).to.equal(true);
+          expect(journal.createdParents).to.deep.equal([]);
+          currentDocumentBytes = desired;
+          detail.contentBody = mediaBody(3);
+        } else {
+          detail.contentBody = {
+            ...(body.contentBody as Row),
+            rawHtml: '&lt;p&gt;Desired&lt;/p&gt;',
+          };
+        }
         detail.managedContentVersionId = 'after';
+        if (binary && name === 'Zulu' && partialDocumentResponse)
+          return { managedContentId: detail.managedContentId };
         return detail;
       }
       if (onRead) await onRead();
@@ -144,8 +289,12 @@ async function fixture(existing = false) {
       if (url.pathname.endsWith('/query')) {
         const soql = url.searchParams.get('q')!;
         const parentId = /ManagedContentId = '([^']+)'/u.exec(soql)?.[1];
+        const types = /ContentTypeFullyQualifiedName IN \(([^)]+)\)/u.exec(soql)?.[1];
         const selected = records.filter(
-          (row) => parentId === undefined || row.ManagedContentId === parentId,
+          (row) =>
+            (parentId === undefined || row.ManagedContentId === parentId) &&
+            (types === undefined ||
+              types.includes(`'${String(row.ContentTypeFullyQualifiedName)}'`)),
         );
         let rows = soql.includes('Id >')
           ? []
@@ -179,6 +328,13 @@ async function fixture(existing = false) {
     return Object.assign(result, { stream: () => new PassThrough() });
   };
   sinon.stub(JsforceConnection.prototype, 'request').callsFake(request as never);
+  if (mixed)
+    sinon.stub(globalThis, 'fetch').callsFake(async (input) => {
+      const isDocument = String(input).includes('MCKEY4');
+      return new Response(isDocument ? currentDocumentBytes : imageBytes, {
+        headers: { 'content-type': isDocument ? 'text/plain' : 'image/svg+xml' },
+      });
+    });
   const connection = {
     accessToken: 'test-token',
     instanceUrl: 'https://example.invalid',
@@ -195,14 +351,20 @@ async function fixture(existing = false) {
   };
   return {
     input,
+    preflight: () => preflightDeployBatch(connection, input),
     files,
     definitions,
     mutations,
     puts: () => puts,
+    partialDocumentResponse: () => {
+      partialDocumentResponse = true;
+    },
     invalidateFinalReadbackVersion: () => {
       invalidFinalReadbackVersion = true;
     },
     details,
+    records,
+    workspace,
     directory,
     fail: (name: string) => {
       failName = name;
@@ -210,13 +372,575 @@ async function fixture(existing = false) {
     onRead: (callback: () => Promise<void>) => {
       onRead = callback;
     },
-    run: (persistence?: DeployBatchPersistence) =>
-      executeDeployBatch(connection, input, {}, persistence),
+    run: (persistence?: DeployBatchPersistence, options = {}) =>
+      executeDeployBatch(connection, input, options, persistence),
     journal: async () => JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport,
   };
 }
 
+describe('verified mixed-family inventory prefix reconciliation', () => {
+  const types = ['email', 'emailTemplate', 'image', 'document'];
+  const rows = types.map((type, index) => ({
+    Id: `variant-${index}`,
+    ManagedContentId: `parent-${index}`,
+    ManagedContentKey: `key-${index}`,
+    ContentTypeFullyQualifiedName: `sfdc_cms__${type}`,
+    Language: 'en_US',
+    IsPublished: false,
+    ManagedContentVariantStatus: 'Draft',
+    IsPrimary: true,
+    Name: type,
+    UrlName: null,
+    ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: type },
+  }));
+  const baseline: NativeInventory = {
+    apiVersion: '67.0',
+    workspaceId,
+    complete: true,
+    pagesRequested: 4,
+    records: [{ ...rows[0], Id: 'unrelated', ManagedContentId: 'unrelated-parent' }],
+  };
+  const fresh = () => ({
+    ...structuredClone(baseline),
+    pagesRequested: 8,
+    records: [...structuredClone(baseline.records), ...structuredClone(rows)],
+  });
+  it('subtracts exactly the verified Email/Template/Image/Document prefix without changing input bytes', () => {
+    const inventory = fresh();
+    const bytes = JSON.stringify(inventory);
+    expect(reconcileDeployBatchInventory(inventory, baseline, rows)).to.deep.equal(baseline);
+    expect(JSON.stringify(inventory)).to.equal(bytes);
+    expect(reconcileDeployBatchInventory(baseline, baseline, [])).to.deep.equal(baseline);
+  });
+  for (const [index, type] of types.entries()) {
+    for (const drift of ['missing', 'changed', 'duplicate'])
+      it(`rejects ${drift} verified ${type} prefix evidence`, () => {
+        const inventory = fresh();
+        if (drift === 'missing') inventory.records.splice(index + 1, 1);
+        if (drift === 'changed') inventory.records[index + 1].ManagedContentKey = 'changed';
+        if (drift === 'duplicate') inventory.records.push(structuredClone(rows[index]));
+        expect(() => reconcileDeployBatchInventory(inventory, baseline, rows)).to.throw(
+          /verified CREATE/u,
+        );
+      });
+  }
+  for (const drift of ['unknown', 'unrelated', 'scope', 'version', 'registration'])
+    it(`rejects ${drift} drift rather than erasing full inventory evidence`, () => {
+      const inventory = fresh();
+      if (drift === 'unknown') inventory.records.push({ ...rows[0], Id: 'new-unknown' });
+      if (drift === 'unrelated') inventory.records[0].Name = 'changed';
+      if (drift === 'scope') inventory.workspaceId = 'different';
+      if (drift === 'version') inventory.apiVersion = '68.0';
+      expect(() =>
+        reconcileDeployBatchInventory(
+          inventory,
+          baseline,
+          drift === 'registration' ? [...rows, rows[0]] : rows,
+        ),
+      ).to.throw(/inventory changed/u);
+    });
+});
+
+describe('verified UPDATE inventory accounting', () => {
+  const before: NativeInventory['records'][number] = {
+    Id: '9Ps000000000001AAA',
+    ManagedContentId: '20Y000000000001AAA',
+    ManagedContentKey: 'key',
+    ContentTypeFullyQualifiedName: 'sfdc_cms__email',
+    Language: 'en_US',
+    IsPublished: false,
+    ManagedContentVariantStatus: 'Draft',
+    IsPrimary: true,
+    Name: 'Alpha',
+    UrlName: null,
+    ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Alpha' },
+  };
+  const baseline: NativeInventory = {
+    apiVersion: '67.0',
+    workspaceId,
+    complete: true,
+    pagesRequested: 4,
+    records: [before],
+  };
+  it('accounts for observed UPDATE alongside CREATE without altering either baseline', () => {
+    const created = { ...structuredClone(before), Id: '9Ps000000000002AAA' };
+    const fresh = {
+      ...structuredClone(baseline),
+      pagesRequested: 8,
+      records: [structuredClone(before), created],
+    };
+    const snapshot = JSON.stringify({ baseline, fresh });
+    const normalized = reconcileDeployBatchInventory(
+      fresh,
+      baseline,
+      [created],
+      [{ before, after: structuredClone(before) }],
+    );
+    expect(normalized).to.deep.equal(baseline);
+    expect(JSON.stringify({ baseline, fresh })).to.equal(snapshot);
+  });
+  for (const drift of [
+    'missing',
+    'changed',
+    'old',
+    'unknown',
+    'duplicate',
+    'conflict',
+    'title',
+    'url',
+  ])
+    it(`rejects ${drift} UPDATE evidence without granting row mutation permission`, () => {
+      const fresh = structuredClone(baseline);
+      const transition = { before: structuredClone(before), after: structuredClone(before) };
+      if (drift === 'missing') fresh.records = [];
+      if (drift === 'changed') fresh.records[0].ManagedContentKey = 'changed';
+      if (drift === 'old') transition.before.ManagedContentKey = 'stale';
+      if (drift === 'unknown') transition.before.Id = 'unknown';
+      if (drift === 'title') {
+        fresh.records[0].Name = 'Changed';
+        transition.after.Name = 'Changed';
+      }
+      if (drift === 'url') {
+        fresh.records[0].UrlName = 'changed';
+        transition.after.UrlName = 'changed';
+      }
+      expect(() =>
+        reconcileDeployBatchInventory(
+          fresh,
+          baseline,
+          drift === 'conflict' ? [before] : [],
+          drift === 'duplicate' ? [transition, transition] : [transition],
+        ),
+      ).to.throw(/inventory changed/u);
+    });
+});
+
 describe('internal sequential batch executor', () => {
+  for (const existing of [false, true])
+    it(`executes real mixed Email/Template/Image ${existing ? 'CREATE/unchanged' : 'CREATE'} orchestration`, async () => {
+      const f = await fixture(existing, true);
+      const result = await f.run();
+      expect(result.report.blockedReasons).to.deep.equal([]);
+      expect(result.report.state).to.equal('completed');
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal(
+        existing ? ['created', 'unchanged', 'unchanged'] : ['created', 'created', 'created'],
+      );
+      expect(f.mutations).to.deep.equal(existing ? ['Alpha'] : ['Alpha', 'Beta', 'Gamma']);
+      expect(result.report.summary.uncertain).to.equal(0);
+      expect(await f.journal()).to.deep.equal(result.report);
+    });
+  for (const drift of [
+    'source',
+    'root',
+    'inventory',
+    'prefix',
+    'summary',
+    'item',
+    'callback',
+    'cancel',
+  ])
+    it(`preserves mixed-family verified prefix on ${drift} failure`, async () => {
+      const f = await fixture(false, true);
+      const controller = new AbortController();
+      let injected = false;
+      const result = await f.run(
+        {
+          rewrite: async (file, report) => {
+            if (drift === 'summary' && report.summary.completed === 2)
+              throw new Error('Summary unavailable');
+            await rewriteAtomic(file, report);
+            if (injected || report.summary.completed !== 2) return;
+            injected = true;
+            if (drift === 'source') await writeFile(f.files[2], '{}');
+            if (drift === 'root') f.workspace.rootFolderId = 'changed';
+            if (drift === 'cancel') controller.abort();
+            if (drift === 'callback')
+              f.onRead(async () => {
+                await writeFile(f.input.reportFile, '{}');
+              });
+            if (drift === 'inventory')
+              f.records.push({
+                ...f.records[0],
+                Id: '9Ps000000000009AAA',
+                ManagedContentId: '20Y000000000009AAA',
+              });
+            if (drift === 'prefix') f.records[0].ManagedContentKey = 'changed';
+          },
+          item: {
+            rewrite: async (file, report) => {
+              if (
+                drift === 'item' &&
+                report.state === 'completed' &&
+                report.createdParents[0]?.contentId === '20Y000000000003AAA'
+              )
+                throw new Error('Item completion unavailable');
+              await rewriteAtomic(file, report);
+            },
+          },
+        },
+        { signal: controller.signal },
+      );
+      expect(result.report.state).to.equal('partial');
+      expect(result.report.items.slice(0, 2).map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'created',
+      ]);
+      expect(result.report.items[2].outcome).to.equal(
+        drift === 'item' ? 'uncertain' : 'unattempted',
+      );
+      expect(f.mutations).to.deep.equal(
+        drift === 'item' ? ['Alpha', 'Beta', 'Gamma'] : ['Alpha', 'Beta'],
+      );
+      for (const item of result.report.items.slice(0, 2)) {
+        const journal = JSON.parse(
+          await readFile(item.reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('completed');
+        expect(journal.createdParents).to.have.length(1);
+      }
+      if (drift === 'item') {
+        const journal = JSON.parse(
+          await readFile(result.report.items[2].reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('ownership-uncertain');
+        expect(journal.operations[0].state).to.equal('pending');
+        expect(journal.operations[0].result?.contentId).to.equal('20Y000000000003AAA');
+      }
+    });
+  for (const existing of [false, true])
+    it(`executes actual four-family Document ${existing ? 'unchanged' : 'CREATE'} batch`, async () => {
+      const f = await fixture(existing, true, true);
+      const result = await f.run();
+      expect(result.report.blockedReasons).to.deep.equal([]);
+      expect(result.report.state).to.equal('completed');
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal(
+        existing
+          ? ['created', 'unchanged', 'unchanged', 'unchanged']
+          : ['created', 'created', 'created', 'created'],
+      );
+      expect(f.mutations).to.deep.equal(existing ? ['Alpha'] : ['Alpha', 'Beta', 'Gamma', 'Zulu']);
+      expect(f.puts()).to.equal(0);
+      const item = result.report.items[3];
+      if (existing) {
+        let absent = false;
+        try {
+          await readFile(item.reportFile);
+        } catch (error) {
+          absent = (error as NodeJS.ErrnoException).code === 'ENOENT';
+        }
+        expect(absent).to.equal(true);
+      } else {
+        const journal = JSON.parse(
+          await readFile(item.reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('completed');
+        expect(journal.createdParents[0].contentId).to.equal('20Y000000000004AAA');
+      }
+      expect(await f.journal()).to.deep.equal(result.report);
+    });
+  for (const drift of ['none', 'title', 'url', 'registered', 'summary'])
+    it(`verifies real Email UPDATE before mixed Document unchanged with ${drift} accounting drift`, async () => {
+      const f = await fixture(true, true, true);
+      f.details.get('MCKEY2')!.contentBody = {
+        ...f.definitions[1].contentBody,
+        rawHtml: '&lt;p&gt;Original&lt;/p&gt;',
+      };
+      let injected = false;
+      const result = await f.run({
+        rewrite: async (file, report) => {
+          await rewriteAtomic(file, report);
+          if (!injected && report.summary.updated === 1) {
+            injected = true;
+            if (drift === 'registered') f.records[0].Name = 'Late drift';
+            if (drift === 'summary') throw new Error('Summary unavailable');
+          }
+        },
+        item: {
+          rewrite: async (file, report) => {
+            await rewriteAtomic(file, report);
+            if (
+              report.state === 'completed' &&
+              report.operations[0]?.operationKind === 'update-variant'
+            ) {
+              if (drift === 'title') f.records[0].Name = 'Unrelated title';
+              if (drift === 'url') f.records[0].UrlName = 'unrelated-url';
+            }
+          },
+        },
+      });
+      expect(f.puts()).to.equal(1);
+      expect(f.mutations).to.deep.equal(['Alpha', 'Beta']);
+      expect(result.report.state).to.equal(drift === 'none' ? 'completed' : 'partial');
+      expect(result.report.items[1].outcome).to.equal(
+        drift === 'title' || drift === 'url' ? 'uncertain' : 'updated',
+      );
+      expect(result.report.items[3].outcome).to.equal(
+        drift === 'none' ? 'unchanged' : 'unattempted',
+      );
+      const journal = JSON.parse(
+        await readFile(result.report.items[1].reportFile, 'utf8'),
+      ) as WorkspaceImportRunReport;
+      expect(journal.state).to.equal('completed');
+      expect(journal.createdParents).to.deep.equal([]);
+      expect(journal.operations[0].state).to.equal('succeeded');
+    });
+  it('executes mixed Document UPDATE with frozen old/new hashes and complete inventory', async () => {
+    const f = await fixture(true, true, true);
+    const file = f.files[3];
+    const definition = JSON.parse(await readFile(file, 'utf8')) as Row;
+    definition.urlName = 'zulu';
+    await writeFile(file, JSON.stringify(definition));
+    f.records[2].UrlName = 'zulu';
+    f.details.get('MCKEY4')!.urlName = 'zulu';
+    const desired = Buffer.from('Different UTF-8 café\r\n');
+    await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), desired);
+    const planned = await f.preflight();
+    expect(planned.eligible).to.equal(true);
+    expect(planned.items[3].proposed).to.equal('update');
+    expect(planned.items[3].blockedReasons).to.deep.equal([]);
+    const proof = planned.items[3].documentUpdate!;
+    expect(proof.mediaSha256).to.equal(createHash('sha256').update(desired).digest('hex'));
+    expect(proof.destination.mediaSha256).not.to.equal(proof.mediaSha256);
+    expect(proof.destination.inventory.records).to.have.length(3);
+    expect(proof).to.deep.equal(planned.preparation.items[3].documentUpdate);
+    expect(planned.preparation.items[3].changedFields).to.deep.equal(['media']);
+    const result = await f.run();
+    expect(result.report.blockedReasons).to.deep.equal([]);
+    expect(result.report.state).to.equal('completed');
+    expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+      'created',
+      'unchanged',
+      'unchanged',
+      'updated',
+    ]);
+    expect(f.mutations).to.deep.equal(['Alpha', 'Zulu']);
+    expect(f.puts()).to.equal(1);
+    const journal = JSON.parse(
+      await readFile(result.report.items[3].reportFile, 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(journal.state).to.equal('completed');
+    expect(journal.operations[0].state).to.equal('succeeded');
+    expect(journal.createdParents).to.deep.equal([]);
+    expect(journal.operations[0].result).to.include({
+      contentId: proof.contentId,
+      variantId: proof.variantId,
+    });
+    expect(proof.destination.mediaSha256).not.to.equal(proof.mediaSha256);
+  });
+  for (const drift of [
+    'none',
+    'source',
+    'root',
+    'inventory',
+    'language',
+    'cancel',
+    'callback',
+    'boundary',
+    'partial',
+    'result',
+    'item',
+    'summary',
+  ])
+    it(`executes actual Document UPDATE after CREATE and UPDATE prefix with ${drift} failure`, async () => {
+      const f = await fixture(true, true, true);
+      const definition = JSON.parse(await readFile(f.files[3], 'utf8')) as Row;
+      definition.urlName = 'zulu';
+      await writeFile(f.files[3], JSON.stringify(definition));
+      f.records[2].UrlName = 'zulu';
+      f.details.get('MCKEY4')!.urlName = 'zulu';
+      f.details.get('MCKEY2')!.contentBody = {
+        ...f.definitions[1].contentBody,
+        rawHtml: '&lt;p&gt;Original&lt;/p&gt;',
+      };
+      await writeFile(
+        path.join(f.directory, 'Zulu.cms-document.media.txt'),
+        'Replacement café\r\n',
+      );
+      if (drift === 'partial') f.partialDocumentResponse();
+      const controller = new AbortController();
+      let injected = false;
+      const result = await f.run(
+        {
+          rewrite: async (file, report) => {
+            await rewriteAtomic(file, report);
+            if (drift === 'summary' && report.summary.updated === 2)
+              throw new Error('Summary unavailable');
+            if (injected || report.summary.completed !== 3) return;
+            injected = true;
+            if (drift === 'source')
+              await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Drift');
+            if (drift === 'root') f.workspace.rootFolderId = 'drift';
+            if (drift === 'inventory') f.records[0].Name = 'drift';
+            if (drift === 'language') f.workspace.defaultLanguage = 'de_DE';
+            if (drift === 'cancel') controller.abort();
+          },
+          item: {
+            rewrite: async (file, report) => {
+              const document =
+                report.operations[0]?.result?.contentId === '20Y000000000004AAA' ||
+                file.endsWith('.4.json');
+              if (document && drift === 'callback' && report.state === 'applying')
+                throw new Error('Awaited item boundary persistence unavailable');
+              if (document && drift === 'boundary' && report.state === 'applying')
+                f.workspace.rootFolderId = 'drift-inside-item';
+              if (document && drift === 'result' && report.state === 'ownership-uncertain')
+                throw new Error('Result persistence unavailable');
+              if (document && drift === 'item' && report.state === 'completed')
+                throw new Error('Completion persistence unavailable');
+              await rewriteAtomic(file, report);
+            },
+          },
+        },
+        { signal: controller.signal },
+      );
+      const dispatched = ['none', 'partial', 'result', 'item', 'summary'].includes(drift);
+      expect(f.mutations).to.deep.equal(dispatched ? ['Alpha', 'Beta', 'Zulu'] : ['Alpha', 'Beta']);
+      expect(f.puts()).to.equal(dispatched ? 2 : 1);
+      expect(result.report.items.slice(0, 3).map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'updated',
+        'unchanged',
+      ]);
+      expect(result.report.state).to.equal(drift === 'none' ? 'completed' : 'partial');
+      let expectedOutcome = 'unattempted';
+      if (dispatched) expectedOutcome = 'uncertain';
+      if (drift === 'callback' || drift === 'boundary') expectedOutcome = 'failed';
+      if (drift === 'none' || drift === 'summary') expectedOutcome = 'updated';
+      expect(result.report.items[3].outcome).to.equal(expectedOutcome);
+      if (dispatched) {
+        const journal = JSON.parse(
+          await readFile(result.report.items[3].reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.createdParents).to.deep.equal([]);
+        let expectedState = 'ownership-uncertain';
+        if (drift === 'result') expectedState = 'applying';
+        if (drift === 'none' || drift === 'summary') expectedState = 'completed';
+        expect(journal.state).to.equal(expectedState);
+        expect(journal.operations[0].state).to.equal(
+          drift === 'none' || drift === 'summary' ? 'succeeded' : 'pending',
+        );
+      }
+    });
+  for (const changed of ['title', 'urlName', 'language', 'mimeType', 'filename', 'type'])
+    it(`rejects changed Document ${changed} before any mixed-prefix mutation`, async () => {
+      const f = await fixture(true, true, true);
+      const definition = JSON.parse(await readFile(f.files[3], 'utf8')) as Row;
+      definition.urlName = 'zulu';
+      f.records[2].UrlName = 'zulu';
+      f.details.get('MCKEY4')!.urlName = 'zulu';
+      if (changed === 'title') definition.title = 'Different';
+      if (changed === 'urlName') definition.urlName = 'different';
+      if (changed === 'language') definition.language = 'de_DE';
+      if (changed === 'type') {
+        f.records[2].ContentTypeFullyQualifiedName = 'sfdc_cms__image';
+      }
+      const nativeMedia = (f.details.get('MCKEY4')!.contentBody as Row)['sfdc_cms:media'] as Row;
+      if (changed === 'mimeType') (nativeMedia.source as Row).mimeType = 'text/csv';
+      if (changed === 'filename')
+        nativeMedia.url = String(nativeMedia.url).replace(
+          'Zulu.cms-document.media.txt',
+          'Other.txt',
+        );
+      await writeFile(f.files[3], JSON.stringify(definition));
+      await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Different bytes');
+      const result = await f.run();
+      expect(result.report.state).to.equal('blocked');
+      expect(result.report.summary.unattempted).to.equal(4);
+      expect(result.report.items[3].outcome).to.equal('unattempted');
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+  it('blocks changed existing Document before any mixed-prefix mutation without Image UPDATE fallback', async () => {
+    const f = await fixture(true, true, true);
+    await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Changed bytes');
+    const result = await f.run();
+    expect(result.report.state).to.equal('blocked');
+    expect(result.report.summary.unattempted).to.equal(4);
+    expect(f.mutations).to.deep.equal([]);
+    expect(f.puts()).to.equal(0);
+  });
+  for (const drift of [
+    'source',
+    'root',
+    'inventory',
+    'prefix',
+    'callback',
+    'cancel',
+    'summary',
+    'item',
+  ])
+    it(`preserves actual three-family prefix at Document ${drift} failure`, async () => {
+      const f = await fixture(false, true, true);
+      const controller = new AbortController();
+      let injected = false;
+      const result = await f.run(
+        {
+          rewrite: async (file, report) => {
+            if (drift === 'summary' && report.summary.completed === 3)
+              throw new Error('Summary unavailable');
+            await rewriteAtomic(file, report);
+            if (injected || report.summary.completed !== 3) return;
+            injected = true;
+            if (drift === 'source')
+              await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Changed');
+            if (drift === 'root') f.workspace.rootFolderId = 'changed';
+            if (drift === 'cancel') controller.abort();
+            if (drift === 'callback')
+              f.onRead(async () => {
+                await writeFile(f.input.reportFile, '{}');
+              });
+            if (drift === 'inventory')
+              f.records.push({
+                ...f.records[0],
+                Id: '9Ps000000000009AAA',
+                ManagedContentId: '20Y000000000009AAA',
+              });
+            if (drift === 'prefix') f.records[0].ManagedContentKey = 'changed';
+          },
+          item: {
+            rewrite: async (file, report) => {
+              if (
+                drift === 'item' &&
+                report.state === 'completed' &&
+                report.createdParents[0]?.contentId === '20Y000000000004AAA'
+              )
+                throw new Error('Document completion unavailable');
+              await rewriteAtomic(file, report);
+            },
+          },
+        },
+        { signal: controller.signal },
+      );
+      expect(result.report.state).to.equal('partial');
+      expect(result.report.items.slice(0, 3).map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'created',
+        'created',
+      ]);
+      expect(result.report.items[3].outcome).to.equal(
+        drift === 'item' ? 'uncertain' : 'unattempted',
+      );
+      expect(f.mutations).to.deep.equal(
+        drift === 'item' ? ['Alpha', 'Beta', 'Gamma', 'Zulu'] : ['Alpha', 'Beta', 'Gamma'],
+      );
+      expect(f.puts()).to.equal(0);
+      for (const item of result.report.items.slice(0, 3)) {
+        const journal = JSON.parse(
+          await readFile(item.reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('completed');
+        expect(journal.createdParents).to.have.length(1);
+      }
+      if (drift === 'item') {
+        const journal = JSON.parse(
+          await readFile(result.report.items[3].reportFile, 'utf8'),
+        ) as WorkspaceImportRunReport;
+        expect(journal.state).to.equal('ownership-uncertain');
+        expect(journal.operations[0].state).to.equal('pending');
+        expect(journal.operations[0].result?.contentId).to.equal('20Y000000000004AAA');
+        expect(journal.createdParents[0].contentId).to.equal('20Y000000000004AAA');
+      }
+    });
   afterEach(() => sinon.restore());
   it('journals and verifies multiple CREATEs in deterministic order', async () => {
     const f = await fixture();
@@ -472,6 +1196,67 @@ describe('internal sequential batch executor', () => {
     ) as WorkspaceImportRunReport;
     expect(journal.state).to.equal('ownership-uncertain');
     expect(journal.operations[0].state).to.equal('pending');
+  });
+  for (const drift of ['prefix', 'unrelated'])
+    it(`stops Email CREATE after ${drift} inventory drift and preserves completed ownership`, async () => {
+      const f = await fixture(true);
+      const result = await f.run({
+        rewrite: async (file, report) => {
+          await rewriteAtomic(file, report);
+          if (report.summary.completed === 1) {
+            const row = f.records.find(
+              (candidate) =>
+                candidate.Id === (drift === 'prefix' ? '9Ps000000000001AAA' : '9Ps000000000003AAA'),
+            )!;
+            row.ManagedContentKey = 'DRIFT';
+          }
+        },
+      });
+      expect(f.mutations).to.deep.equal(['Alpha']);
+      expect(result.report.state).to.equal('partial');
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'unattempted',
+        'unattempted',
+      ]);
+      const journal = JSON.parse(
+        await readFile(result.report.items[0].reportFile, 'utf8'),
+      ) as WorkspaceImportRunReport;
+      expect(journal.state).to.equal('completed');
+      expect(journal.createdParents).to.have.length(1);
+    });
+  it('retains earlier ownership when a later CREATE final persistence is uncertain', async () => {
+    const f = await fixture();
+    const result = await f.run({
+      rewrite: rewriteAtomic,
+      item: {
+        rewrite: async (file, report) => {
+          if (
+            report.state === 'completed' &&
+            report.createdParents[0]?.contentId === '20Y000000000002AAA'
+          )
+            throw new Error('Final persistence unavailable');
+          await rewriteAtomic(file, report);
+        },
+      },
+    });
+    expect(f.mutations).to.deep.equal(['Alpha', 'Beta']);
+    expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+      'created',
+      'uncertain',
+      'unattempted',
+    ]);
+    expect(result.report.state).to.equal('partial');
+    const first = JSON.parse(
+      await readFile(result.report.items[0].reportFile, 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(first.state).to.equal('completed');
+    expect(first.createdParents).to.have.length(1);
+    const second = JSON.parse(
+      await readFile(result.report.items[1].reportFile, 'utf8'),
+    ) as WorkspaceImportRunReport;
+    expect(second.state).to.equal('ownership-uncertain');
+    expect(second.operations[0].result?.contentId).to.equal('20Y000000000002AAA');
   });
   it('blocks before any executor if initial batch summary persistence fails', async () => {
     const f = await fixture();

@@ -14,6 +14,10 @@ import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
 import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
 import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
 import { getWorkspace } from './read.js';
+import { preflightDeployDocumentCreate } from './deploy-document-create-preflight.js';
+import { admitDeployDocumentUnchanged } from './deploy-document-unchanged.js';
+import { preflightDeployDocumentUpdate } from './deploy-document-update-preflight.js';
+import { enumerateNativeWorkspace } from './retrieve-native-inventory.js';
 
 export type DeployBatchPreflightInput = {
   sources: DeploySourceSelectionFlags;
@@ -40,6 +44,9 @@ export type DeployBatchPreflight = {
     imageCreate?: Awaited<ReturnType<typeof preflightDeployImageCreate>>;
     imageUpdate?: Awaited<ReturnType<typeof preflightDeployImageUpdate>>;
     imageUnchanged?: Awaited<ReturnType<typeof admitDeployImageUnchanged>>;
+    documentCreate?: Awaited<ReturnType<typeof preflightDeployDocumentCreate>>;
+    documentUpdate?: Awaited<ReturnType<typeof preflightDeployDocumentUpdate>>;
+    documentUnchanged?: Awaited<ReturnType<typeof admitDeployDocumentUnchanged>>;
   }>;
 };
 
@@ -120,7 +127,63 @@ export async function preflightDeployBatch(
         language: selected.language,
         expectedRootFolderId: rootFolderId,
       };
-      if (source.definition.contract === 'sf-cms-media-source') {
+      if (source.definition.contentType === 'sfdc_cms__document') {
+        switch (prepared.proposed) {
+          case 'create': {
+            const proof = await preflightDeployDocumentCreate(connection, scope, requestOptions);
+            if (
+              !isDeepStrictEqual(proof.source.definition, source.definition) ||
+              !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths) ||
+              proof.mediaSha256 !== source.mediaSha256 ||
+              !isDeepStrictEqual(proof.observations.inventory, prepared.documentInventory)
+            )
+              throw new TypeError('Batch Document CREATE selected or destination snapshot changed');
+            if (
+              titles.has(proof.payload.title!) ||
+              (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
+            )
+              throw new TypeError('Selected CREATE title/URL collision');
+            titles.add(proof.payload.title!);
+            if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
+            item.documentCreate = proof;
+
+            break;
+          }
+          case 'unchanged': {
+            const proof = await admitDeployDocumentUnchanged(connection, scope, requestOptions);
+            if (
+              proof.contentId !== prepared.existing?.contentId ||
+              proof.variantId !== prepared.existing.variantId
+            )
+              throw new TypeError('Batch Document unchanged identity changed');
+            if (
+              !isDeepStrictEqual(
+                await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
+                prepared.documentInventory,
+              )
+            )
+              throw new TypeError('Batch Document unchanged destination snapshot changed');
+            item.documentUnchanged = proof;
+
+            break;
+          }
+          case 'update': {
+            const proof = await preflightDeployDocumentUpdate(connection, scope, requestOptions);
+            if (
+              !isDeepStrictEqual(proof, prepared.documentUpdate) ||
+              proof.mediaSha256 !== source.mediaSha256 ||
+              proof.contentId !== prepared.existing?.contentId ||
+              proof.variantId !== prepared.existing.variantId
+            )
+              throw new TypeError('Batch Document UPDATE selected or destination snapshot changed');
+            item.documentUpdate = proof;
+            break;
+          }
+          default: {
+            throw new TypeError('Batch Document operation proof missing');
+          }
+        }
+      } else if (source.definition.contract === 'sf-cms-media-source') {
         if (prepared.proposed === 'create') {
           const proof = await preflightDeployImageCreate(connection, scope, requestOptions);
           if (

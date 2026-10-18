@@ -3,6 +3,9 @@ import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { selectDeploySources } from './deploy-source-selection.js';
 import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
+import { preflightDeployDocumentCreate } from './deploy-document-create-preflight.js';
+import { admitDeployDocumentUnchanged } from './deploy-document-unchanged.js';
+import { preflightDeployDocumentUpdate } from './deploy-document-update-preflight.js';
 import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
 import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
 import { sourcePathSegment } from '../contracts/source-definition.js';
@@ -37,6 +40,10 @@ export type DeployPreparedItem = {
   /** No prepared observation is authorization or a reusable mutation capability. */
   qualification: 'unqualified';
   changedFields: string[];
+  /** Detached complete Document baseline; never mutation authority. */
+  documentInventory?: NativeInventory;
+  /** Private bytes-only UPDATE observation; batch execution remains guarded. */
+  documentUpdate?: Awaited<ReturnType<typeof preflightDeployDocumentUpdate>>;
   blockedReasons: string[];
   desired: { contentBody: Record<string, JsonValue>; title?: string; urlName?: string };
   existing?: {
@@ -150,6 +157,59 @@ async function prepareItem(
           row.Name === item.definition.title ||
           (item.definition.urlName !== undefined && row.UrlName === item.definition.urlName),
       );
+      if (item.definition.contentType === 'sfdc_cms__document') {
+        prepared.documentInventory = structuredClone(inventory);
+        if (collisions.length === 0) {
+          const proof = await preflightDeployDocumentCreate(connection, scope, options);
+          if (
+            !isDeepStrictEqual(proof.source.definition, item.definition) ||
+            !isDeepStrictEqual(proof.source.companionPaths, item.companionPaths) ||
+            proof.mediaSha256 !== item.mediaSha256 ||
+            !isDeepStrictEqual(proof.observations.inventory, inventory)
+          )
+            throw new TypeError('Document CREATE selected or destination snapshot disagreement');
+          prepared.proposed = 'create';
+        } else {
+          let proof;
+          try {
+            proof = await admitDeployDocumentUnchanged(connection, scope, options);
+          } catch {
+            // An unchanged rejection grants no authority: acquire independent Document evidence.
+            const update = await preflightDeployDocumentUpdate(connection, scope, options);
+            if (
+              !isDeepStrictEqual(update.source.definition, item.definition) ||
+              !isDeepStrictEqual(update.source.companionPaths, item.companionPaths) ||
+              update.mediaSha256 !== item.mediaSha256 ||
+              !isDeepStrictEqual(update.destination.inventory, inventory)
+            )
+              throw new TypeError('Document UPDATE selected or destination snapshot disagreement');
+            prepared.documentUpdate = update;
+            proof = update;
+          }
+          if (
+            collisions.length !== 1 ||
+            proof.variantId !== collisions[0].Id ||
+            proof.contentId !== collisions[0].ManagedContentId ||
+            proof.contentKey !== collisions[0].ManagedContentKey ||
+            !isDeepStrictEqual(
+              await enumerateNativeWorkspace(connection, input.workspaceId, options),
+              inventory,
+            )
+          )
+            throw new TypeError('Document planning destination snapshot changed');
+          prepared.existing = {
+            variantId: proof.variantId,
+            contentId: proof.contentId,
+            contentBody: structuredClone(item.contentBody),
+            title: item.definition.title,
+            urlName: item.definition.urlName,
+          };
+          prepared.proposed = proof.operation;
+          if (proof.operation === 'update') prepared.changedFields = ['media'];
+        }
+        await bind();
+        return prepared;
+      }
       if (collisions.length === 0) {
         const proof = await preflightDeployImageCreate(connection, scope, options);
         if (
@@ -354,6 +414,17 @@ export async function prepareDeployDestination(
         workspace.rootFolderId !== selected.expectedRootFolderId)
     )
       throw new TypeError('Destination workspace identity or root mismatch');
+    if (
+      selected.selection.items.some((item) => item.definition.contentType === 'sfdc_cms__document')
+    ) {
+      if (
+        workspace.defaultLanguage !== selected.language ||
+        typeof workspace.rootFolderId !== 'string' ||
+        !workspace.rootFolderId
+      )
+        throw new TypeError('Document planning requires exact workspace root and default language');
+      selected.expectedRootFolderId = workspace.rootFolderId;
+    }
     sourcePathSegment(workspace.apiName);
     await assertCanonicalMarketingWorkspace(
       connection,

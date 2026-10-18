@@ -78,7 +78,7 @@ describe('current public documentation', () => {
       'Existing targets must be unpublished primary Drafts with their native filename already exactly `<apiName>.cms-image.media.png`',
       'Retrieval normalizes the companion filename, so retrieval alone does not prove deploy eligibility',
       'A native filename mismatch blocks deploy; filename and metadata updates are unsupported',
-      'URL-only sources, Documents, nested folders, multiple variants, published targets and metadata-changing UPDATE remain unsupported',
+      'For this Image workflow, URL-only sources, nested folders, multiple variants, published targets and metadata-changing UPDATE remain unsupported',
       'the client does NOT cap at 25 MB',
       '**Live qualification pending:**',
       'the exact byte boundary has not been proven',
@@ -101,14 +101,78 @@ describe('current public documentation', () => {
     expect(RetrieveContent.description).not.to.include('deployment is not supported');
   });
 
-  it('documents retrieval-only UTF-8 Documents without admitting deploy', async () => {
+  it('aligns README and command help on bounded unqualified Document support', async () => {
     const readme = await readFile(readmeFile, 'utf8');
-    expect(readme).to.include('**Bounded Document retrieval (retrieval only):**');
-    expect(readme).to.include('Document deploy remains blocked');
-    expect(readme).to.include('UTF-8 contents are not restricted to ASCII');
-    expect(readme).to.include('Document installed qualification remains pending');
-    expect(readme).not.to.include('Document is not admitted by this command');
-    expect(RetrieveContent.description).to.include('Document deployment remains blocked');
+    for (const claim of [
+      '**Bounded Document retrieval:**',
+      '**Bounded Document deployment:**',
+      'UTF-8 contents are not restricted to ASCII',
+      'Document retrieval, CREATE, bytes-only UPDATE and exact unchanged remain unqualified',
+      'Bounded two-org development-artifact acceptance covers the tested text/plain profile',
+      'released-package verification remains separate',
+      'nonempty UTF-8 `text/plain` bytes up to 10 MiB',
+      'safe ASCII companion filename with lowercase `.txt` extension',
+      'Document profile bounds, not Salesforce caps or Image restrictions',
+      'Exact metadata, native filename, MIME and bytes',
+      'All other Document differences block the whole selection before mutation',
+      'Document UPDATE never falls back to Image transport',
+      'metadata, filename, MIME, language and type changes remain unsupported',
+      'zero created parents',
+      '`content.retrieve.document`',
+      '`content.deploy.document.create`',
+      '`content.deploy.document.unchanged`',
+      '`content.deploy.document.update`',
+    ]) {
+      expect(readme, claim).to.include(claim);
+    }
+    const documentRow = readme.split('\n').find((line) => /^\| Document\s+\|/u.test(line));
+    expect(
+      documentRow
+        ?.split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    ).to.deep.equal([
+      'Document',
+      '`sfdc_cms__document`',
+      'Available (limited)',
+      'Available (text/plain)',
+      'Available (bytes only)',
+      'Not supported',
+    ]);
+    for (const obsolete of [
+      'Bounded Document retrieval (retrieval only)',
+      'Document deploy remains blocked',
+      'retrieval-only Document profile',
+      'its deploy operations remain blocked',
+      'Documents are not deployable',
+      'Document is not admitted by this command',
+      'Current immutable-artifact two-org UPDATE qualification is pending',
+      'pending current immutable-artifact two-org UPDATE qualification',
+    ]) {
+      expect(readme, obsolete).not.to.include(obsolete);
+    }
+    expect(RetrieveContent.description).to.include(
+      'unqualified CREATE, bytes-only UPDATE and exact unchanged',
+    );
+    expect(RetrieveContent.description).to.include(
+      'with bounded two-org development-artifact acceptance for the tested text/plain profile',
+    );
+    expect(RetrieveContent.description).not.to.include('Documents are not deployable');
+    expect(DeployContent.summary).to.include('Document');
+    expect(DeployContent.flags['content-type'].summary).to.include('Document');
+    expect(DeployContent.description).to.include(
+      'Documents support CREATE, bytes-only UPDATE and exact unchanged',
+    );
+    expect(DeployContent.description).to.include(
+      'unchanged metadata, native filename, MIME, language and type',
+    );
+    expect(DeployContent.description).to.include(
+      'unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile',
+    );
+    expect(DeployContent.description).to.include('never falls back to Image transport');
+    expect(DeployContent.description).to.include(
+      'all other Document differences block the whole selection before mutation',
+    );
     expect(RetrieveContent.flags['content-type'].summary).to.include('sfdc_cms__document');
   });
 
