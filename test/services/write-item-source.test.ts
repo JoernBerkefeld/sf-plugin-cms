@@ -91,6 +91,62 @@ function mediaProjection(binary = true, jpeg = false) {
 }
 
 describe('item-local incremental source writer', () => {
+  it('writes Audio exact files, preserves unchanged mtimes and unrelated files, and guards overwrite and family mapping', async () => {
+    const project = await root();
+    const audioDirectory = 'cms/Marketing/audio';
+    const bytes = Buffer.from('opaque non-WAV audio');
+    const item = extractEditableMediaSource(
+      {
+        identity: {
+          family: 'cms',
+          type: 'Audio',
+          apiName: 'Hero',
+          context: { workspaceApiName: 'Marketing' },
+        },
+        contentType: 'sfdc_cms__audio',
+        language: 'en_US',
+        folderPath: [],
+      },
+      {
+        'sfdc_cms:media': {
+          source: { type: 'file', size: bytes.length, mimeType: 'audio/mpeg' },
+          url: `/cms/media/key?fileName=hero.mp3&version=1.1&fileHash=${createHash('md5').update(bytes).digest('hex')}`,
+        },
+      },
+      bytes,
+    );
+    for (const wrong of ['cms/Marketing/document', 'cms/Marketing/image'])
+      await failure(writeEditableItemSource(project, wrong, item, true), /directory/u);
+    const wrongFamily = structuredClone(item);
+    wrongFamily.definition.identity.type = 'Document';
+    wrongFamily.definitionBytes = Buffer.from(JSON.stringify(wrongFamily.definition));
+    await failure(
+      writeEditableItemSource(project, audioDirectory, wrongFamily, true),
+      /identity|type/u,
+    );
+    expect(await readdir(project)).to.deep.equal([]);
+    const first = await writeEditableItemSource(project, audioDirectory, item, false);
+    const folder = path.join(project, audioDirectory);
+    expect(first.created.map((name) => path.basename(name))).to.have.members([
+      'Hero.cms-audio.json',
+      'Hero.cms-audio.media.mp3',
+    ]);
+    const companion = path.join(folder, item.companions[0].path);
+    expect(await readFile(companion)).to.deep.equal(bytes);
+    await writeFile(path.join(folder, 'Other.cms-audio.media.mp3'), 'keep');
+    const before = await snapshot(folder);
+    const repeated = await writeEditableItemSource(project, audioDirectory, item, false);
+    expect(repeated.unchanged).to.have.length(2);
+    expect(await snapshot(folder)).to.deep.equal(before);
+    await writeFile(companion, 'local edit');
+    const edited = await snapshot(folder);
+    await failure(writeEditableItemSource(project, audioDirectory, item, false), /overwrite/u);
+    expect(await snapshot(folder)).to.deep.equal(edited);
+    const overwritten = await writeEditableItemSource(project, audioDirectory, item, true);
+    expect(overwritten.updated).to.deep.equal([companion]);
+    expect(await readFile(companion)).to.deep.equal(bytes);
+    expect(await readFile(path.join(folder, 'Other.cms-audio.media.mp3'), 'utf8')).to.equal('keep');
+  });
   for (const prior of ['missing', 'url-only', 'other-extension'] as const) {
     it(`rejects differing undeclared media targets before any write with ${prior} ownership`, async () => {
       const project = await root();

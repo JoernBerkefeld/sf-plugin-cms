@@ -290,7 +290,8 @@ export async function prepareEditableSourceSelection(
         throw new TypeError('Native selection scope disagreement');
       if (
         row.ContentTypeFullyQualifiedName === 'sfdc_cms__image' ||
-        row.ContentTypeFullyQualifiedName === 'sfdc_cms__document'
+        row.ContentTypeFullyQualifiedName === 'sfdc_cms__document' ||
+        row.ContentTypeFullyQualifiedName === 'sfdc_cms__audio'
       ) {
         const source = await acquireEditableMediaSource(
           nativeConnection,

@@ -21,7 +21,7 @@ export type AcquireEditableMediaSourceInput = {
   readonly workspaceId: string;
   readonly apiName: string;
   readonly language: string;
-  readonly contentType: 'sfdc_cms__image' | 'sfdc_cms__document';
+  readonly contentType: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
   /** Explicit URL-only mode does not attempt a binary download. */
   readonly urlOnly?: boolean;
 };
@@ -152,7 +152,7 @@ async function download(
 }
 
 /**
- * Acquire one exact root-level native Image/Document with complete sibling evidence.
+ * Acquire one exact root-level native Image/Document/Audio with complete sibling evidence.
  * Unknown authoring fields are rejected before download; no org mutations occur.
  * @param {MediaConnection} connection - Existing source connection including binary auth context.
  * @param {AcquireEditableMediaSourceInput} input - Explicit native scope and representation choice.
@@ -168,7 +168,7 @@ export async function acquireEditableMediaSource(
   const options = { ...requestOptions };
   for (const value of [selected.apiName, selected.language]) sourcePathSegment(value);
   if (
-    !['sfdc_cms__image', 'sfdc_cms__document'].includes(selected.contentType) ||
+    !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(selected.contentType) ||
     (selected.urlOnly !== undefined && typeof selected.urlOnly !== 'boolean')
   )
     throw new TypeError('Unsupported media acquisition selection');
@@ -188,6 +188,15 @@ export async function acquireEditableMediaSource(
   if (matches.length !== 1)
     throw new TypeError('Media selection requires exactly one native variant');
   const row = matches[0];
+  const audio = selected.contentType === 'sfdc_cms__audio';
+  if (audio && (workspace.defaultLanguage !== selected.language || !row.IsPrimary))
+    throw new TypeError('Audio requires workspace-default language and a primary native variant');
+  const mediaTypes = {
+    sfdc_cms__audio: 'Audio',
+    sfdc_cms__image: 'Image',
+    sfdc_cms__document: 'Document',
+  };
+  const mediaType = mediaTypes[selected.contentType];
   const raw = await getVariant(connection, row.Id, options);
   bind(raw, row);
   const parent = await getContent(connection, row.ManagedContentId, {}, options);
@@ -247,7 +256,7 @@ export async function acquireEditableMediaSource(
   const metadata = {
     identity: {
       family: 'cms' as const,
-      type: selected.contentType === 'sfdc_cms__image' ? 'Image' : 'Document',
+      type: mediaType,
       apiName: selected.apiName,
       context: { workspaceApiName },
     },
@@ -287,8 +296,33 @@ export async function acquireEditableMediaSource(
       projection = extractEditableMediaSource(metadata, raw.contentBody, bytes);
     }
   }
+  if (audio) {
+    const finalWorkspace = await getWorkspace(connection, selected.workspaceId, options);
+    const finalVariant = await getVariant(connection, row.Id, options);
+    const finalParent = await getContent(connection, row.ManagedContentId, {}, options);
+    const finalFamily = await enumerateNativeFamily(
+      connection,
+      selected.workspaceId,
+      [selected.contentType],
+      options,
+    );
+    const finalSiblings = await enumerateNativeSiblings(
+      connection,
+      selected.workspaceId,
+      row.ManagedContentId,
+      options,
+    );
+    if (
+      !isDeepStrictEqual(finalSiblings.records, siblings.records) ||
+      !isDeepStrictEqual(finalWorkspace, workspace) ||
+      !isDeepStrictEqual(finalVariant, raw) ||
+      !isDeepStrictEqual(finalParent, parent) ||
+      !isDeepStrictEqual(finalFamily.records, family.records)
+    )
+      throw new TypeError('Native Audio changed during acquisition');
+  }
   return {
-    directory: `cms/${workspaceApiName}/${selected.contentType === 'sfdc_cms__image' ? 'image' : 'document'}`,
+    directory: `cms/${workspaceApiName}/${mediaType.toLowerCase()}`,
     projection,
     evidence: { variantId: row.Id, contentId: row.ManagedContentId },
   };

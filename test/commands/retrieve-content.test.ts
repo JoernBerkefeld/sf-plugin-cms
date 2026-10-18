@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { Parser } from '@oclif/core';
+import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import RetrieveContent from '../../src/commands/cms/retrieve/content.js';
@@ -7,9 +8,10 @@ import type { AcquiredEditableEmailSource } from '../../src/services/retrieve-it
 import type { NativeInventoryRow } from '../../src/services/retrieve-native-inventory.js';
 import type { NativeRetrieveResolution } from '../../src/services/retrieve-native-resolution.js';
 import { CmsRequestError } from '../../src/transport/json-request.js';
+import { normalizeRetrieveSelection } from '../../src/services/retrieve-selection.js';
 
 const flags = {
-  'target-org': 'source',
+  'target-org': { getUsername: () => 'source' },
   'api-version': '67.0',
   'workspace-id': 'space',
   'content-type': ['sfdc_cms__email'],
@@ -115,34 +117,172 @@ describe('cms retrieve content command', () => {
     process.exitCode = undefined;
   });
 
-  it('parses optional repeatable selectors and requires only org/output at parser level', async () => {
+  it('parses repeatable selectors and resolves an explicit org without changing configuration', async () => {
+    const org = { getUsername: () => 'source@example.test' } as Org;
+    const create = sinon.stub(Org, 'create').resolves(org);
     const parsed = await Parser.parse([...arguments_, '-n', 'Other', '-x'], {
       flags: RetrieveContent.flags,
     });
     expect(parsed.flags['api-name']).to.deep.equal(['Welcome', 'Other']);
     expect(parsed.flags.overwrite).to.equal(true);
+    expect(parsed.flags['target-org']).to.equal(org);
+    expect(create.firstCall.args).to.deep.equal([{ aliasOrUsername: 'source' }]);
     for (const selector of [
-      ['-m', 'sfdc_cms__email'],
-      ['-t', 'sfdc_cms__email', '-i', 'key'],
-      ['-t', 'sfdc_cms__email', '-a'],
+      ['-m', 'email'],
+      ['-t', 'email', '-i', 'key'],
+      ['-t', 'email', '-a'],
     ]) {
-      const alternative = await Parser.parse(
-        ['-o', 'source', '-W', 'Marketing', '-L', '-d', '.', ...selector],
-        { flags: RetrieveContent.flags },
+      const alternative = await Parser.parse(['-o', 'source', '-W', 'Marketing', ...selector], {
+        flags: RetrieveContent.flags,
+      });
+      expect(alternative.flags['target-org']).to.equal(org);
+      expect(alternative.flags['output-dir']).to.equal(undefined);
+    }
+  });
+
+  for (const override of [false, true]) {
+    it(`runs the minimal real parser with controlled default org (override: ${override})`, async () => {
+      const create = sinon.stub(Org, 'create').callsFake(async (options) => {
+        const username =
+          (options as { aliasOrUsername?: string } | undefined)?.aliasOrUsername === 'override'
+            ? 'override@example.test'
+            : 'default@example.test';
+        return { getUsername: () => username } as Org;
+      });
+      const subject = command();
+      Object.assign(subject.instance, {
+        parse: () =>
+          Parser.parse(
+            [
+              '-W',
+              'Content Workspace for Marketing Cloud',
+              ...(override ? ['-o', 'override'] : []),
+            ],
+            { flags: RetrieveContent.flags },
+          ),
+      });
+      const result = await subject.instance.run();
+      const username = override ? 'override@example.test' : 'default@example.test';
+      expect(create.firstCall.args).to.deep.equal([
+        { aliasOrUsername: override ? 'override' : undefined },
+      ]);
+      expect(subject.getOrgContext.firstCall.args[0]).to.equal(username);
+      expect(result.result!.scope).to.include({
+        targetOrg: username,
+        workspaceName: 'Content Workspace for Marketing Cloud',
+        language: 'en_US',
+        defaultLanguage: true,
+        outputDir: process.cwd(),
+      });
+      expect(result.status).to.equal('success');
+      expect(subject.prepareSources.firstCall.args[1].selection).to.deep.equal(
+        normalizeRetrieveSelection({}),
       );
-      expect(alternative.flags['target-org']).to.equal('source');
+      expect(subject.writeSource.firstCall.args[0]).to.equal(process.cwd());
+    });
+  }
+
+  it('retains the standard Salesforce missing-default parser error before selection handling', async () => {
+    sinon.stub(Org, 'create').rejects(new Error('No default configured in controlled auth mock'));
+    const subject = command();
+    Object.assign(subject.instance, {
+      parse: () => Parser.parse(['-W', 'Marketing'], { flags: RetrieveContent.flags }),
+    });
+    let failure: unknown;
+    try {
+      await subject.instance.run();
+    } catch (error) {
+      failure = error;
     }
-    for (const name of ['-o', '-d']) {
-      const missing = [...arguments_];
-      missing.splice(missing.indexOf(name), 2);
-      let failure: unknown;
-      try {
-        await Parser.parse(missing, { flags: RetrieveContent.flags });
-      } catch (error) {
-        failure = error;
-      }
-      expect(failure, name).to.be.instanceOf(Error);
+    expect(failure).to.be.instanceOf(Error);
+    expect((failure as Error).message).to.include('No default environment found');
+    expect((failure as Error).message).not.to.include('RETRIEVE_SELECTION_INVALID');
+    expect(subject.getOrgContext.notCalled).to.equal(true);
+    expect(subject.prepareSources.notCalled).to.equal(true);
+    expect(subject.writeSource.notCalled).to.equal(true);
+  });
+
+  it('runs explicit workspace ID, output and language overrides through the real parser', async () => {
+    sinon.stub(Org, 'create').resolves({ getUsername: () => 'source' } as Org);
+    for (const language of [[], ['-L'], ['-l', 'fr']]) {
+      const subject = command();
+      Object.assign(subject.instance, {
+        parse: () =>
+          Parser.parse(
+            ['-o', 'source', '-w', 'space', '-m', 'email:Welcome', '-d', './project', ...language],
+            { flags: RetrieveContent.flags },
+          ),
+      });
+      const result = await subject.instance.run();
+      expect(result.status).to.equal('success');
+      expect(result.result!.scope).to.include({
+        language: language[0] === '-l' ? 'fr' : 'en_US',
+        defaultLanguage: language[0] !== '-l',
+        outputDir: path.resolve('project'),
+      });
+      expect(subject.prepareSources.firstCall.args[1].selection.groups).to.have.length(1);
     }
+  });
+
+  it('retains real-parser blank output, language conflict and missing workspace diagnostics', async () => {
+    sinon.stub(Org, 'create').resolves({ getUsername: () => 'source' } as Org);
+    for (const arguments_ of [
+      ['-W', 'Marketing', '-d', ''],
+      ['-W', 'Marketing', '-d', '   '],
+      ['-W', 'Marketing', '-l', 'fr', '-L'],
+      ['-W', 'Marketing', '-l', ''],
+      [],
+      ['-W', 'Marketing', '-w', 'space'],
+      ['-W', 'Marketing', '-t', 'email'],
+      ['-W', 'Marketing', '-a'],
+    ]) {
+      const subject = command();
+      Object.assign(subject.instance, {
+        parse: () => Parser.parse(arguments_, { flags: RetrieveContent.flags }),
+      });
+      const result = await subject.instance.run();
+      expect(result.status).to.equal('blocked');
+      expect(result.diagnostics.errors[0].code).to.equal('RETRIEVE_SELECTION_INVALID');
+      expect(subject.getOrgContext.notCalled).to.equal(true);
+      expect(subject.writeSource.notCalled).to.equal(true);
+    }
+  });
+
+  it('defaults only omitted output/language with an explicit workspace ID and short selector', async () => {
+    const subject = command({
+      'output-dir': undefined,
+      'default-language': false,
+      'content-type': ['email'],
+      language: undefined,
+    });
+    const result = await subject.instance.run();
+    expect(result.result!.scope).to.include({
+      outputDir: process.cwd(),
+      defaultLanguage: true,
+      language: 'en_US',
+    });
+    expect(subject.writeSource.firstCall.args[0]).to.equal(process.cwd());
+    expect(subject.resolveSourceWorkspace.firstCall.args[1]).to.deep.equal({
+      workspaceId: 'space',
+      workspaceName: undefined,
+    });
+    expect(subject.prepareSources.firstCall.args[1].selection.mode).to.equal('api-name');
+  });
+
+  it('accepts an explicit language without -L and preserves the explicit output override', async () => {
+    const subject = command({
+      language: 'de',
+      'default-language': false,
+      'output-dir': './elsewhere',
+    });
+    const result = await subject.instance.run();
+    expect(result.result!.scope).to.include({
+      language: 'de',
+      defaultLanguage: false,
+      outputDir: path.resolve('elsewhere'),
+    });
+    expect(subject.prepareSources.firstCall.args[1].language).to.equal('de');
+    expect(subject.writeSource.firstCall.args[0]).to.equal('./elsewhere');
   });
 
   it('prepares exactly once before writing and retains the single-item identity, receipt and counts', async () => {
@@ -246,14 +386,14 @@ describe('cms retrieve content command', () => {
     { 'workspace-id': undefined },
     { 'workspace-name': 'other' },
     { 'workspace-id': ' ' },
-    { 'default-language': false },
     { language: 'fr' },
     { language: '', 'default-language': false },
-    { 'target-org': '' },
+    { 'target-org': { getUsername: () => '' } },
     { 'output-dir': '' },
+    { 'output-dir': '   ' },
     { 'api-name': [' '] },
-    { 'content-type': ['sfdc_cms__audio'] },
-    { 'content-type': ['email'] },
+    { 'content-type': ['sfdc_cms__video'] },
+    { 'content-type': ['Email'] },
     { 'content-type': ['sfdc_cms__email', 'sfdc_cms__emailTemplate'] },
     { metadata: ['sfdc_cms__email:Welcome'] },
     { all: true },
@@ -270,7 +410,7 @@ describe('cms retrieve content command', () => {
     });
   }
 
-  for (const contentType of ['sfdc_cms__image', 'sfdc_cms__document'] as const) {
+  for (const contentType of ['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'] as const) {
     it(`admits a standalone ${contentType} selector through preparation and local writing`, async () => {
       const subject = command({
         'content-type': [contentType],

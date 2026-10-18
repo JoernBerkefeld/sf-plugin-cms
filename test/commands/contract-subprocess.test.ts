@@ -583,6 +583,24 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     });
   });
 
+  it('renders installed retrieve defaults and operation-scoped friendly examples without auth', async () => {
+    const retrieve = await runSf(['cms', 'retrieve', 'content', '--help']);
+    expect(retrieve.exitCode, retrieve.stderr).to.equal(0);
+    const retrieveHelp = retrieve.stdout.replaceAll(/\s+/gu, ' ');
+    expect(retrieveHelp).to.include('Content Workspace for Marketing Cloud');
+    expect(retrieveHelp).to.include('configured default org');
+    expect(retrieveHelp).to.include('current directory');
+    expect(retrieveHelp).to.include('emailTemplate');
+    expect(retrieveHelp).to.include('sfdc_cms__ names');
+    const deploy = await runSf(['cms', 'deploy', 'content', '--help']);
+    expect(deploy.exitCode, deploy.stderr).to.equal(0);
+    expect(deploy.stdout.replaceAll(/\s+/gu, ' ')).to.include('-m email:Welcome');
+    const deletion = await runSf(['cms', 'delete', 'content', '--help']);
+    expect(deletion.exitCode, deletion.stderr).to.equal(0);
+    expect(deletion.stdout.replaceAll(/\s+/gu, ' ')).to.include('--content-type emailTemplate');
+    expect(deletion.stdout).not.to.include('sfdc_cms__audio');
+  });
+
   it('previews one installed packed bounded Email Template delete v2', async function () {
     this.timeout(300_000);
     await writeFile(file('email-template-delete-journal.json'), '{}');
@@ -596,7 +614,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         '--contract-version',
         '2',
         '--content-type',
-        'sfdc_cms__emailTemplate',
+        'emailTemplate',
         '--workspace-id',
         'space',
         '--api-name',
@@ -634,7 +652,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         '--contract-version',
         '2',
         '--content-type',
-        'sfdc_cms__emailTemplate',
+        'emailTemplate',
         '--workspace-id',
         'space',
         '--api-name',
@@ -699,7 +717,10 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       '--ownership-report',
       'email-delete-ownership.json',
     ];
-    const preview = await runSf([...common, '--json'], 'email-delete-preview');
+    const preview = await runSf(
+      [...common, '--content-type', 'email', '--json'],
+      'email-delete-preview',
+    );
     expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
     const previewEnvelope = parseEnvelope(preview);
     expect(previewEnvelope).to.deep.include({

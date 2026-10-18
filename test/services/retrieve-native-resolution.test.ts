@@ -61,12 +61,12 @@ function setup(records: NativeInventoryRow[] = [row()]) {
         language,
         selection: normalizeRetrieveSelection({ metadata }),
       }),
-    native: (selector: string) =>
+    native: (selector: string, contentType = type) =>
       resolveNativeRetrieveSelection(connection, {
         workspaceId,
         language: 'en_US',
         selection: normalizeRetrieveSelection({
-          'content-type': [type],
+          'content-type': [contentType],
           'content-key-or-id': [selector],
         }),
       }),
@@ -105,6 +105,24 @@ describe('native retrieve resolution', () => {
       fixture.calls.every((query) => query.includes(workspaceId) && !query.includes('Language =')),
     ).to.equal(true);
   });
+  it('resolves default groups with empty types/languages only after complete native proof', async () => {
+    const fixture = setup([row(0, { Language: 'de' })]);
+    const input = { workspaceId, language: 'en_US', selection: normalizeRetrieveSelection({}) };
+    const result = await resolveNativeRetrieveSelection(fixture.connection, input);
+    expect(result.variants).to.deep.equal([]);
+    expect(result.unresolved).to.deep.equal([]);
+    expect(result.inventory.complete).to.equal(true);
+    expect(result.inventory.contentTypes).to.deep.equal(
+      input.selection.groups.map((group) => group.contentType),
+    );
+    const incomplete = setup();
+    incomplete.responses[1] = undefined;
+    expect(
+      await failure(() => resolveNativeRetrieveSelection(incomplete.connection, input)),
+    ).to.be.instanceOf(TypeError);
+    const explicitMissing = await setup().resolve([type, `${type}:Missing`]);
+    expect(explicitMissing.unresolved[0]).to.include({ selector: 'Missing', reason: 'missing' });
+  });
   it('matches parent keys and parent IDs but never variant IDs', async () => {
     for (const selector of ['MCNATIVE', parentId]) {
       const resolved = await setup().native(selector);
@@ -121,6 +139,28 @@ describe('native retrieve resolution', () => {
         parentIds: [],
       },
     ]);
+  });
+  it('resolves exact Audio names, keys and parent IDs with mixed metadata but not variant IDs', async () => {
+    const audio = 'sfdc_cms__audio';
+    const selected = row(0, { ContentTypeFullyQualifiedName: audio });
+    for (const selector of ['MCNATIVE', parentId]) {
+      const result = await setup([selected]).native(selector, audio);
+      expect(result.variants).to.deep.equal([selected]);
+      expect(result.unresolved).to.deep.equal([]);
+    }
+    const missing = await setup([selected]).native(selected.Id, audio);
+    expect(missing.variants).to.deep.equal([]);
+    expect(missing.unresolved[0]).to.include({ selector: selected.Id, reason: 'missing' });
+    const template = row(1, { ManagedContentId: otherParent });
+    const mixed = await setup([selected, template]).resolve([
+      `${audio}:Exact_Name`,
+      `${type}:Exact_Name`,
+      `${audio}:Missing`,
+    ]);
+    expect(mixed.variants).to.deep.equal([selected, template]);
+    expect(mixed.unresolved[0]).to.include({ contentType: audio, selector: 'Missing' });
+    const wrongCase = await setup([selected]).resolve([`${audio}:exact_name`]);
+    expect(wrongCase.variants).to.deep.equal([]);
   });
   it('preserves exact unresolved selectors without matching titles, slugs, whitespace or case', async () => {
     for (const selector of [

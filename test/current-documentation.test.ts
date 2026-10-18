@@ -173,7 +173,47 @@ describe('current public documentation', () => {
     expect(DeployContent.description).to.include(
       'all other Document differences block the whole selection before mutation',
     );
-    expect(RetrieveContent.flags['content-type'].summary).to.include('sfdc_cms__document');
+    expect(RetrieveContent.flags['content-type'].summary).to.include('document');
+    expect(RetrieveContent.flags['content-type'].summary).to.include('sfdc_cms__ names');
+  });
+
+  it('documents retrieve defaults, exact operation aliases and limited Audio evidence', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const claim of [
+      'sf cms retrieve content -W "Content Workspace for Marketing Cloud"',
+      './cms/<workspaceAPI>/',
+      'current directory',
+      'configured default org',
+      'workspace default language',
+      'Explicit `-t` still requires',
+      'All org-backed commands except `retrieve content`',
+      'Case and whitespace are not normalized',
+      'delete accepts only `email` and `emailTemplate`',
+      'Audio deployment is not enabled',
+      '844-byte primary WAV',
+      'Audio CREATE and UPDATE remain unproven',
+    ])
+      expect(readme, claim).to.include(claim);
+    expect(readme).not.to.include(
+      'No configured default org or implicit directory/language scope is used',
+    );
+    const audioRow = readme.split('\n').find((line) => /^\| Audio\s+\|/u.test(line));
+    expect(
+      audioRow
+        ?.split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    ).to.deep.equal([
+      'Audio',
+      '`sfdc_cms__audio`',
+      'Available (limited)',
+      'Planned',
+      'Planned',
+      'Not supported',
+    ]);
+    expect(RetrieveContent.examples.join('\n')).to.include('-t email');
+    expect(DeployContent.examples.join('\n')).to.include('-m email:Welcome');
+    expect(DeployContent.flags['content-type'].summary).to.include('sfdc_cms__ names');
   });
 
   it('preserves recovery, qualification, ownership and API interoperability limits', async () => {

@@ -182,6 +182,23 @@ export function buildImageCreateMultipart(
   return buildFileCreateMultipart(input, filename, image, 'sfdc_cms__image', options);
 }
 
+export function buildAudioCreateMultipart(
+  input: ImageCreateInput,
+  filename: string,
+  audio: Uint8Array,
+  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> & {
+    mimeType: string;
+  },
+): MultipartParts {
+  assertMediaMimeType(options.mimeType);
+  validateFilename(filename);
+  // Reject Unicode before ASCII framing can introduce header delimiters.
+  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
+    throw new CmsRequestError(OPERATION_KEY, 'Audio filename must contain only ASCII characters');
+  }
+  return buildFileCreateMultipart(input, filename, audio, 'sfdc_cms__audio', options);
+}
+
 export function buildDocumentCreateMultipart(
   input: ImageCreateInput,
   filename: string,
@@ -206,7 +223,7 @@ function buildFileCreateMultipart(
   input: ImageCreateInput,
   filename: string,
   image: Uint8Array,
-  contentType: 'sfdc_cms__image' | 'sfdc_cms__document',
+  contentType: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio',
   options: Pick<
     MultipartImageCreateOptions,
     'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
@@ -292,6 +309,20 @@ export async function createImageContent(
   return sendFileCreateMultipart(
     connection,
     buildImageCreateMultipart(input, filename, image, options),
+    options,
+  );
+}
+
+export async function createAudioContent(
+  connection: RequestConnection,
+  input: ImageCreateInput,
+  filename: string,
+  audio: Uint8Array,
+  options: MultipartImageCreateOptions & { mimeType: string },
+): Promise<ManagedContentDocumentBinding> {
+  return sendFileCreateMultipart(
+    connection,
+    buildAudioCreateMultipart(input, filename, audio, options),
     options,
   );
 }

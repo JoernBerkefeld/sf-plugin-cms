@@ -254,6 +254,34 @@ describe('experimental workspace media export', () => {
     expect(fetcher.callCount).to.equal(2);
   });
 
+  it('retains the legacy Audio export signature boundary independently of generic acquisition', async () => {
+    const detail = imageDetail();
+    detail.contentType = 'sfdc_cms__audio';
+    const bytes = Buffer.from('opaque non-WAV bytes');
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    detail.contentBody['sfdc_cms:media'] = {
+      source: { mimeType: 'audio/x-wav', ref: 'synthetic-ref', size: bytes.length, type: 'file' },
+      url: `/cms/media/key?fileHash=${md5}&fileName=audio.wav&version=1`,
+    };
+    sinon
+      .stub(globalThis, 'fetch')
+      .callsFake(async () => new Response(bytes, { headers: { 'content-type': 'audio/x-wav' } }));
+    const result = await exportWorkspace(
+      { request: mediaRequest(detail) },
+      'space',
+      path.join(root, 'opaque-audio-export'),
+      {
+        experimentalMedia: {
+          accessToken: 'synthetic-token',
+          instanceUrl: 'https://tenant.my.salesforce.com',
+        },
+      },
+    );
+    expect(result.manifest.completeness).to.equal('partial');
+    expect(result.manifest.media).to.deep.equal([]);
+    expect(result.manifest.warnings.at(-1)?.message).to.include('WAV signature');
+  });
+
   it('retains Audio JSON without opt-in and rejects unqualified Audio MIME aliases', async () => {
     for (const mimeType of ['audio/x-wav', 'audio/wav', 'audio/mpeg']) {
       const detail = imageDetail();
@@ -588,9 +616,58 @@ describe('experimental workspace media export', () => {
     });
   }
 
+  it('exports Audio beyond the revoked invented ceiling and preserves explicit caller budgets', async () => {
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1);
+    bytes.write('RIFF', 0);
+    bytes.write('WAVE', 8);
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    for (const budget of ['default', 'per-file', 'total']) {
+      const detail = imageDetail();
+      detail.contentType = 'sfdc_cms__audio';
+      detail.contentBody['sfdc_cms:media'] = {
+        source: { mimeType: 'audio/x-wav', ref: 'synthetic-ref', size: bytes.length, type: 'file' },
+        url: `/cms/media/key?fileHash=${md5}&fileName=audio.wav&version=1`,
+      };
+      const fetcher = sinon.stub().callsFake(
+        async () =>
+          new Response(bytes, {
+            headers: {
+              'content-type': 'audio/x-wav',
+              'content-length': String(bytes.length),
+            },
+          }),
+      );
+      const result = await exportWorkspace(
+        { request: mediaRequest(detail) },
+        'space',
+        path.join(root, `audio-budget-${budget}`),
+        {
+          experimentalMedia: {
+            accessToken: 'synthetic-token',
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            fetch: fetcher,
+            ...(budget === 'per-file' ? { perImageBytes: bytes.length - 1 } : {}),
+            ...(budget === 'total' ? { totalBytes: bytes.length - 1 } : {}),
+          },
+        },
+      );
+      if (budget === 'default') {
+        expect(result.manifest.media).to.have.length(1);
+        expect(result.manifest.media![0].sha256).to.equal(
+          createHash('sha256').update(bytes).digest('hex'),
+        );
+        expect(
+          await readFile(path.join(result.destination, result.manifest.media![0].path)),
+        ).to.deep.equal(bytes);
+      } else {
+        expect(result.manifest.media).to.deep.equal([]);
+        expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
+      }
+    }
+  });
+
   for (const [family, mimeType] of [
     ['document', 'text/plain'],
-    ['audio', 'audio/x-wav'],
     ['video', 'video/mp4'],
   ]) {
     it(`retains the ${family} 10 MiB per-file cap even with larger explicit budgets`, async () => {

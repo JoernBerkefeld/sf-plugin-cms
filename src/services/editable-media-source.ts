@@ -50,6 +50,7 @@ function fields(
 }
 
 function stem(metadata: EditableMediaMetadata): string {
+  if (metadata.contentType === 'sfdc_cms__audio') return `${metadata.identity.apiName}.cms-audio`;
   return `${metadata.identity.apiName}.cms-${metadata.contentType === 'sfdc_cms__image' ? 'image' : 'document'}`;
 }
 
@@ -71,6 +72,7 @@ function mediaExtension(metadata: EditableMediaMetadata, mimeType: unknown, file
     if (mimeType !== 'text/plain') throw new TypeError('Unsupported Document MIME type');
     return 'txt';
   }
+  if (metadata.contentType === 'sfdc_cms__audio' && mimeType === 'audio/x-wav') return 'wav';
   // Keep existing canonical names; unfamiliar types use filename evidence, never MIME-derived paths.
   if (Object.hasOwn(extensions, mimeType) && mimeType !== 'text/plain') return extensions[mimeType];
   const suffix = path.extname(filename).slice(1);
@@ -125,7 +127,8 @@ export function assertEditableMediaDefinition(
     value.identity.family !== 'cms' ||
     !(
       (value.contentType === 'sfdc_cms__image' && value.identity.type === 'Image') ||
-      (value.contentType === 'sfdc_cms__document' && value.identity.type === 'Document')
+      (value.contentType === 'sfdc_cms__document' && value.identity.type === 'Document') ||
+      (value.contentType === 'sfdc_cms__audio' && value.identity.type === 'Audio')
     )
   )
     throw new TypeError('Unsupported media type/contentType');

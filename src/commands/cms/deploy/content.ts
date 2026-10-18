@@ -66,7 +66,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
     'Default dry-run reads explicit local sources and destination without writes. --apply requires a new --report-dir, preflights the whole selection and journals sequential CREATE/UPDATE/unchanged execution, stopping on first failure. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language binary UTF-8 text/plain, nonempty up to 10 MiB, with a safe ASCII lowercase .txt filename; these are profile bounds, not Salesforce caps. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
   public static readonly examples = [
     '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --definition-file ./Welcome.cms-email.json --json',
-    '<%= config.bin %> cms deploy content -o destination -W Marketing -L -d ./cms -m sfdc_cms__email:Welcome --json',
+    '<%= config.bin %> cms deploy content -o destination -W Marketing -L -d ./cms -m email:Welcome --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -105,13 +105,14 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Email/Email Template/Image/Document directory filter; repeat. Exclusive of metadata.',
+        'Email/Email Template/Image/Document filter: email, emailTemplate, image, document (or sfdc_cms__ names). Exclusive of metadata.',
     }),
     metadata: Flags.string({
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Local directory filter Type or Type:ApiName; repeat. Exact members must exist.',
+      summary:
+        'Local directory filter short or qualified Type[:ApiName]; repeat. Exact members must exist.',
     }),
     apply: Flags.boolean({
       char: 'a',

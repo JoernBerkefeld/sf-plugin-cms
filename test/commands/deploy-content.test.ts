@@ -133,6 +133,8 @@ describe('cms deploy content command', () => {
       ['--definition-file', 'a.json', '--definition-file', 'b.json'],
       ['-d', './a', '-d', './b', '-t', 'sfdc_cms__email', '-t', 'sfdc_cms__emailTemplate'],
       ['-d', './a', '-m', 'sfdc_cms__email:Welcome', '-m', 'sfdc_cms__emailTemplate'],
+      ['-d', './a', '-m', 'email:Welcome', '-m', 'emailTemplate'],
+      ['-d', './a', '-t', 'email', '-t', 'emailTemplate'],
     ]) {
       const parsed = await Parser.parse(['-o', 'destination', '-W', 'Marketing', '-L', ...args], {
         flags: DeployContent.flags,

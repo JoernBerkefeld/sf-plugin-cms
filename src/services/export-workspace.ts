@@ -1351,14 +1351,18 @@ export async function exportWorkspace(
       for (const { variantId, evidence } of mediaCandidates) {
         const mediaPath = `media/${variantId}-${evidence.fileName}`;
         try {
-          const isImage = evidence.contentType === 'sfdc_cms__image';
+          // Retain the legacy export qualification; generic Audio acquisition is separate.
+          const isAudio = evidence.contentType === 'sfdc_cms__audio';
+          if (isAudio && evidence.mimeType !== 'audio/x-wav')
+            throw new TypeError('Experimental Audio export format is unsupported');
+          const usesCallerBudgets = evidence.contentType === 'sfdc_cms__image' || isAudio;
           const remainingTotal = Math.min(
             mediaCaps!.totalBytes - totalBytes,
-            isImage
+            usesCallerBudgets
               ? Number.MAX_SAFE_INTEGER
               : EXPERIMENTAL_MEDIA_POLICY.totalBytes - otherMediaBytes,
           );
-          const perFileBytes = isImage
+          const perFileBytes = usesCallerBudgets
             ? mediaCaps!.perImageBytes
             : Math.min(mediaCaps!.perImageBytes, EXPERIMENTAL_MEDIA_POLICY.perImageBytes);
           if (!Number.isSafeInteger(remainingTotal) || remainingTotal <= 0) {
@@ -1378,11 +1382,28 @@ export async function exportWorkspace(
               outputFile: path.join(temporary, mediaPath),
             },
           );
+          if (isAudio) {
+            if (path.extname(evidence.fileName).toLowerCase() !== '.wav')
+              throw new TypeError('Experimental Audio export filename extension must be wav');
+            const header = await open(path.join(temporary, mediaPath), 'r');
+            try {
+              const signature = Buffer.alloc(12);
+              const { bytesRead } = await header.read(signature, 0, signature.length, 0);
+              if (
+                bytesRead !== signature.length ||
+                !signature.subarray(0, 4).equals(Buffer.from('RIFF')) ||
+                !signature.subarray(8, 12).equals(Buffer.from('WAVE'))
+              )
+                throw new TypeError('Experimental Audio export WAV signature is invalid');
+            } finally {
+              await header.close();
+            }
+          }
           if (downloaded.bytes > remainingTotal) {
             throw new TypeError('Experimental media total byte accounting exceeded the cap');
           }
           totalBytes += downloaded.bytes;
-          if (!isImage) otherMediaBytes += downloaded.bytes;
+          if (!usesCallerBudgets) otherMediaBytes += downloaded.bytes;
           const current = mediaEvidence(await getVariant(connection, variantId, options));
           if (current === undefined || JSON.stringify(current) !== JSON.stringify(evidence)) {
             throw new TypeError('Experimental media authoring metadata changed during export');

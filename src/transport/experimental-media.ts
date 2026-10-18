@@ -127,7 +127,6 @@ export async function downloadExperimentalCmsMedia(
   }
   if (
     (contentType === 'sfdc_cms__document' && options.expectedMimeType !== 'text/plain') ||
-    (contentType === 'sfdc_cms__audio' && options.expectedMimeType !== 'audio/x-wav') ||
     (contentType === 'sfdc_cms__video' && options.expectedMimeType !== 'video/mp4') ||
     (contentType !== 'sfdc_cms__image' &&
       contentType !== 'sfdc_cms__document' &&
@@ -215,7 +214,7 @@ export async function downloadExperimentalCmsMedia(
   const declaredLengthText = response.headers.get('content-length');
   const declaredLength = declaredLengthText === null ? undefined : Number(declaredLengthText);
   const familyLimit =
-    contentType === 'sfdc_cms__image'
+    contentType === 'sfdc_cms__image' || contentType === 'sfdc_cms__audio'
       ? bufferConstants.MAX_LENGTH
       : EXPERIMENTAL_MEDIA_POLICY.perImageBytes;
   const configuredLimit = options.maxBytes ?? familyLimit;
@@ -282,20 +281,6 @@ export async function downloadExperimentalCmsMedia(
 
         break;
       }
-      case 'sfdc_cms__audio': {
-        if (extension(fileName) !== 'wav') {
-          throw new TypeError('Experimental Audio filename extension must be wav');
-        }
-        const signature = Buffer.concat(prefix);
-        if (
-          !signature.subarray(0, 4).equals(Buffer.from('RIFF')) ||
-          !signature.subarray(8, 12).equals(Buffer.from('WAVE'))
-        ) {
-          throw new TypeError('Experimental Audio WAV signature is invalid');
-        }
-
-        break;
-      }
       case 'sfdc_cms__video': {
         if (extension(fileName) !== 'mp4') {
           throw new TypeError('Experimental Video filename extension must be mp4');
@@ -307,7 +292,7 @@ export async function downloadExperimentalCmsMedia(
         break;
       }
       default: {
-        // Image format admission belongs to the API, not a local signature inventory.
+        // Image/Audio format admission belongs to the API, not a local signature inventory.
         break;
       }
     }

@@ -132,6 +132,155 @@ describe('standalone editable native media source', () => {
     });
   }
 
+  it('roundtrips Audio WAV bytes and edited companions without qualifying API acceptance', async () => {
+    const audio = metadata();
+    audio.identity.type = 'Audio';
+    audio.contentType = 'sfdc_cms__audio';
+    // Synthetic RIFF/WAVE bytes exercise the codec, not live fixture qualification.
+    const wav = Buffer.concat([
+      Buffer.from('RIFF'),
+      Buffer.from([36, 0, 0, 0]),
+      Buffer.from('WAVEfmt '),
+      Buffer.from([0, 255, 42, 128]),
+    ]);
+    const native = body(wav, 'audio/x-wav', 'cms-audio-probe.wav');
+    const original = structuredClone(native);
+    const projection = extractEditableMediaSource(audio, native, wav);
+    expect(native).to.deep.equal(original);
+    expect(projection.definitionName).to.equal('Hero.cms-audio.json');
+    expect(projection.companions[0].path).to.equal('Hero.cms-audio.media.wav');
+    expect(
+      extractEditableMediaSource(audio, native, wav).definitionBytes.equals(
+        projection.definitionBytes,
+      ),
+    ).to.equal(true);
+    for (const locator of ['source-native-ref', 'source-key', 'fileHash', 'size', 'contentBody'])
+      expect(projection.definitionBytes.toString()).not.to.include(locator);
+    const reconstructed = reassembleEditableMediaSource(
+      projection.definition,
+      new Map([[projection.companions[0].path, wav]]),
+    );
+    if (reconstructed.representation !== 'binary') throw new Error('Expected binary');
+    expect(reconstructed.binary.fileName).to.equal('Hero.cms-audio.media.wav');
+    expect(reconstructed.binary.mimeType).to.equal('audio/x-wav');
+    expect(reconstructed.binary.bytes.equals(wav)).to.equal(true);
+    expect(createHash('sha256').update(reconstructed.binary.bytes).digest('hex')).to.equal(
+      createHash('sha256').update(wav).digest('hex'),
+    );
+    reconstructed.binary.bytes.fill(0);
+    expect(projection.companions[0].bytes.equals(wav)).to.equal(true);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-audio-codec-'));
+    const json = path.join(directory, projection.definitionName);
+    await writeFile(json, projection.definitionBytes);
+    await failure(loadEditableMediaSource(json), /missing/u);
+    await writeFile(path.join(directory, projection.companions[0].path.toLowerCase()), wav);
+    await failure(loadEditableMediaSource(json), /case-aliased/u);
+    // A fresh directory avoids relying on case-only renaming behavior across platforms.
+    const exactDirectory = await mkdtemp(path.join(os.tmpdir(), 'cms-audio-exact-'));
+    const exactJson = path.join(exactDirectory, projection.definitionName);
+    await writeFile(exactJson, projection.definitionBytes);
+    await writeFile(path.join(exactDirectory, projection.companions[0].path), wav);
+    const loaded = await loadEditableMediaSource(exactJson);
+    expect(loaded.source).to.deep.equal(
+      reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, wav]]),
+      ),
+    );
+    const edited = Buffer.concat([wav, Buffer.from([255, 0])]);
+    await writeFile(path.join(exactDirectory, projection.companions[0].path), edited);
+    const result = await loadEditableMediaSource(exactJson);
+    if (result.source.representation !== 'binary') throw new Error('Expected binary');
+    expect(result.source.binary.bytes.equals(edited)).to.equal(true);
+    const urlOnly = extractEditableMediaSource(audio, native);
+    expect(urlOnly.definitionName).to.equal('Hero.cms-audio.json');
+    expect(reassembleEditableMediaSource(urlOnly.definition, new Map())).to.deep.equal({
+      representation: 'url-only',
+      address: native['sfdc_cms:media'].url,
+    });
+  });
+
+  it('represents other safe Audio MIME/filename evidence without a format acceptance policy', () => {
+    const audio = metadata();
+    audio.identity.type = 'Audio';
+    audio.contentType = 'sfdc_cms__audio';
+    const bytes = Buffer.from([0, 255, 128, 42]);
+    for (const [mime, filename, suffix] of [
+      ['audio/x-wav', 'track.other', 'wav'],
+      ['audio/mpeg', 'track.mp3', 'mp3'],
+      ['audio/ogg', 'track.ogg', 'ogg'],
+      ['audio/x-unfamiliar', 'track', 'bin'],
+      ['application/octet-stream', 'track.custom', 'custom'],
+    ]) {
+      const projection = extractEditableMediaSource(audio, body(bytes, mime, filename), bytes);
+      expect(projection.companions[0].path).to.equal(`Hero.cms-audio.media.${suffix}`);
+      const source = reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, bytes]]),
+      );
+      if (source.representation !== 'binary') throw new Error('Expected binary');
+      expect(source.binary.mimeType).to.equal(mime);
+      expect(source.binary.bytes.equals(bytes)).to.equal(true);
+    }
+    const projection = extractEditableMediaSource(
+      audio,
+      body(bytes, 'audio/x-wav', 'track.wav'),
+      bytes,
+    );
+    for (const type of ['audio', 'Document', 'Image', 'sfdc_cms__audio'])
+      expect(() =>
+        assertEditableMediaDefinition({
+          ...projection.definition,
+          identity: { ...audio.identity, type },
+        }),
+      ).to.throw(/type\/contentType/u);
+    for (const mimeType of ['audio/x-wav\r\nX: yes', 'audio/wav; charset=UTF-8', 'audio/π'])
+      expect(() =>
+        assertEditableMediaDefinition({
+          ...projection.definition,
+          media: { ...projection.definition.media, mimeType },
+        }),
+      ).to.throw(/ASCII/u);
+    for (const name of ['../track.wav', 'nested/track.wav', String.raw`nested\track.wav`])
+      expect(() =>
+        extractEditableMediaSource(audio, body(bytes, 'audio/x-wav', name), bytes),
+      ).to.throw();
+    for (const companion of [
+      '../Hero.cms-audio.media.wav',
+      'Hero.cms-image.media.wav',
+      'Hero.cms-audio.media.wav/escape',
+    ])
+      expect(() =>
+        assertEditableMediaDefinition({
+          ...projection.definition,
+          media: {
+            representation: 'binary',
+            mimeType: 'audio/x-wav',
+            companion: { role: 'media', path: companion },
+          },
+        }),
+      ).to.throw(/same-stem/u);
+    expect(() =>
+      extractEditableMediaSource(
+        audio,
+        body(bytes, 'audio/x-wav', 'track.wav'),
+        Buffer.from([1, 2, 3, 4]),
+      ),
+    ).to.throw(/MD5/u);
+    expect(() =>
+      extractEditableMediaSource(audio, body(bytes, 'audio/x-wav', 'track.wav'), Buffer.from([1])),
+    ).to.throw(/size/u);
+    expect(() =>
+      reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, Buffer.alloc(0)]]),
+      ),
+    ).to.throw(/nonempty/u);
+    expect(() =>
+      reassembleEditableMediaSource(projection.definition, new Map([['wrong', bytes]])),
+    ).to.throw(/missing/u);
+  });
+
   it('represents unretrieved URLs explicitly without inventing a native upload body', async () => {
     for (const address of ['https://cdn.example.test/image.png', body(PNG)['sfdc_cms:media'].url]) {
       const native = body(PNG);

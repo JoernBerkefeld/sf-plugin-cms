@@ -1,5 +1,13 @@
-export type RetrieveContentType =
-  'sfdc_cms__email' | 'sfdc_cms__emailTemplate' | 'sfdc_cms__image' | 'sfdc_cms__document';
+import { normalizeContentTypeAlias } from './content-type-alias.js';
+
+export const RETRIEVE_CONTENT_TYPES = [
+  'sfdc_cms__email',
+  'sfdc_cms__emailTemplate',
+  'sfdc_cms__image',
+  'sfdc_cms__document',
+  'sfdc_cms__audio',
+] as const;
+export type RetrieveContentType = (typeof RETRIEVE_CONTENT_TYPES)[number];
 
 /** The actual repeatable CLI flag shapes; unrelated command flags are not consumed. */
 export interface RetrieveSelectionFlags {
@@ -26,16 +34,10 @@ export interface RetrieveSelection {
 }
 
 function qualifiedType(value: string): RetrieveContentType {
-  if (value === 'email' || value === 'emailTemplate')
-    throw new TypeError('Retrieve requires qualified content types, not unqualified families');
-  if (
-    value !== 'sfdc_cms__email' &&
-    value !== 'sfdc_cms__emailTemplate' &&
-    value !== 'sfdc_cms__image' &&
-    value !== 'sfdc_cms__document'
-  )
-    throw new TypeError('Retrieve requires a supported qualified content type');
-  return value;
+  const canonical = normalizeContentTypeAlias(value, RETRIEVE_CONTENT_TYPES);
+  if (canonical === undefined)
+    throw new TypeError('Retrieve requires a supported qualified content type or short name');
+  return canonical;
 }
 
 function nonemptyValues(values: readonly string[]): string[] {
@@ -53,11 +55,23 @@ function group(contentType: RetrieveContentType): RetrieveSelectionGroup {
 }
 
 /**
- * Normalize explicit retrieve selectors without org access or expanding type/name cross products.
+ * Normalize retrieve selectors, defaulting absent selection to all admitted types without org access.
  * @param {RetrieveSelectionFlags} flags - Parsed repeatable CLI selectors.
  * @returns {RetrieveSelection} Detached per-type groups retaining explicit validation obligations.
  */
 export function normalizeRetrieveSelection(flags: RetrieveSelectionFlags): RetrieveSelection {
+  if (
+    flags.metadata === undefined &&
+    flags['content-type'] === undefined &&
+    flags['api-name'] === undefined &&
+    flags['content-key-or-id'] === undefined &&
+    flags.all !== true
+  )
+    return {
+      mode: 'all',
+      groups: RETRIEVE_CONTENT_TYPES.map((contentType) => ({ ...group(contentType), all: true })),
+    };
+
   if (flags.metadata !== undefined) {
     if (
       flags['content-type'] !== undefined ||
@@ -84,7 +98,9 @@ export function normalizeRetrieveSelection(flags: RetrieveSelectionFlags): Retri
     return { mode: 'metadata', groups: [...groups.values()] };
   }
 
-  const types = nonemptyValues(flags['content-type'] ?? []).map((value) => qualifiedType(value));
+  const types = [
+    ...new Set(nonemptyValues(flags['content-type'] ?? []).map((value) => qualifiedType(value))),
+  ];
   const hasNames = flags['api-name'] !== undefined;
   const hasNative = flags['content-key-or-id'] !== undefined;
   if (Number(hasNames) + Number(hasNative) + Number(flags.all === true) !== 1)

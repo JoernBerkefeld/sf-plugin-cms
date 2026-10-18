@@ -19,7 +19,7 @@ This is a plugin for the Salesforce `sf` command-line tool. It is **not a comple
 
 | Type label                                 | Type API name                   | Retrieve support    | Create support       | Update support         | Delete support               |
 | ------------------------------------------ | ------------------------------- | ------------------- | -------------------- | ---------------------- | ---------------------------- |
-| Audio                                      | `sfdc_cms__audio`               | Planned             | Planned              | Planned                | Not supported                |
+| Audio                                      | `sfdc_cms__audio`               | Available (limited) | Planned              | Planned                | Not supported                |
 | Brand                                      | `sfdc_cms__brand`               | Planned             | Planned              | Planned                | Not supported                |
 | Consent Banner                             | `sfdc_cms__consentBanner`       | Planned             | Planned              | Planned                | Not supported                |
 | Contact Card (VCF)                         | Not verified                    | Planned             | Planned              | Planned                | Not supported                |
@@ -49,7 +49,7 @@ Image admission is API-led for retrieval, portable deployment and loose-file upl
 
 Current operation limits:
 
-- Retrieve admits only supported root-level, single-variant Email, Email Template, Image and Document shapes in an explicitly selected workspace and language. Images can have downloaded native media or external URL-only evidence; retrieving them does not make them deployable.
+- Retrieve admits only supported root-level, single-variant Email, Email Template, Image, Document and Audio shapes in an explicitly selected workspace; language defaults to that workspace's default. Images can have downloaded native media or external URL-only evidence; retrieving them does not make them deployable.
 - Deploy admits dependency-free raw-HTML Email/Email Template sources, API-led binary Images and bounded UTF-8 `text/plain` Documents for CREATE, bytes-only UPDATE or exact unchanged. Create makes an unpublished Draft. Existing Email/Template update changes **HTML only** and requires an eligible Draft; differing JSON metadata or text companions block the whole selection. Image deploy requires a Marketing workspace, its default language and root placement; existing Images require one unpublished primary Draft and exact metadata, filename and MIME. Only the binary bytes may change. Additional variants, non-root placement and unresolved dependencies remain blocked. Authoring-baseline conflict and sibling-aware update safeguards are not integrated into deploy.
 - Delete requires strict ownership evidence, unchanged content, an unpublished Draft and a single-variant parent. It is not deletion by name alone. Email Template additionally requires its strict completed CREATE journal and unchanged source artifacts. A normal portable deploy report is not automatically accepted as delete ownership evidence.
 - Offline `sf cms info --json` labels Email/Template/Image retrieval and deletion **experimental**, and Document retrieval, deploy and loose-image upload **unqualified**. Narrow installed Email/Template and same-org PNG Image evidence does not qualify every source shape. Cross-org Image acceptance is pending; loose-image upload has no live-upload proof. Internal family profiles do not add public operation support.
@@ -111,7 +111,7 @@ This lists one page; use `--page 1` for the next page if needed. In the examples
 ### 1. Download the Email
 
 ```sh
-sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type sfdc_cms__email --api-name Welcome --default-language --output-dir ./project
+sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type email --api-name Welcome --default-language --output-dir ./project
 ```
 
 This reads Salesforce and writes local source files; it does not change Salesforce. `--default-language` explicitly chooses the workspace default language. Use `--language en_US` instead if that is your intended language.
@@ -145,7 +145,7 @@ To create supported content in another workspace or org, use its explicit destin
 This PNG walkthrough is an example, not a format restriction; other binary Images use the same API-led admission and retain their declared MIME and companion filename. Select a root-level, single-variant native PNG Image in a Marketing workspace and its default language. Existing targets must be unpublished primary Drafts with their native filename already exactly `<apiName>.cms-image.media.png`. Retrieval normalizes the companion filename, so retrieval alone does not prove deploy eligibility. A native filename mismatch blocks deploy; filename and metadata updates are unsupported. Download it first:
 
 ```sh
-sf cms retrieve content -o my-org -W Marketing -t sfdc_cms__image -n Hero -L -d ./project
+sf cms retrieve content -o my-org -W Marketing -t image -n Hero -L -d ./project
 sf cms deploy content -o my-org -W Marketing -L -f ./project/cms/Marketing/image/Hero.cms-image.json --json
 ```
 
@@ -196,46 +196,55 @@ For scripts, add `--json` and inspect both the exit code and item diagnostics: `
 | `sf cms info`              | [Plugin information](#sf-cms-info)                                                         |
 | `sf cms list workspace`    | [List workspaces](#sf-cms-list-workspace)                                                  |
 | `sf cms list channel`      | [List workspace channels](#sf-cms-list-channel)                                            |
-| `sf cms retrieve content`  | [Retrieve supported Email, Template, Image and Document sources](#sf-cms-retrieve-content) |
+| `sf cms retrieve content`  | [Retrieve supported Email, Template, Image, Document and Audio sources](#sf-cms-retrieve-content) |
 | `sf cms deploy content`    | [Bounded Email/Template deployment](#sf-cms-deploy-content)                                |
 | `sf cms upload images`     | [Upload local images](#sf-cms-upload-images)                                               |
 | `sf cms publish content`   | [Publish a Draft Email](#sf-cms-publish-content)                                           |
 | `sf cms unpublish content` | [Unpublish a Published Email](#sf-cms-unpublish-content)                                   |
 | `sf cms delete content`    | [Delete a run-owned Draft Email](#sf-cms-delete-content)                                   |
 
-All org-backed commands require `--target-org <username-or-alias>` (short form `-o`). They prefer the `/services/data/latest` REST routes by default, while keeping a numeric Core/JSforce connection version. Read-only CMS and native-query capability checks run before command operations; only an explicit unsupported-version or missing-route response permits a temporary `67.0` fallback. Authentication, permission and transport failures do not trigger fallback. Pass `--api-version <numeric-version>` to select a numbered API explicitly (without automatic fallback), or `--api-version latest` to request the default policy. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables; other commands render their command-specific human-readable output.
+All org-backed commands except `retrieve content` require explicit `--target-org <username-or-alias>` (short form `-o`). Retrieve uses your configured Salesforce CLI default org when `-o` is omitted; without one, the standard Salesforce CLI org-resolution error applies. They prefer the `/services/data/latest` REST routes by default, while keeping a numeric Core/JSforce connection version. Read-only CMS and native-query capability checks run before command operations; only an explicit unsupported-version or missing-route response permits a temporary `67.0` fallback. Authentication, permission and transport failures do not trigger fallback. Pass `--api-version <numeric-version>` to select a numbered API explicitly (without automatic fallback), or `--api-version latest` to request the default policy. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables; other commands render their command-specific human-readable output.
 
 ### `sf cms retrieve content`
 
-Retrieve one or several supported Emails, Email Templates, Images or Documents (`sfdc_cms__email`, `sfdc_cms__emailTemplate`, `sfdc_cms__image` or `sfdc_cms__document`) into an explicit project root. This command reads the org and writes selected local files only; use the separate bounded `deploy content` workflow below for supported Email/Template or binary Image changes, or bounded Document CREATE, bytes-only UPDATE and exact unchanged. All-of-type selection expands the requested scope, not the supported source shapes.
+Retrieve supported Emails, Email Templates, Images, Documents and Audio into a local project. With a configured default org, the minimal command is:
+
+```sh
+sf cms retrieve content -W "Content Workspace for Marketing Cloud"
+```
+
+It selects all five currently admitted types in the workspace default language and writes under `./cms/<workspaceAPI>/` relative to the current directory. The workspace API name can differ from its display name. Unsupported items are reported as blocked, not silently omitted; this is not a complete workspace backup. Override the org with `-o`, language with `-l`, and project root with `-d`. This command reads the org and writes selected local files only; use the separate bounded `deploy content` workflow below for supported Email/Template or binary Image changes, or bounded Document CREATE, bytes-only UPDATE and exact unchanged. All-of-type selection expands the requested scope, not the supported source shapes.
 
 ```sh
 # One exact API name.
-sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type sfdc_cms__email --api-name Welcome --default-language --output-dir ./project --json
+sf cms retrieve content --target-org my-org --workspace-name Marketing --content-type email --api-name Welcome --default-language --output-dir ./project --json
 # Repeat --api-name within one type.
-sf cms retrieve content -o my-org -W Marketing -t sfdc_cms__email -n Welcome -n Reminder -L -d ./project --json
+sf cms retrieve content -o my-org -W Marketing -t email -n Welcome -n Reminder -L -d ./project --json
 # Native content key or parent content ID, not a variant ID; repeat -i as needed.
-sf cms retrieve content -o my-org -w 0ZuSOURCE -t sfdc_cms__email -i CONTENT_KEY -i PARENT_CONTENT_ID -l en_US -d ./project --json
+sf cms retrieve content -o my-org -w 0ZuSOURCE -t email -i CONTENT_KEY -i PARENT_CONTENT_ID -l en_US -d ./project --json
 # All items of the explicitly selected types in one workspace/language.
-sf cms retrieve content -o my-org -W Marketing -t sfdc_cms__email -t sfdc_cms__emailTemplate -a -L -d ./project --json
+sf cms retrieve content -o my-org -W Marketing -t email -t emailTemplate -a -L -d ./project --json
 # Mixed-type exact selection, or Type alone for all of that type.
-sf cms retrieve content -o my-org -W Marketing -m sfdc_cms__email:Welcome -m sfdc_cms__emailTemplate:Welcome_Template -L -d ./project --json
-sf cms retrieve content -o my-org -W Marketing -m sfdc_cms__email -L -d ./project --json
+sf cms retrieve content -o my-org -W Marketing -m email:Welcome -m emailTemplate:Welcome_Template -L -d ./project --json
+sf cms retrieve content -o my-org -W Marketing -m email -L -d ./project --json
 # Explicitly permit replacing differing selected local files.
-sf cms retrieve content -o my-org -W Marketing -t sfdc_cms__email -n Welcome -L -d ./project -x --json
+sf cms retrieve content -o my-org -W Marketing -t email -n Welcome -L -d ./project -x --json
 ```
 
 Names, keys, IDs and paths above are illustrative; use identities visible in your own workspace.
 
-- Required scope: explicit `--target-org -o`, exactly one `--workspace-id -w` / `--workspace-name -W`, exactly one `--language -l` / `--default-language -L`, and `--output-dir -d`. No configured default org or implicit directory/language scope is used.
-- Choose exactly one selector style: repeatable `--metadata -m`, or separate flags. Metadata accepts qualified `Type` (all of that type) or `Type:ApiName` (exact name), splitting only at the first colon. It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`. Empty/unknown types and empty names are invalid; no wildcard or comma-separated selector syntax is provided.
+Type selectors accept exact friendly names or their `sfdc_cms__`-qualified names only for families admitted by that operation: retrieve accepts `email`, `emailTemplate`, `image`, `document`, `audio`; deploy accepts the first four; delete accepts only `email` and `emailTemplate`. For example, `emailTemplate` and `sfdc_cms__emailTemplate` select the same family. Case and whitespace are not normalized. Aliases do not enable unsupported operations or alter canonical API identifiers and portable contracts.
+
+- Required scope: exactly one `--workspace-id -w` / `--workspace-name -W`. Omitted `--target-org -o` uses the configured default org; omitted language uses the workspace default, as does `--default-language -L`. Use `--language -l` to override it, never together with `-L`. Omitted `--output-dir -d` uses the current directory as project root. Blank selectors/paths and conflicting workspace/language selectors block. No selection flags means all currently admitted types, not all CMS families. Explicit `-t` still requires a member selector or `-a`; `-a` alone is invalid.
+- Choose exactly one selector style: repeatable `--metadata -m`, or separate flags. Metadata accepts exact short or qualified `Type` (all of that type) or `Type:ApiName` (exact name), splitting only at the first colon. It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`. Empty/unknown types and empty names are invalid; no wildcard or comma-separated selector syntax is provided.
 - Separate flags require `--content-type -t` plus exactly one of repeatable `--api-name -n`, repeatable `--content-key-or-id -i`, or `--all -a`. Name/key/ID mode requires one distinct type; `--all` accepts repeated types. Selectors are exact and case-sensitive; native selectors match the content key or parent content ID, never the variant ID. Overlapping selectors resolve each native variant once; distinct parents colliding on a portable output identity are blocked even with overwrite.
 - `--all` selects only the named types in the explicit workspace/language, not all workspaces, languages, dependencies, or CMS families. Explicit missing/ambiguous members remain blocked even alongside a type-wide selector; a completely enumerated empty type succeeds with zero selected items.
 - Admission uses native `ManagedContentVariant` inventory through the selected CMS REST API route, not search-index completeness. Read-only workspace, Email/Template detail and native-query requests through `latest` have bounded two-org qualification resolving to API `68.0`; newer explicit numeric versions are not artificially rejected. It covers principal-visible, nondeleted records, across all languages/statuses, with independent unfiltered parent-sibling reads and GET-detail binding. Keyset reads require empty terminal pages, grouped-count parity and matching repeat reads; limits are 1,000 pages, 250,000 rows and fewer than 2,000 parent groups per scope. This is not an atomic snapshot or evidence about inaccessible/deleted content; scope, count or detail drift blocks retrieval.
 - Native GET provenance `source: "User"` is normalized only when both parent and variant agree; unknown, conflicting or one-sided provenance blocks retrieval. Provenance is not editable content and is omitted from portable source; original body and detached source identities remain checked.
-- Only the qualified native raw-HTML Email/Email Template profiles are eligible: exact selected language, one independently proven native variant across all sibling languages/statuses, supported body/envelope fields, and reconstructable dependency-free HTML. Folder evidence must be null or the workspace's distinct proven root folder ID in both parent and variant; unknown/non-root placement is blocked. Additional variants, unresolved references/personalization, unsupported components or shapes, and missing/ambiguous identities are not silently dropped. This is not support for every Email shape, folder hierarchy, or multivariant content. Legacy Email and other families remain unsupported, except the bounded Image and Document retrieval described below.
-- **Bounded Image retrieval:** `sfdc_cms__image` uses the same exact-name, native key/parent ID, all-of-type and mixed metadata selectors. For example, `sf cms retrieve content -o my-org -W Marketing -m sfdc_cms__email:Welcome -m sfdc_cms__image:Hero -L -d ./project --json`. Root-level, single-variant Images are bound to native parent/variant/workspace evidence and written under `cms/<workspaceApiName>/image/<apiName>.cms-image.json` using `sf-cms-media-source@1`. Native media is downloaded as a declared binary companion (for PNG, `<apiName>.cms-image.media.png`) and verified against its native byte/MIME/hash evidence; external media remains explicitly URL-only without fetching. Resolved identity drift blocks local writing. Binary Images use API-led admission for CREATE, bytes-only UPDATE or unchanged under the deployment safeguards below; URL-only evidence remains undeployable.
+- Only the qualified native raw-HTML Email/Email Template profiles are eligible: exact selected language, one independently proven native variant across all sibling languages/statuses, supported body/envelope fields, and reconstructable dependency-free HTML. Folder evidence must be null or the workspace's distinct proven root folder ID in both parent and variant; unknown/non-root placement is blocked. Additional variants, unresolved references/personalization, unsupported components or shapes, and missing/ambiguous identities are not silently dropped. This is not support for every Email shape, folder hierarchy, or multivariant content. Legacy Email and other families remain unsupported, except the bounded Image, Document and Audio retrieval described below.
+- **Bounded Image retrieval:** `sfdc_cms__image` uses the same exact-name, native key/parent ID, all-of-type and mixed metadata selectors. For example, `sf cms retrieve content -o my-org -W Marketing -m email:Welcome -m image:Hero -L -d ./project --json`. Root-level, single-variant Images are bound to native parent/variant/workspace evidence and written under `cms/<workspaceApiName>/image/<apiName>.cms-image.json` using `sf-cms-media-source@1`. Native media is downloaded as a declared binary companion (for PNG, `<apiName>.cms-image.media.png`) and verified against its native byte/MIME/hash evidence; external media remains explicitly URL-only without fetching. Resolved identity drift blocks local writing. Binary Images use API-led admission for CREATE, bytes-only UPDATE or unchanged under the deployment safeguards below; URL-only evidence remains undeployable.
 - **Bounded Document retrieval:** `sfdc_cms__document` uses the same selectors, native identity/workspace evidence, root/single-variant admission and overwrite controls. Native `text/plain` media is validated as UTF-8 and preserved byte-for-byte in `cms/<workspaceApiName>/document/<apiName>.cms-document.media.txt`, referenced by `<apiName>.cms-document.json` using `sf-cms-media-source@1`. UTF-8 contents are not restricted to ASCII; the deployment profile's safe ASCII filename with lowercase `.txt` extension restricts filenames only. External media stays explicitly URL-only and is not deployable. Retrieval alone does not prove deployment eligibility. Document retrieval, CREATE, bytes-only UPDATE and exact unchanged remain unqualified. Bounded two-org development-artifact acceptance covers the tested text/plain profile; released-package verification remains separate.
+- **Bounded Audio retrieval:** `audio` selects `sfdc_cms__audio` with the same selector and overwrite controls. Native root-level, default-language, single-primary Audio is written as `cms/<workspaceApiName>/audio/<apiName>.cms-audio.json` with its declared binary companion, preserving exact bytes and native identity/integrity evidence. Only an 844-byte primary WAV has native READ qualification; this does not establish broad-format or cross-org support. Audio CREATE and UPDATE remain unproven, and Audio deployment is not enabled.
 - Writes portable v2 JSON under `cms/<workspaceApiName>/email/<apiName>.cms-email.json` or `cms/<workspaceApiName>/emailTemplate/<apiName>.cms-email-template.json`, with same-stem `.html` and, when present, `.txt` companions. These are editable source files, not a workspace backup manifest. Source IDs remain detached retrieval evidence, not deployable identity. Only the bounded Email/Template deploy workflow below accepts these portable sources; this layout alone does not prove that an item is deployable.
 - Existing differing selected files require `--overwrite -x`, including during all-of-type retrieval; unchanged retrieval leaves their bytes stable. Only files owned by each selected item may be replaced or removed; unrelated and remote-absent local items are retained. Local writes are not an item/batch transaction: an I/O failure can leave partial local progress. There is no rollback or project-wide cleanup.
 - Complete native selection is resolved before local writes. Independent item admission/write failures may allow other selected items to complete; fatal authentication/scope read failures stop further acquisition and retain unattempted identities. A complete inventory does not mean every selected item passes strict source admission.
@@ -252,7 +261,7 @@ sf cms deploy content --target-org source-org --workspace-name Marketing --defau
 # After editing its HTML file, preview the target org.
 sf cms deploy content -o target-org -W Marketing -L -f ./project/cms/Marketing/email/Welcome.cms-email.json --json
 # Apply a local Email/Template subset with an exclusive new report directory.
-sf cms deploy content -o target-org -W Marketing -L -d ./project/cms/Marketing -m sfdc_cms__email -m sfdc_cms__emailTemplate --apply --report-dir ./reports/deploy-001 --json
+sf cms deploy content -o target-org -W Marketing -L -d ./project/cms/Marketing -m email -m emailTemplate --apply --report-dir ./reports/deploy-001 --json
 ```
 
 - Require explicit `--target-org -o`, exactly one `--workspace-id -w` / `--workspace-name -W`, and exactly one `--language -l` / `--default-language -L`. Choose repeatable `--definition-file -f` or repeatable `--source-dir -d`, never both. Directory selection recursively finds recognized definitions, not arbitrary JSON or standalone companions; it never defaults to the current directory. Optional repeatable `--content-type -t` or `--metadata -m` filters are mutually exclusive and directory-only. Metadata accepts `Type` or exact `Type:ApiName`; a requested missing member blocks preflight. Overlapping paths deduplicate; distinct definitions targeting one identity block deployment.
@@ -363,7 +372,7 @@ An ambiguous unpublish result is not authorization to retry: preserve its journa
 
 ### `sf cms delete content`
 
-Previews or permanently deletes one exact run-owned, unpublished Draft variant from a sealed family policy. `--content-type sfdc_cms__email` remains the exact default and preserves the `sf-cms-content-delete@1` output shape; ownership may come from this plugin's completed CREATE journal (`workspace-import-run.json`) or a strict `sf-cms-email-delete-ownership@1` report. `--content-type sfdc_cms__emailTemplate` requires `--contract-version 2` and accepts only a strict completed CREATE journal.
+Previews or permanently deletes one exact run-owned, unpublished Draft variant from a sealed family policy. `--content-type sfdc_cms__email` remains the exact default and preserves the `sf-cms-content-delete@1` output shape; ownership may come from this plugin's completed CREATE journal (`workspace-import-run.json`) or a strict `sf-cms-email-delete-ownership@1` report. `--content-type emailTemplate` requires `--contract-version 2` and accepts only a strict completed CREATE journal.
 
 Dry-run is the default:
 
@@ -374,7 +383,7 @@ sf cms delete content --target-org my-org --workspace-id 0Zu... --api-name Welco
 Email Template preview uses the v2 contract and explicit sealed family:
 
 ```sh
-sf cms delete content --target-org my-org --contract-version 2 --content-type sfdc_cms__emailTemplate --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --ownership-report ./create-report/workspace-import-run.json --json
+sf cms delete content --target-org my-org --contract-version 2 --content-type emailTemplate --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --ownership-report ./create-report/workspace-import-run.json --json
 ```
 
 Apply additionally requires a new report directory and explicit permanent-delete acknowledgement:

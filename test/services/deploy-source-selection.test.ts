@@ -6,6 +6,7 @@ import type { SourceDefinition } from '../../src/contracts/source-definition.js'
 import { extractEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
 import {
   selectDeploySources,
+  DEPLOY_SOURCE_CONTENT_TYPES,
   type DeploySourceSelectionFlags,
 } from '../../src/services/deploy-source-selection.js';
 
@@ -64,6 +65,61 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
+  for (const canonical of DEPLOY_SOURCE_CONTENT_TYPES) {
+    const short = canonical.slice('sfdc_cms__'.length);
+    it(`selects identical canonical sources for both ${short} spellings`, async () => {
+      const root = await temporary();
+      let file: string;
+      if (short === 'email' || short === 'emailTemplate') {
+        file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
+      } else {
+        const token = short === 'image' ? 'image' : 'document';
+        file = path.join(root, `Exact.cms-${token}.json`);
+        const companion = `Exact.cms-${token}.media.txt`;
+        await writeFile(
+          file,
+          JSON.stringify({
+            contract: 'sf-cms-media-source',
+            contractVersion: '1.0.0',
+            identity: {
+              family: 'cms',
+              type: short === 'image' ? 'Image' : 'Document',
+              apiName: 'Exact',
+              context: { workspaceApiName: 'Source' },
+            },
+            contentType: canonical,
+            language: 'en_US',
+            title: 'Exact',
+            folderPath: [],
+            media: {
+              representation: 'binary',
+              mimeType: 'text/plain',
+              companion: { role: 'media', path: companion },
+            },
+          }),
+        );
+        await writeFile(path.join(root, companion), 'Exact bytes');
+      }
+      const expected = await selectDeploySources({ 'definition-file': [file] });
+      for (const filter of [
+        { 'content-type': Object.freeze([short, canonical, short]) },
+        { metadata: Object.freeze([short, `${short}:Exact`, canonical, `${canonical}:Exact`]) },
+      ]) {
+        const flags = Object.freeze({ 'source-dir': Object.freeze([root]), ...filter });
+        const before = JSON.stringify(flags);
+        const selected = await selectDeploySources(flags);
+        expect(selected.items).to.deep.equal(expected.items);
+        expect(selected.items[0].targetIdentity.contentType).to.equal(canonical);
+        expect(JSON.stringify(flags)).to.equal(before);
+      }
+      for (const name of ['Exact:remaining:colons', ' Exact', 'Exact '])
+        await failure(
+          selectDeploySources({ 'source-dir': [root], metadata: [short, `${short}:${name}`] }),
+          /Exact deploy metadata member is missing/u,
+        );
+    });
+  }
+
   it('selects binary Documents explicitly and recursively with exact filters and byte bindings', async () => {
     const root = await temporary();
     const email = await fixture(root);
@@ -272,7 +328,12 @@ describe('local deploy source selection', () => {
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email'], 'content-type': ['sfdc_cms__email'] },
       { 'source-dir': ['x'], metadata: [] },
       { 'source-dir': ['x'], 'content-type': [] },
-      { 'source-dir': ['x'], 'content-type': ['email'] },
+      { 'source-dir': ['x'], 'content-type': ['Email'] },
+      { 'source-dir': ['x'], 'content-type': [' email'] },
+      { 'source-dir': ['x'], 'content-type': ['email '] },
+      { 'source-dir': ['x'], metadata: ['audio'] },
+      { 'source-dir': ['x'], metadata: ['futureType'] },
+      { 'source-dir': ['x'], metadata: ['sfdc_cms__futureType'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__audio'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email:'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email: '] },

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { normalizeContentTypeAlias } from './content-type-alias.js';
 import { createHash } from 'node:crypto';
 import {
   assertEditableMediaDefinition,
@@ -21,6 +22,12 @@ import {
 } from './editable-item-source-v2.js';
 import { enumeratePackageFiles, readStableRegularFile } from './import-workspace.js';
 import { strictSourceJson } from './source-definition-import.js';
+
+export const DEPLOY_SOURCE_CONTENT_TYPES = [
+  ...SOURCE_EMAIL_PROFILES.map((profile) => profile.contentType),
+  'sfdc_cms__image',
+  'sfdc_cms__document',
+] as const;
 
 export interface DeploySourceSelectionFlags {
   'definition-file'?: readonly string[];
@@ -59,13 +66,12 @@ function values(input: readonly string[] | undefined): string[] | undefined {
 }
 
 function contentType(value: string): string {
-  if (
-    value !== 'sfdc_cms__image' &&
-    value !== 'sfdc_cms__document' &&
-    !SOURCE_EMAIL_PROFILES.some((profile) => profile.contentType === value)
-  )
-    throw new TypeError('Deploy source selection requires a supported qualified content type');
-  return value;
+  const canonical = normalizeContentTypeAlias(value, DEPLOY_SOURCE_CONTENT_TYPES);
+  if (canonical === undefined)
+    throw new TypeError(
+      'Deploy source selection requires a supported qualified content type or short name',
+    );
+  return canonical;
 }
 
 function metadataSelector(value: string): Selector {
@@ -131,9 +137,15 @@ export async function selectDeploySources(
     throw new TypeError('Deploy content-type and metadata filters are exclusive');
   if (files !== undefined && (types !== undefined || metadata !== undefined))
     throw new TypeError('Deploy filters require source-dir mode');
-  const selectors: Selector[] | undefined = metadata
+  const normalizedSelectors: Selector[] | undefined = metadata
     ? metadata.map((value) => metadataSelector(value))
     : types?.map((value) => ({ contentType: contentType(value) }));
+  const selectors = normalizedSelectors?.filter(
+    (selector, index, all) =>
+      all.findIndex(
+        (other) => other.contentType === selector.contentType && other.apiName === selector.apiName,
+      ) === index,
+  );
   const candidates = new Set<string>();
   for (const file of files ?? []) {
     await assertEditableDirectoryPath(path.dirname(file), false);

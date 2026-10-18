@@ -79,8 +79,16 @@ export async function writeEditableItemSource(
   const profile =
     definition.contract === 'sf-cms-media-source'
       ? {
-          token: definition.contentType === 'sfdc_cms__image' ? 'image' : 'document',
-          directory: definition.contentType === 'sfdc_cms__image' ? 'image' : 'document',
+          token: {
+            sfdc_cms__image: 'image',
+            sfdc_cms__document: 'document',
+            sfdc_cms__audio: 'audio',
+          }[definition.contentType],
+          directory: {
+            sfdc_cms__image: 'image',
+            sfdc_cms__document: 'document',
+            sfdc_cms__audio: 'audio',
+          }[definition.contentType],
         }
       : SOURCE_EMAIL_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
   const base = `${definition.identity.apiName}.cms-${profile.token}`;

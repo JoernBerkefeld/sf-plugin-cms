@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import {
   normalizeRetrieveSelection,
+  RETRIEVE_CONTENT_TYPES,
   type RetrieveSelectionFlags,
 } from '../../src/services/retrieve-selection.js';
 
@@ -19,6 +20,18 @@ const group = (
 });
 
 describe('pure retrieve selector normalization', () => {
+  it('defaults absent selection flags to detached all-of-type groups from the admitted canonical list', () => {
+    const expected = {
+      mode: 'all',
+      groups: RETRIEVE_CONTENT_TYPES.map((type) => group(type, true)),
+    };
+    expect(normalizeRetrieveSelection(Object.freeze({}))).to.deep.equal(expected);
+    const first = normalizeRetrieveSelection({ all: false });
+    first.groups[0].apiNames.push('Not implicit');
+    first.groups[1].contentKeysOrIds.push('Not implicit');
+    first.groups.pop();
+    expect(normalizeRetrieveSelection({ all: false })).to.deep.equal(expected);
+  });
   it('normalizes repeatable exact API names and one distinct qualified type', () => {
     expect(
       normalizeRetrieveSelection({
@@ -31,7 +44,7 @@ describe('pure retrieve selector normalization', () => {
     });
   });
 
-  for (const image of ['sfdc_cms__image', 'sfdc_cms__document']) {
+  for (const image of ['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio']) {
     it(`admits ${image} exact, native, all and mixed metadata selectors`, () => {
       expect(
         normalizeRetrieveSelection({ 'content-type': [image], 'api-name': ['Hero'] }).groups,
@@ -112,7 +125,6 @@ describe('pure retrieve selector normalization', () => {
   });
 
   const invalid: Array<[string, RetrieveSelectionFlags]> = [
-    ['no selection', {}],
     ['type only', { 'content-type': [email] }],
     ['all without types', { all: true }],
     ['name without type', { 'api-name': ['Name'] }],
@@ -139,9 +151,11 @@ describe('pure retrieve selector normalization', () => {
     ' ',
     '\t',
     'unknown',
-    'email',
-    'emailTemplate',
-    'sfdc_cms__audio',
+    'futureType',
+    'sfdc_cms__futureType',
+    'Audio',
+    'sfdc_cms__Audio',
+    'sfdc_cms__video',
     'sfdc_cms__Email',
     ` ${email}`,
     `${email} `,
@@ -177,10 +191,45 @@ describe('pure retrieve selector normalization', () => {
     });
   }
 
-  it('explicitly blocks known unqualified family names instead of aliasing them', () => {
-    for (const contentType of ['email', 'emailTemplate']) {
-      expect(() => normalizeRetrieveSelection({ metadata: [contentType] })).to.throw(/qualified/u);
-    }
+  for (const canonical of RETRIEVE_CONTENT_TYPES) {
+    const short = canonical.slice('sfdc_cms__'.length);
+    it(`canonicalizes both ${short} spellings before deduplication in every mode`, () => {
+      const types = Object.freeze([short, canonical, short]);
+      for (const selector of [
+        { 'api-name': [' A:B:c ', ' A:B:c '] },
+        { 'content-key-or-id': ['Opaque:Key', 'Opaque:Key'] },
+        { all: true },
+      ]) {
+        expect(normalizeRetrieveSelection({ 'content-type': types, ...selector })).to.deep.equal(
+          normalizeRetrieveSelection({ 'content-type': [canonical], ...selector }),
+        );
+      }
+      const metadata = Object.freeze([
+        `${short}: A:B:c `,
+        canonical,
+        `${canonical}: A:B:c `,
+        short,
+      ]);
+      expect(normalizeRetrieveSelection({ metadata })).to.deep.equal({
+        mode: 'metadata',
+        groups: [group(canonical, true, [' A:B:c '])],
+      });
+      expect(types).to.deep.equal([short, canonical, short]);
+      expect(metadata).to.deep.equal([
+        `${short}: A:B:c `,
+        canonical,
+        `${canonical}: A:B:c `,
+        short,
+      ]);
+    });
+  }
+
+  it('retains first canonical occurrence order across mixed alias metadata', () => {
+    expect(
+      normalizeRetrieveSelection({
+        metadata: ['image:Hero', 'email', 'sfdc_cms__image', 'email:Exact'],
+      }).groups,
+    ).to.deep.equal([group('sfdc_cms__image', true, ['Hero']), group(email, true, ['Exact'])]);
   });
 
   it('treats false all as absent in metadata and exact modes', () => {

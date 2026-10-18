@@ -14,6 +14,7 @@ import {
 import {
   applyDraftEmailDeleteWithReport,
   deleteFamilyPolicy,
+  DELETE_CONTENT_TYPES,
   EMAIL_CONTENT_TYPE,
   EMAIL_TEMPLATE_CONTENT_TYPE,
   EmailDeleteOutcomeUnknownError,
@@ -21,6 +22,7 @@ import {
   previewDraftEmailDelete,
   type DeleteContentType,
 } from '../../../services/email-delete.js';
+import { normalizeContentTypeAlias } from '../../../services/content-type-alias.js';
 import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
@@ -29,9 +31,9 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
   public static readonly summary =
     'Preview or permanently delete one bounded run-owned Draft Email or Email Template.';
   public static readonly description =
-    'Selects exactly one Draft/unpublished sealed content family by workspace ID, API name, and explicit language or workspace default language. sfdc_cms__email remains the default and requires contract v1; sfdc_cms__emailTemplate requires contract v2 and a strict completed CREATE journal with unchanged source artifacts. Dry-run is the default. --apply additionally requires a new --report-dir and --acknowledge-permanent-delete before org access. The command deletes one variant only, never cascades, never deletes published content, and never retries ambiguity.';
+    'Selects exactly one Draft/unpublished sealed content family by workspace ID, API name, and explicit language or workspace default language. email remains the default and requires contract v1; emailTemplate requires contract v2 (exact sfdc_cms__ names are also accepted) and a strict completed CREATE journal with unchanged source artifacts. Dry-run is the default. --apply additionally requires a new --report-dir and --acknowledge-permanent-delete before org access. The command deletes one variant only, never cascades, never deletes published content, and never retries ambiguity.';
   public static readonly examples = [
-    '<%= config.bin %> cms delete content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --ownership-report ./create-report/workspace-import-run.json --json',
+    '<%= config.bin %> cms delete content --target-org my-org --content-type emailTemplate --contract-version 2 --workspace-id 0Zu... --api-name WelcomeTemplate --language en_US --ownership-report ./create-report/workspace-import-run.json --json',
     '<%= config.bin %> cms delete content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report --json',
   ];
   public static readonly flags = {
@@ -44,8 +46,8 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
     }),
     'content-type': Flags.string({
       default: EMAIL_CONTENT_TYPE,
-      options: [EMAIL_CONTENT_TYPE, EMAIL_TEMPLATE_CONTENT_TYPE],
-      summary: 'Sealed CMS delete family.',
+      options: DELETE_CONTENT_TYPES.flatMap((type) => [type.slice('sfdc_cms__'.length), type]),
+      summary: 'email or emailTemplate (or sfdc_cms__ names); sealed delete families only.',
     }),
     'workspace-id': Flags.string({ required: true, summary: 'Exact CMS workspace ID.' }),
     'api-name': Flags.string({ required: true, summary: 'Exact Email API name.' }),
@@ -79,7 +81,10 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
 
   public async run(): Promise<CmsEnvelope<ContentDeleteResult>> {
     const { flags } = await this.parse(DeleteContent);
-    const selectedContentType = flags['content-type'] as DeleteContentType;
+    const selectedContentType = normalizeContentTypeAlias(
+      flags['content-type'] ?? EMAIL_CONTENT_TYPE,
+      DELETE_CONTENT_TYPES,
+    )!;
     const expectedContractVersion = selectedContentType === EMAIL_TEMPLATE_CONTENT_TYPE ? 2 : 1;
     if ((flags['contract-version'] ?? 1) !== expectedContractVersion)
       return this.finish(

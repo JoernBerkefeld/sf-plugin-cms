@@ -17,7 +17,8 @@ import {
 
 export const EMAIL_CONTENT_TYPE = 'sfdc_cms__email' as const;
 export const EMAIL_TEMPLATE_CONTENT_TYPE = 'sfdc_cms__emailTemplate' as const;
-export type DeleteContentType = typeof EMAIL_CONTENT_TYPE | typeof EMAIL_TEMPLATE_CONTENT_TYPE;
+export const DELETE_CONTENT_TYPES = [EMAIL_CONTENT_TYPE, EMAIL_TEMPLATE_CONTENT_TYPE] as const;
+export type DeleteContentType = (typeof DELETE_CONTENT_TYPES)[number];
 
 type DeleteFamilyPolicy = {
   readonly blockerCode:

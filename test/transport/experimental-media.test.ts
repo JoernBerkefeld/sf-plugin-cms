@@ -11,6 +11,7 @@ import {
 } from '../../src/filesystem/runOwnedTemp.js';
 import {
   downloadExperimentalCmsMedia,
+  EXPERIMENTAL_MEDIA_POLICY,
   isApprovedSalesforceMediaUrl,
 } from '../../src/transport/experimental-media.js';
 
@@ -204,7 +205,7 @@ describe('experimental CMS media transport', () => {
     }
   });
 
-  it('admits only explicit Audio audio/x-wav and verifies exact WAV bytes', async () => {
+  it('acquires explicit Audio audio/x-wav with exact bytes', async () => {
     const bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
     const md5 = createHash('md5').update(bytes).digest('hex');
     const source = new URL(
@@ -226,16 +227,6 @@ describe('experimental CMS media transport', () => {
       downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__document' }),
       'unsupported',
     );
-    for (const mimeType of ['audio/wav', 'audio/mpeg', 'image/png']) {
-      await expectRejected(
-        downloadExperimentalCmsMedia(source, {
-          ...base,
-          contentType: 'sfdc_cms__audio',
-          expectedMimeType: mimeType,
-        }),
-        'unsupported',
-      );
-    }
     expect(fetcher.notCalled).to.equal(true);
     const result = await downloadExperimentalCmsMedia(source, {
       ...base,
@@ -251,30 +242,37 @@ describe('experimental CMS media transport', () => {
     expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('audio/x-wav');
   });
 
-  it('rejects Audio extension, signature, MIME, integrity, cap and redirect failures', async () => {
-    for (const failure of [
-      'extension',
-      'missing-extension',
-      'signature',
-      'high-bit-signature',
-      'wave',
-      'mime',
-      'size',
-      'md5',
-      'length',
-      'cap',
-      'redirect',
-    ]) {
-      const bytes =
-        failure === 'high-bit-signature'
-          ? Buffer.from('d2c9c6c604000000d7c1d6c5', 'hex')
-          : Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
-      if (failure === 'signature') bytes.write('FAKE', 0);
-      if (failure === 'wave') bytes.write('WEBP', 8);
+  it('transports opaque non-WAV Audio beyond the legacy cap without format qualification', async () => {
+    const bytes = Buffer.alloc(EXPERIMENTAL_MEDIA_POLICY.perImageBytes + 1, 255);
+    const md5 = createHash('md5').update(bytes).digest('hex');
+    const outputFile = path.join(root, 'opaque-audio');
+    const result = await downloadExperimentalCmsMedia(
+      new URL(
+        `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=opaque.bin&version=1`,
+      ),
+      {
+        accessToken: 'synthetic-token',
+        contentType: 'sfdc_cms__audio',
+        expectedMd5: md5,
+        expectedMimeType: 'audio/x-unfamiliar',
+        expectedSize: bytes.length,
+        instanceUrl: 'https://tenant.my.salesforce.com',
+        outputFile,
+        fetch: async () =>
+          new Response(bytes, { headers: { 'content-type': 'audio/x-unfamiliar' } }),
+      },
+    );
+    expect(result.bytes).to.equal(bytes.length);
+    expect(result.sha256).to.equal(createHash('sha256').update(bytes).digest('hex'));
+    expect(await readFile(outputFile)).to.deep.equal(bytes);
+  });
+
+  it('rejects Audio unsafe filename, MIME, integrity, cap and redirect failures', async () => {
+    for (const failure of ['filename', 'mime', 'size', 'md5', 'length', 'cap', 'redirect']) {
+      const bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
       const md5 = createHash('md5').update(bytes).digest('hex');
       let fileName = 'audio.wav';
-      if (failure === 'extension') fileName = 'audio.mp3';
-      if (failure === 'missing-extension') fileName = 'audio';
+      if (failure === 'filename') fileName = '../audio.wav';
       const outputFile = path.join(root, `${failure}.wav`);
       await expectRejected(
         downloadExperimentalCmsMedia(
@@ -305,11 +303,7 @@ describe('experimental CMS media transport', () => {
           },
         ),
         {
-          extension: 'extension must be wav',
-          'missing-extension': 'extension must be wav',
-          signature: 'WAV signature',
-          'high-bit-signature': 'WAV signature',
-          wave: 'WAV signature',
+          filename: 'filename is invalid',
           mime: 'MIME type changed',
           size: 'authoring metadata',
           md5: 'MD5 differs',
@@ -343,7 +337,7 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'video.mp4'),
     };
-    for (const contentType of ['sfdc_cms__document', 'sfdc_cms__audio'] as const) {
+    for (const contentType of ['sfdc_cms__document'] as const) {
       await expectRejected(
         downloadExperimentalCmsMedia(source, { ...base, contentType }),
         'unsupported',

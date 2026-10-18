@@ -6,8 +6,10 @@ import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import {
+  buildAudioCreateMultipart,
   buildDocumentCreateMultipart,
   buildImageCreateMultipart,
+  createAudioContent,
   createDocumentContent,
   createImageContent,
   MAX_IMAGE_BYTES,
@@ -33,6 +35,334 @@ const input = {
 function constantBoundary(value: string): () => string {
   return () => value;
 }
+
+describe('pure multipart Audio CREATE preparation', () => {
+  it('frames exact sliced opaque bytes with explicit MIME and Audio input, without sending', () => {
+    const backing = Buffer.from([9, 0, 255, 128, 13, 10, 8]);
+    const audio = backing.subarray(1, -1);
+    const result = buildAudioCreateMultipart(input, 'sound.bin', audio, {
+      mimeType: 'application/x-future-audio',
+      boundaryFactory: constantBoundary('safe'),
+    });
+    const nativeInput = {
+      ...input,
+      contentType: 'sfdc_cms__audio',
+      contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
+    };
+    const expected = Buffer.concat([
+      Buffer.from(
+        '--safe\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify(nativeInput) +
+          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="sound.bin"\r\n' +
+          'Content-Type: application/x-future-audio\r\n\r\n',
+      ),
+      audio,
+      Buffer.from('\r\n--safe--\r\n'),
+    ]);
+    expect(result.input).to.deep.equal(nativeInput);
+    expect(result.body.equals(expected)).to.equal(true);
+  });
+  it('accepts opaque non-WAV bytes above the revoked cap as local framing, not platform qualification', () => {
+    const audio = Buffer.alloc(MAX_IMAGE_BYTES + 1, 255);
+    const built = buildAudioCreateMultipart(input, 'opaque.bin', audio, {
+      mimeType: 'audio/x-future',
+      boundaryFactory: constantBoundary('safe'),
+    });
+    const start = built.body.lastIndexOf(Buffer.from('\r\n\r\n')) + 4;
+    expect(
+      createHash('sha256')
+        .update(built.body.subarray(start, start + audio.length))
+        .digest('hex'),
+    ).to.equal(createHash('sha256').update(audio).digest('hex'));
+  });
+  it('requires runtime-safe explicit MIME before boundary generation', () => {
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const mimeType of [
+      undefined,
+      null,
+      42,
+      {},
+      '',
+      'audio',
+      '/wav',
+      'audio/',
+      ' audio/wav',
+      'audio/wav ',
+      'audio/wav; charset=UTF-8',
+      'audio/wav\r\nX: yes',
+      'audio/\0wav',
+      'audio/\u007Fwav',
+      'audio/\u010Dwav',
+    ]) {
+      expect(() =>
+        buildAudioCreateMultipart(input, 'sound.bin', Buffer.from([1]), {
+          mimeType: mimeType as string,
+          boundaryFactory,
+        }),
+      ).to.throw(TypeError, 'safe ASCII type/subtype');
+    }
+    expect(boundaryFactory.called).to.equal(false);
+  });
+  it('rejects unsafe and non-ASCII filenames before ASCII serialization', () => {
+    const boundaryFactory = sinon.stub().returns('safe');
+    for (const filename of [
+      '',
+      '.',
+      '..',
+      '../sound.bin',
+      'a/b.bin',
+      String.raw`a\b.bin`,
+      'a".bin',
+      'a\r\nX: yes.bin',
+      'a\0.bin',
+      'a\u007F.bin',
+      'caf\u00E9.bin',
+      'a\u010D.bin',
+      'a\u010A.bin',
+      'a\u0122.bin',
+    ]) {
+      expect(() =>
+        buildAudioCreateMultipart(input, filename, Buffer.from([1]), {
+          mimeType: 'audio/wav',
+          boundaryFactory,
+        }),
+      ).to.throw(CmsRequestError);
+    }
+    expect(boundaryFactory.called).to.equal(false);
+  });
+  it('reuses bounded JSON/binary collision avoidance and rejects invalid boundaries', () => {
+    const candidates = ['hero_image', 'collision', 'safe'];
+    const options = { mimeType: 'audio/wav', boundaryFactory: () => candidates.shift()! };
+    expect(
+      buildAudioCreateMultipart(input, 'sound.bin', Buffer.from('collision'), options).boundary,
+    ).to.equal('safe');
+    for (const boundary of ['collision', 'bad boundary']) {
+      expect(() =>
+        buildAudioCreateMultipart(input, 'sound.bin', Buffer.from('collision'), {
+          mimeType: 'audio/wav',
+          boundaryFactory: constantBoundary(boundary),
+          maxBoundaryAttempts: 2,
+        }),
+      ).to.throw(CmsRequestError, /boundary/u);
+    }
+    expect(() =>
+      buildAudioCreateMultipart(input, 'sound.bin', Buffer.from([1]), {
+        mimeType: 'audio/wav',
+        maxBoundaryAttempts: 0,
+      }),
+    ).to.throw(CmsRequestError, 'positive integer');
+  });
+  it('retains nonempty binary, input allowlist and Buffer representability guards', () => {
+    const options = { mimeType: 'audio/wav', boundaryFactory: constantBoundary('safe') };
+    for (const audio of [Buffer.alloc(0), 'not-binary' as unknown as Uint8Array]) {
+      expect(() => buildAudioCreateMultipart(input, 'sound.bin', audio, options)).to.throw(
+        CmsRequestError,
+      );
+    }
+    for (const byteLength of [Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const audio = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
+      expect(() => buildAudioCreateMultipart(input, 'sound.bin', audio, options)).to.throw(
+        CmsRequestError,
+        'represented by a Buffer',
+      );
+    }
+    expect(() =>
+      buildAudioCreateMultipart(
+        { ...input, contentType: 'sfdc_cms__document' } as typeof input,
+        'sound.bin',
+        Buffer.from([1]),
+        options,
+      ),
+    ).to.throw(CmsRequestError, 'Unsupported image create field');
+  });
+});
+
+describe('multipart Audio create sender', () => {
+  const binding = {
+    contentKey: 'audio-key',
+    managedContentId: 'audio-parent',
+    managedContentVariantId: 'audio-variant',
+  };
+  const options = {
+    mimeType: 'application/x-future-audio',
+    boundaryFactory: constantBoundary('safe'),
+    timeoutMs: 1234,
+  };
+
+  it('sends one exact Audio POST with explicit MIME, sliced bytes and retry disabled', async () => {
+    const backing = Buffer.from([9, 0, 255, 128, 13, 10, 8]);
+    const audio = backing.subarray(1, -1);
+    const expected = Buffer.concat([
+      Buffer.from(
+        '--safe\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          JSON.stringify({
+            ...input,
+            contentType: 'sfdc_cms__audio',
+            contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
+          }) +
+          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="sound.bin"\r\n' +
+          'Content-Type: application/x-future-audio\r\n\r\n',
+      ),
+      audio,
+      Buffer.from('\r\n--safe--\r\n'),
+    ]);
+    const request = sinon.stub().returns(fakeRequest(Promise.resolve(binding)));
+    expect(await createAudioContent({ request }, input, 'sound.bin', audio, options)).to.deep.equal(
+      binding,
+    );
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0]).to.deep.equal({
+      method: 'POST',
+      url: '/connect/cms/contents',
+      body: expected,
+      headers: {
+        'content-length': String(expected.length),
+        'content-type': 'multipart/form-data; boundary=safe',
+      },
+    });
+    expect(request.firstCall.args[1]).to.deep.equal({ retry: { maxRetries: 0 }, timeout: 1234 });
+  });
+
+  it('locally sends opaque non-WAV bytes above the revoked cap with exact bytes/hash, not native qualification', async () => {
+    const backing = Buffer.alloc(MAX_IMAGE_BYTES + 3, 255);
+    const audio = backing.subarray(1, -1);
+    audio.set([0, 13, 10, 128]);
+    const request = sinon.stub().returns(fakeRequest(Promise.resolve(binding)));
+    await createAudioContent({ request }, input, 'opaque.bin', audio, options);
+    expect(request.calledOnce).to.equal(true);
+    const body = request.firstCall.args[0].body as Buffer;
+    const header = Buffer.from(`Content-Type: ${options.mimeType}\r\n\r\n`);
+    const start = body.indexOf(header) + header.length;
+    expect(start).to.be.greaterThan(header.length);
+    const sent = body.subarray(start, start + audio.byteLength);
+    expect(sent.equals(audio)).to.equal(true);
+    expect(createHash('sha256').update(sent).digest('hex')).to.equal(
+      createHash('sha256').update(audio).digest('hex'),
+    );
+    expect(body.subarray(start + audio.byteLength).toString('ascii')).to.equal('\r\n--safe--\r\n');
+  });
+
+  it('rejects invalid framing, input, options and pre-abort without any POST', async () => {
+    const request = sinon.stub();
+    const controller = new AbortController();
+    controller.abort();
+    const cases: Array<{
+      filename?: string;
+      audio?: Uint8Array;
+      input?: Parameters<typeof createAudioContent>[1];
+      options?: Partial<Parameters<typeof createAudioContent>[4]>;
+    }> = [
+      { filename: '../sound.bin' },
+      { filename: 'a".bin' },
+      { filename: 'a\r\nInjected.bin' },
+      { filename: 'a\u010D.bin' },
+      { audio: Buffer.alloc(0) },
+      { audio: 'not-binary' as unknown as Uint8Array },
+      { audio: Object.defineProperty(new Uint8Array(1), 'byteLength', { value: Number.NaN }) },
+      { input: { ...input, contentBody: {} } as Parameters<typeof createAudioContent>[1] },
+      { input: { ...input, title: '' } },
+      { options: { mimeType: undefined as unknown as string } },
+      { options: { mimeType: 'audio/wav\r\nInjected: yes' } },
+      { options: { boundaryFactory: constantBoundary('bad boundary') } },
+      { options: { boundaryFactory: constantBoundary('collision'), maxBoundaryAttempts: 2 } },
+      { options: { maxBoundaryAttempts: 0 } },
+      ...[0, -1, Number.NaN, Number.POSITIVE_INFINITY].map((timeoutMs) => ({
+        options: { timeoutMs },
+      })),
+      { options: { signal: controller.signal } },
+    ];
+    for (const candidate of cases) {
+      try {
+        await createAudioContent(
+          { request },
+          candidate.input ?? input,
+          candidate.filename ?? 'sound.bin',
+          candidate.audio ?? Buffer.from('collision'),
+          { ...options, ...candidate.options },
+        );
+        expect.fail('expected Audio sender rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(Error);
+        expect(error).not.to.have.property('message', 'expected Audio sender rejection');
+      }
+    }
+    expect(request.called).to.equal(false);
+  });
+
+  it('destroys the in-flight stream on cancellation without a second request', async () => {
+    const controller = new AbortController();
+    const stream = new PassThrough();
+    const pending = new Promise<never>((_resolve, reject) => stream.once('error', reject));
+    const destroy = sinon.spy(stream, 'destroy');
+    const request = sinon.stub().returns(fakeRequest(pending, stream));
+    const result = createAudioContent({ request }, input, 'sound.bin', Buffer.from([1]), {
+      ...options,
+      signal: controller.signal,
+    });
+    controller.abort();
+    try {
+      await result;
+      expect.fail('expected cancellation');
+    } catch (error) {
+      expect(error).to.be.instanceOf(CmsRequestError);
+      expect((error as Error).message).to.include('cancelled');
+    }
+    expect(stream.destroyed).to.equal(true);
+    expect(destroy.calledOnce).to.equal(true);
+    controller.abort();
+    expect(request.calledOnce).to.equal(true);
+  });
+
+  it('never replays or refreshes socket, 401, rate-limit or malformed-success outcomes', async () => {
+    for (const outcome of [
+      new Error('ambiguous socket failure'),
+      Object.assign(new Error('expired token'), { statusCode: 401 }),
+      Object.assign(new Error('rate limited'), { statusCode: 429 }),
+      { contentKey: 'incomplete' },
+    ]) {
+      const originalRequest = sinon.stub();
+      const refresh = sinon.spy();
+      const caller = {
+        request: originalRequest,
+        accessToken: 'connection-owned-token',
+        instanceUrl: 'https://example.my.salesforce.com',
+        version: '67.0',
+        refreshFn: refresh,
+      };
+      const request = sinon
+        .stub(JsforceConnection.prototype, 'request')
+        .callsFake(() =>
+          fakeRequest(
+            outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome),
+          ),
+        );
+      try {
+        try {
+          await createAudioContent(caller, input, 'sound.bin', Buffer.from([1]), options);
+          expect.fail('expected uncertain Audio CREATE');
+        } catch (error) {
+          expect(error).to.be.instanceOf(CmsRequestError);
+          if ('statusCode' in outcome) {
+            expect((error as CmsRequestError).status).to.equal(outcome.statusCode);
+          }
+        }
+        expect(request.calledOnce).to.equal(true);
+        expect(originalRequest.called).to.equal(false);
+        expect(refresh.called).to.equal(false);
+        expect(request.thisValues[0]).not.to.equal(caller);
+        expect(request.thisValues[0]).to.have.property('_refreshDelegate', undefined);
+        expect(request.firstCall.args[1]).to.deep.equal({
+          retry: { maxRetries: 0 },
+          timeout: 1234,
+        });
+      } finally {
+        request.restore();
+      }
+    }
+  });
+});
 
 describe('multipart Document create transport', () => {
   it('matches the qualified native text/plain multipart body byte for byte', () => {
