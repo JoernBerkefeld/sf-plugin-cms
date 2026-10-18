@@ -18,6 +18,9 @@ import { preflightDeployDocumentCreate } from './deploy-document-create-prefligh
 import { admitDeployDocumentUnchanged } from './deploy-document-unchanged.js';
 import { preflightDeployDocumentUpdate } from './deploy-document-update-preflight.js';
 import { enumerateNativeWorkspace } from './retrieve-native-inventory.js';
+import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
+import { admitDeployAudioUnchanged } from './deploy-audio-unchanged.js';
+import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
 
 export type DeployBatchPreflightInput = {
   sources: DeploySourceSelectionFlags;
@@ -47,6 +50,9 @@ export type DeployBatchPreflight = {
     documentCreate?: Awaited<ReturnType<typeof preflightDeployDocumentCreate>>;
     documentUpdate?: Awaited<ReturnType<typeof preflightDeployDocumentUpdate>>;
     documentUnchanged?: Awaited<ReturnType<typeof admitDeployDocumentUnchanged>>;
+    audioCreate?: Awaited<ReturnType<typeof preflightDeployAudioCreate>>;
+    audioUpdate?: Awaited<ReturnType<typeof preflightDeployAudioUpdate>>;
+    audioUnchanged?: Awaited<ReturnType<typeof admitDeployAudioUnchanged>>;
   }>;
 };
 
@@ -75,7 +81,9 @@ export async function preflightDeployBatch(
   for (const source of selection.items) {
     if (
       source.definition.contract === 'sf-cms-media-source' &&
-      !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+      !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+        source.definition.contentType,
+      )
     )
       throw new TypeError('Unsupported deploy media content type');
   }
@@ -127,7 +135,9 @@ export async function preflightDeployBatch(
         throw new TypeError('Batch destination selection disagreement');
       if (
         source.definition.contract === 'sf-cms-media-source' &&
-        !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+        !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+          source.definition.contentType,
+        )
       )
         throw new TypeError('Unsupported deploy media content type');
       item.proposed = prepared.proposed;
@@ -139,17 +149,135 @@ export async function preflightDeployBatch(
         language: selected.language,
         expectedRootFolderId: rootFolderId,
       };
-      if (source.definition.contentType === 'sfdc_cms__document') {
-        switch (prepared.proposed) {
-          case 'create': {
-            const proof = await preflightDeployDocumentCreate(connection, scope, requestOptions);
+      switch (source.definition.contentType) {
+        case 'sfdc_cms__audio': {
+          switch (prepared.proposed) {
+            case 'create': {
+              const proof = await preflightDeployAudioCreate(connection, scope, requestOptions);
+              if (
+                !isDeepStrictEqual(proof.source.definition, source.definition) ||
+                !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths) ||
+                proof.mediaSha256 !== source.mediaSha256 ||
+                !isDeepStrictEqual(proof.observations.inventory, prepared.audioInventory)
+              )
+                throw new TypeError('Batch Audio CREATE selected or destination snapshot changed');
+              if (
+                titles.has(proof.payload.title!) ||
+                (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
+              )
+                throw new TypeError('Selected CREATE title/URL collision');
+              titles.add(proof.payload.title!);
+              if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
+              item.audioCreate = proof;
+              break;
+            }
+            case 'unchanged': {
+              const proof = await admitDeployAudioUnchanged(connection, scope, requestOptions);
+              if (
+                proof.contentId !== prepared.existing?.contentId ||
+                proof.variantId !== prepared.existing.variantId
+              )
+                throw new TypeError('Batch Audio unchanged identity changed');
+              if (
+                !isDeepStrictEqual(
+                  await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
+                  prepared.audioInventory,
+                )
+              )
+                throw new TypeError('Batch Audio unchanged destination snapshot changed');
+              item.audioUnchanged = proof;
+              break;
+            }
+            case 'update': {
+              const proof = await preflightDeployAudioUpdate(connection, scope, requestOptions);
+              if (
+                !isDeepStrictEqual(proof, prepared.audioUpdate) ||
+                proof.mediaSha256 !== source.mediaSha256 ||
+                proof.contentId !== prepared.existing?.contentId ||
+                proof.variantId !== prepared.existing.variantId
+              )
+                throw new TypeError('Batch Audio UPDATE selected or destination snapshot changed');
+              item.audioUpdate = proof;
+              break;
+            }
+            default: {
+              throw new TypeError('Batch Audio operation proof missing');
+            }
+          }
+
+          break;
+        }
+        case 'sfdc_cms__document': {
+          switch (prepared.proposed) {
+            case 'create': {
+              const proof = await preflightDeployDocumentCreate(connection, scope, requestOptions);
+              if (
+                !isDeepStrictEqual(proof.source.definition, source.definition) ||
+                !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths) ||
+                proof.mediaSha256 !== source.mediaSha256 ||
+                !isDeepStrictEqual(proof.observations.inventory, prepared.documentInventory)
+              )
+                throw new TypeError(
+                  'Batch Document CREATE selected or destination snapshot changed',
+                );
+              if (
+                titles.has(proof.payload.title!) ||
+                (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
+              )
+                throw new TypeError('Selected CREATE title/URL collision');
+              titles.add(proof.payload.title!);
+              if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
+              item.documentCreate = proof;
+
+              break;
+            }
+            case 'unchanged': {
+              const proof = await admitDeployDocumentUnchanged(connection, scope, requestOptions);
+              if (
+                proof.contentId !== prepared.existing?.contentId ||
+                proof.variantId !== prepared.existing.variantId
+              )
+                throw new TypeError('Batch Document unchanged identity changed');
+              if (
+                !isDeepStrictEqual(
+                  await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
+                  prepared.documentInventory,
+                )
+              )
+                throw new TypeError('Batch Document unchanged destination snapshot changed');
+              item.documentUnchanged = proof;
+
+              break;
+            }
+            case 'update': {
+              const proof = await preflightDeployDocumentUpdate(connection, scope, requestOptions);
+              if (
+                !isDeepStrictEqual(proof, prepared.documentUpdate) ||
+                proof.mediaSha256 !== source.mediaSha256 ||
+                proof.contentId !== prepared.existing?.contentId ||
+                proof.variantId !== prepared.existing.variantId
+              )
+                throw new TypeError(
+                  'Batch Document UPDATE selected or destination snapshot changed',
+                );
+              item.documentUpdate = proof;
+              break;
+            }
+            default: {
+              throw new TypeError('Batch Document operation proof missing');
+            }
+          }
+
+          break;
+        }
+        case 'sfdc_cms__image': {
+          if (prepared.proposed === 'create') {
+            const proof = await preflightDeployImageCreate(connection, scope, requestOptions);
             if (
               !isDeepStrictEqual(proof.source.definition, source.definition) ||
-              !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths) ||
-              proof.mediaSha256 !== source.mediaSha256 ||
-              !isDeepStrictEqual(proof.observations.inventory, prepared.documentInventory)
+              !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths)
             )
-              throw new TypeError('Batch Document CREATE selected or destination snapshot changed');
+              throw new TypeError('Batch Image CREATE intent changed');
             if (
               titles.has(proof.payload.title!) ||
               (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
@@ -157,105 +285,58 @@ export async function preflightDeployBatch(
               throw new TypeError('Selected CREATE title/URL collision');
             titles.add(proof.payload.title!);
             if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
-            item.documentCreate = proof;
-
-            break;
-          }
-          case 'unchanged': {
-            const proof = await admitDeployDocumentUnchanged(connection, scope, requestOptions);
+            item.imageCreate = proof;
+          } else if (prepared.proposed === 'update') {
+            const proof = await preflightDeployImageUpdate(connection, scope, requestOptions);
             if (
-              proof.contentId !== prepared.existing?.contentId ||
-              proof.variantId !== prepared.existing.variantId
-            )
-              throw new TypeError('Batch Document unchanged identity changed');
-            if (
-              !isDeepStrictEqual(
-                await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
-                prepared.documentInventory,
-              )
-            )
-              throw new TypeError('Batch Document unchanged destination snapshot changed');
-            item.documentUnchanged = proof;
-
-            break;
-          }
-          case 'update': {
-            const proof = await preflightDeployDocumentUpdate(connection, scope, requestOptions);
-            if (
-              !isDeepStrictEqual(proof, prepared.documentUpdate) ||
+              !isDeepStrictEqual(proof.source.definition, source.definition) ||
               proof.mediaSha256 !== source.mediaSha256 ||
               proof.contentId !== prepared.existing?.contentId ||
               proof.variantId !== prepared.existing.variantId
             )
-              throw new TypeError('Batch Document UPDATE selected or destination snapshot changed');
-            item.documentUpdate = proof;
-            break;
+              throw new TypeError('Batch Image UPDATE intent changed');
+            item.imageUpdate = proof;
+          } else {
+            const proof = await admitDeployImageUnchanged(connection, scope, requestOptions);
+            if (
+              proof.contentId !== prepared.existing?.contentId ||
+              proof.variantId !== prepared.existing.variantId
+            )
+              throw new TypeError('Batch Image unchanged identity changed');
+            item.imageUnchanged = proof;
           }
-          default: {
-            throw new TypeError('Batch Document operation proof missing');
+
+          break;
+        }
+        default: {
+          if (prepared.proposed === 'create') {
+            const create = await preflightDeployCreate(connection, scope, requestOptions);
+            if (
+              !isDeepStrictEqual(create.payload.contentBody, source.contentBody) ||
+              create.payload.apiName !== source.targetIdentity.apiName ||
+              create.payload.title !== source.definition.title ||
+              create.payload.urlName !== source.definition.urlName
+            )
+              throw new TypeError('Batch CREATE desired intent changed');
+            if (
+              titles.has(create.payload.title!) ||
+              (create.payload.urlName !== undefined && urls.has(create.payload.urlName))
+            )
+              throw new TypeError('Selected CREATE title/URL collision');
+            titles.add(create.payload.title!);
+            if (create.payload.urlName !== undefined) urls.add(create.payload.urlName);
+            item.create = create;
+          } else {
+            const update = await preflightDeployUpdate(connection, scope, requestOptions);
+            if (
+              !isDeepStrictEqual(update.source.items, [source]) ||
+              update.item.proposed !== prepared.proposed ||
+              !isDeepStrictEqual(update.item.existing, prepared.existing)
+            )
+              throw new TypeError('Batch UPDATE local or destination intent changed');
+            item.update = update;
           }
         }
-      } else if (source.definition.contentType === 'sfdc_cms__image') {
-        if (prepared.proposed === 'create') {
-          const proof = await preflightDeployImageCreate(connection, scope, requestOptions);
-          if (
-            !isDeepStrictEqual(proof.source.definition, source.definition) ||
-            !isDeepStrictEqual(proof.source.companionPaths, source.companionPaths)
-          )
-            throw new TypeError('Batch Image CREATE intent changed');
-          if (
-            titles.has(proof.payload.title!) ||
-            (proof.payload.urlName !== undefined && urls.has(proof.payload.urlName))
-          )
-            throw new TypeError('Selected CREATE title/URL collision');
-          titles.add(proof.payload.title!);
-          if (proof.payload.urlName !== undefined) urls.add(proof.payload.urlName);
-          item.imageCreate = proof;
-        } else if (prepared.proposed === 'update') {
-          const proof = await preflightDeployImageUpdate(connection, scope, requestOptions);
-          if (
-            !isDeepStrictEqual(proof.source.definition, source.definition) ||
-            proof.mediaSha256 !== source.mediaSha256 ||
-            proof.contentId !== prepared.existing?.contentId ||
-            proof.variantId !== prepared.existing.variantId
-          )
-            throw new TypeError('Batch Image UPDATE intent changed');
-          item.imageUpdate = proof;
-        } else {
-          const proof = await admitDeployImageUnchanged(connection, scope, requestOptions);
-          if (
-            proof.contentId !== prepared.existing?.contentId ||
-            proof.variantId !== prepared.existing.variantId
-          )
-            throw new TypeError('Batch Image unchanged identity changed');
-          item.imageUnchanged = proof;
-        }
-      } else if (prepared.proposed === 'create') {
-        const create = await preflightDeployCreate(connection, scope, requestOptions);
-        if (
-          !isDeepStrictEqual(create.payload.contentBody, source.contentBody) ||
-          create.payload.apiName !== source.targetIdentity.apiName ||
-          create.payload.title !== source.definition.title ||
-          create.payload.urlName !== source.definition.urlName
-        )
-          throw new TypeError('Batch CREATE desired intent changed');
-        if (
-          titles.has(create.payload.title!) ||
-          (create.payload.urlName !== undefined && urls.has(create.payload.urlName))
-        )
-          throw new TypeError('Selected CREATE title/URL collision');
-        titles.add(create.payload.title!);
-        if (create.payload.urlName !== undefined) urls.add(create.payload.urlName);
-        item.create = create;
-      } else {
-        const update = await preflightDeployUpdate(connection, scope, requestOptions);
-        if (
-          !isDeepStrictEqual(update.source.items, [source]) ||
-          update.item.proposed !== prepared.proposed ||
-          !isDeepStrictEqual(update.item.existing, prepared.existing)
-        )
-          throw new TypeError('Batch UPDATE local or destination intent changed');
-        item.update = update;
       }
     } catch (error) {
       item.blockedReasons.push(
