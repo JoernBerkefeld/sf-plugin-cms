@@ -516,6 +516,66 @@ describe('verified UPDATE inventory accounting', () => {
 });
 
 describe('internal sequential batch executor', () => {
+  for (const contentType of ['sfdc_cms__audio', 'sfdc_cms__unknown']) {
+    it(`rejects explicit ${contentType} before executor inventory or mutation`, async () => {
+      const f = await fixture();
+      let reads = 0;
+      f.onRead(async () => {
+        reads++;
+      });
+      await writeFile(
+        f.files[0],
+        JSON.stringify({
+          contract: 'sf-cms-media-source',
+          contractVersion: '1.0.0',
+          identity: {
+            ...f.definitions[0].identity,
+            type: contentType === 'sfdc_cms__audio' ? 'Audio' : 'Unknown',
+          },
+          contentType,
+          language: 'en_US',
+          folderPath: [],
+          media: { representation: 'url-only', address: 'https://example.invalid/sound.wav' },
+        }),
+      );
+      try {
+        await f.run();
+        throw new Error('Expected unsupported source rejection');
+      } catch (error) {
+        expect((error as Error).message).to.match(
+          /Unsupported (deploy media content type|media type\/contentType)/u,
+        );
+      }
+      expect(reads).to.equal(0);
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+  }
+  for (const contentType of ['sfdc_cms__audio', 'sfdc_cms__unknown']) {
+    it(`blocks fabricated ${contentType} media at the execution boundary without Image transport`, async () => {
+      const f = await fixture(false, true);
+      let injected = false;
+      const result = await f.run({
+        rewrite: async (file, report) => {
+          if (!injected) {
+            injected = true;
+            report.items[0].source.definition = {
+              ...report.items[2].source.definition,
+              contentType,
+            };
+          }
+          await rewriteAtomic(file, report);
+        },
+      });
+      expect(result.report.state).to.equal('blocked');
+      expect(result.report.blockedReasons.join('; ')).to.include(
+        'Unsupported deploy media content type',
+      );
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+      expect(result.report.items.every((item) => item.outcome === 'unattempted')).to.equal(true);
+    });
+  }
   for (const existing of [false, true])
     it(`executes real mixed Email/Template/Image ${existing ? 'CREATE/unchanged' : 'CREATE'} orchestration`, async () => {
       const f = await fixture(existing, true);

@@ -172,6 +172,17 @@ function fixture(template = false) {
 }
 
 describe('read-only deploy destination preparation', () => {
+  for (const contentType of ['sfdc_cms__audio', 'sfdc_cms__unknown']) {
+    it(`rejects fabricated ${contentType} media before Image admission or org reads`, async () => {
+      const f = fixture();
+      Object.assign(f.source.definition, { contract: 'sf-cms-media-source', contentType });
+      f.source.targetIdentity.contentType = contentType;
+      const result = await f.run();
+      expect(result.blockedReasons).to.deep.equal(['Unsupported deploy media content type']);
+      expect(result.items).to.deep.equal([]);
+      expect(f.calls).to.deep.equal([]);
+    });
+  }
   for (const template of [false, true]) {
     it(`resolves exact ${template ? 'Template' : 'Email'} with portable source context and unchanged semantics`, async () => {
       const f = fixture(template);

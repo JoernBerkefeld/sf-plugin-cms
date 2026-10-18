@@ -326,7 +326,14 @@ export async function executeDeployBatch(
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Batch requires exact destination org ID');
   // Never accept a caller's eligibility, payload, or operation-specific proof.
-  await selectDeploySources(selected.sources);
+  const selection = await selectDeploySources(selected.sources);
+  for (const source of selection.items) {
+    if (
+      source.definition.contract === 'sf-cms-media-source' &&
+      !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+    )
+      throw new TypeError('Unsupported deploy media content type');
+  }
   const initialInventory = await enumerateNativeWorkspace(
     connection,
     selected.workspaceId,
@@ -414,6 +421,11 @@ export async function executeDeployBatch(
         }
       };
       const boundary = async () => {
+        if (
+          item.source.definition.contract === 'sf-cms-media-source' &&
+          !['sfdc_cms__image', 'sfdc_cms__document'].includes(item.source.definition.contentType)
+        )
+          throw new TypeError('Unsupported deploy media content type');
         if (requestOptions.signal?.aborted) throw new TypeError('Batch cancelled before execution');
         if (!isDeepStrictEqual(await reselect(), baseline.selection))
           throw new TypeError('Batch selection changed before execution');
@@ -433,7 +445,7 @@ export async function executeDeployBatch(
             requestOptions,
             verifiedUpdatedRows,
           );
-        } else if (item.source.definition.contract === 'sf-cms-media-source') {
+        } else if (item.source.definition.contentType === 'sfdc_cms__image') {
           if (item.proposed === 'create') {
             const fresh = await preflightDeployImageCreate(connection, scope, requestOptions);
             if (!isDeepStrictEqual(fresh, proof.imageCreate))
@@ -480,6 +492,11 @@ export async function executeDeployBatch(
           throw new TypeError('Batch durable intent changed at execution boundary');
       };
       await boundary();
+      if (
+        item.source.definition.contract === 'sf-cms-media-source' &&
+        !['sfdc_cms__image', 'sfdc_cms__document'].includes(item.source.definition.contentType)
+      )
+        throw new TypeError('Unsupported deploy media content type');
       active = item;
       const itemInput = {
         ...scope,
@@ -497,7 +514,7 @@ export async function executeDeployBatch(
         );
         item.target = result.target;
         item.outcome = result.outcome;
-      } else if (item.source.definition.contract === 'sf-cms-media-source') {
+      } else if (item.source.definition.contentType === 'sfdc_cms__image') {
         if (item.proposed === 'blocked') throw new TypeError('Blocked Image operation');
         const result = await executeDeployImage(
           connection,

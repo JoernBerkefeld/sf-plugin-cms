@@ -72,6 +72,13 @@ export async function preflightDeployBatch(
     !isDeepStrictEqual(selection, selected.expectedSelection)
   )
     throw new TypeError('Batch selection changed since planning');
+  for (const source of selection.items) {
+    if (
+      source.definition.contract === 'sf-cms-media-source' &&
+      !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+    )
+      throw new TypeError('Unsupported deploy media content type');
+  }
   let rootFolderId = selected.expectedRootFolderId;
   if (selection.items.some((item) => item.definition.contract === 'sf-cms-media-source')) {
     const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
@@ -118,6 +125,11 @@ export async function preflightDeployBatch(
     try {
       if (!prepared || !isDeepStrictEqual(prepared.source, source))
         throw new TypeError('Batch destination selection disagreement');
+      if (
+        source.definition.contract === 'sf-cms-media-source' &&
+        !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+      )
+        throw new TypeError('Unsupported deploy media content type');
       item.proposed = prepared.proposed;
       if (prepared.blockedReasons.length > 0 || prepared.proposed === 'blocked')
         throw new TypeError(prepared.blockedReasons.join('; ') || 'Blocked destination item');
@@ -183,7 +195,7 @@ export async function preflightDeployBatch(
             throw new TypeError('Batch Document operation proof missing');
           }
         }
-      } else if (source.definition.contract === 'sf-cms-media-source') {
+      } else if (source.definition.contentType === 'sfdc_cms__image') {
         if (prepared.proposed === 'create') {
           const proof = await preflightDeployImageCreate(connection, scope, requestOptions);
           if (

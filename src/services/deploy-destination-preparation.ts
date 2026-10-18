@@ -137,6 +137,8 @@ async function prepareItem(
   };
   try {
     if (item.definition.contract === 'sf-cms-media-source') {
+      if (!['sfdc_cms__image', 'sfdc_cms__document'].includes(item.definition.contentType))
+        throw new TypeError('Unsupported deploy media content type');
       const bind = async () => {
         const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
         if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
@@ -210,6 +212,8 @@ async function prepareItem(
         await bind();
         return prepared;
       }
+      if (item.definition.contentType !== 'sfdc_cms__image')
+        throw new TypeError('Unsupported deploy media content type');
       if (collisions.length === 0) {
         const proof = await preflightDeployImageCreate(connection, scope, options);
         if (
@@ -397,6 +401,8 @@ export async function prepareDeployDestination(
     const identities = new Set<string>();
     for (const item of selected.selection.items) {
       if (item.definition.contract === 'sf-cms-media-source') {
+        if (!['sfdc_cms__image', 'sfdc_cms__document'].includes(item.definition.contentType))
+          throw new TypeError('Unsupported deploy media content type');
         const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
         if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
           throw new TypeError('Image planning local snapshot changed');

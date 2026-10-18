@@ -107,6 +107,8 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
   }
   if ((candidate as { contract?: string })?.contract === 'sf-cms-media-source') {
     assertEditableMediaDefinition(candidate);
+    if (!(DEPLOY_SOURCE_CONTENT_TYPES as readonly string[]).includes(candidate.contentType))
+      throw new TypeError('Unsupported deploy media content type');
     if (candidate.media.representation !== 'binary')
       throw new TypeError(
         candidate.contentType === 'sfdc_cms__image'

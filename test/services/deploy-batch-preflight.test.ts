@@ -141,6 +141,42 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 }
 
 describe('internal whole-selection deploy preflight', () => {
+  for (const contentType of ['sfdc_cms__audio', 'sfdc_cms__unknown']) {
+    it(`rejects explicit ${contentType} media before Image preflight or org access`, async () => {
+      const f = await fixture();
+      await writeFile(
+        f.files[0],
+        JSON.stringify({
+          contract: 'sf-cms-media-source',
+          contractVersion: '1.0.0',
+          identity: {
+            ...f.definitions[0].identity,
+            type: contentType === 'sfdc_cms__audio' ? 'Audio' : 'Unknown',
+          },
+          contentType,
+          language: 'en_US',
+          folderPath: [],
+          media: {
+            representation: 'binary',
+            mimeType: 'audio/x-wav',
+            companion: { role: 'media', path: 'Alpha.cms-audio.media.wav' },
+          },
+        }),
+      );
+      await writeFile(
+        path.join(path.dirname(f.files[0]), 'Alpha.cms-audio.media.wav'),
+        'RIFF mock WAV',
+      );
+      await failure(
+        preflightDeployBatch(f.connection, {
+          ...f.input,
+          sources: { 'definition-file': [f.files[0]] },
+        }),
+        /Unsupported (deploy media content type|media type\/contentType)/u,
+      );
+      expect(f.calls).to.deep.equal([]);
+    });
+  }
   for (const scenario of [
     'nondefault-language',
     'selected-title',

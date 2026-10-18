@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, symlink, unlink, writeFile } from 'node:fs/pr
 import os from 'node:os';
 import path from 'node:path';
 import type { SourceDefinition } from '../../src/contracts/source-definition.js';
+import { assertEditableMediaDefinition } from '../../src/services/editable-media-source.js';
 import { extractEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
 import {
   selectDeploySources,
@@ -65,6 +66,40 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
+  for (const representation of ['binary', 'url-only']) {
+    it(`rejects a valid explicit Audio ${representation} source while public admission is closed`, async () => {
+      const root = await temporary();
+      const file = path.join(root, 'Sound.cms-audio.json');
+      const candidate = {
+        contract: 'sf-cms-media-source',
+        contractVersion: '1.0.0',
+        identity: {
+          family: 'cms',
+          type: 'Audio',
+          apiName: 'Sound',
+          context: { workspaceApiName: 'Source' },
+        },
+        contentType: 'sfdc_cms__audio',
+        language: 'en_US',
+        folderPath: [],
+        media:
+          representation === 'binary'
+            ? {
+                representation,
+                mimeType: 'audio/x-wav',
+                companion: { role: 'media', path: 'Sound.cms-audio.media.wav' },
+              }
+            : { representation, address: 'https://example.invalid/sound.wav' },
+      };
+      expect(() => assertEditableMediaDefinition(candidate)).not.to.throw();
+      await writeFile(file, JSON.stringify(candidate));
+      await writeFile(path.join(root, 'Sound.cms-audio.media.wav'), Buffer.from('RIFF mock WAV'));
+      await failure(
+        selectDeploySources({ 'definition-file': [file] }),
+        /Unsupported deploy media content type/u,
+      );
+    });
+  }
   for (const canonical of DEPLOY_SOURCE_CONTENT_TYPES) {
     const short = canonical.slice('sfdc_cms__'.length);
     it(`selects identical canonical sources for both ${short} spellings`, async () => {
