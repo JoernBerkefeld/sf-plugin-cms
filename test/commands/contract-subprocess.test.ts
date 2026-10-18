@@ -684,7 +684,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(retrieveHelp).to.include('sfdc_cms__ names');
     const deploy = await runSf(['cms', 'deploy', 'content', '--help']);
     expect(deploy.exitCode, deploy.stderr).to.equal(0);
-    expect(deploy.stdout.replaceAll(/\s+/gu, ' ')).to.include('-m email:Welcome');
+    const deployHelp = deploy.stdout.replaceAll(/\s+/gu, ' ');
+    expect(deployHelp).to.include('-m email:Welcome');
+    expect(deployHelp).to.include('-m audio:Intro');
+    expect(deployHelp).to.include(
+      'Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged',
+    );
+    expect(deployHelp).to.include(
+      'Native Audio CREATE/UPDATE and two-org qualification remain pending',
+    );
+    expect(retrieveHelp).not.to.include('Audio deployment is not enabled');
     const deletion = await runSf(['cms', 'delete', 'content', '--help']);
     expect(deletion.exitCode, deletion.stderr).to.equal(0);
     expect(deletion.stdout.replaceAll(/\s+/gu, ' ')).to.include('--content-type emailTemplate');

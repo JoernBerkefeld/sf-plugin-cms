@@ -191,9 +191,11 @@ describe('current public documentation', () => {
       'Offline `cms info` needs no org.',
       'Case and whitespace are not normalized',
       'delete accepts only `email` and `emailTemplate`',
-      'Audio deployment is not enabled',
+      'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
       '844-byte primary WAV',
-      'Audio CREATE and UPDATE remain unproven',
+      'Native Audio CREATE/UPDATE and two-org qualification remain pending',
+      '**0.19.0**',
+      'Current Document profile bounds and unsupported Video operations remain unchanged',
     ])
       expect(readme, claim).to.include(claim);
     expect(readme).not.to.include(
@@ -209,10 +211,21 @@ describe('current public documentation', () => {
       'Audio',
       '`sfdc_cms__audio`',
       'Available (limited)',
-      'Planned',
-      'Planned',
+      'Available (unqualified)',
+      'Available (bytes only)',
       'Not supported',
     ]);
+    expect(readme).not.to.include('Audio deployment is not enabled');
+    expect(readme).not.to.include('deploy accepts the first four');
+    expect(RetrieveContent.description).to.include(
+      'native CREATE/UPDATE and two-org qualification remain pending',
+    );
+    expect(DeployContent.summary).to.include('Audio');
+    expect(DeployContent.flags['content-type'].summary).to.include('audio');
+    expect(DeployContent.description).to.include(
+      'Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged',
+    );
+    expect(DeployContent.examples.join('\n')).to.include('-m audio:Intro');
     expect(RetrieveContent.examples.join('\n')).to.include('-t email');
     expect(DeployContent.examples.join('\n')).to.include('-m email:Welcome');
     expect(DeployContent.flags['content-type'].summary).to.include('sfdc_cms__ names');
