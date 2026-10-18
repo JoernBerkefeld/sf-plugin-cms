@@ -9,12 +9,14 @@ import { PassThrough } from 'node:stream';
 import { createHash } from 'node:crypto';
 import {
   executeDeployBatch,
+  revalidateDeployBatchAudioBoundary,
   reconcileDeployBatchInventory,
   type DeployBatchPersistence,
   type DeployBatchReport,
 } from '../../src/services/deploy-batch-executor.js';
 import type { NativeInventory } from '../../src/services/retrieve-native-inventory.js';
 import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
+import { DEPLOY_SOURCE_CONTENT_TYPES } from '../../src/services/deploy-source-selection.js';
 import { buildDocumentCreateMultipart } from '../../src/transport/multipart-image-create.js';
 import {
   buildDocumentUpdateMultipart,
@@ -351,6 +353,7 @@ async function fixture(existing = false, mixed = false, document = false) {
   };
   return {
     input,
+    connection,
     preflight: () => preflightDeployBatch(connection, input),
     files,
     definitions,
@@ -378,8 +381,197 @@ async function fixture(existing = false, mixed = false, document = false) {
   };
 }
 
+async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update') {
+  const f = await fixture(operation !== 'create', true, true);
+  const companion = path.join(f.directory, 'Zulu.cms-audio.media.bin');
+  const current = Buffer.from([0, 255, 128, 13, 10]);
+  const desired = operation === 'update' ? Buffer.from([255, 0, 129]) : current;
+  const definition = {
+    contract: 'sf-cms-media-source',
+    contractVersion: '1.0.0',
+    identity: { ...f.definitions[3].identity, type: 'Audio' },
+    contentType: 'sfdc_cms__audio',
+    language: 'en_US',
+    title: 'Zulu',
+    folderPath: [],
+    media: {
+      representation: 'binary',
+      mimeType: 'application/x-future-audio',
+      companion: { role: 'media', path: path.basename(companion) },
+    },
+  };
+  const audioFile = path.join(f.directory, 'Zulu.cms-audio.json');
+  await writeFile(audioFile, JSON.stringify(definition));
+  await writeFile(companion, desired);
+  // Explicit files exercise unreachable Audio integration without changing public admission.
+  Object.assign(f.input, { sources: { 'definition-file': [f.files[0], audioFile] } });
+  const detail = f.details.get('MCKEY4');
+  if (detail) {
+    Object.assign(detail, {
+      contentType: { fullyQualifiedName: 'sfdc_cms__audio' },
+      contentBody: {
+        'sfdc_cms:media': {
+          source: { type: 'file', size: current.length, mimeType: definition.media.mimeType },
+          url: `/cms/media/MCKEY4?version=1&fileHash=${createHash('md5').update(current).digest('hex')}&fileName=${path.basename(companion)}`,
+        },
+      },
+    });
+    f.records.find((row) => row.ManagedContentKey === 'MCKEY4')!.ContentTypeFullyQualifiedName =
+      'sfdc_cms__audio';
+  }
+  (globalThis.fetch as sinon.SinonStub).callsFake(
+    async () => new Response(current, { headers: { 'content-type': definition.media.mimeType } }),
+  );
+  return { ...f, companion, audioFile, definition };
+}
+
+describe('Audio execution-boundary observations with closed item routing', () => {
+  beforeEach(() => {
+    (DEPLOY_SOURCE_CONTENT_TYPES as unknown as string[]).push('sfdc_cms__audio');
+  });
+  afterEach(() => {
+    (DEPLOY_SOURCE_CONTENT_TYPES as unknown as string[]).pop();
+    sinon.restore();
+  });
+  for (const operation of ['create', 'unchanged', 'update'] as const) {
+    it(`reacquires real Audio ${operation} without mutation authority`, async () => {
+      const f = await audioBoundaryFixture(operation);
+      const baseline = await f.preflight();
+      expect(baseline.eligible).to.equal(true);
+      expect(baseline.items[1].proposed).to.equal(operation);
+      await revalidateDeployBatchAudioBoundary(f.connection, f.input, baseline, 1, []);
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+    for (const drift of [
+      'bytes',
+      'definition',
+      'inventory',
+      'root',
+      'language',
+      'proof',
+      'prepared',
+      'cancel',
+    ]) {
+      it(`blocks Audio ${operation} ${drift} at the boundary`, async () => {
+        const f = await audioBoundaryFixture(operation);
+        const baseline = await f.preflight();
+        const controller = new AbortController();
+        if (drift === 'bytes') await writeFile(f.companion, 'changed');
+        if (drift === 'definition') {
+          f.definition.title = 'Changed';
+          await writeFile(f.audioFile, JSON.stringify(f.definition));
+        }
+        if (drift === 'inventory') f.records.push({ ...f.records[0], Id: '9Ps000000000009AAA' });
+        if (drift === 'root') f.workspace.rootFolderId = 'changed';
+        if (drift === 'language') f.workspace.defaultLanguage = 'de_DE';
+        if (drift === 'proof') {
+          delete baseline.items[1].audioCreate;
+          delete baseline.items[1].audioUnchanged;
+          delete baseline.items[1].audioUpdate;
+        }
+        if (drift === 'prepared') baseline.preparation.items[1].source.mediaSha256 = 'changed';
+        if (drift === 'cancel') controller.abort();
+        let rejected = false;
+        try {
+          await revalidateDeployBatchAudioBoundary(f.connection, f.input, baseline, 1, [], {
+            signal: controller.signal,
+          });
+        } catch {
+          rejected = true;
+        }
+        expect(rejected).to.equal(true);
+        expect(f.mutations).to.deep.equal([]);
+        expect(f.puts()).to.equal(0);
+      });
+    }
+    it(`rejects late Audio ${operation} drift before earlier Email mutation`, async () => {
+      const f = await audioBoundaryFixture(operation);
+      const result = await f.run({
+        rewrite: async (file, report) => {
+          await rewriteAtomic(file, report);
+          await writeFile(f.companion, 'late drift');
+        },
+      });
+      expect(result.report.state).to.equal('blocked');
+      expect(result.report.items.every((item) => item.outcome === 'unattempted')).to.equal(true);
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+    it(`keeps Audio ${operation} item execution closed after a verified Email prefix`, async () => {
+      const f = await audioBoundaryFixture(operation);
+      const result = await f.run();
+      expect(result.report.state).to.equal('partial');
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'unattempted',
+      ]);
+      expect(result.report.blockedReasons.join('; ')).to.include(
+        'Unsupported deploy media content type',
+      );
+      expect(f.mutations).to.deep.equal(['Alpha']);
+      expect(f.puts()).to.equal(0);
+    });
+  }
+  for (const drift of [
+    'version',
+    'download',
+    'late-source',
+    'late-cancel',
+    'expected-selection',
+    'expected-root',
+    'prepared-id',
+    'verified-prefix',
+  ]) {
+    it(`rejects independent Audio UPDATE ${drift} observation drift`, async () => {
+      const f = await audioBoundaryFixture('update');
+      const baseline = await f.preflight();
+      const controller = new AbortController();
+      const input = {
+        ...f.input,
+        expectedSelection: baseline.selection,
+        expectedRootFolderId: baseline.rootFolderId,
+      };
+      if (drift === 'version') f.details.get('MCKEY4')!.managedContentVersionId = 'new-version';
+      if (drift === 'download')
+        (globalThis.fetch as sinon.SinonStub).callsFake(
+          async () =>
+            new Response('changed', { headers: { 'content-type': 'application/x-future-audio' } }),
+        );
+      let changed = false;
+      if (drift === 'late-source' || drift === 'late-cancel')
+        f.onRead(async () => {
+          if (changed) return;
+          changed = true;
+          if (drift === 'late-source') await writeFile(f.companion, 'changed during GET');
+          else controller.abort();
+        });
+      if (drift === 'expected-selection')
+        input.expectedSelection = { ...baseline.selection, items: [] };
+      if (drift === 'expected-root') input.expectedRootFolderId = 'wrong-root';
+      if (drift === 'prepared-id')
+        baseline.preparation.items[1].existing!.variantId = '9Ps000000000009AAA';
+      const prefix =
+        drift === 'verified-prefix'
+          ? [baseline.preparation.items[1].audioInventory!.records[0]]
+          : [];
+      let rejected = false;
+      try {
+        await revalidateDeployBatchAudioBoundary(f.connection, input, baseline, 1, prefix, {
+          signal: controller.signal,
+        });
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).to.equal(true);
+      expect(f.mutations).to.deep.equal([]);
+      expect(f.puts()).to.equal(0);
+    });
+  }
+});
+
 describe('verified mixed-family inventory prefix reconciliation', () => {
-  const types = ['email', 'emailTemplate', 'image', 'document'];
+  const types = ['email', 'emailTemplate', 'image', 'document', 'audio'];
   const rows = types.map((type, index) => ({
     Id: `variant-${index}`,
     ManagedContentId: `parent-${index}`,
@@ -568,8 +760,8 @@ describe('internal sequential batch executor', () => {
         },
       });
       expect(result.report.state).to.equal('blocked');
-      expect(result.report.blockedReasons.join('; ')).to.include(
-        'Unsupported deploy media content type',
+      expect(result.report.blockedReasons.join('; ')).to.match(
+        /Unsupported deploy media content type|Batch selection changed before execution/u,
       );
       expect(f.mutations).to.deep.equal([]);
       expect(f.puts()).to.equal(0);

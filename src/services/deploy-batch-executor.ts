@@ -7,6 +7,9 @@ import type { JsonRequestOptions } from '../transport/json-request.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
 import { executeDeployCreate } from './deploy-create-executor.js';
+import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
+import { admitDeployAudioUnchanged } from './deploy-audio-unchanged.js';
+import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
 import { executeDeployDocumentCreate } from './deploy-document-create-executor.js';
 import {
   preflightDeployDocumentCreate,
@@ -231,6 +234,117 @@ export async function revalidateDeployBatchDocumentBoundary(
 }
 
 /**
+ * Reacquire Audio observations without granting item execution or mutation authority.
+ * @param {Connection} connection - Exact destination connection with media read credentials.
+ * @param {DeployBatchPreflightInput} input - Bound selectors and destination.
+ * @param {DeployBatchPreflight} baseline - Frozen whole-selection observation.
+ * @param {number} index - Exact selected Audio index.
+ * @param {NativeInventoryRow[]} verifiedCreatedRows - Independently verified prior CREATE rows.
+ * @param {JsonRequestOptions} options - Read/cancellation options only.
+ * @param {DeployBatchVerifiedUpdateRow[]} verifiedUpdatedRows - Verified earlier UPDATE observations.
+ * @returns {Promise<void>} Resolves only while source, private proof and destination agree.
+ */
+export async function revalidateDeployBatchAudioBoundary(
+  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  input: DeployBatchPreflightInput,
+  baseline: DeployBatchPreflight,
+  index: number,
+  verifiedCreatedRows: readonly NativeInventoryRow[],
+  options: JsonRequestOptions = {},
+  verifiedUpdatedRows: readonly DeployBatchVerifiedUpdateRow[] = [],
+): Promise<void> {
+  const selected = structuredClone(input);
+  // Retain native Buffers in private proof observations, as for Document.
+  const source = baseline.selection.items[index];
+  const proof = baseline.items[index];
+  const prepared = baseline.preparation.items[index];
+  const inventory = prepared?.audioInventory;
+  const registered = structuredClone(verifiedCreatedRows);
+  const updates = structuredClone(verifiedUpdatedRows);
+  const requestOptions = { ...options };
+  if (
+    selected.workspaceId !== baseline.preparation.workspaceId ||
+    selected.language !== baseline.preparation.language ||
+    source?.definition.contentType !== 'sfdc_cms__audio' ||
+    !proof ||
+    !inventory ||
+    !isDeepStrictEqual(prepared.source, source) ||
+    proof.definitionFile !== source.definitionPath ||
+    proof.proposed !== prepared.proposed ||
+    !baseline.rootFolderId ||
+    (selected.expectedRootFolderId !== undefined &&
+      selected.expectedRootFolderId !== baseline.rootFolderId) ||
+    (selected.expectedSelection !== undefined &&
+      !isDeepStrictEqual(selected.expectedSelection, baseline.selection))
+  )
+    throw new TypeError('Batch Audio boundary binding missing');
+  const scope = {
+    definitionFile: source.definitionPath,
+    workspaceId: selected.workspaceId,
+    language: selected.language,
+    expectedRootFolderId: baseline.rootFolderId,
+  };
+  const checkLocal = async () => {
+    if (requestOptions.signal?.aborted) throw new TypeError('Batch Audio boundary cancelled');
+    if (!isDeepStrictEqual(await selectDeploySources(selected.sources), baseline.selection))
+      throw new TypeError('Batch Audio local selection changed');
+  };
+  const checkInventory = async () => {
+    reconcileDeployBatchInventory(
+      await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
+      inventory,
+      registered,
+      updates,
+    );
+  };
+  await checkLocal();
+  await checkInventory();
+  if (proof.proposed === 'create' && proof.audioCreate) {
+    const fresh = await preflightDeployAudioCreate(connection, scope, requestOptions);
+    fresh.observations.inventory = reconcileDeployBatchInventory(
+      fresh.observations.inventory,
+      proof.audioCreate.observations.inventory,
+      registered,
+      updates,
+    );
+    if (!isDeepStrictEqual(fresh, proof.audioCreate))
+      throw new TypeError('Batch Audio CREATE intent changed');
+  } else if (proof.proposed === 'unchanged' && proof.audioUnchanged) {
+    const fresh = await admitDeployAudioUnchanged(connection, scope, requestOptions);
+    if (
+      !isDeepStrictEqual(fresh, proof.audioUnchanged) ||
+      fresh.contentId !== prepared.existing?.contentId ||
+      fresh.variantId !== prepared.existing?.variantId
+    )
+      throw new TypeError('Batch Audio unchanged identity changed');
+  } else if (proof.proposed === 'update' && proof.audioUpdate && prepared.audioUpdate) {
+    const fresh = await preflightDeployAudioUpdate(connection, scope, requestOptions);
+    fresh.destination.inventory = reconcileDeployBatchInventory(
+      fresh.destination.inventory,
+      proof.audioUpdate.destination.inventory,
+      registered,
+      updates,
+    );
+    if (
+      !isDeepStrictEqual(fresh, proof.audioUpdate) ||
+      !isDeepStrictEqual(proof.audioUpdate, prepared.audioUpdate) ||
+      fresh.contentId !== prepared.existing?.contentId ||
+      fresh.variantId !== prepared.existing?.variantId
+    )
+      throw new TypeError('Batch Audio UPDATE intent changed');
+  } else throw new TypeError('Batch Audio operation proof missing');
+  await checkInventory();
+  const workspace = await getWorkspace(connection, scope.workspaceId, requestOptions);
+  if (
+    workspace.id !== scope.workspaceId ||
+    workspace.rootFolderId !== scope.expectedRootFolderId ||
+    workspace.defaultLanguage !== scope.language
+  )
+    throw new TypeError('Batch Audio destination root or default language changed');
+  await checkLocal();
+}
+
+/**
  * Execute the Document item branch only after fresh whole-selection preflight.
  * @param {Connection} connection - Exact destination connection.
  * @param {object} input - Bound source, destination and exclusive item path.
@@ -330,7 +444,9 @@ export async function executeDeployBatch(
   for (const source of selection.items) {
     if (
       source.definition.contract === 'sf-cms-media-source' &&
-      !['sfdc_cms__image', 'sfdc_cms__document'].includes(source.definition.contentType)
+      !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+        source.definition.contentType,
+      )
     )
       throw new TypeError('Unsupported deploy media content type');
   }
@@ -423,7 +539,9 @@ export async function executeDeployBatch(
       const boundary = async () => {
         if (
           item.source.definition.contract === 'sf-cms-media-source' &&
-          !['sfdc_cms__image', 'sfdc_cms__document'].includes(item.source.definition.contentType)
+          !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
+            item.source.definition.contentType,
+          )
         )
           throw new TypeError('Unsupported deploy media content type');
         if (requestOptions.signal?.aborted) throw new TypeError('Batch cancelled before execution');
@@ -434,52 +552,81 @@ export async function executeDeployBatch(
         )
           throw new TypeError('Batch durable intent changed before execution');
         await checkInventory();
+        // A late Audio drift must block even an earlier non-Audio mutation.
+        for (const [audioIndex, source] of baseline.selection.items.entries()) {
+          if (source.definition.contentType === 'sfdc_cms__audio')
+            await revalidateDeployBatchAudioBoundary(
+              connection,
+              selected,
+              baseline,
+              audioIndex,
+              verifiedCreatedRows,
+              requestOptions,
+              verifiedUpdatedRows,
+            );
+        }
         const proof = baseline.items[index];
-        if (item.source.definition.contentType === 'sfdc_cms__document') {
-          await revalidateDeployBatchDocumentBoundary(
-            connection,
-            selected,
-            baseline,
-            index,
-            verifiedCreatedRows,
-            requestOptions,
-            verifiedUpdatedRows,
-          );
-        } else if (item.source.definition.contentType === 'sfdc_cms__image') {
-          if (item.proposed === 'create') {
-            const fresh = await preflightDeployImageCreate(connection, scope, requestOptions);
-            if (!isDeepStrictEqual(fresh, proof.imageCreate))
-              throw new TypeError('Batch Image CREATE intent changed');
-          } else if (item.proposed === 'update') {
-            const fresh = await preflightDeployImageUpdate(connection, scope, requestOptions);
-            if (proof.imageUpdate)
-              fresh.destination.inventory = reconcileDeployBatchInventory(
-                fresh.destination.inventory,
-                proof.imageUpdate.destination.inventory,
-                verifiedCreatedRows,
-                verifiedUpdatedRows,
-              );
-            if (!isDeepStrictEqual(fresh, proof.imageUpdate))
-              throw new TypeError('Batch Image UPDATE intent changed');
-          } else {
-            const fresh = await admitDeployImageUnchanged(connection, scope, requestOptions);
-            if (!isDeepStrictEqual(fresh, proof.imageUnchanged))
-              throw new TypeError('Batch Image unchanged intent changed');
+        switch (item.source.definition.contentType) {
+          case 'sfdc_cms__document': {
+            await revalidateDeployBatchDocumentBoundary(
+              connection,
+              selected,
+              baseline,
+              index,
+              verifiedCreatedRows,
+              requestOptions,
+              verifiedUpdatedRows,
+            );
+
+            break;
           }
-        } else {
-          const fresh =
-            item.proposed === 'create'
-              ? await preflightDeployCreate(connection, scope, requestOptions)
-              : await preflightDeployUpdate(connection, scope, requestOptions);
-          // Full records were checked above; normalize only the registered prefix count
-          // and pagination in the UPDATE preparation's aggregate observation.
-          if ('prepared' in fresh && fresh.prepared.inventory && proof.update?.prepared.inventory) {
-            fresh.prepared.inventory.recordCount -= verifiedCreatedRows.length;
-            fresh.prepared.inventory.pagesRequested =
-              proof.update.prepared.inventory.pagesRequested;
+          case 'sfdc_cms__audio': {
+            // All selected Audio proofs were revalidated above; item routing remains closed.
+            throw new TypeError('Unsupported deploy media content type');
           }
-          if (!isDeepStrictEqual(fresh, (proof.create ?? proof.update)!))
-            throw new TypeError('Batch operation intent changed before execution');
+          case 'sfdc_cms__image': {
+            if (item.proposed === 'create') {
+              const fresh = await preflightDeployImageCreate(connection, scope, requestOptions);
+              if (!isDeepStrictEqual(fresh, proof.imageCreate))
+                throw new TypeError('Batch Image CREATE intent changed');
+            } else if (item.proposed === 'update') {
+              const fresh = await preflightDeployImageUpdate(connection, scope, requestOptions);
+              if (proof.imageUpdate)
+                fresh.destination.inventory = reconcileDeployBatchInventory(
+                  fresh.destination.inventory,
+                  proof.imageUpdate.destination.inventory,
+                  verifiedCreatedRows,
+                  verifiedUpdatedRows,
+                );
+              if (!isDeepStrictEqual(fresh, proof.imageUpdate))
+                throw new TypeError('Batch Image UPDATE intent changed');
+            } else {
+              const fresh = await admitDeployImageUnchanged(connection, scope, requestOptions);
+              if (!isDeepStrictEqual(fresh, proof.imageUnchanged))
+                throw new TypeError('Batch Image unchanged intent changed');
+            }
+
+            break;
+          }
+          default: {
+            const fresh =
+              item.proposed === 'create'
+                ? await preflightDeployCreate(connection, scope, requestOptions)
+                : await preflightDeployUpdate(connection, scope, requestOptions);
+            // Full records were checked above; normalize only the registered prefix count
+            // and pagination in the UPDATE preparation's aggregate observation.
+            if (
+              'prepared' in fresh &&
+              fresh.prepared.inventory &&
+              proof.update?.prepared.inventory
+            ) {
+              fresh.prepared.inventory.recordCount -= verifiedCreatedRows.length;
+              fresh.prepared.inventory.pagesRequested =
+                proof.update.prepared.inventory.pagesRequested;
+            }
+            if (!isDeepStrictEqual(fresh, (proof.create ?? proof.update)!))
+              throw new TypeError('Batch operation intent changed before execution');
+          }
         }
         await checkInventory();
         if (!isDeepStrictEqual(await reselect(), baseline.selection))
