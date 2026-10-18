@@ -246,7 +246,9 @@ describe('internal whole-selection deploy preflight', () => {
           ...f.input,
           sources: { 'definition-file': [f.files[0]] },
         }),
-        /Unsupported (deploy media content type|media type\/contentType)/u,
+        contentType === 'sfdc_cms__audio'
+          ? /Media definition must use exact same-stem filename/u
+          : /Unsupported (deploy media content type|media type\/contentType)/u,
       );
       expect(f.calls).to.deep.equal([]);
     });

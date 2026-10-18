@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,8 +67,8 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
-  for (const representation of ['binary', 'url-only']) {
-    it(`rejects a valid explicit Audio ${representation} source while public admission is closed`, async () => {
+  for (const representation of ['binary', 'url-only'] as const) {
+    it(`handles an explicit Audio ${representation} source through existing media contracts`, async () => {
       const root = await temporary();
       const file = path.join(root, 'Sound.cms-audio.json');
       const candidate = {
@@ -94,10 +95,25 @@ describe('local deploy source selection', () => {
       expect(() => assertEditableMediaDefinition(candidate)).not.to.throw();
       await writeFile(file, JSON.stringify(candidate));
       await writeFile(path.join(root, 'Sound.cms-audio.media.wav'), Buffer.from('RIFF mock WAV'));
-      await failure(
-        selectDeploySources({ 'definition-file': [file] }),
-        /Unsupported deploy media content type/u,
-      );
+      if (representation === 'url-only') {
+        for (const flags of [{ 'definition-file': [file] }, { 'source-dir': [root] }])
+          await failure(
+            selectDeploySources(flags),
+            /Audio deploy selection requires a binary source/u,
+          );
+      } else {
+        const selected = await selectDeploySources({ 'definition-file': [file] });
+        expect(selected.items[0].targetIdentity).to.deep.equal({
+          contentType: 'sfdc_cms__audio',
+          apiName: 'Sound',
+          language: 'en_US',
+        });
+        expect(selected.items[0].mediaSha256).to.equal(
+          createHash('sha256').update(Buffer.from('RIFF mock WAV')).digest('hex'),
+        );
+        const discovered = await selectDeploySources({ 'source-dir': [root] });
+        expect(discovered.items).to.deep.equal(selected.items);
+      }
     });
   }
   for (const canonical of DEPLOY_SOURCE_CONTENT_TYPES) {
@@ -108,7 +124,8 @@ describe('local deploy source selection', () => {
       if (short === 'email' || short === 'emailTemplate') {
         file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
       } else {
-        const token = short === 'image' ? 'image' : 'document';
+        const token = short;
+        const mediaType = { image: 'Image', document: 'Document', audio: 'Audio' }[short]!;
         file = path.join(root, `Exact.cms-${token}.json`);
         const companion = `Exact.cms-${token}.media.txt`;
         await writeFile(
@@ -118,7 +135,7 @@ describe('local deploy source selection', () => {
             contractVersion: '1.0.0',
             identity: {
               family: 'cms',
-              type: short === 'image' ? 'Image' : 'Document',
+              type: mediaType,
               apiName: 'Exact',
               context: { workspaceApiName: 'Source' },
             },
@@ -154,6 +171,82 @@ describe('local deploy source selection', () => {
         );
     });
   }
+
+  it('selects nested opaque Audio with exact filters, deterministic deduplication and byte bindings', async () => {
+    const root = await temporary();
+    const directory = path.join(root, 'nested');
+    await mkdir(directory);
+    const file = path.join(directory, 'Sound.cms-audio.json');
+    const companion = path.join(directory, 'Sound.cms-audio.media.bin');
+    const bytes = Buffer.from([0, 255, 128, 13, 10, 42]);
+    const candidate = {
+      contract: 'sf-cms-media-source',
+      contractVersion: '1.0.0',
+      identity: {
+        family: 'cms',
+        type: 'Audio',
+        apiName: 'Sound',
+        context: { workspaceApiName: 'Source' },
+      },
+      contentType: 'sfdc_cms__audio',
+      language: 'en_US',
+      folderPath: [],
+      media: {
+        representation: 'binary',
+        mimeType: 'application/x-future-audio',
+        companion: { role: 'media', path: path.basename(companion) },
+      },
+    };
+    await writeFile(file, JSON.stringify(candidate));
+    await writeFile(companion, bytes);
+    const before = await readFile(file);
+    const selected = await selectDeploySources({ 'definition-file': [file, file] });
+    expect(selected.items).to.have.length(1);
+    expect(selected.items[0].companionPaths).to.deep.equal([companion]);
+    expect(selected.items[0].contentBody).to.deep.equal({
+      'sfdc_cms:media': { source: { type: 'file' } },
+    });
+    expect(selected.items[0].mediaSha256).to.equal(
+      createHash('sha256').update(bytes).digest('hex'),
+    );
+    for (const filter of [
+      {},
+      { 'content-type': ['audio', 'sfdc_cms__audio'] },
+      { metadata: ['audio', 'sfdc_cms__audio:Sound'] },
+      { metadata: ['audio:Sound'] },
+    ]) {
+      const result = await selectDeploySources({
+        'source-dir': [root, directory, root],
+        ...filter,
+      });
+      expect(result.items).to.deep.equal(selected.items);
+    }
+    const afterDefinition = await readFile(file);
+    const afterCompanion = await readFile(companion);
+    expect(afterDefinition.equals(before)).to.equal(true);
+    expect(afterCompanion.equals(bytes)).to.equal(true);
+    await writeFile(companion, Buffer.from([42, 0, 255]));
+    const changed = await selectDeploySources({ 'definition-file': [file] });
+    expect(changed.items[0].mediaSha256).not.to.equal(selected.items[0].mediaSha256);
+    for (const patch of [
+      { media: { ...candidate.media, mimeType: 'audio/wav\r\nX-Evil: yes' } },
+      { media: { ...candidate.media, companion: { role: 'media', path: '../escape.bin' } } },
+      { identity: { ...candidate.identity, type: 'Video' }, contentType: 'sfdc_cms__video' },
+    ]) {
+      await writeFile(file, JSON.stringify({ ...candidate, ...patch }));
+      await failure(
+        selectDeploySources({ 'definition-file': [file] }),
+        /MIME|same-stem|Unsupported media type/u,
+      );
+    }
+    await writeFile(file, JSON.stringify(candidate));
+    await writeFile(companion, Buffer.alloc(0));
+    await failure(selectDeploySources({ 'source-dir': [root] }), /nonempty/u);
+    await unlink(companion);
+    await failure(selectDeploySources({ 'source-dir': [root] }), /missing/u);
+    await writeFile(file, '{broken');
+    await failure(selectDeploySources({ 'source-dir': [root] }), /valid JSON/u);
+  });
 
   it('selects binary Documents explicitly and recursively with exact filters and byte bindings', async () => {
     const root = await temporary();
@@ -317,7 +410,7 @@ describe('local deploy source selection', () => {
     const file = await fixture(nested);
     const second = await fixture(path.join(root, 'email'), definition(true));
     await writeFile(path.join(root, 'receipt.json'), '{not a definition');
-    await writeFile(path.join(root, 'other.cms-audio.json'), '{not supported');
+    await writeFile(path.join(root, 'other.cms-video.json'), '{not supported');
     await writeFile(path.join(root, 'Welcome.cms-email.txt'), 'companion');
     const result = await selectDeploySources({ 'source-dir': [nested, root, root] });
     expect(result.mode).to.equal('source-dir');
@@ -366,10 +459,10 @@ describe('local deploy source selection', () => {
       { 'source-dir': ['x'], 'content-type': ['Email'] },
       { 'source-dir': ['x'], 'content-type': [' email'] },
       { 'source-dir': ['x'], 'content-type': ['email '] },
-      { 'source-dir': ['x'], metadata: ['audio'] },
+      { 'source-dir': ['x'], metadata: ['Audio'] },
       { 'source-dir': ['x'], metadata: ['futureType'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__futureType'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__audio'] },
+      { 'source-dir': ['x'], metadata: ['sfdc_cms__video'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email:'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email: '] },
       { 'source-dir': 'x' as unknown as string[] },

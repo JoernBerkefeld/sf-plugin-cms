@@ -826,7 +826,9 @@ describe('internal sequential batch executor', () => {
         throw new Error('Expected unsupported source rejection');
       } catch (error) {
         expect((error as Error).message).to.match(
-          /Unsupported (deploy media content type|media type\/contentType)/u,
+          contentType === 'sfdc_cms__audio'
+            ? /Audio deploy selection requires a binary source/u
+            : /Unsupported (deploy media content type|media type\/contentType)/u,
         );
       }
       expect(reads).to.equal(0);

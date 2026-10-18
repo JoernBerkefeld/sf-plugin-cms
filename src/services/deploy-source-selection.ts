@@ -27,6 +27,7 @@ export const DEPLOY_SOURCE_CONTENT_TYPES = [
   ...SOURCE_EMAIL_PROFILES.map((profile) => profile.contentType),
   'sfdc_cms__image',
   'sfdc_cms__document',
+  'sfdc_cms__audio',
 ] as const;
 
 export interface DeploySourceSelectionFlags {
@@ -113,7 +114,7 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
       throw new TypeError(
         candidate.contentType === 'sfdc_cms__image'
           ? 'Image deploy requires a binary Image source'
-          : 'Document deploy selection requires a binary source',
+          : `${candidate.identity.type} deploy selection requires a binary source`,
       );
     return candidate;
   }
@@ -122,7 +123,7 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
 }
 
 /**
- * Select local Email/Template/binary Image/Document sources without apply authority or org access.
+ * Select local Email/Template/binary Image/Document/Audio sources without apply authority or org access.
  * @param {DeploySourceSelectionFlags} flags - Explicit files or directories with optional directory filters.
  * @returns {Promise<DeployLocalSelection>} Deterministic admitted sources and destination-relative identities.
  */
@@ -160,7 +161,7 @@ export async function selectDeploySources(
     for (const relative of await enumeratePackageFiles(root, root)) {
       if (
         /\.cms-email(?:-template)?\.json$/u.test(relative) ||
-        /\.cms-(?:image|document)\.json$/u.test(relative)
+        /\.cms-(?:image|document|audio)\.json$/u.test(relative)
       )
         candidates.add(path.join(root, relative));
     }
@@ -178,7 +179,7 @@ export async function selectDeploySources(
       throw new TypeError(
         media.definition.contentType === 'sfdc_cms__image'
           ? 'Image deploy requires a binary Image source'
-          : 'Document deploy selection requires a binary source',
+          : `${media.definition.identity.type} deploy selection requires a binary source`,
       );
     let email:
       | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
