@@ -86,17 +86,17 @@ describe('current public documentation', () => {
   it('retains current commands, schema identities and illustrative plugin versions', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const command of [
-      'info',
-      'list workspace',
-      'list channel',
-      'retrieve content',
-      'deploy content',
-      'upload images',
-      'publish content',
-      'unpublish content',
-      'delete content',
+      'content info',
+      'content list workspace',
+      'content list channel',
+      'content retrieve',
+      'content deploy',
+      'content upload images',
+      'content publish',
+      'content unpublish',
+      'content delete',
     ]) {
-      expect(readme).to.include(`### \`sf cms ${command}\``);
+      expect(readme).to.include(`### \`sf ${command}\``);
     }
     for (const schema of [
       'sf-cms-info@1',
@@ -232,7 +232,7 @@ describe('current public documentation', () => {
   it('documents retrieve defaults, exact operation aliases and bounded two-org Audio evidence', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
-      'sf cms retrieve content -W "Content Workspace for Marketing Cloud"',
+      'sf content retrieve --workspace-name "Content Workspace for Marketing Cloud"',
       './cms/<workspaceAPI>/',
       'current directory',
       'configured default org',
@@ -240,7 +240,7 @@ describe('current public documentation', () => {
       'Explicit `-t` still requires',
       'All eight org-backed commands use your configured Salesforce CLI default org',
       'Org defaults do not supply or broaden workspace, language, source, mutation or ownership selectors.',
-      'Offline `cms info` needs no org.',
+      'Offline `content info` needs no org.',
       'Case and whitespace are not normalized',
       'delete accepts only `email` and `emailTemplate`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
@@ -295,6 +295,27 @@ describe('current public documentation', () => {
     expect(RetrieveContent.examples.join('\n')).to.include('-t email');
     expect(DeployContent.examples.join('\n')).to.include('-m email:Welcome');
     expect(DeployContent.flags['content-type'].summary).to.include('sfdc_cms__ names');
+  });
+
+  it('keeps concise metadata examples without omitting required mutation scope', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const example of [
+      'sf org login web --alias my-org --set-default',
+      'aliases in the upcoming 0.19 release',
+      'sf content retrieve --workspace-name Marketing -m email:Welcome\n',
+      'sf content retrieve --workspace-name Marketing -m email\n',
+      'sf content retrieve --workspace-name Marketing -m email -m emailTemplate\n',
+      'sf content retrieve --workspace-name Marketing -m email:Welcome -m email:Reminder',
+      'sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001',
+      'sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing -m audio:Intro --json',
+      '--apply --acknowledge-no-send --report-dir ./cms-publish-report',
+      '--ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report',
+      'It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`.',
+    ])
+      expect(readme, example).to.include(example);
+    expect(readme).not.to.include('./project/cms/');
+    expect(readme).not.to.include('sf content retrieve -W');
+    expect(readme).not.to.include('sf cms info --contract-version 1 --json');
   });
 
   it('preserves recovery, qualification, ownership and API interoperability limits', async () => {
