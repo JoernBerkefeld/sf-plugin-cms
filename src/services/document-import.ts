@@ -650,9 +650,8 @@ export async function applyDocumentImports(
       outputFile,
       contentType: DOCUMENT_TYPE,
       expectedMd5: plan.media.md5,
-      expectedMimeType: 'text/plain',
+      expectedMimeType: plan.media.mimeType,
       expectedSize: bytes.length,
-      maxBytes: MAX_IMAGE_BYTES,
     });
     const readback = await readStableRegularFile(outputFile, 'Document downloaded readback');
     if (

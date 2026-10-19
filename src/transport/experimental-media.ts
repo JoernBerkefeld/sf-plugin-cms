@@ -106,12 +106,6 @@ function sameOrigin(left: URL, right: URL): boolean {
   return assertSafeHttps(left) === assertSafeHttps(right) && left.port === right.port;
 }
 
-function extension(fileName: string): string {
-  const last = fileName.split('.').at(-1)?.toLowerCase();
-  if (last === undefined || last === fileName.toLowerCase()) return '';
-  return last;
-}
-
 export async function downloadExperimentalCmsMedia(
   source: URL,
   options: ExperimentalMediaDownloadOptions,
@@ -126,12 +120,10 @@ export async function downloadExperimentalCmsMedia(
     throw new TypeError('Experimental media expected size must be a positive safe Buffer length');
   }
   if (
-    (contentType === 'sfdc_cms__document' && options.expectedMimeType !== 'text/plain') ||
-    (contentType === 'sfdc_cms__video' && options.expectedMimeType !== 'video/mp4') ||
-    (contentType !== 'sfdc_cms__image' &&
-      contentType !== 'sfdc_cms__document' &&
-      contentType !== 'sfdc_cms__audio' &&
-      contentType !== 'sfdc_cms__video')
+    contentType !== 'sfdc_cms__image' &&
+    contentType !== 'sfdc_cms__document' &&
+    contentType !== 'sfdc_cms__audio' &&
+    contentType !== 'sfdc_cms__video'
   ) {
     throw new TypeError(`Experimental media MIME type is unsupported: ${options.expectedMimeType}`);
   }
@@ -213,10 +205,7 @@ export async function downloadExperimentalCmsMedia(
   }
   const declaredLengthText = response.headers.get('content-length');
   const declaredLength = declaredLengthText === null ? undefined : Number(declaredLengthText);
-  const familyLimit =
-    contentType === 'sfdc_cms__image' || contentType === 'sfdc_cms__audio'
-      ? bufferConstants.MAX_LENGTH
-      : EXPERIMENTAL_MEDIA_POLICY.perImageBytes;
+  const familyLimit = bufferConstants.MAX_LENGTH;
   const configuredLimit = options.maxBytes ?? familyLimit;
   if (!Number.isSafeInteger(configuredLimit) || configuredLimit <= 0) {
     throw new TypeError('Experimental media byte cap must be a positive safe integer');
@@ -239,8 +228,6 @@ export async function downloadExperimentalCmsMedia(
   }
   const md5 = createHash('md5');
   const sha256 = createHash('sha256');
-  const prefix: Buffer[] = [];
-  let prefixLength = 0;
   let bytes = 0;
   const handle = await (options.openFile ?? (async (file) => open(file, 'wx')))(options.outputFile);
   const unlinkFile = options.unlinkFile ?? unlink;
@@ -254,11 +241,6 @@ export async function downloadExperimentalCmsMedia(
         throw new TypeError('Experimental media response exceeds the byte cap');
       }
       bytes += chunk.length;
-      if (prefixLength < 12) {
-        const selected = chunk.subarray(0, 12 - prefixLength);
-        prefix.push(selected);
-        prefixLength += selected.length;
-      }
       md5.update(chunk);
       sha256.update(chunk);
       await handle.write(chunk);
@@ -273,29 +255,7 @@ export async function downloadExperimentalCmsMedia(
     if (actualMd5 !== options.expectedMd5.toLowerCase()) {
       throw new TypeError('Experimental media MD5 differs from the authoring URL');
     }
-    switch (contentType) {
-      case 'sfdc_cms__document': {
-        if (extension(fileName) !== 'txt') {
-          throw new TypeError('Experimental Document filename extension must be txt');
-        }
-
-        break;
-      }
-      case 'sfdc_cms__video': {
-        if (extension(fileName) !== 'mp4') {
-          throw new TypeError('Experimental Video filename extension must be mp4');
-        }
-        if (!Buffer.concat(prefix).subarray(4, 12).equals(Buffer.from('ftypisom'))) {
-          throw new TypeError('Experimental Video MP4 isom signature is invalid');
-        }
-
-        break;
-      }
-      default: {
-        // Image/Audio format admission belongs to the API, not a local signature inventory.
-        break;
-      }
-    }
+    // Format admission belongs to the API; preserve opaque bytes and native MIME.
     closeAttempted = true;
     await handle.close();
     return {

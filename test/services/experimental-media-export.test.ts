@@ -171,7 +171,7 @@ describe('experimental workspace media export', () => {
     expect(fetcher.callCount).to.equal(2);
   });
 
-  it('retains Document JSON and partial diagnostics without opt-in or for unsupported MIME', async () => {
+  it('retains Document JSON and partial diagnostics without opt-in', async () => {
     for (const mimeType of ['text/plain', 'application/pdf']) {
       const detail = imageDetail();
       detail.contentType = 'sfdc_cms__document';
@@ -181,23 +181,12 @@ describe('experimental workspace media export', () => {
         { request: mediaRequest(detail) },
         'space',
         path.join(root, mimeType.split('/')[1]),
-        {
-          ...(mimeType === 'text/plain'
-            ? {}
-            : {
-                experimentalMedia: {
-                  accessToken: 'synthetic-token',
-                  instanceUrl: 'https://tenant.my.salesforce.com',
-                },
-              }),
-        },
+        {},
       );
       expect(result.manifest.completeness).to.equal('partial');
       expect(result.manifest.media).to.deep.equal([]);
       expect(result.manifest.warnings.at(-1)?.code).to.equal('MEDIA_EXPORT_FAILED');
-      expect(result.manifest.warnings.at(-1)?.message).to.include(
-        mimeType === 'text/plain' ? 'not enabled' : 'unsupported',
-      );
+      expect(result.manifest.warnings.at(-1)?.message).to.include('not enabled');
       expect(fetcher.notCalled).to.equal(true);
       expect(
         JSON.parse(await readFile(path.join(result.destination, 'items/variant.json'), 'utf8')),
@@ -362,7 +351,7 @@ describe('experimental workspace media export', () => {
     expect(fetcher.callCount).to.equal(2);
   });
 
-  it('retains Video JSON without opt-in and rejects unqualified Video MIME types', async () => {
+  it('retains Video JSON without opt-in for every native MIME', async () => {
     for (const mimeType of ['video/mp4', 'video/webm', 'video/quicktime']) {
       const detail = imageDetail();
       detail.contentType = 'sfdc_cms__video';
@@ -372,23 +361,12 @@ describe('experimental workspace media export', () => {
         { request: mediaRequest(detail) },
         'space',
         path.join(root, mimeType.split('/')[1]),
-        {
-          ...(mimeType === 'video/mp4'
-            ? {}
-            : {
-                experimentalMedia: {
-                  accessToken: 'synthetic-token',
-                  instanceUrl: 'https://tenant.my.salesforce.com',
-                },
-              }),
-        },
+        {},
       );
       expect(result.manifest).to.include({ completeness: 'partial', schemaVersion: 2 });
       expect(result.manifest.media).to.deep.equal([]);
       expect(result.manifest.items.map(({ kind }) => kind)).to.deep.equal(['cms.content']);
-      expect(result.manifest.warnings.at(-1)?.message).to.include(
-        mimeType === 'video/mp4' ? 'not enabled' : 'unsupported',
-      );
+      expect(result.manifest.warnings.at(-1)?.message).to.include('not enabled');
       expect(fetcher.notCalled).to.equal(true);
       expect(
         JSON.parse(await readFile(path.join(result.destination, 'items/variant.json'), 'utf8')),
@@ -667,38 +645,121 @@ describe('experimental workspace media export', () => {
   });
 
   for (const [family, mimeType] of [
-    ['document', 'text/plain'],
-    ['video', 'video/mp4'],
+    ['document', 'application/pdf'],
+    ['video', 'video/webm'],
   ]) {
-    it(`retains the ${family} 10 MiB per-file cap even with larger explicit budgets`, async () => {
-      const detail = imageDetail();
-      detail.contentType = `sfdc_cms__${family}`;
-      detail.contentBody['sfdc_cms:media'].source.mimeType = mimeType;
-      detail.contentBody['sfdc_cms:media'].source.size = 10 * 1024 * 1024 + 1;
-      const fetcher = sinon.stub().resolves(
-        new Response(PNG, {
-          headers: { 'content-length': String(10 * 1024 * 1024 + 1), 'content-type': mimeType },
-        }),
-      );
-      const result = await exportWorkspace(
-        { request: mediaRequest(detail) },
-        'space',
-        path.join(root, family),
-        {
-          experimentalMedia: {
-            accessToken: 'synthetic-token',
-            fetch: fetcher,
-            instanceUrl: 'https://tenant.my.salesforce.com',
-            perImageBytes: Number.MAX_SAFE_INTEGER,
-            totalBytes: Number.MAX_SAFE_INTEGER,
+    for (const budget of ['default', 'larger', 'per-file', 'total']) {
+      it(`exports opaque >10 MiB ${family} with ${budget} caller budgets`, async () => {
+        const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+        const detail = imageDetail();
+        detail.contentType = `sfdc_cms__${family}`;
+        detail.contentBody['sfdc_cms:media'] = {
+          source: { mimeType, size: bytes.length, ref: 'synthetic-ref', type: 'file' },
+          url: `/cms/media/key?fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=opaque.native&version=1`,
+        };
+        const fetcher = sinon.stub().callsFake(
+          async () =>
+            new Response(bytes, {
+              headers: { 'content-length': String(bytes.length), 'content-type': mimeType },
+            }),
+        );
+        const result = await exportWorkspace(
+          { request: mediaRequest(detail) },
+          'space',
+          path.join(root, `${family}-${budget}`),
+          {
+            experimentalMedia: {
+              accessToken: 'synthetic-token',
+              fetch: fetcher,
+              instanceUrl: 'https://tenant.my.salesforce.com',
+              ...(budget === 'larger'
+                ? { perImageBytes: Number.MAX_SAFE_INTEGER, totalBytes: Number.MAX_SAFE_INTEGER }
+                : {}),
+              ...(budget === 'per-file' ? { perImageBytes: bytes.length - 1 } : {}),
+              ...(budget === 'total' ? { totalBytes: bytes.length - 1 } : {}),
+            },
           },
-        },
-      );
-      expect(result.manifest.completeness).to.equal('partial');
-      expect(result.manifest.media).to.deep.equal([]);
-      expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
-      expect(fetcher.calledOnce).to.equal(true);
-    });
+        );
+        if (budget === 'default' || budget === 'larger') {
+          expect(result.manifest.media).to.have.length(1);
+          expect(result.manifest.media![0]).to.include({ bytes: bytes.length, mimeType });
+          expect(
+            await readFile(path.join(result.destination, result.manifest.media![0].path)),
+          ).to.deep.equal(bytes);
+        } else {
+          expect(result.manifest.media).to.deep.equal([]);
+          expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
+          await expectRejectedAccess(path.join(result.destination, 'media/variant-opaque.native'));
+        }
+        expect(fetcher.calledOnce).to.equal(true);
+      });
+    }
+  }
+
+  for (const [family, mimeType] of [
+    ['document', 'application/pdf'],
+    ['video', 'video/webm'],
+  ]) {
+    for (const explicit of [false, true]) {
+      it(`retains ${explicit ? 'explicit aggregate budget' : 'no implicit 50 MiB aggregate cap'} for ${family}`, async () => {
+        const bytes = Buffer.alloc(explicit ? 16 : 26 * 1024 * 1024, 255);
+        const md5 = createHash('md5').update(bytes).digest('hex');
+        const details = ['first', 'second'].map((id) => ({
+          ...imageDetail(),
+          id,
+          contentKey: id,
+          contentType: `sfdc_cms__${family}`,
+          contentBody: {
+            'sfdc_cms:media': {
+              source: { mimeType, size: bytes.length, ref: 'synthetic-ref', type: 'file' },
+              url: `/cms/media/key?fileHash=${md5}&fileName=opaque.native&version=1`,
+            },
+          },
+        }));
+        const request = sinon.stub().callsFake(({ url }: { url: string }) =>
+          fakeRequest(
+            url.startsWith('/connect/cms/items/search')
+              ? {
+                  items: details.map(({ id }) => ({
+                    id,
+                    managedContentSpaceId: 'space',
+                    type: 'ManagedContentVariantSearchResultRepresentation',
+                  })),
+                  total: 2,
+                }
+              : details.find(({ id }) => url.includes(id)),
+          ),
+        );
+        const result = await exportWorkspace(
+          { request },
+          'space',
+          path.join(root, `${family}-aggregate-${String(explicit)}`),
+          {
+            experimentalMedia: {
+              accessToken: 'synthetic-token',
+              instanceUrl: 'https://tenant.my.salesforce.com',
+              ...(explicit ? { totalBytes: 2 * bytes.length - 1 } : {}),
+              fetch: async () =>
+                new Response(bytes, {
+                  headers: { 'content-type': mimeType, 'content-length': String(bytes.length) },
+                }),
+            },
+          },
+        );
+        expect(result.manifest.media).to.have.length(explicit ? 1 : 2);
+        if (explicit) {
+          expect(result.manifest.warnings.at(-1)?.message).to.include('exceeds the cap');
+          await expectRejectedAccess(path.join(result.destination, 'media/second-opaque.native'));
+          expect(
+            await readFile(path.join(result.destination, 'media/first-opaque.native')),
+          ).to.deep.equal(bytes);
+        } else {
+          expect(result.manifest.media!.reduce((sum, media) => sum + media.bytes, 0)).to.equal(
+            52 * 1024 * 1024,
+          );
+        }
+      });
+    }
   }
 
   it('writes a strict v2 media descriptor after byte and immediate source revalidation', async () => {

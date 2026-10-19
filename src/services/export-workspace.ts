@@ -82,7 +82,6 @@ import {
 } from './consent-banner.js';
 import {
   downloadExperimentalCmsMedia,
-  EXPERIMENTAL_MEDIA_POLICY,
   type ExperimentalMediaDownloadOptions,
 } from '../transport/experimental-media.js';
 import {
@@ -1347,7 +1346,6 @@ export async function exportWorkspace(
     if (mediaCandidates.length > 0 && options.experimentalMedia !== undefined) {
       await mkdir(path.join(temporary, 'media'));
       let totalBytes = 0;
-      let otherMediaBytes = 0;
       for (const { variantId, evidence } of mediaCandidates) {
         const mediaPath = `media/${variantId}-${evidence.fileName}`;
         try {
@@ -1355,16 +1353,8 @@ export async function exportWorkspace(
           const isAudio = evidence.contentType === 'sfdc_cms__audio';
           if (isAudio && evidence.mimeType !== 'audio/x-wav')
             throw new TypeError('Experimental Audio export format is unsupported');
-          const usesCallerBudgets = evidence.contentType === 'sfdc_cms__image' || isAudio;
-          const remainingTotal = Math.min(
-            mediaCaps!.totalBytes - totalBytes,
-            usesCallerBudgets
-              ? Number.MAX_SAFE_INTEGER
-              : EXPERIMENTAL_MEDIA_POLICY.totalBytes - otherMediaBytes,
-          );
-          const perFileBytes = usesCallerBudgets
-            ? mediaCaps!.perImageBytes
-            : Math.min(mediaCaps!.perImageBytes, EXPERIMENTAL_MEDIA_POLICY.perImageBytes);
+          const remainingTotal = mediaCaps!.totalBytes - totalBytes;
+          const perFileBytes = mediaCaps!.perImageBytes;
           if (!Number.isSafeInteger(remainingTotal) || remainingTotal <= 0) {
             throw new TypeError('Experimental media total byte cap is exhausted');
           }
@@ -1403,7 +1393,6 @@ export async function exportWorkspace(
             throw new TypeError('Experimental media total byte accounting exceeded the cap');
           }
           totalBytes += downloaded.bytes;
-          if (!usesCallerBudgets) otherMediaBytes += downloaded.bytes;
           const current = mediaEvidence(await getVariant(connection, variantId, options));
           if (current === undefined || JSON.stringify(current) !== JSON.stringify(evidence)) {
             throw new TypeError('Experimental media authoring metadata changed during export');

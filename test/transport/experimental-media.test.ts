@@ -101,7 +101,7 @@ describe('experimental CMS media transport', () => {
     ).to.equal(true);
   });
 
-  it('admits text/plain only with explicit Document family and preserves exact bytes', async () => {
+  it('preserves exact text/plain Document bytes', async () => {
     const bytes = Buffer.from('Document fixture\r\nUTF-8 café\n');
     const md5 = createHash('md5').update(bytes).digest('hex');
     const source = new URL(
@@ -121,15 +121,6 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'document.txt'),
     };
-    await expectRejected(
-      downloadExperimentalCmsMedia(source, {
-        ...base,
-        contentType: 'sfdc_cms__document',
-        expectedMimeType: 'application/pdf',
-      }),
-      'unsupported',
-    );
-    expect(fetcher.notCalled).to.equal(true);
     const result = await downloadExperimentalCmsMedia(source, {
       ...base,
       contentType: 'sfdc_cms__document',
@@ -144,22 +135,12 @@ describe('experimental CMS media transport', () => {
     expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('text/plain');
   });
 
-  it('keeps Document extension, response MIME, byte/hash, cap and redirect checks fail-closed', async () => {
+  it('keeps Document filename, response MIME, byte/hash, cap and redirect checks fail-closed', async () => {
     const bytes = Buffer.from('Document fixture\n');
     const md5 = createHash('md5').update(bytes).digest('hex');
-    for (const failure of [
-      'extension',
-      'missing-extension',
-      'mime',
-      'size',
-      'md5',
-      'length',
-      'cap',
-      'redirect',
-    ]) {
+    for (const failure of ['filename', 'mime', 'size', 'md5', 'length', 'cap', 'redirect']) {
       let fileName = 'document.txt';
-      if (failure === 'extension') fileName = 'document.pdf';
-      if (failure === 'missing-extension') fileName = 'document';
+      if (failure === 'filename') fileName = '../document.pdf';
       const source = new URL(
         `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=${fileName}&version=1`,
       );
@@ -188,8 +169,7 @@ describe('experimental CMS media transport', () => {
                 }),
         }),
         {
-          extension: 'extension must be txt',
-          'missing-extension': 'extension must be txt',
+          filename: 'filename is invalid',
           mime: 'MIME type changed',
           size: 'authoring metadata',
           md5: 'MD5 differs',
@@ -223,11 +203,6 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'audio.wav'),
     };
-    await expectRejected(
-      downloadExperimentalCmsMedia(source, { ...base, contentType: 'sfdc_cms__document' }),
-      'unsupported',
-    );
-    expect(fetcher.notCalled).to.equal(true);
     const result = await downloadExperimentalCmsMedia(source, {
       ...base,
       contentType: 'sfdc_cms__audio',
@@ -319,7 +294,7 @@ describe('experimental CMS media transport', () => {
     }
   });
 
-  it('admits only explicit Video video/mp4 with byte-exact isom evidence', async () => {
+  it('preserves exact Video video/mp4 bytes', async () => {
     const bytes = Buffer.from('000000206674797069736f6d', 'hex');
     const md5 = createHash('md5').update(bytes).digest('hex');
     const source = new URL(
@@ -337,23 +312,6 @@ describe('experimental CMS media transport', () => {
       instanceUrl: 'https://tenant.my.salesforce.com',
       outputFile: path.join(root, 'video.mp4'),
     };
-    for (const contentType of ['sfdc_cms__document'] as const) {
-      await expectRejected(
-        downloadExperimentalCmsMedia(source, { ...base, contentType }),
-        'unsupported',
-      );
-    }
-    for (const expectedMimeType of ['video/webm', 'video/quicktime', 'application/octet-stream']) {
-      await expectRejected(
-        downloadExperimentalCmsMedia(source, {
-          ...base,
-          contentType: 'sfdc_cms__video',
-          expectedMimeType,
-        }),
-        'unsupported',
-      );
-    }
-    expect(fetcher.notCalled).to.equal(true);
     const result = await downloadExperimentalCmsMedia(source, {
       ...base,
       contentType: 'sfdc_cms__video',
@@ -368,30 +326,12 @@ describe('experimental CMS media transport', () => {
     expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('video/mp4');
   });
 
-  it('rejects Video extension, byte-exact signature and existing security failures', async () => {
-    for (const failure of [
-      'extension',
-      'missing-extension',
-      'signature',
-      'high-bit-signature',
-      'brand',
-      'truncated',
-      'mime',
-      'size',
-      'md5',
-      'length',
-      'cap',
-      'redirect',
-    ]) {
-      let bytes = Buffer.from('000000206674797069736f6d', 'hex');
-      if (failure === 'signature') bytes.write('fake', 4);
-      if (failure === 'high-bit-signature') bytes = Buffer.from('00000020e6f4f9f0e9f3efed', 'hex');
-      if (failure === 'brand') bytes.write('mp42', 8);
-      if (failure === 'truncated') bytes = bytes.subarray(0, 11);
+  it('rejects Video unsafe filenames and existing security failures', async () => {
+    for (const failure of ['filename', 'mime', 'size', 'md5', 'length', 'cap', 'redirect']) {
+      const bytes = Buffer.from('000000206674797069736f6d', 'hex');
       const md5 = createHash('md5').update(bytes).digest('hex');
       let fileName = 'video.mp4';
-      if (failure === 'extension') fileName = 'video.mov';
-      if (failure === 'missing-extension') fileName = 'video';
+      if (failure === 'filename') fileName = '../video.mov';
       const outputFile = path.join(root, `video-${failure}.mp4`);
       await expectRejected(
         downloadExperimentalCmsMedia(
@@ -422,12 +362,7 @@ describe('experimental CMS media transport', () => {
           },
         ),
         {
-          extension: 'extension must be mp4',
-          'missing-extension': 'extension must be mp4',
-          signature: 'isom signature',
-          'high-bit-signature': 'isom signature',
-          brand: 'isom signature',
-          truncated: 'isom signature',
+          filename: 'filename is invalid',
           mime: 'MIME type changed',
           size: 'authoring metadata',
           md5: 'MD5 differs',
@@ -506,7 +441,7 @@ describe('experimental CMS media transport', () => {
     });
   }
 
-  it('downloads Images above 10 MiB while retaining the Document cap', async () => {
+  it('downloads Images above 10 MiB without an implicit cap', async () => {
     const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61);
     const md5 = createHash('md5').update(bytes).digest('hex');
     const base = {
@@ -524,20 +459,102 @@ describe('experimental CMS media transport', () => {
     const source = new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.bin');
     const downloaded = await downloadExperimentalCmsMedia(source, base);
     expect(downloaded.bytes).to.equal(bytes.length);
-    await expectRejected(
-      downloadExperimentalCmsMedia(source, {
-        ...base,
-        contentType: 'sfdc_cms__document',
-        expectedMimeType: 'text/plain',
-        maxBytes: Number.MAX_SAFE_INTEGER,
-        fetch: async () =>
-          new Response(bytes, {
-            headers: { 'content-type': 'text/plain', 'content-length': String(bytes.length) },
-          }),
-      }),
-      'exceeds the cap',
-    );
   });
+
+  for (const [contentType, mimeType] of [
+    ['sfdc_cms__document', 'Application/Pdf'],
+    ['sfdc_cms__video', 'video/webm'],
+  ] as const) {
+    for (const fileName of ['opaque.native', 'opaque']) {
+      it(`downloads >10 MiB opaque ${contentType} ${fileName} without invented format defaults`, async () => {
+        const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+        const outputFile = path.join(root, fileName);
+        const md5 = createHash('md5').update(bytes).digest('hex');
+        const result = await downloadExperimentalCmsMedia(
+          new URL(`https://tenant.my.salesforce.com/cms/media/key?fileName=${fileName}`),
+          {
+            accessToken: 'synthetic-token',
+            contentType,
+            expectedMd5: md5,
+            expectedMimeType: mimeType,
+            expectedSize: bytes.length,
+            instanceUrl: 'https://tenant.my.salesforce.com',
+            outputFile,
+            fetch: async () =>
+              new Response(bytes, {
+                headers: {
+                  'content-type': `${mimeType}; charset=binary`,
+                  'content-length': String(bytes.length),
+                },
+              }),
+          },
+        );
+        expect(result).to.include({
+          bytes: bytes.length,
+          mimeType,
+          md5,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        });
+        expect(await readFile(outputFile)).to.deep.equal(bytes);
+      });
+    }
+
+    for (const declared of [false, true]) {
+      it(`enforces explicit ${contentType} budget on ${declared ? 'declared' : 'streamed'} excess without collateral writes`, async () => {
+        const bytes = Buffer.alloc(16, 255);
+        const outputFile = path.join(root, 'rejected.native');
+        const write = sinon.stub().resolves();
+        const close = sinon.stub().resolves();
+        const unlinkFile = sinon.stub().resolves();
+        const openFile = sinon.stub().resolves({ write, close });
+        const cancel = sinon.spy();
+        let sent = false;
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!sent) {
+              sent = true;
+              controller.enqueue(bytes);
+            }
+          },
+          cancel,
+        });
+        await expectRejected(
+          downloadExperimentalCmsMedia(
+            new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=opaque.native'),
+            {
+              accessToken: 'synthetic-token',
+              contentType,
+              expectedMd5: createHash('md5').update(bytes).digest('hex'),
+              expectedMimeType: mimeType,
+              expectedSize: bytes.length,
+              instanceUrl: 'https://tenant.my.salesforce.com',
+              outputFile,
+              maxBytes: bytes.length - 1,
+              openFile,
+              unlinkFile,
+              fetch: async () =>
+                new Response(body, {
+                  headers: {
+                    'content-type': mimeType,
+                    ...(declared ? { 'content-length': String(bytes.length) } : {}),
+                  },
+                }),
+            },
+          ),
+          declared ? 'exceeds the cap' : 'exceeds the byte cap',
+        );
+        expect(write.notCalled).to.equal(true);
+        expect(openFile.callCount).to.equal(declared ? 0 : 1);
+        expect(close.callCount).to.equal(declared ? 0 : 1);
+        expect(unlinkFile.callCount).to.equal(declared ? 0 : 1);
+        if (!declared) expect(cancel.calledOnce).to.equal(true);
+        await lstat(outputFile).then(
+          () => expect.fail('Rejected download must not create a file'),
+          (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+        );
+      });
+    }
+  }
 
   it('rejects malformed Image MIME, unsafe sizes, empty bytes and integrity mismatches', async () => {
     const bytes = Buffer.from('opaque');
