@@ -1,6 +1,12 @@
 import { Stream } from 'node:stream';
+import { isNativeError } from 'node:util/types';
 
 const REDACTED = '[REDACTED]';
+// Node 24 exposes lazy native Error stacks as a shared own accessor.
+const NATIVE_ERROR_STACK_GETTER = Object.getOwnPropertyDescriptor(
+  new Error('native stack descriptor'),
+  'stack',
+)?.get;
 const SECRET_KEY =
   /^(?:authorization|proxy[-_]?authorization|cookie|set[-_]?cookie|(?:access|refresh|id)[-_]?token|token|password|passwd|client[-_]?secret|session(?:id|key)?|fueloauth)$/iu;
 
@@ -56,12 +62,20 @@ export function redactLogValue(value: unknown, seen = new Set<object>()): unknow
     if (SECRET_KEY.test(key)) result[key] = REDACTED;
     else if (descriptor && 'value' in descriptor)
       result[key] = redactLogValue(descriptor.value, ancestors);
+    else if (
+      key === 'stack' &&
+      isNativeError(value) &&
+      NATIVE_ERROR_STACK_GETTER &&
+      descriptor?.get === NATIVE_ERROR_STACK_GETTER
+    )
+      result[key] = redactLogValue(NATIVE_ERROR_STACK_GETTER.call(value), ancestors);
     else result[key] = '[omitted accessor]';
   }
   return result;
 }
 
-const AUTHORIZATION_HEADERS = '(?:authorization|proxy-authorization)';
+const TEXT_SECRET_KEYS = SECRET_KEY.source.slice(1, -1);
+const AUTHORIZATION_HEADERS = '(?:authorization|proxy[-_]?authorization)';
 const COOKIE_HEADERS = '(?:cookie|set-cookie)';
 const QUERY_KEYS = [
   'client_secret',
@@ -110,7 +124,7 @@ export function redactSecrets(message: string): string {
     )
     .replaceAll(
       new RegExp(
-        String.raw`(${AUTHORIZATION_HEADERS}\s*[:=]\s*)(?:(?:bearer|basic)\s+)?[^\s,;]+`,
+        String.raw`(\b${AUTHORIZATION_HEADERS}\s*[:=]\s*)(?:Digest\s+[^\r\n&]+|(?:(?:bearer|basic|negotiate)\s+)?[^\s,;]+)`,
         'giu',
       ),
       `$1${REDACTED}`,
@@ -123,7 +137,10 @@ export function redactSecrets(message: string): string {
     .replaceAll(new RegExp(String.raw`([?&](?:${QUERY_KEYS})=)[^&#\s]+`, 'giu'), `$1${REDACTED}`)
     .replaceAll(/(https?:\/\/)[^\s/@]+@/giu, `$1${REDACTED}@`)
     .replaceAll(
-      /(["']?(?:access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|password|sessionid)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s&,;}]+)/giu,
+      new RegExp(
+        String.raw`((?:^|[^\w-])["']?${TEXT_SECRET_KEYS}["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s&,;}]+)`,
+        'giu',
+      ),
       `$1${REDACTED}`,
     );
 }

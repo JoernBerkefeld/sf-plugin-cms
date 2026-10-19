@@ -150,7 +150,9 @@ async function runDocumentUpdate(
       if (fresh.source.source.representation !== 'binary')
         throw new TypeError('Document UPDATE requires binary source');
       const binary = fresh.source.source.binary;
-      const multipart = buildDocumentUpdateMultipart(fresh.payload, binary.fileName, binary.bytes);
+      const multipart = buildDocumentUpdateMultipart(fresh.payload, binary.fileName, binary.bytes, {
+        mimeType: binary.mimeType,
+      });
       const receiver = Object.create(connection) as DocumentConnection;
       Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
       const response = await sendVariantUpdateMultipart(
@@ -209,7 +211,7 @@ async function runDocumentUpdate(
         acquired.evidence.variantId !== fresh.variantId ||
         !isDeepStrictEqual(actual, fresh.destination.acquisition.projection.definition) ||
         actual.media.representation !== 'binary' ||
-        actual.media.mimeType !== 'text/plain' ||
+        actual.media.mimeType !== binary.mimeType ||
         acquired.projection.companions.length !== 1 ||
         !acquired.projection.companions[0].bytes.equals(binary.bytes) ||
         createHash('sha256').update(acquired.projection.companions[0].bytes).digest('hex') !==

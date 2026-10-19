@@ -16,11 +16,12 @@ import { CmsRequestError, type JsonRequestOptions } from '../transport/json-requ
 import {
   buildDocumentCreateMultipart,
   createDocumentContent,
-  MAX_IMAGE_BYTES,
   type ManagedContentDocumentBinding,
   type MultipartImageCreateOptions,
   type ImageCreateInput,
 } from '../transport/multipart-image-create.js';
+import { constants as bufferConstants } from 'node:buffer';
+import { assertMediaMimeType } from './editable-media-source.js';
 import { assertCanonicalContentKey } from './content-key.js';
 import { lookupExactCmsVariants } from './cms-prerequisite-lookup.js';
 import {
@@ -133,20 +134,22 @@ function assertDocumentEvidence(
   exactKeys(native, ['source', 'url'], 'Document media');
   exactKeys(native.source, ['type', 'ref', 'size', 'mimeType'], 'Document media source');
   nonempty(native.source.ref, 'Document native file ref');
-  if (
-    native.source.type !== 'file' ||
-    native.source.mimeType !== 'text/plain' ||
-    media.mimeType !== 'text/plain'
-  )
-    fail('Document import admits only native file text/plain');
+  assertMediaMimeType(media.mimeType);
+  if (native.source.type !== 'file' || native.source.mimeType !== media.mimeType)
+    fail('Document native file MIME does not match descriptor');
   if (
     media.variantId !== item.id ||
     media.contentKey !== item.contentKey ||
     item.contentSpace.id !== source.manifest.workspaceId
   )
     fail('Document descriptor is not bound to source variant/content key/workspace');
-  if (media.bytes !== native.source.size || media.bytes <= 0 || media.bytes > MAX_IMAGE_BYTES)
-    fail('Document byte size is inconsistent or exceeds the 10 MiB cap');
+  if (
+    media.bytes !== native.source.size ||
+    !Number.isSafeInteger(media.bytes) ||
+    media.bytes <= 0 ||
+    media.bytes > bufferConstants.MAX_LENGTH
+  )
+    fail('Document byte size is inconsistent, empty or not runtime-representable');
   const status = item.status;
   if (
     !record(status) ||
@@ -165,7 +168,6 @@ function assertDocumentEvidence(
     url.searchParams.get('version') !== media.sourceVersion
   )
     fail('Document native filename/hash/version URL evidence is not bound');
-  if (!media.fileName.endsWith('.txt')) fail('Document filename must end in lowercase .txt');
   const declared = source.manifest.items.find(({ path: file }) => file === media.path);
   if (declared?.kind !== 'cms.media' || declared.sha256 !== media.sha256)
     fail('Document binary manifest binding is missing');
@@ -249,6 +251,7 @@ export function planDocumentImports(
     documentCreateInput(plan, 'validation-workspace'),
     media[0].fileName,
     new Uint8Array(1),
+    { mimeType: media[0].mimeType },
   );
   return [plan];
 }
@@ -328,6 +331,7 @@ export async function readDocumentImportBytes(
     documentCreateInput(plan, 'validation-workspace'),
     plan.media.fileName,
     bytes,
+    { mimeType: plan.media.mimeType },
   );
   return bytes;
 }
@@ -524,7 +528,7 @@ function verifyDocumentReadback(
   nonempty(native.source.ref, 'Document created native ref');
   if (
     native.source.type !== 'file' ||
-    native.source.mimeType !== 'text/plain' ||
+    native.source.mimeType !== plan.media.mimeType ||
     native.source.size !== plan.media.bytes
   )
     fail('Document native metadata MIME/size mismatch');
@@ -563,7 +567,9 @@ export async function applyDocumentImports(
   const plan = options.plans[0];
   const bytes = await readDocumentImportBytes(options.source, options.plans);
   const input = documentCreateInput(plan, options.destinationWorkspaceId);
-  const multipart = buildDocumentCreateMultipart(input, plan.media.fileName, bytes);
+  const multipart = buildDocumentCreateMultipart(input, plan.media.fileName, bytes, {
+    mimeType: plan.media.mimeType,
+  });
   const requestSha256 = createHash('sha256').update(multipart.body).digest('hex');
   const runId = randomUUID();
   const requestIdentity = `create-document\u0000${input.apiName}\u0000${requestSha256}`;
@@ -608,7 +614,7 @@ export async function applyDocumentImports(
             documentCreateInput(plan, options.destinationWorkspaceId),
             plan.media.fileName,
             currentBytes,
-            { boundaryFactory: () => multipart.boundary },
+            { boundaryFactory: () => multipart.boundary, mimeType: plan.media.mimeType },
           ).body,
         )
         .digest('hex') !== requestSha256
@@ -623,6 +629,7 @@ export async function applyDocumentImports(
       currentBytes,
       {
         ...options.createOptions,
+        mimeType: plan.media.mimeType,
         boundaryFactory: () => multipart.boundary,
       },
     );

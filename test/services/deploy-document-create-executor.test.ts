@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { executeDeployDocumentCreate } from '../../src/services/deploy-document-create-executor.js';
 import { executeDeployBatchDocumentItem } from '../../src/services/deploy-batch-executor.js';
+import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 import { buildDocumentCreateMultipart } from '../../src/transport/multipart-image-create.js';
 import {
   rewriteAtomic,
@@ -18,11 +19,14 @@ const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture() {
+async function fixture(opaque = false, rejected = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-document-executor-'));
-  const fileName = 'Guide.cms-document.media.txt';
+  const mimeType = opaque ? 'application/pdf' : 'text/plain';
+  const fileName = opaque ? 'Guide.cms-document.media.pdf' : 'Guide.cms-document.media.txt';
   const companion = path.join(directory, fileName);
-  const bytes = Buffer.from('Grüße 世界\r\nDocument\n');
+  const bytes = opaque
+    ? Buffer.alloc(10 * 1024 * 1024 + 1, 255)
+    : Buffer.from('Grüße 世界\r\nDocument\n');
   const definition = {
     contract: 'sf-cms-media-source',
     contractVersion: '1.0.0',
@@ -39,7 +43,7 @@ async function fixture() {
     urlName: 'guide-document',
     media: {
       representation: 'binary',
-      mimeType: 'text/plain',
+      mimeType,
       companion: { role: 'media', path: fileName },
     },
   };
@@ -73,7 +77,7 @@ async function fixture() {
     ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Guide' },
   };
   const media = {
-    source: { type: 'file', size: bytes.length, mimeType: 'text/plain' },
+    source: { type: 'file', size: bytes.length, mimeType },
     url: `/cms/media/MCGENERATED?version=1&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=${fileName}`,
   };
   const detail: Row = {
@@ -138,12 +142,14 @@ async function fixture() {
             },
             fileName,
             bytes,
-            { boundaryFactory: () => boundary },
+            { boundaryFactory: () => boundary, mimeType },
           );
           expect(request.body!.equals(expected.body)).to.equal(true);
-          expect(request.body!.includes(Buffer.from('Content-Type: text/plain\r\n'))).to.equal(
+          expect(request.body!.includes(Buffer.from(`Content-Type: ${mimeType}\r\n`))).to.equal(
             true,
           );
+          if (rejected)
+            throw Object.assign(new Error('Native Document format rejected'), { statusCode: 415 });
           if (lost) throw new Error('Lost response');
           return structuredClone(response);
         }
@@ -207,6 +213,35 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 
 describe('journaled portable Document CREATE executor', () => {
   afterEach(() => sinon.restore());
+  for (const rejected of [false, true])
+    it(`preserves >10 MiB opaque PDF through fresh CREATE preflight and transport (rejected=${rejected})`, async () => {
+      const f = await fixture(true, rejected);
+      sinon.stub(globalThis, 'fetch').resolves(
+        new Response(f.bytes, {
+          headers: { 'content-type': 'application/pdf' },
+        }),
+      );
+      const planned = await preflightDeployBatch(f.connection, {
+        sources: { 'definition-file': [f.input.definitionFile] },
+        workspaceId,
+        language: 'en_US',
+      });
+      expect(planned.items[0].proposed).to.equal('create');
+      const invoke = () =>
+        executeDeployBatchDocumentItem(f.connection, f.input, 'create', async () => {});
+      if (rejected) {
+        const error = await invoke().catch((error_: unknown) => error_);
+        expect(error).to.have.property('message', 'Native Document format rejected');
+        expect(error).to.have.property('status', 415);
+        expect(await f.journal().then((report) => report.state)).to.equal('ownership-uncertain');
+      } else {
+        expect(await invoke().then((result) => result.outcome)).to.equal('created');
+        expect(await f.journal().then((report) => report.state)).to.equal('completed');
+      }
+      expect(f.posts()).to.equal(1);
+      await failure(invoke(), /collision|exist/u);
+      expect(f.posts()).to.equal(1);
+    });
   it('routes private batch CREATE through fresh callbacks and the existing exclusive journal', async () => {
     const f = await fixture();
     sinon

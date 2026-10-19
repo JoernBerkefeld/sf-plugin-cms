@@ -318,8 +318,8 @@ describe('private read-only Document UPDATE admission', () => {
       if (kind === 'url') f.definition.urlName = '';
       await f.save();
       await rejects(f.run());
-      // Safe suffixes reach native filename identity comparison; metadata differences stay local.
-      if (kind !== 'filename') expect(f.fetcher.called).to.equal(false);
+      // Safe MIME/suffixes reach native identity comparison; metadata differences stay local.
+      if (!['filename', 'mime'].includes(kind)) expect(f.fetcher.called).to.equal(false);
     });
   for (const kind of [
     'source-bytes',

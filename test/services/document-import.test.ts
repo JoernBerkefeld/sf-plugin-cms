@@ -51,7 +51,14 @@ async function rejected(promise: Promise<unknown>): Promise<string> {
   throw new Error('Expected rejection');
 }
 
-async function fixture(root: string) {
+async function fixture(
+  root: string,
+  bytes = BYTES,
+  mimeType = 'text/plain',
+  fileName = 'fixture.txt',
+) {
+  const md5 = createHash('md5').update(bytes).digest('hex');
+  const sourceUrl = `/cms/media/${KEY}?version=1.1&fileHash=${md5}&fileName=${fileName}`;
   const source = path.join(root, 'package');
   await mkdir(path.join(source, 'items'), { recursive: true });
   await mkdir(path.join(source, 'media'));
@@ -71,23 +78,23 @@ async function fixture(root: string) {
     status: { status: 'Draft' },
     contentBody: {
       'sfdc_cms:media': {
-        source: { type: 'file', ref: 'native-ref', size: BYTES.length, mimeType: 'text/plain' },
+        source: { type: 'file', ref: 'native-ref', size: bytes.length, mimeType },
         url: sourceUrl,
       },
     },
   };
   const itemBytes = Buffer.from(`${JSON.stringify(item)}\n`);
   await writeFile(path.join(source, 'items/variant.json'), itemBytes);
-  await writeFile(path.join(source, 'media/variant.txt'), BYTES);
+  await writeFile(path.join(source, 'media/variant.txt'), bytes);
   const media = {
     variantId: 'variant',
     contentKey: KEY,
     path: 'media/variant.txt',
-    sha256: sha256(BYTES),
+    sha256: sha256(bytes),
     md5,
-    bytes: BYTES.length,
-    mimeType: 'text/plain',
-    fileName: 'fixture.txt',
+    bytes: bytes.length,
+    mimeType,
+    fileName,
     sourceStatus: 'Draft',
     sourceModifiedAt: item.lastModifiedDate,
     sourceVersion: '1.1',
@@ -197,10 +204,15 @@ describe('Document import admission and read-only preflight', () => {
       if (url === '/connect/cms/contents/variants/created-variant') return response(detail);
       throw new Error(`Unexpected ${method} ${url}`);
     });
-    const fetcher = sinon.stub().resolves(
-      new Response(BYTES, {
-        headers: { 'content-type': 'text/plain', 'content-length': String(BYTES.length) },
-      }),
+    const descriptor = source.manifest.media![0];
+    const fetcher = sinon.stub().callsFake(
+      async () =>
+        new Response(await readFile(path.join(source.sourceDirectory, descriptor.path)), {
+          headers: {
+            'content-type': descriptor.mimeType,
+            'content-length': String(descriptor.bytes),
+          },
+        }),
     );
     return {
       ...options(source, request),
@@ -212,6 +224,63 @@ describe('Document import admission and read-only preflight', () => {
       },
     };
   }
+
+  it('preserves >10 MiB opaque PDF import bytes and MIME through planning and local preflight', async () => {
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+    const source = await fixture(root, bytes, 'application/pdf', 'native.pdf');
+    const input = options(source);
+    const proof = await preflightDocumentImports(input);
+    expect(proof.dryRun).to.equal(true);
+    expect(proof.plans[0].media.mimeType).to.equal('application/pdf');
+    expect(
+      await readDocumentImportBytes(source, input.plans).then((actual) => actual.equals(bytes)),
+    ).to.equal(true);
+    expect(
+      input.connection.request.getCalls().every((call) => call.args[0].method === 'GET'),
+    ).to.equal(true);
+  });
+
+  for (const nativeReject of [false, true])
+    it(`preserves opaque PDF import transport and exactly-once native outcome (rejected=${nativeReject})`, async () => {
+      const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+      const source = await fixture(root, bytes, 'application/pdf', 'native.pdf');
+      const input = applyOptions(source);
+      const request = input.connection.request;
+      request
+        .withArgs(sinon.match({ method: 'POST' }))
+        .callsFake((call: { body: Buffer }, requestOptions: { retry?: { maxRetries: number } }) => {
+          expect(requestOptions.retry?.maxRetries).to.equal(0);
+          expect(
+            call.body.includes(
+              Buffer.from('filename="native.pdf"\r\nContent-Type: application/pdf\r\n'),
+            ),
+          ).to.equal(true);
+          const start =
+            call.body.indexOf(Buffer.from('Content-Type: application/pdf\r\n\r\n')) +
+            Buffer.byteLength('Content-Type: application/pdf\r\n\r\n');
+          expect(sha256(call.body.subarray(start, start + bytes.length))).to.equal(sha256(bytes));
+          if (nativeReject)
+            return Promise.reject(
+              Object.assign(new Error('Native PDF rejected'), { statusCode: 415 }),
+            );
+          return response({
+            contentKey: KEY,
+            managedContentId: 'created-parent',
+            managedContentVariantId: 'created-variant',
+          });
+        });
+      if (nativeReject)
+        expect(await rejected(applyDocumentImports(input))).to.include('Native PDF rejected');
+      else
+        expect(
+          await applyDocumentImports(input).then(
+            (result) => result.contractResult.assets[0].byteProof,
+          ),
+        ).to.equal('passed');
+      expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(1);
+      await rejected(applyDocumentImports(input));
+      expect(request.getCalls().filter((call) => call.args[0].method === 'POST')).to.have.length(1);
+    });
 
   it('persists exclusive intent before exactly one POST and proves independent native metadata and bytes', async () => {
     const source = await fixture(root);
@@ -474,7 +543,7 @@ describe('Document import admission and read-only preflight', () => {
     ).to.throw('exactly one native Document');
   });
 
-  it('rejects unsupported native bodies, descriptor binding, MIME, extension and size', async () => {
+  it('rejects unsupported native bodies and mismatched descriptor MIME, filename and size', async () => {
     const source = await fixture(root);
     const descriptor = source.manifest.media![0];
     for (const change of [

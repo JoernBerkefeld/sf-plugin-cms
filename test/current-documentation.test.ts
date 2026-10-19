@@ -164,9 +164,9 @@ describe('current public documentation', () => {
       'Document retrieval, CREATE, bytes-only UPDATE and exact unchanged remain unqualified',
       'Bounded two-org development-artifact acceptance covers the tested text/plain profile',
       'released-package verification remains separate',
-      'nonempty UTF-8 `text/plain` bytes up to 10 MiB',
-      'safe ASCII companion filename with lowercase `.txt` extension',
-      'Document profile bounds, not Salesforce caps or Image restrictions',
+      'opaque nonempty runtime-representable bytes, safe native MIME',
+      'no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap',
+      'Explicit caller download budgets still bind',
       'Exact metadata, native filename, MIME and bytes',
       'All other Document differences block the whole selection before mutation',
       'Document UPDATE never falls back to Image transport',
@@ -189,7 +189,7 @@ describe('current public documentation', () => {
       'Document',
       '`sfdc_cms__document`',
       'Available (limited)',
-      'Available (text/plain)',
+      'Available (API-led)',
       'Available (bytes only)',
       'Not supported',
     ]);
@@ -211,6 +211,16 @@ describe('current public documentation', () => {
     expect(RetrieveContent.description).to.include(
       'with bounded two-org development-artifact acceptance for the tested text/plain profile',
     );
+    for (const text of [readme, RetrieveContent.description, DeployContent.description]) {
+      expect(text).to.include(
+        'no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap',
+      );
+      expect(text).not.to.include(
+        'Document deploy requires root/default-language UTF-8 text/plain bytes',
+      );
+      expect(text).not.to.include('nonempty up to 10 MiB and a safe ASCII lowercase .txt filename');
+    }
+    expect(RetrieveContent.description).to.include('Explicit caller download budgets still bind');
     expect(RetrieveContent.description).not.to.include('Documents are not deployable');
     expect(DeployContent.summary).to.include('Document');
     expect(DeployContent.flags['content-type'].summary).to.include('Document');
@@ -255,7 +265,7 @@ describe('current public documentation', () => {
       'tested 844-byte WAV profile',
       'zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks',
       '**0.19.0**',
-      'current Document deployment profile bounds and unsupported Video operations remain unchanged',
+      'Video deployment remains closed; 0.20 qualification and local sync are deferred.',
     ])
       expect(readme, claim).to.include(claim);
     expect(readme).not.to.include(
@@ -318,6 +328,25 @@ describe('current public documentation', () => {
     expect(readme).not.to.include('./project/cms/');
     expect(readme).not.to.include('sf content retrieve -W');
     expect(readme).not.to.include('sf cms info --contract-version 1 --json');
+  });
+
+  it('documents automatic logs, opt-in API payloads and customer-content precautions', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const claim of [
+      'automatically write one diagnostic log under `logs/cms/`',
+      '2026-10-19T21.11.00.000Z.log',
+      'installed plugin version and exact received command tokens, subject to secret redaction',
+      "does not reconstruct your shell's original quoting",
+      'terminal diagnostics, warnings, errors and stack traces',
+      'complete rows and columns are recorded as structured data',
+      '`--api log` to opt in to request/response payload details',
+      'not a raw HTTP wire capture',
+      'not comprehensive PII redaction',
+      'customer content or other sensitive data',
+      '**Inspect before sharing**',
+      "**consuming project's `.gitignore`**",
+    ])
+      expect(readme, claim).to.include(claim);
   });
 
   it('preserves recovery, qualification, ownership and API interoperability limits', async () => {

@@ -41,7 +41,6 @@ export async function preflightDeployDocumentUpdate(
   if (
     desired.contentType !== 'sfdc_cms__document' ||
     source.source.representation !== 'binary' ||
-    source.source.binary.mimeType !== 'text/plain' ||
     desired.language !== selected.language ||
     desired.folderPath.length > 0 ||
     typeof desired.title !== 'string' ||
@@ -50,7 +49,7 @@ export async function preflightDeployDocumentUpdate(
     !/^[a-z0-9-]+$/u.test(desired.urlName)
   )
     throw new TypeError(
-      'Document UPDATE requires binary text/plain, exact metadata, root and language',
+      'Document UPDATE requires binary Document, exact metadata, root and language',
     );
   const binary = source.source.binary;
   const payload: DocumentUpdateInput = {
@@ -60,7 +59,9 @@ export async function preflightDeployDocumentUpdate(
     contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
   };
   // Validate the accepted bytes-only profile and envelope without retaining or sending a body.
-  buildDocumentUpdateMultipart(payload, binary.fileName, binary.bytes);
+  buildDocumentUpdateMultipart(payload, binary.fileName, binary.bytes, {
+    mimeType: binary.mimeType,
+  });
   const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
   if (
     workspace.id !== selected.workspaceId ||
@@ -141,7 +142,9 @@ export async function preflightDeployDocumentUpdate(
   )
     throw new TypeError('Document UPDATE native filename/identity readback mismatch');
   // The current binary must independently meet the same bounded profile as the selected binary.
-  buildDocumentUpdateMultipart(payload, binary.fileName, observedBytes);
+  buildDocumentUpdateMultipart(payload, binary.fileName, observedBytes, {
+    mimeType: binary.mimeType,
+  });
   if (
     !isDeepStrictEqual(
       await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),

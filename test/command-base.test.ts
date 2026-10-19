@@ -18,6 +18,7 @@ import { CmsCommand, apiVersionFlag } from '../src/command-base.js';
 import { getCmsApiSelection } from '../src/api-policy.js';
 
 import { requestJson, getSelectedOperation } from '../src/transport/json-request.js';
+import { createInvocationLogger } from '../src/logging.js';
 
 class Command extends CmsCommand<void> {
   public async run(): Promise<void> {}
@@ -118,6 +119,34 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
         .map((line) => JSON.parse(line)),
     );
   };
+  it('never writes text credentials to actual logger file bytes and retains originating cause frames', async () => {
+    const sentinel = 'GATE4_CREDENTIAL_SENTINEL';
+    const logger = createInvocationLogger({ cwd, argv: [] });
+    const fields = ['token', 'sessionKey', 'passwd', 'fueloauth'];
+    for (const key of fields) {
+      const text = `${key}=${sentinel}&safe=selector-required`;
+      logger.log('error', text, { body: text, encoded: encodeURIComponent(text) });
+    }
+    logger.log(
+      'error',
+      `Authorization: Digest username="${sentinel}", response="${sentinel}"\nselector required`,
+    );
+    const cause = new Error(`sessionKey=${sentinel}`);
+    logger.log('error', 'native failure', new Error(`token=${sentinel}`, { cause }));
+    await logger.close();
+    const bytes = fs.readFileSync(logger.filePath);
+    expect(bytes.includes(Buffer.from(sentinel))).to.equal(false);
+    const native = bytes
+      .toString('utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.message === 'native failure');
+    expect(native.details.stack).to.include('command-base.test.ts:');
+    expect(native.details.cause.stack).to.include('command-base.test.ts:');
+    expect(bytes.toString('utf8')).to.include('selector required');
+  });
+
   it('binds API verbosity from parsed flags only for that invocation', async () => {
     for (const enabled of [true, false]) {
       const config = command(false).config;
@@ -175,7 +204,7 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
           expect(entries.filter((entry) => entry.message === 'command failure')).to.have.length(1);
           expect(
             entries.find((entry) => entry.message === 'command failure')?.details.stack,
-          ).to.be.a('string');
+          ).to.match(/\n\s+at .*(?:command-base\.test\.ts|@oclif)/u);
           if (json) expect(JSON.parse(output(stdout))).to.have.property('status');
         }
       });
@@ -337,7 +366,7 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
       (entry) => entry.message === 'image upload local validation failed',
     );
     expect(failure?.details).to.have.property('message', 'Unsafe or unsupported image filename');
-    expect(failure?.details.stack).to.be.a('string');
+    expect(failure?.details.stack).to.match(/at .*image-upload\.ts:/u);
     expect(context.called).to.equal(false);
     const visible = output(stdout);
     expect(JSON.parse(visible)).to.deep.equal(result);

@@ -33,7 +33,7 @@ export type ExecuteDeployDocumentCreateInput = DeployDocumentCreatePreflightInpu
 
 /**
  * Journal one unqualified Document CREATE; this is not public deploy or Salesforce qualification.
- * Current UTF-8 text/plain, ASCII .txt and nonempty 10 MiB bounds are a local profile.
+ * Safe native MIME and opaque nonempty bytes retain identity and integrity checks.
  * @param {DocumentConnection} connection - Explicit destination connection.
  * @param {ExecuteDeployDocumentCreateInput} input - Local source, destination and new journal.
  * @param {JsonRequestOptions} options - Cancellation and bounded request options.
@@ -134,7 +134,7 @@ export async function executeDeployDocumentCreate(
       fresh.payload,
       binary.fileName,
       binary.bytes,
-      requestOptions,
+      { ...requestOptions, mimeType: binary.mimeType },
     );
     const created = {
       contentId: response.managedContentId,

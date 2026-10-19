@@ -23,7 +23,7 @@ export type DeployDocumentUnchangedResult = {
 
 /**
  * Observe exact unchanged Document content without mutation or UPDATE authority.
- * Current text/plain UTF-8, ASCII .txt and 10 MiB bounds are a profile, not Salesforce limits.
+ * Safe native MIME and opaque nonempty bytes retain identity and integrity checks.
  * @param {DocumentConnection} connection - Explicit authenticated destination connection.
  * @param {DeployDocumentUnchangedInput} input - Local source and exact destination scope.
  * @param {JsonRequestOptions} options - Bounded read options only.
@@ -63,6 +63,7 @@ export async function admitDeployDocumentUnchanged(
     },
     binary.fileName,
     binary.bytes,
+    { mimeType: binary.mimeType },
   );
   const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
   if (

@@ -2,6 +2,76 @@ import { expect } from 'chai';
 import { redactSecrets, redactLogValue, redactArgv } from '../../src/transport/redact-secrets.js';
 
 describe('transport secret redaction', () => {
+  it('matches the secret-key policy in leading, subsequent and encoded text fields', () => {
+    for (const key of [
+      'authorization',
+      'proxy_authorization',
+      'cookie',
+      'set_cookie',
+      'accessToken',
+      'refresh-token',
+      'id_token',
+      'token',
+      'password',
+      'passwd',
+      'clientSecret',
+      'session',
+      'sessionId',
+      'sessionKey',
+      'fueloauth',
+    ]) {
+      for (const text of [
+        `${key}=SECRET&safe=value`,
+        `safe=value&${key}=SECRET`,
+        `failure ${key}: SECRET`,
+      ]) {
+        expect(redactSecrets(text), text).not.to.include('SECRET');
+        expect(redactSecrets(encodeURIComponent(text)), text).not.to.include('SECRET');
+      }
+    }
+    expect(redactSecrets('not_token=ordinary&safe=value')).to.equal(
+      'not_token=ordinary&safe=value',
+    );
+  });
+
+  it('masks complete authorization credentials including Digest parameters', () => {
+    for (const header of ['Authorization', 'proxy-authorization', 'proxy_authorization']) {
+      for (const value of [
+        'Basic SECRET',
+        'Bearer SECRET',
+        'Negotiate SECRET',
+        'Digest username="SECRET", realm="SECRET", response="SECRET"',
+      ]) {
+        expect(redactSecrets(`${header}: ${value}\nselector required`)).to.equal(
+          `${header}: [REDACTED]\nselector required`,
+        );
+      }
+    }
+  });
+
+  it('preserves native error frames and nested causes without invoking custom accessors', () => {
+    const cause = new Error('sessionKey=SECRET');
+    const error = new Error('token=SECRET', { cause });
+    const sanitized = redactLogValue(error) as { stack: string; cause: { stack: string } };
+    expect(sanitized.stack).to.include('redact-secrets.test.ts:').and.not.to.include('SECRET');
+    expect(sanitized.cause.stack)
+      .to.include('redact-secrets.test.ts:')
+      .and.not.to.include('SECRET');
+    const custom = new Error('ordinary');
+    Object.defineProperty(custom, 'stack', {
+      get() {
+        throw new Error('must not invoke');
+      },
+    });
+    expect(redactLogValue(custom)).to.have.property('stack', '[omitted accessor]');
+    const fake = Object.create(Error.prototype) as Error;
+    Object.defineProperty(
+      fake,
+      'stack',
+      Object.getOwnPropertyDescriptor(new Error('native stack descriptor'), 'stack')!,
+    );
+    expect(redactLogValue(fake)).to.have.property('stack', '[omitted accessor]');
+  });
   it('sanitizes JSON headers, form credentials and encoded bodies without hiding guard prose', () => {
     for (const text of [
       '{"Authorization":"Basic SECRET", "nested":{"clientSecret":"SECRET"}, "reason":"selector required"}',

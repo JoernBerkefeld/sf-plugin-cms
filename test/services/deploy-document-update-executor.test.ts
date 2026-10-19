@@ -12,18 +12,24 @@ import {
   executeDeployDocumentUpdate,
 } from '../../src/services/deploy-document-update-executor.js';
 import { buildDocumentUpdateMultipart } from '../../src/transport/multipart-document-update.js';
+import { executeDeployBatchDocumentItem } from '../../src/services/deploy-batch-executor.js';
+import { admitDeployDocumentUnchanged } from '../../src/services/deploy-document-unchanged.js';
+import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 import {
   rewriteAtomic,
   type WorkspaceImportRunReport,
 } from '../../src/services/import-workspace.js';
 
-async function fixture(execute = false, fault = '') {
+async function fixture(execute = false, fault = '', opaque = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-document-update-intent-'));
   const definitionFile = path.join(directory, 'Guide.cms-document.json');
-  const fileName = 'Guide.cms-document.media.txt';
+  const mimeType = opaque ? 'application/pdf' : 'text/plain';
+  const fileName = opaque ? 'Guide.cms-document.media.pdf' : 'Guide.cms-document.media.txt';
   const companion = path.join(directory, fileName);
   const current = Buffer.from('Current — café.\r\n');
-  const bytes = Buffer.from('Replacement — 世界.\n');
+  const bytes = opaque
+    ? Buffer.alloc(10 * 1024 * 1024 + 1, 255)
+    : Buffer.from('Replacement — 世界.\n');
   const workspaceId = '0Zu000000000001AAA';
   const contentId = '20Y000000000001AAA';
   const variantId = '9Ps000000000001AAA';
@@ -43,7 +49,7 @@ async function fixture(execute = false, fault = '') {
     urlName: 'guide-document',
     media: {
       representation: 'binary',
-      mimeType: 'text/plain',
+      mimeType,
       companion: { role: 'media', path: fileName },
     },
   };
@@ -84,7 +90,7 @@ async function fixture(execute = false, fault = '') {
     status: { status: 'Draft' },
     contentBody: {
       'sfdc_cms:media': {
-        source: { type: 'file', size: current.length, mimeType: 'text/plain' },
+        source: { type: 'file', size: current.length, mimeType },
         url: `/cms/media/MCGENERATED?version=1&fileHash=${createHash('md5').update(current).digest('hex')}&fileName=${fileName}`,
       },
     },
@@ -125,9 +131,12 @@ async function fixture(execute = false, fault = '') {
           const boundary = input.body!.toString('ascii').split('\r\n')[0].slice(2);
           const expected = buildDocumentUpdateMultipart(evidence.payload, fileName, bytes, {
             boundaryFactory: () => boundary,
+            mimeType,
           });
           expect(input.body!.equals(expected.body)).to.equal(true);
           expect(input.headers?.['content-length']).to.equal(String(expected.body.length));
+          if (fault === 'rejected')
+            throw Object.assign(new Error('Native Document format rejected'), { statusCode: 415 });
           remote = bytes;
           detail.contentBody['sfdc_cms:media'].source.size = bytes.length;
           detail.contentBody['sfdc_cms:media'].url =
@@ -184,7 +193,7 @@ async function fixture(execute = false, fault = '') {
   sinon.stub(globalThis, 'fetch').callsFake(
     async () =>
       new Response(fault === 'bytes' && methods.includes('PUT') ? current : remote, {
-        headers: { 'content-type': 'text/plain' },
+        headers: { 'content-type': mimeType },
       }),
   );
   if (execute)
@@ -223,6 +232,34 @@ async function rejects(operation: Promise<unknown>, pattern = /./u) {
 
 describe('private Document UPDATE guarded intent and one-shot executor', () => {
   afterEach(() => sinon.restore());
+  for (const fault of ['', 'rejected'])
+    it(`preserves >10 MiB opaque PDF through fresh UPDATE preflight and transport (${fault || 'accepted'})`, async () => {
+      const f = await fixture(true, fault, true);
+      const planned = await preflightDeployBatch(f.connection, {
+        sources: { 'definition-file': [f.input.definitionFile] },
+        workspaceId: f.input.workspaceId,
+        language: 'en_US',
+      });
+      expect(planned.items[0].proposed).to.equal('update');
+      const invoke = () =>
+        executeDeployBatchDocumentItem(f.connection, f.input, 'update', async () => {});
+      if (fault) {
+        const error = await invoke().catch((error_: unknown) => error_);
+        expect(error).to.have.property('message', 'Native Document format rejected');
+        expect(error).to.have.property('status', 415);
+        expect(await f.journal().then((report) => report.state)).to.equal('ownership-uncertain');
+      } else {
+        expect(await invoke().then((result) => result.outcome)).to.equal('updated');
+        expect(
+          await admitDeployDocumentUnchanged(f.connection, f.input).then(
+            (result) => result.operation,
+          ),
+        ).to.equal('unchanged');
+      }
+      expect(f.methods.filter((method) => method === 'PUT')).to.have.length(1);
+      await rejects(invoke());
+      expect(f.methods.filter((method) => method === 'PUT')).to.have.length(1);
+    });
   it('dispatches exact Document multipart once and durably proves independent replacement', async () => {
     const f = await fixture(true);
     let boundary = false;
