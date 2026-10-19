@@ -22,6 +22,7 @@ import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base
 
 /** Unpublishes one exact published Email variant without deleting it. */
 export default class UnpublishContent extends CmsCommand<CmsEnvelope<ContentUnpublishResult>> {
+  public static readonly aliases = ['content:unpublish'];
   public static readonly summary = 'Preview or parent-unpublish one bounded published Email.';
   public static readonly description =
     'Selects exactly one Published sfdc_cms__email by workspace ID, API name, and explicit language or workspace default language, and requires fresh proof that its parent has exactly one variant. Dry-run is the default and shows parent scope. --apply requires a new --report-dir and --acknowledge-active-use-stops before org access. Unpublish removes the Email from active use but does not delete it.';

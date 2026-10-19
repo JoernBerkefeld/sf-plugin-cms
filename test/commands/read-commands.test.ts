@@ -47,6 +47,25 @@ describe('CMS read command definitions', () => {
       'cms:unpublish:content',
       'cms:delete:content',
     ]);
+    const aliasPairs = [
+      ['cms:retrieve:content', 'content:retrieve'],
+      ['cms:deploy:content', 'content:deploy'],
+      ['cms:delete:content', 'content:delete'],
+      ['cms:publish:content', 'content:publish'],
+      ['cms:unpublish:content', 'content:unpublish'],
+      ['cms:list:workspace', 'content:list:workspace'],
+      ['cms:list:channel', 'content:list:channel'],
+      ['cms:upload:images', 'content:upload:images'],
+      ['cms:info', 'content:info'],
+    ];
+    for (const [canonical, alias] of aliasPairs) {
+      const descriptor = await plugin.findCommand(canonical);
+      expect(descriptor?.id, canonical).to.equal(canonical);
+      expect(descriptor?.aliases, canonical).to.deep.equal([alias]);
+    }
+    const aliases = plugin.commands.flatMap((command) => command.aliases ?? []);
+    expect(aliases).to.have.members(aliasPairs.map(([, alias]) => alias));
+    expect(new Set(aliases).size).to.equal(aliases.length);
     expect(plugin.commandIDs.filter((id) => id.split(':').includes('get'))).to.deep.equal([]);
     expect(plugin.commandIDs.filter((id) => id.split(':').includes('export'))).to.deep.equal([]);
     expect(plugin.commandIDs.filter((id) => id.split(':').includes('import'))).to.deep.equal([]);

@@ -19,6 +19,7 @@ import { assertWorkspaceSelector } from '../../../services/resolve-workspace.js'
 import { getContent } from '../../../services/read.js';
 
 export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadCommandResult>> {
+  public static readonly aliases = ['content:upload:images'];
   public static readonly summary =
     'Preview or create local images in an enhanced CMS workspace root.';
   public static readonly description =

@@ -53,6 +53,7 @@ export type RetrieveContentResult = {
 };
 
 export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveContentResult>> {
+  public static readonly aliases = ['content:retrieve'];
   public static readonly summary =
     'Retrieve editable Emails, Email Templates, Images, Documents and Audio into a local project.';
   public static readonly description =

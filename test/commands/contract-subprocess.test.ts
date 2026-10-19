@@ -235,6 +235,64 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     });
   }
 
+  for (const [alias, canonical, evidence] of [
+    ['retrieve', 'retrieve content', '--metadata'],
+    ['deploy', 'deploy content', '--source-dir'],
+    ['delete', 'delete content', '--ownership-report'],
+    ['publish', 'publish content', '--acknowledge-no-send'],
+    ['unpublish', 'unpublish content', '--acknowledge-active-use-stops'],
+    ['list workspace', 'list workspace', '--name-fragment'],
+    ['list channel', 'list channel', '--workspace-id'],
+    ['upload images', 'upload images', '--file'],
+    ['info', 'info', '--contract-version'],
+  ]) {
+    it(`resolves packed content ${alias} help to the canonical command`, async () => {
+      const help = await runSf(['content', ...alias.split(' '), '--help']);
+      expect(help.exitCode, help.stdout + help.stderr).to.equal(0);
+      const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+      expect(normalizedHelp).to.include(`sf cms ${canonical}`);
+      expect(normalizedHelp).to.include(evidence);
+      expect(normalizedHelp).to.include('--json');
+    });
+  }
+
+  it('keeps packed content info success and blocked envelopes equivalent to cms info', async () => {
+    for (const unsupported of [false, true]) {
+      const suffix = unsupported ? ['--contract-version', '3', '--json'] : ['--json'];
+      const canonical = await runSf(['cms', 'info', ...suffix]);
+      const alias = await runSf(['content', 'info', ...suffix]);
+      expect(alias.exitCode, alias.stdout + alias.stderr).to.equal(unsupported ? 1 : 0);
+      expect(alias.exitCode).to.equal(canonical.exitCode);
+      const canonicalEnvelope = parseEnvelope(canonical);
+      const aliasEnvelope = parseEnvelope(alias);
+      expect(aliasEnvelope).to.deep.include({
+        contract: 'sf-cms-info',
+        contractVersion: '1.0.0',
+        status: unsupported ? 'blocked' : 'success',
+      });
+      expectPluginVersion(aliasEnvelope, installedPackageVersion);
+      expect(aliasEnvelope.provenance).to.include({ command: 'sf cms info' });
+      expect(alias.stdout).to.equal(`${JSON.stringify(aliasEnvelope, null, 2)}\n`);
+      if (unsupported) {
+        expect(aliasEnvelope.result).to.equal(null);
+        expect(aliasEnvelope.diagnostics).to.deep.include({
+          errors: [
+            {
+              code: 'UNSUPPORTED_CONTRACT_VERSION',
+              message: 'Contract major 3 is unsupported; supported major is 1.',
+              retryable: false,
+            },
+          ],
+        });
+      }
+      // Each invocation owns its timestamp; every other public field stays identical.
+      for (const envelope of [canonicalEnvelope, aliasEnvelope]) {
+        delete (envelope.provenance as Record<string, unknown>).generatedAt;
+      }
+      expect(aliasEnvelope).to.deep.equal(canonicalEnvelope);
+    }
+  });
+
   it('loads packed image upload help, ordered repeated files, and offline invalid arguments', async function () {
     this.timeout(300_000);
     const help = await runSf(['cms', 'upload', 'images', '--help']);

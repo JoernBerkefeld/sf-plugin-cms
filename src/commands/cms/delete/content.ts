@@ -28,6 +28,7 @@ import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base
 
 /** Permanently deletes one exact run-owned Draft Email variant. */
 export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteResult>> {
+  public static readonly aliases = ['content:delete'];
   public static readonly summary =
     'Preview or permanently delete one bounded run-owned Draft Email or Email Template.';
   public static readonly description =

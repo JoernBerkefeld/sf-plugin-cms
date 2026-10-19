@@ -9,6 +9,7 @@ import {
 } from '../../../command-base.js';
 
 export default class ListWorkspace extends CmsCommand<CmsPage> {
+  public static readonly aliases = ['content:list:workspace'];
   public static readonly summary = 'List Marketing Cloud CMS workspaces.';
   public static readonly description =
     'Lists one bounded page of CMS workspaces through the authenticated Salesforce connection.';

@@ -60,6 +60,7 @@ export type DeployContentResult = {
 };
 
 export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentResult>> {
+  public static readonly aliases = ['content:deploy'];
   public static readonly summary =
     'Plan or apply portable Email, Email Template, Image, Document and Audio deployment.';
   public static readonly description =

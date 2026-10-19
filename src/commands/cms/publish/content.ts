@@ -23,6 +23,7 @@ import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base
 
 /** Publishes one exact unpublished Draft Email variant without sending it. */
 export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublishResult>> {
+  public static readonly aliases = ['content:publish'];
   public static readonly summary = 'Preview or publish one bounded Draft Email variant.';
   public static readonly description =
     'Selects exactly one unpublished Draft sfdc_cms__email variant by workspace ID, API name, and explicit language or workspace default language. Dry-run is the default. --apply requires a new --report-dir and --acknowledge-no-send, writes durable pending intent, then performs one non-retried variant-scoped publish with content references excluded. Publishing CMS content does not send the Email; this command never starts a Flow, transactional send, journey, or campaign.';

@@ -9,6 +9,7 @@ import {
 } from '../../../command-base.js';
 
 export default class ListChannel extends CmsCommand<CmsPage> {
+  public static readonly aliases = ['content:list:channel'];
   public static readonly summary = 'List channels assigned to a CMS workspace.';
   public static readonly description = 'Retrieves one page of channels for an explicit workspace.';
   public static readonly examples = [
