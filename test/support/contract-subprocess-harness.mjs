@@ -8,6 +8,37 @@ import { isMainThread } from 'node:worker_threads';
 
 const contractCase = process.env.SF_PLUGIN_CMS_CONTRACT_CASE;
 
+if (contractCase?.startsWith('logging-') && isMainThread) {
+  const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
+  if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
+  const installedRequire = createRequire(path.join(pluginRoot, 'package.json'));
+  const { Org } = installedRequire('@salesforce/core');
+  Org.create = async (options) => ({ getUsername: () => options?.aliasOrUsername ?? 'unused' });
+  const { CmsCommand } = await import(pathToFileURL(path.join(pluginRoot, 'lib/command-base.js')));
+  CmsCommand.prototype.getOrgContext = async () => {
+    throw new Error('Unexpected logging fixture org access');
+  };
+  if (contractCase === 'logging-table' || contractCase === 'logging-error') {
+    CmsCommand.prototype.getConnection = async () => {
+      if (contractCase === 'logging-error')
+        throw new Error('list failure sentinel Authorization: Bearer disk-secret');
+      return {
+        request: async () => ({
+          items: [{ id: 'space', name: 'Transcript fixture', type: 'Marketing' }],
+          total: 1,
+        }),
+      };
+    };
+  }
+  if (contractCase === 'logging-close-fault') {
+    // Deliberate process-local sink fault after output; never replace/retry the command.
+    const fs = installedRequire('node:fs');
+    fs.fsyncSync = () => {
+      throw new Error('packed flush failure sentinel');
+    };
+  }
+}
+
 if (contractCase === 'definition-export-fixture' && isMainThread) {
   const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
@@ -233,6 +264,7 @@ if (['source-b-export-fixture', 'brand-export-fixture'].includes(contractCase) &
 
 if (
   contractCase !== undefined &&
+  !contractCase.startsWith('logging-') &&
   contractCase !== 'email-update-fixture' &&
   contractCase !== 'editable-export-fixture' &&
   contractCase !== 'source-b-export-fixture' &&

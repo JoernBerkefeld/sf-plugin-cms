@@ -20,6 +20,10 @@ import {
   type CmsProvenance,
 } from './contracts/shared.js';
 
+// Command modules load before host prerun hooks; Salesforce telemetry consumes
+// process.argv there. Retain received tokens only, never an invocation/logger singleton.
+const loadedProcessArgv = process.argv.slice(2);
+
 export const targetOrgFlag = Flags.requiredOrg();
 
 export const apiVersionFlag = Flags.string({
@@ -151,9 +155,9 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
   }
 
   private invocationArgv(): string[] {
-    const received = process.argv.slice(2);
+    const received = process.argv.length > 2 ? process.argv.slice(2) : loadedProcessArgv;
     const prefixLength = received.length - this.argv.length;
-    const identifiers = [this.id, ...this.ctor.aliases];
+    const identifiers = [this.id, ...this.ctor.aliases].map((id) => id?.replaceAll(' ', ':'));
     if (
       prefixLength > 0 &&
       this.argv.every((token, index) => received[prefixLength + index] === token) &&

@@ -49,7 +49,11 @@ type ProcessResult = {
   stdout: string;
 };
 
-async function runSf(arguments_: string[], contractCase?: string): Promise<ProcessResult> {
+async function runSf(
+  arguments_: string[],
+  contractCase?: string,
+  environment: NodeJS.ProcessEnv = {},
+): Promise<ProcessResult> {
   try {
     const pending = execFileAsync(executable, [...sfPrefix, ...arguments_], {
       cwd: isolatedDataDirectory,
@@ -57,6 +61,7 @@ async function runSf(arguments_: string[], contractCase?: string): Promise<Proce
       env: {
         ...process.env,
         NO_COLOR: '1',
+        ...environment,
         SF_DATA_DIR: isolatedDataDirectory,
         SF_CONFIG_DIR: isolatedDataDirectory,
         ...(contractCase === undefined
@@ -81,6 +86,39 @@ async function runSf(arguments_: string[], contractCase?: string): Promise<Proce
       stdout: result.stdout ?? '',
     };
   }
+}
+
+type LogRecord = { message: string; details?: Record<string, unknown> };
+
+async function invocationRecords(result: ProcessResult, argv: string[]): Promise<LogRecord[]> {
+  const notices = [...result.stderr.matchAll(/^CMS log: (.+)\r?$/gmu)];
+  expect(notices, result.stderr).to.have.length(1);
+  const logPath = notices[0][1].trim();
+  expect(path.dirname(logPath)).to.equal(file('logs/cms'));
+  expect(path.basename(logPath)).to.match(/^\d{4}-\d\d-\d\dT\d\d\.\d\d\.\d\d\.\d{3}Z\.log$/u);
+  const bytes = await readFile(logPath, 'utf8');
+  const records = bytes
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as LogRecord);
+  expect(records[0].message).to.equal(`sf-plugin-cms ${installedPackageVersion}`);
+  expect(records[1].message).to.equal('invocation');
+  expect(records[1].details).to.deep.include({ argv, cwd: isolatedDataDirectory });
+  for (const channel of ['stdout', 'stderr']) {
+    const transcript = records
+      .filter(({ message, details }) => message === 'terminal' && details?.channel === channel)
+      .map(({ details }) => details!.text)
+      .join('');
+    // Host notices before the CMS-owned boundary are deliberately outside this transcript.
+    if (channel === 'stdout') expect(transcript).to.equal(result.stdout);
+    else expect(result.stderr).to.include(transcript);
+  }
+  expect(
+    records.some(
+      ({ message, details }) => message === 'terminal' && details?.text === `CMS log: ${logPath}\n`,
+    ),
+  ).to.equal(true);
+  return records;
 }
 
 function expectPluginVersion(envelope: Record<string, unknown>, version: string): void {
@@ -247,18 +285,36 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     ['info', 'info', '--contract-version'],
   ]) {
     it(`resolves packed content ${alias} help to the canonical command`, async () => {
-      const help = await runSf(['content', ...alias.split(' '), '--help']);
-      expect(help.exitCode, help.stdout + help.stderr).to.equal(0);
-      const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
-      expect(normalizedHelp).to.include(`sf cms ${canonical}`);
-      expect(normalizedHelp).to.include(evidence);
-      expect(normalizedHelp).to.include('--json');
+      for (const route of [
+        ['cms', ...canonical.split(' ')],
+        ['content', ...alias.split(' ')],
+      ]) {
+        const argv = [...route, '--help'];
+        const help = await runSf(argv);
+        expect(help.exitCode, help.stdout + help.stderr).to.equal(0);
+        const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
+        expect(normalizedHelp).to.include(`sf cms ${canonical}`);
+        expect(normalizedHelp).to.include(evidence);
+        expect(normalizedHelp).to.include('--json');
+        expect(normalizedHelp).to.include('--api');
+        expect(normalizedHelp).to.include('log');
+        // The host renders --help before constructing the CMS command.
+        // Help/invalid enum parsing needs no auth fixture or transport replacement.
+        const invalidArgv = [...route, '--api', 'cli', '--json'];
+        const invalid = await runSf(invalidArgv);
+        expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(1);
+        expect(JSON.parse(invalid.stdout).message).to.match(/--api.*(?:log|cli)/su);
+        const records = await invocationRecords(invalid, invalidArgv);
+        expect(records.some(({ message }) => message === 'command failure')).to.equal(true);
+      }
     });
   }
 
   it('keeps packed content info success and blocked envelopes equivalent to cms info', async () => {
     for (const unsupported of [false, true]) {
-      const suffix = unsupported ? ['--contract-version', '3', '--json'] : ['--json'];
+      const suffix = unsupported
+        ? ['--contract-version', '3', '--api', 'log', '--json']
+        : ['--json'];
       const canonical = await runSf(['cms', 'info', ...suffix]);
       const alias = await runSf(['content', 'info', ...suffix]);
       expect(alias.exitCode, alias.stdout + alias.stderr).to.equal(unsupported ? 1 : 0);
@@ -273,6 +329,19 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expectPluginVersion(aliasEnvelope, installedPackageVersion);
       expect(aliasEnvelope.provenance).to.include({ command: 'sf cms info' });
       expect(alias.stdout).to.equal(`${JSON.stringify(aliasEnvelope, null, 2)}\n`);
+      for (const [response, route] of [
+        [canonical, 'cms'],
+        [alias, 'content'],
+      ] as const) {
+        const records = await invocationRecords(response, [route, 'info', ...suffix]);
+        const diagnostics = records.find(({ message }) => message === 'command diagnostics')!;
+        expect(diagnostics.details?.orgContext).to.equal(
+          'not entered; no CMS org HTTP or mutation dispatched',
+        );
+        expect(diagnostics.details?.status).to.equal(unsupported ? 'blocked' : 'success');
+        if (unsupported)
+          expect(JSON.stringify(diagnostics)).to.include('UNSUPPORTED_CONTRACT_VERSION');
+      }
       if (unsupported) {
         expect(aliasEnvelope.result).to.equal(null);
         expect(aliasEnvelope.diagnostics).to.deep.include({
@@ -291,6 +360,108 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       }
       expect(aliasEnvelope).to.deep.equal(canonicalEnvelope);
     }
+  });
+
+  it('records packed all-command local guards and plain list results with valid API opt-in', async () => {
+    await writeFile(file('logging-ownership.json'), '{}');
+    const common = ['--target-org', 'unused', '--api-version', '67.0'];
+    const lifecycle = [
+      '--workspace-id',
+      'space',
+      '--api-name',
+      'Welcome',
+      '--contract-version',
+      '99',
+    ];
+    const cases: Array<[string[], string[], string]> = [
+      [['retrieve', 'content'], [], 'RETRIEVE_'],
+      [['deploy', 'content'], [], 'DEPLOY_'],
+      [
+        ['upload', 'images'],
+        ['--workspace-id', 'space', '--file', 'missing-logging.png'],
+        'IMAGE_',
+      ],
+      [['publish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
+      [['unpublish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
+      [
+        ['delete', 'content'],
+        [...lifecycle, '--ownership-report', 'logging-ownership.json'],
+        'UNSUPPORTED_CONTRACT_VERSION',
+      ],
+    ];
+    for (const [route, args, code] of cases) {
+      for (const prefix of [
+        ['cms', ...route],
+        ['content', ...route.filter((token) => token !== 'content')],
+      ]) {
+        const argv = [...prefix, ...common, ...args, '--api', 'log', '--json'];
+        const result = await runSf(argv, 'logging-guards');
+        expect(result.exitCode, result.stdout + result.stderr).to.equal(1);
+        expect(parseEnvelope(result).status).to.equal('blocked');
+        const records = await invocationRecords(result, argv);
+        const diagnostics = records.find(({ message }) => message === 'command diagnostics');
+        expect(JSON.stringify(diagnostics)).to.include(code);
+        expect(diagnostics?.details?.orgContext).to.equal(
+          'not entered; no CMS org HTTP or mutation dispatched',
+        );
+        expect(result.stdout + result.stderr).not.to.include(
+          'Unexpected logging fixture org access',
+        );
+      }
+    }
+    for (const route of [
+      ['list', 'workspace'],
+      ['list', 'channel'],
+    ]) {
+      const argv = [
+        'content',
+        ...route,
+        ...common,
+        ...(route[1] === 'channel' ? ['--workspace-id', 'space'] : []),
+        '--api',
+        'log',
+        '--json',
+      ];
+      const result = await runSf(argv, 'logging-table');
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
+      expect(JSON.parse(result.stdout).items[0].name).to.equal('Transcript fixture');
+      await invocationRecords(result, argv);
+    }
+  });
+
+  it('mirrors packed human tables/errors and preserves JSON success after sink close failure', async () => {
+    for (const environment of [{}, { CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }]) {
+      const argv = [
+        'content',
+        'list',
+        'workspace',
+        '--target-org',
+        'unused',
+        '--api-version',
+        '67.0',
+      ];
+      const result = await runSf(argv, 'logging-table', environment);
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
+      expect(result.stdout).to.include('Transcript fixture');
+      await invocationRecords(result, argv);
+    }
+    const argv = ['cms', 'list', 'workspace', '--target-org', 'unused'];
+    const failed = await runSf(argv, 'logging-error');
+    expect(failed.exitCode).to.equal(1);
+    expect(failed.stderr).to.include('list failure sentinel');
+    // Visible secrets are intentionally masked on disk, not byte-identical there.
+    const notice = /^CMS log: (.+)$/mu.exec(failed.stderr)!;
+    const bytes = await readFile(notice[1].trim(), 'utf8');
+    expect(bytes).to.include('list failure sentinel');
+    expect(bytes).not.to.include('disk-secret');
+    expect(bytes).to.include('command failure');
+    const successArgv = ['content', 'info', '--api', 'log', '--json'];
+    const success = await runSf(successArgv, 'logging-close-fault');
+    expect(success.exitCode).to.equal(0);
+    expect(parseEnvelope(success).status).to.equal('success');
+    expect(success.stderr).to.include('CMS logging incomplete at');
+    expect(success.stderr).to.include('packed flush failure sentinel');
+    await invocationRecords(success, successArgv);
   });
 
   it('loads packed image upload help, ordered repeated files, and offline invalid arguments', async function () {
