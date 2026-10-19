@@ -1,5 +1,16 @@
-import { Parser } from '@oclif/core';
-import { Org } from '@salesforce/core';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Config, Parser } from '@oclif/core';
+import { ConfigAggregator, Org, SfProject } from '@salesforce/core';
+import { SfCommand, Ux } from '@salesforce/sf-plugins-core';
+import { ux } from '@oclif/core';
+import Info from '../src/commands/cms/info.js';
+import {
+  createRunOwnedDirectory,
+  createRunOwnedTemp,
+  removeRunOwnedPath,
+  type RunOwnedTemp,
+} from '../src/filesystem/runOwnedTemp.js';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { CmsCommand, apiVersionFlag } from '../src/command-base.js';
@@ -12,8 +23,282 @@ class Command extends CmsCommand<void> {
   }
 }
 
+class LifecycleCommand extends CmsCommand<{ ok: boolean }> {
+  public static id = 'cms:fixture';
+  public static aliases = ['content:fixture'];
+  public stage = 'success';
+  public async init(): Promise<void> {
+    if (this.stage === 'init') throw new Error('init sentinel');
+  }
+  public async run(): Promise<{ ok: boolean }> {
+    if (this.stage === 'parse') await this.parse({ flags: {} }, ['--unknown']);
+    if (this.stage === 'run') throw new Error('run sentinel');
+    if (this.stage === 'table') this.table({ data: [{ id: 'workspace', name: 'Fixture' }] });
+    if (this.stage === 'styled') this.styledJSON({ name: 'Fixture', password: 'disk-secret' });
+    this.log('hello %s', 'world');
+    this.warn('final warning');
+    return { ok: true };
+  }
+}
+
+const command = (json: boolean): LifecycleCommand =>
+  new LifecycleCommand(json ? ['--json'] : [], {
+    getPluginsList: () => [],
+    scopedEnvVar: () => {},
+    scopedEnvVarKey: (key: string) => `CMS_TEST_${key}`,
+  } as unknown as Config);
+
+describe('CMS invocation lifecycle logging (bounded L2a)', () => {
+  let run: RunOwnedTemp;
+  let cwd: string;
+  let previousExit: typeof process.exitCode;
+  let previousArgv: string[];
+  let stdout: sinon.SinonStub;
+  let stderr: sinon.SinonStub;
+  let signals: Map<string, NodeJS.SignalsListener[]>;
+  beforeEach(async () => {
+    run = await createRunOwnedTemp('cms-command-logging');
+    cwd = await createRunOwnedDirectory(run, 'fixture');
+    previousExit = process.exitCode;
+    previousArgv = process.argv;
+    signals = new Map(
+      ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SIGHUP'].map((signal) => [
+        signal,
+        process.listeners(signal) as NodeJS.SignalsListener[],
+      ]),
+    );
+    sinon.stub(process, 'cwd').returns(cwd);
+    stdout = sinon.stub(process.stdout, 'write').returns(true);
+    stderr = sinon.stub(process.stderr, 'write').returns(true);
+    sinon.stub(ConfigAggregator, 'create').resolves({} as ConfigAggregator);
+  });
+  afterEach(async () => {
+    for (const [signal, existing] of signals) {
+      for (const listener of process.listeners(signal)) {
+        if (!existing.includes(listener as NodeJS.SignalsListener)) process.off(signal, listener);
+      }
+    }
+    process.argv = previousArgv;
+    process.exitCode = previousExit;
+    sinon.restore();
+    await removeRunOwnedPath(run, cwd);
+  });
+  const output = (stream: sinon.SinonStub): string =>
+    stream
+      .getCalls()
+      .map((call) => String(call.args[0]))
+      .join('');
+  const records = (): Array<{
+    message: string;
+    details: { channel?: string; text?: string; argv?: string[]; stack?: string };
+  }> => {
+    const directory = path.join(cwd, 'logs', 'cms');
+    return fs.readdirSync(directory).flatMap((file) =>
+      fs
+        .readFileSync(path.join(directory, file), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    );
+  };
+  for (const json of [false, true]) {
+    for (const stage of ['setup', 'project', 'init', 'parse', 'run', 'success']) {
+      it(`flushes ${stage} in ${json ? 'JSON' : 'human'} mode exactly once`, async () => {
+        const instance = command(json);
+        instance.stage = stage;
+        if (stage === 'setup') {
+          (ConfigAggregator.create as sinon.SinonStub).rejects(new Error('setup sentinel'));
+        }
+        if (stage === 'project') {
+          sinon.stub(LifecycleCommand, 'requiresProject').value(true);
+          sinon.stub(SfProject, 'resolve').rejects(new Error('project sentinel'));
+        }
+        const catcher = sinon.spy(SfCommand.prototype as never, 'catch');
+        const finalizer = sinon.spy(SfCommand.prototype as never, 'finally');
+        let failure: unknown;
+        try {
+          await instance._run();
+        } catch (error) {
+          failure = error;
+        }
+        const entries = records();
+        expect(entries[0].message).to.match(/^sf-plugin-cms /u);
+        expect(entries[1].message).to.equal('invocation');
+        expect(finalizer.callCount).to.equal(1);
+        expect(catcher.callCount).to.equal(stage === 'success' ? 0 : 1);
+        expect(output(stderr).match(/CMS log: /gu)).to.have.length(1);
+        if (stage === 'success') {
+          expect(failure).to.equal(undefined);
+          if (json) expect(JSON.parse(output(stdout))).to.deep.equal({ ok: true });
+          else expect(output(stdout)).to.equal('hello world\n');
+          const terminals = entries.filter((entry) => entry.message === 'terminal');
+          expect(
+            terminals
+              .filter((entry) => entry.details.channel === 'stdout')
+              .map((entry) => entry.details.text)
+              .join(''),
+          ).to.equal(output(stdout));
+        } else {
+          expect(failure).to.have.property('skipOclifErrorHandling', true);
+          expect(process.exitCode).to.be.greaterThan(0);
+          expect(entries.filter((entry) => entry.message === 'command failure')).to.have.length(1);
+          expect(
+            entries.find((entry) => entry.message === 'command failure')?.details.stack,
+          ).to.be.a('string');
+          if (json) expect(JSON.parse(output(stdout))).to.have.property('status');
+        }
+      });
+    }
+  }
+
+  for (const stage of ['table', 'styled']) {
+    for (const json of [false, true]) {
+      it(`mirrors ${stage} once without changing ${json ? 'JSON' : 'human'} bytes`, async () => {
+        const instance = command(json);
+        instance.stage = stage;
+        const table = sinon.spy(Ux.prototype, 'makeTable');
+        const styled = sinon.spy(ux, 'colorizeJson');
+        await instance._run();
+        expect(table.callCount).to.equal(!json && stage === 'table' ? 1 : 0);
+        expect(styled.callCount).to.equal(json || stage === 'styled' ? 1 : 0);
+        const entries = records();
+        const terminal = (channel: string): string =>
+          entries
+            .filter((entry) => entry.message === 'terminal' && entry.details.channel === channel)
+            .map((entry) => entry.details.text)
+            .join('');
+        expect(terminal('stderr')).to.equal(output(stderr));
+        if (stage === 'styled' && !json) {
+          expect(output(stdout)).to.include('disk-secret');
+          expect(JSON.stringify(entries)).not.to.include('disk-secret');
+          expect(terminal('stdout')).to.include('Fixture');
+        } else expect(terminal('stdout')).to.equal(output(stdout));
+        if (json) expect(JSON.parse(output(stdout))).to.deep.equal({ ok: true });
+        if (!json && stage === 'table') {
+          expect(output(stdout)).to.equal(`${table.firstCall.returnValue}\nhello world\n`);
+        }
+      });
+    }
+  }
+
+  it('keeps a confirmed success when the final durable flush fails', async () => {
+    sinon.stub(fs, 'fsyncSync').throws(new Error('flush sentinel password=disk-secret'));
+    const result = await command(true)._run();
+    expect(result).to.deep.equal({ ok: true });
+    expect(JSON.parse(output(stdout))).to.deep.equal({ ok: true });
+    expect(output(stderr)).to.include('CMS logging incomplete').and.include('flush sentinel');
+    expect(output(stderr)).not.to.include('disk-secret');
+    expect(records().filter((entry) => entry.message === 'command outcome')).to.have.length(1);
+  });
+
+  it('captures deferred framework warnings before closing', async () => {
+    const original = SfCommand.prototype as unknown as { finally: () => Promise<void> };
+    sinon.stub(original, 'finally').callsFake(async function (this: LifecycleCommand) {
+      this.warn('deferred warning');
+      throw new Error('finalizer sentinel');
+    });
+    await command(false)._run();
+    const entries = records();
+    expect(output(stderr)).to.include('deferred warning').and.include('finalizer sentinel');
+    expect(
+      entries.findIndex((entry) => entry.message === 'warning finalization incomplete'),
+    ).to.be.lessThan(entries.findIndex((entry) => entry.message === 'command completed'));
+    expect(entries.at(-1)?.details.text).to.include('CMS log:');
+  });
+
+  it('records offline blocked normal-return reasons with no fabricated exception', async () => {
+    const instance = new Info(
+      ['--json', '--api', 'log', '--contract-version', '2'],
+      command(true).config,
+    );
+    sinon.stub(instance, 'init').resolves();
+    sinon
+      .stub(instance as unknown as { pluginVersion: string }, 'pluginVersion')
+      .get(() => '0.18.0');
+    sinon
+      .stub(instance as unknown as { pluginVersion: string }, 'pluginVersion')
+      .get(() => '0.18.0');
+    sinon
+      .stub(instance, 'parse')
+      .resolves({ flags: { 'contract-version': 2, api: 'log' } } as never);
+    await instance._run();
+    const entries = records();
+    const diagnostic = entries.find((entry) => entry.message === 'command diagnostics');
+    expect(diagnostic?.details).to.have.property(
+      'orgContext',
+      'not entered; no CMS org HTTP or mutation dispatched',
+    );
+    expect(JSON.stringify(diagnostic)).to.include('UNSUPPORTED_CONTRACT_VERSION');
+    expect(entries.some((entry) => entry.message === 'command failure')).to.equal(false);
+    expect(JSON.parse(output(stdout))).to.have.property('status', 'blocked');
+  });
+
+  it('retains the received alias tokens and isolates repeated instances', async () => {
+    process.argv = ['node', 'sf', 'content', 'fixture', '--json'];
+    await command(true)._run();
+    await command(false)._run();
+    const entries = records().filter((entry) => entry.message === 'invocation');
+    expect(entries).to.have.length(2);
+    expect(entries.map((entry) => entry.details.argv)).to.deep.include([
+      'content',
+      'fixture',
+      '--json',
+    ]);
+    expect(entries.map((entry) => entry.details.argv)).to.deep.include([]);
+  });
+
+  it('does not rerender when the inherited JSON renderer fails', async () => {
+    const instance = command(true);
+    instance.stage = 'run';
+    sinon.stub(instance, 'logJson').throws(new Error('renderer sentinel'));
+    let failure: unknown;
+    try {
+      await instance._run();
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).to.have.property('message', 'run sentinel');
+    expect(failure).to.have.property('skipOclifErrorHandling', true);
+    expect(output(stderr)).to.include('error rendering incomplete');
+    expect(output(stdout)).to.equal('');
+  });
+});
+
 describe('CMS command API selection', () => {
   afterEach(() => sinon.restore());
+
+  it('inherits the API opt-in and existing global flags across all nine command classes', async () => {
+    const ids = [
+      'info',
+      'list/workspace',
+      'list/channel',
+      'retrieve/content',
+      'deploy/content',
+      'upload/images',
+      'publish/content',
+      'unpublish/content',
+      'delete/content',
+    ];
+    for (const id of ids) {
+      const { default: ctor } = (await import(`../src/commands/cms/${id}.js`)) as {
+        default: typeof Info;
+      };
+      expect(ctor.baseFlags).to.equal(CmsCommand.baseFlags);
+      expect(ctor.baseFlags).to.have.property('flags-dir');
+      expect(ctor.aliases).to.have.length(1);
+      const parsed = await Parser.parse(['--api', 'log'], { flags: ctor.baseFlags });
+      expect(parsed.flags.api).to.equal('log');
+      const absent = await Parser.parse([], { flags: ctor.baseFlags });
+      expect(absent.flags.api).to.equal(undefined);
+      let failure: unknown;
+      try {
+        await Parser.parse(['--api', 'cli'], { flags: ctor.baseFlags });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).to.be.instanceOf(Error);
+    }
+  });
 
   it('accepts latest and explicit numeric API flags, but rejects malformed versions', async () => {
     for (const version of ['latest', '68.0']) {
