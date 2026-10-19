@@ -91,7 +91,14 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
       .join('');
   const records = (): Array<{
     message: string;
-    details: { channel?: string; text?: string; argv?: string[]; stack?: string };
+    details: {
+      channel?: string;
+      text?: string;
+      argv?: string[];
+      stack?: string;
+      columns?: unknown;
+      rows?: unknown;
+    };
   }> => {
     const directory = path.join(cwd, 'logs', 'cms');
     return fs.readdirSync(directory).flatMap((file) =>
@@ -157,10 +164,12 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
       it(`mirrors ${stage} once without changing ${json ? 'JSON' : 'human'} bytes`, async () => {
         const instance = command(json);
         instance.stage = stage;
-        const table = sinon.spy(Ux.prototype, 'makeTable');
+        const table = sinon.spy(Ux.prototype, 'table');
+        const inkOnly = sinon.spy(Ux.prototype, 'makeTable');
         const styled = sinon.spy(ux, 'colorizeJson');
         await instance._run();
         expect(table.callCount).to.equal(!json && stage === 'table' ? 1 : 0);
+        expect(inkOnly.called).to.equal(false);
         expect(styled.callCount).to.equal(json || stage === 'styled' ? 1 : 0);
         const entries = records();
         const terminal = (channel: string): string =>
@@ -173,13 +182,59 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
           expect(output(stdout)).to.include('disk-secret');
           expect(JSON.stringify(entries)).not.to.include('disk-secret');
           expect(terminal('stdout')).to.include('Fixture');
-        } else expect(terminal('stdout')).to.equal(output(stdout));
+        } else if (stage !== 'table' || json) {
+          expect(terminal('stdout')).to.equal(output(stdout));
+        }
         if (json) expect(JSON.parse(output(stdout))).to.deep.equal({ ok: true });
         if (!json && stage === 'table') {
-          expect(output(stdout)).to.equal(`${table.firstCall.returnValue}\nhello world\n`);
+          expect(output(stdout)).to.include('Fixture').and.include('hello world');
+          expect(terminal('stdout')).to.equal('hello world\n');
+          expect(
+            entries.find((entry) => entry.message === 'terminal table')?.details,
+          ).to.deep.include({
+            channel: 'stdout',
+            columns: ['id', 'name'],
+            rows: [{ id: 'workspace', name: 'Fixture' }],
+          });
         }
       });
     }
+  }
+
+  for (const environment of [{ CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }]) {
+    it(`preserves native table output and complete redacted rows with ${JSON.stringify(environment)}`, async () => {
+      sinon.stub(process, 'env').value({ ...process.env, ...environment });
+      const options = {
+        title: 'Complete table',
+        columns: [{ key: 'name', name: 'Full name' }, 'password'],
+        data: [
+          { name: 'a'.repeat(300), password: 'table-secret' },
+          { name: 'Second row', password: 'second-secret' },
+        ],
+      };
+      new Ux().table(options);
+      const native = output(stdout);
+      stdout.resetHistory();
+      const instance = command(false);
+      sinon.stub(instance, 'run').callsFake(async () => {
+        instance.table(options);
+        return { ok: true };
+      });
+      await instance._run();
+      expect(output(stdout)).to.equal(native);
+      const table = records().find((entry) => entry.message === 'terminal table');
+      expect(table?.details).to.deep.include({
+        title: options.title,
+        columns: options.columns,
+        rows: [
+          { name: 'a'.repeat(300), password: '[REDACTED]' },
+          { name: 'Second row', password: '[REDACTED]' },
+        ],
+      });
+      expect(JSON.stringify(records()))
+        .not.to.include('table-secret')
+        .and.not.to.include('second-secret');
+    });
   }
 
   it('keeps a confirmed success when the final durable flush fails', async () => {

@@ -110,7 +110,10 @@ async function invocationRecords(result: ProcessResult, argv: string[]): Promise
       .map(({ details }) => details!.text)
       .join('');
     // Host notices before the CMS-owned boundary are deliberately outside this transcript.
-    if (channel === 'stdout') expect(transcript).to.equal(result.stdout);
+    if (channel === 'stdout' && records.some(({ message }) => message === 'terminal table')) {
+      // Native tables retain their renderer; complete headers/rows are logged separately.
+      expect(result.stdout).to.include(transcript);
+    } else if (channel === 'stdout') expect(transcript).to.equal(result.stdout);
     else expect(result.stderr).to.include(transcript);
   }
   expect(
@@ -429,7 +432,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
-  it('mirrors packed human tables/errors and preserves JSON success after sink close failure', async () => {
+  it('logs packed native table data/errors and preserves JSON success after sink close failure', async () => {
     for (const environment of [{}, { CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }]) {
       const argv = [
         'content',
@@ -443,7 +446,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       const result = await runSf(argv, 'logging-table', environment);
       expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
       expect(result.stdout).to.include('Transcript fixture');
-      await invocationRecords(result, argv);
+      const records = await invocationRecords(result, argv);
+      const table = records.find(({ message }) => message === 'terminal table');
+      expect(table?.details).to.have.property('columns').that.deep.equals(['id', 'name', 'type']);
+      expect(table?.details).to.have.property('rows').that.is.an('array').with.length(1);
+      expect(JSON.stringify(table)).to.include('Transcript fixture');
     }
     const argv = ['cms', 'list', 'workspace', '--target-org', 'unused'];
     const failed = await runSf(argv, 'logging-error');

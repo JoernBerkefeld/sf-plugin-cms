@@ -109,7 +109,15 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
 
   public table<R extends Record<string, unknown>>(options: TableOptions<R>): void {
     if (!this.jsonEnabled()) {
-      this.emitTerminal('stdout', `${new Ux().makeTable(options)}\n`);
+      // Native tables choose their own CI/large-table renderer. Log complete data,
+      // not a second rendering that can differ from the visible native output.
+      this.invocationLogger?.log('info', 'terminal table', {
+        channel: 'stdout',
+        title: options.title,
+        columns: options.columns ?? [...new Set(options.data.flatMap((row) => Object.keys(row)))],
+        rows: options.data,
+      });
+      new Ux().table(options);
     }
   }
 
