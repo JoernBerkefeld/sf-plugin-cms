@@ -299,9 +299,16 @@ describe('local deploy source selection', () => {
     await writeFile(companion, 'Changed bytes');
     const changed = await selectDeploySources({ 'definition-file': [file] });
     expect(changed.items[0].mediaSha256).not.to.equal(explicit.items[0].mediaSha256);
+    await writeFile(
+      file,
+      JSON.stringify({ ...candidate, media: { ...candidate.media, mimeType: 'application/pdf' } }),
+    );
+    const opaque = await selectDeploySources({ 'definition-file': [file] });
+    expect(opaque.items).to.have.length(1);
+    expect(opaque.items[0].mediaSha256).to.equal(changed.items[0].mediaSha256);
     for (const media of [
       { representation: 'url-only', address: 'https://example.invalid/document' },
-      { ...candidate.media, mimeType: 'application/pdf' },
+      { ...candidate.media, mimeType: 'application/pdf\r\nX: yes' },
       { ...candidate.media, companion: { role: 'media', path: '../escape.txt' } },
     ]) {
       await writeFile(file, JSON.stringify({ ...candidate, media }));

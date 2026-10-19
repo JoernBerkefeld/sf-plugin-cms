@@ -158,7 +158,9 @@ describe('current public documentation', () => {
     for (const claim of [
       '**Bounded Document retrieval:**',
       '**Bounded Document deployment:**',
-      'UTF-8 contents are not restricted to ASCII',
+      'Native Document bytes and safe declared MIME are preserved without UTF-8 conversion or a source-level 10 MiB cap',
+      'safe same-stem paths, nonempty bytes and native size/hash integrity remain required',
+      'Explicit download budgets still bind',
       'Document retrieval, CREATE, bytes-only UPDATE and exact unchanged remain unqualified',
       'Bounded two-org development-artifact acceptance covers the tested text/plain profile',
       'released-package verification remains separate',
@@ -253,7 +255,7 @@ describe('current public documentation', () => {
       'tested 844-byte WAV profile',
       'zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks',
       '**0.19.0**',
-      'Current Document profile bounds and unsupported Video operations remain unchanged',
+      'current Document deployment profile bounds and unsupported Video operations remain unchanged',
     ])
       expect(readme, claim).to.include(claim);
     expect(readme).not.to.include(

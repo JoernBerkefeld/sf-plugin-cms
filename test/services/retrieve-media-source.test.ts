@@ -645,7 +645,7 @@ describe('native editable media acquisition', () => {
     expect(first.created).to.have.length(2);
   });
 
-  it('rejects downloaded Document bytes, MIME and invalid UTF-8', async () => {
+  it('rejects downloaded Document size or MIME disagreement but preserves opaque bytes', async () => {
     const fetcher = sinon.stub(globalThis, 'fetch');
     for (const [bytes, mime] of [
       [Buffer.concat([DOCUMENT, Buffer.from('changed')]), 'text/plain'],
@@ -658,11 +658,11 @@ describe('native editable media acquisition', () => {
         const media = (f.raw.contentBody as R)['sfdc_cms:media'] as R;
         media.url = `/cms/media/source-key?version=1.3&fileHash=${createHash('md5').update(bytes).digest('hex')}&fileName=original.txt`;
         f.parent.contentBody = structuredClone(f.raw.contentBody);
+        const acquired = await acquireEditableMediaSource(f.connection, documentInput);
+        expect(acquired.projection.companions[0].bytes.equals(bytes)).to.equal(true);
+      } else {
+        await failure(acquireEditableMediaSource(f.connection, documentInput), /byte count|MIME/u);
       }
-      await failure(
-        acquireEditableMediaSource(f.connection, documentInput),
-        /byte count|MIME|UTF|encoded/u,
-      );
     }
   });
 

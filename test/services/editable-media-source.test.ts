@@ -342,7 +342,87 @@ describe('standalone editable native media source', () => {
         document.definition,
         new Map([[document.companions[0].path, larger]]),
       ),
-    ).to.throw(/10 MiB/u);
+    ).not.to.throw();
+  });
+
+  it('extracts and loads opaque Documents above 10 MiB with exact safe MIME and filename evidence', async () => {
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+    bytes[1] = 0;
+    for (const [mime, filename, suffix] of [
+      ['application/pdf', 'guide.pdf', 'pdf'],
+      ['application/x-native', 'guide.CUSTOM', 'CUSTOM'],
+      ['text/plain', 'guide', 'bin'],
+      ['application/octet-stream', 'guide.bad-suffix', 'bin'],
+    ]) {
+      const native = body(bytes, mime, filename);
+      const projection = extractEditableMediaSource(metadata(true), native, bytes);
+      expect(projection.companions[0].path).to.equal(`Hero.cms-document.media.${suffix}`);
+      expect(projection.companions[0].bytes.equals(bytes)).to.equal(true);
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-document-opaque-'));
+      const json = path.join(directory, projection.definitionName);
+      await writeFile(json, projection.definitionBytes);
+      await writeFile(path.join(directory, projection.companions[0].path), bytes);
+      const loaded = await loadEditableMediaSource(json);
+      if (loaded.source.representation !== 'binary') throw new Error('Expected binary');
+      expect(loaded.source.binary.mimeType).to.equal(mime);
+      expect(loaded.source.binary.fileName).to.equal(projection.companions[0].path);
+      expect(loaded.source.binary.bytes.equals(bytes)).to.equal(true);
+      expect(createHash('sha256').update(loaded.source.binary.bytes).digest('hex')).to.equal(
+        createHash('sha256').update(bytes).digest('hex'),
+      );
+    }
+  });
+
+  it('retains Document path, header, empty-input and native integrity rejection', () => {
+    const bytes = Buffer.from([255, 0, 128]);
+    const projection = extractEditableMediaSource(
+      metadata(true),
+      body(bytes, 'application/pdf', 'guide.pdf'),
+      bytes,
+    );
+    for (const filename of ['../guide.pdf', String.raw`nested\guide.pdf`, 'guide.pdf\u0000'])
+      expect(() =>
+        extractEditableMediaSource(metadata(true), body(bytes, 'application/pdf', filename), bytes),
+      ).to.throw();
+    for (const mime of ['application/pdf\r\nX: yes', 'application/pdf; charset=UTF-8'])
+      expect(() =>
+        extractEditableMediaSource(metadata(true), body(bytes, mime, 'guide.pdf'), bytes),
+      ).to.throw(/ASCII/u);
+    for (const companion of [
+      '../Hero.cms-document.media.pdf',
+      'Other.cms-document.media.pdf',
+      'Hero.cms-document.media.pdf/escape',
+    ])
+      expect(() =>
+        assertEditableMediaDefinition({
+          ...projection.definition,
+          media: {
+            representation: 'binary',
+            mimeType: 'application/pdf',
+            companion: { role: 'media', path: companion },
+          },
+        }),
+      ).to.throw(/same-stem/u);
+    expect(() =>
+      reassembleEditableMediaSource(
+        projection.definition,
+        new Map([[projection.companions[0].path, Buffer.alloc(0)]]),
+      ),
+    ).to.throw(/nonempty/u);
+    expect(() =>
+      extractEditableMediaSource(
+        metadata(true),
+        body(bytes, 'application/pdf', 'guide.pdf'),
+        Buffer.from([1, 2, 3]),
+      ),
+    ).to.throw(/MD5/u);
+    expect(() =>
+      extractEditableMediaSource(
+        metadata(true),
+        body(bytes, 'application/pdf', 'guide.pdf'),
+        Buffer.from([1]),
+      ),
+    ).to.throw(/size/u);
   });
 
   it('validates MIME framing without a closed format list', () => {
@@ -438,7 +518,7 @@ describe('standalone editable native media source', () => {
         document.definition,
         new Map([[document.companions[0].path, Buffer.from([195, 40])]]),
       ),
-    ).to.throw();
+    ).not.to.throw();
   });
 
   it('fails clearly for missing/case-aliased companions and duplicate JSON keys', async () => {

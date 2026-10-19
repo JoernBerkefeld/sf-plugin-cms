@@ -202,18 +202,18 @@ describe('portable Document CREATE preflight (read-only)', () => {
         d.language = 'de';
       },
       (d) => {
-        if (d.media.representation === 'binary') d.media.mimeType = 'application/pdf';
+        if (d.media.representation === 'binary') d.media.mimeType = 'application/pdf\r\nX: yes';
       },
       (d) => {
         if (d.media.representation === 'binary')
-          d.media.companion.path = 'Guide.cms-document.media.TXT';
+          d.media.companion.path = 'Guide.cms-document.media.TXT/escape';
       },
     ];
     for (const change of changes) {
       const f = await fixture();
       change(f.definition);
       await f.save();
-      await failure(f.run(), /Document CREATE|same-stem|type\/contentType/u);
+      await failure(f.run(), /Document CREATE|same-stem|type\/contentType|ASCII/u);
       expect(f.calls).to.have.length(0);
     }
     const unicode = await fixture('Grüße');
@@ -223,21 +223,25 @@ describe('portable Document CREATE preflight (read-only)', () => {
     await failure(invalid.run({ workspaceId: 'wrong' }), /workspace ID/u);
     expect(invalid.calls).to.have.length(0);
   });
-  it('rejects missing, empty, invalid UTF-8 and over-profile bytes before org access', async () => {
-    for (const bytes of [
-      Buffer.alloc(0),
-      Buffer.from([255]),
-      Buffer.alloc(10 * 1024 * 1024 + 1, 65),
-    ]) {
+  it('rejects missing, empty and currently over-profile CREATE bytes before org access', async () => {
+    for (const bytes of [Buffer.alloc(0), Buffer.alloc(10 * 1024 * 1024 + 1, 65)]) {
       const f = await fixture();
       await writeFile(f.companion, bytes);
-      await failure(f.run(), /nonempty|encoded data|10 MiB/u);
+      await failure(f.run(), /nonempty|byte limit/u);
       expect(f.calls).to.have.length(0);
     }
     const missing = await fixture();
     await unlink(missing.companion);
     await failure(missing.run(), /missing/u);
     expect(missing.calls).to.have.length(0);
+  });
+  it('preserves opaque source bytes through the existing CREATE preflight', async () => {
+    const f = await fixture();
+    const bytes = Buffer.from([255, 0, 195, 40]);
+    await writeFile(f.companion, bytes);
+    const result = await f.run();
+    expect(result.source.source).to.have.nested.property('binary.bytes').deep.equal(bytes);
+    expect(f.calls.length).to.be.greaterThan(0);
   });
   it('accepts the inclusive 10 MiB profile boundary', async () => {
     const f = await fixture();
