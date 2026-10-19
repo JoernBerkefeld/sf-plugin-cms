@@ -2,6 +2,8 @@ import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
 import { SELECTED_OPERATIONS, type SelectedOperation } from '../generated/operations.js';
 import { redactSecrets } from './redact-secrets.js';
+import { randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 
 export type OperationParameterValues = Readonly<
   Record<string, boolean | number | readonly string[] | string | undefined>
@@ -27,7 +29,8 @@ type RequestStream<T> = Promise<T> & {
   stream(): Duplex;
 };
 
-type RequestConnection = Pick<Connection, 'request'>;
+type RequestConnection = Pick<Connection, 'request'> &
+  Partial<Pick<Connection, 'version' | 'instanceUrl'>>;
 type RuntimeParameter = {
   location: 'path' | 'query';
   name: string;
@@ -234,10 +237,24 @@ export async function requestJson<T>(
   }
 
   const url = buildOperationUrl(operation, values);
-  const request = connection.request<T>(
-    { method: operation.method, url },
-    { timeout: timeoutMs },
-  ) as RequestStream<T>;
+  const event = {
+    requestId: randomUUID(),
+    startedAt: Date.now(),
+    method: operation.method,
+    url,
+    operationKey: operation.localKey,
+  };
+  logApiEvent('request', event);
+  let request: RequestStream<T>;
+  try {
+    request = connection.request<T>(
+      { method: operation.method, url },
+      { timeout: timeoutMs },
+    ) as RequestStream<T>;
+  } catch (error) {
+    logApiEvent('error', event, error);
+    throw error;
+  }
   const cancel = (): void => {
     request.stream().destroy(new Error('CMS request cancelled'));
   };
@@ -245,8 +262,10 @@ export async function requestJson<T>(
 
   try {
     const data = await request;
+    logApiEvent('response', event, data);
     return { data, operationKey: operation.localKey, status: successStatus(operation) };
   } catch (error) {
+    logApiEvent('error', event, error);
     if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
     const status = errorStatus(error);

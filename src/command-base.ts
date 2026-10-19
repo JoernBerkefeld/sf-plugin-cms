@@ -3,7 +3,12 @@ import { ux } from '@oclif/core';
 import type { TableOptions } from '@oclif/table';
 import { Org, SfError } from '@salesforce/core';
 import { Flags, SfCommand, Ux } from '@salesforce/sf-plugins-core';
-import { createInvocationLogger, type InvocationLogger } from './logging.js';
+import {
+  createInvocationLogger,
+  enableInvocationApiLogging,
+  runWithInvocationLogging,
+  type InvocationLogger,
+} from './logging.js';
 import { redactSecrets } from './transport/redact-secrets.js';
 import type { CmsPage, CmsRecord } from './services/read.js';
 import { getPluginVersion } from './runtime-version.js';
@@ -44,6 +49,10 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
     ...SfCommand.baseFlags,
     api: Flags.string({
       options: ['log'],
+      parse: async (value) => {
+        if (value === 'log') enableInvocationApiLogging();
+        return value;
+      },
       summary: 'Opt in to API details in the CMS diagnostic log (may contain customer data).',
     }),
   };
@@ -63,7 +72,7 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
       argv: this.invocationArgv(),
     });
     try {
-      const result = await super._run<R>();
+      const result = await runWithInvocationLogging(this.invocationLogger, () => super._run<R>());
       this.invocationLogger.log(
         'debug',
         'command outcome',

@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import type { Duplex } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 import { assertExactKeys } from '../contracts/shared.js';
@@ -123,16 +125,32 @@ async function enumerate(
   const query = async (soql: string): Promise<unknown[]> => {
     if (options.signal?.aborted) throw new TypeError('Native inventory cancelled');
     pagesRequested += 1;
-    const request = receiver.request<unknown>(
-      { method: 'GET', url: `${selection.restDataPath}/query?q=${encodeURIComponent(soql)}` },
-      { timeout, retry: { maxRetries: 0 } },
-    ) as Promise<unknown> & { stream(): Duplex };
+    const event = {
+      requestId: randomUUID(),
+      startedAt: Date.now(),
+      method: 'GET',
+      url: `${selection.restDataPath}/query?q=${encodeURIComponent(soql)}`,
+      operationKey: 'inventory.native',
+    };
+    logApiEvent('request', event);
+    let request: Promise<unknown> & { stream(): Duplex };
+    try {
+      request = receiver.request<unknown>(
+        { method: 'GET', url: event.url },
+        { timeout, retry: { maxRetries: 0 } },
+      ) as typeof request;
+    } catch (error) {
+      logApiEvent('error', event, error);
+      throw error;
+    }
     const cancel = (): void => {
       request.stream().destroy(new Error('Native inventory cancelled'));
     };
     options.signal?.addEventListener('abort', cancel, { once: true });
     try {
-      const response = structuredClone(await request);
+      const data = await request;
+      logApiEvent('response', event, data);
+      const response = structuredClone(data);
       if (options.signal?.aborted) throw new TypeError('Native inventory cancelled');
       assertExactKeys(
         response,
@@ -148,6 +166,7 @@ async function enumerate(
         throw new TypeError('Native inventory incomplete query/count response');
       return response.records;
     } catch (error) {
+      logApiEvent('error', event, error);
       throw new NativeInventoryRequestError(error);
     } finally {
       options.signal?.removeEventListener('abort', cancel);

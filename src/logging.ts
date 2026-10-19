@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Writable } from 'node:stream';
@@ -18,6 +19,79 @@ export type InvocationLogOptions = Readonly<{
   startedAt?: Date;
   stderr?: (message: string) => void;
 }>;
+
+type InvocationContext = { logger: InvocationLogger; apiEnabled: boolean };
+const invocationContext = new AsyncLocalStorage<InvocationContext>();
+
+export function runWithInvocationLogging<T>(
+  logger: InvocationLogger,
+  task: () => T,
+  apiEnabled = false,
+): T {
+  return invocationContext.run({ logger, apiEnabled }, task);
+}
+
+export function enableInvocationApiLogging(): void {
+  const context = invocationContext.getStore();
+  if (context) context.apiEnabled = true;
+}
+
+// Callers own dispatch and correlation. This function only emits sanitized events.
+export function logApiEvent(
+  phase: 'request' | 'response' | 'error',
+  details: {
+    requestId: string;
+    method: string;
+    url: string;
+    operationKey: string;
+    startedAt: number;
+  },
+  value?: unknown,
+): void {
+  try {
+    const context = invocationContext.getStore();
+    if (!context) return;
+    const error =
+      phase === 'error'
+        ? (value as
+            | {
+                status?: unknown;
+                statusCode?: unknown;
+                statusObserved?: boolean;
+                response?: { status?: unknown; statusCode?: unknown };
+              }
+            | undefined)
+        : undefined;
+    const status =
+      error?.statusObserved === false
+        ? undefined
+        : [
+            error?.statusCode,
+            error?.status,
+            error?.response?.statusCode,
+            error?.response?.status,
+          ].find((entry) => typeof entry === 'number' && Number.isInteger(entry));
+    context.logger.log(
+      phase === 'error' ? 'error' : 'debug',
+      `CMS JSON ${phase}`,
+      redactLogValue({
+        ...details,
+        elapsedMs: Date.now() - details.startedAt,
+        ...(phase === 'request'
+          ? {}
+          : {
+              status: status ?? 'unavailable: parsed SDK boundary did not expose HTTP status',
+              rawBody: 'unavailable: parsed SDK boundary does not expose raw body',
+            }),
+        ...(phase === 'error' ? { error: value } : {}),
+        ...(context.apiEnabled && phase === 'request' ? { requestPayload: value ?? null } : {}),
+        ...(context.apiEnabled && phase === 'response' ? { parsedResponse: value } : {}),
+      }),
+    );
+  } catch {
+    // Diagnostics cannot change a request outcome or trigger a replay.
+  }
+}
 
 // Check each ancestor separately: recursive mkdir would follow an existing junction.
 function prepareDirectory(directory: string): void {

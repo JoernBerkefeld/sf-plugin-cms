@@ -1,3 +1,5 @@
+import sinon from 'sinon';
+import { runWithInvocationLogging } from '../../src/logging.js';
 import type { Connection } from '@salesforce/core';
 import { expect } from 'chai';
 import type { WorkspaceExportManifest } from '../../src/contracts/workspace-export.js';
@@ -181,6 +183,23 @@ async function rejects(change: (fixture: ReturnType<typeof setup>) => void): Pro
 }
 
 describe('canonical Brand source inventory acquisition', () => {
+  it('logs both direct Brand queries and shared JSON reads in the same invocation', async () => {
+    const fixture = setup();
+    const log = sinon.spy();
+    await runWithInvocationLogging(
+      { filePath: 'unused', log, close: async () => {} },
+      () => fixture.acquire(),
+      true,
+    );
+    const starts = log.args.filter(([, phase]) => phase === 'CMS JSON request');
+    const ends = log.args.filter(([, phase]) => phase === 'CMS JSON response');
+    expect(starts).to.have.length(fixture.calls.length);
+    expect(ends).to.have.length(starts.length);
+    expect(starts.some((call) => call[2].operationKey === 'inventory.brand')).to.equal(true);
+    expect(ends.map((call) => call[2].requestId)).to.deep.equal(
+      starts.map((call) => call[2].requestId),
+    );
+  });
   it('requests exact unfiltered keysets and grouped counts around actual parent/detail GETs', async () => {
     const fixture = setup();
     const original = structuredClone(fixture.manifest);

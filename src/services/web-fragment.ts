@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { LoadedWorkspaceExport, WorkspaceImportItem } from './import-workspace.js';
 import type { PlannedImportIdentities } from './import-identities.js';
@@ -317,10 +319,20 @@ export async function validateDataGraphPrerequisites(
   for (const group of groups.values()) {
     const prerequisite = group[0];
     const url = `/services/data/v${connection.version}/ssot/data-graphs/${encodeURIComponent(prerequisite.targetDeveloperName)}`;
+    const event = {
+      requestId: randomUUID(),
+      startedAt: Date.now(),
+      method: 'GET',
+      url,
+      operationKey: 'webFragment.dataGraph',
+    };
+    logApiEvent('request', event);
     let response: unknown;
     try {
       response = await connection.request({ method: 'GET', url });
+      logApiEvent('response', event, response);
     } catch (error) {
+      logApiEvent('error', event, error);
       const evidence: DataGraphValidationEvidence = {
         url,
         failure: error instanceof Error ? error.message : String(error),

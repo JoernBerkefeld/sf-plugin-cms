@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
@@ -11,6 +11,7 @@ import {
 } from './json-request.js';
 import { redactSecrets } from './redact-secrets.js';
 import { inheritCmsApiSelection } from '../api-policy.js';
+import { logApiEvent } from '../logging.js';
 
 export type JsonMutationBody = Readonly<Record<string, unknown>>;
 
@@ -131,7 +132,7 @@ function withoutRefreshReplay(
   connection: RequestConnection,
   operation: SelectedOperation,
   allowCallerConnection: boolean,
-): Pick<Connection, 'request'> {
+): RequestConnection {
   if (
     typeof connection.accessToken !== 'string' ||
     connection.accessToken.length === 0 ||
@@ -194,27 +195,46 @@ async function sendMutation<T>(
   }
 
   validateMutationOperation(operation, body !== undefined);
-  const request = withoutRefreshReplay(
+  const receiver = withoutRefreshReplay(
     connection,
     operation,
     options.allowCallerConnection === true,
-  ).request<T>(
-    {
-      method: operation.method,
-      url: buildOperationUrl(operation, values),
-      headers: { 'content-type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    },
-    { retry: { maxRetries: 0 }, timeout: timeoutMs },
-  ) as RequestStream<T>;
+  );
+  const input = {
+    method: operation.method,
+    url: buildOperationUrl(operation, values),
+    headers: { 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  };
+  const event = {
+    requestId: randomUUID(),
+    startedAt: Date.now(),
+    method: operation.method,
+    url: input.url,
+    operationKey: operation.localKey,
+  };
+  logApiEvent('request', event, body);
+  let request: RequestStream<T>;
+  try {
+    request = receiver.request<T>(input, {
+      retry: { maxRetries: 0 },
+      timeout: timeoutMs,
+    }) as RequestStream<T>;
+  } catch (error) {
+    logApiEvent('error', event, error);
+    throw error;
+  }
   const cancel = (): void => {
     request.stream().destroy(new Error('CMS request cancelled'));
   };
   options.signal?.addEventListener('abort', cancel, { once: true });
 
   try {
-    return await request;
+    const data = await request;
+    logApiEvent('response', event, data);
+    return data;
   } catch (error) {
+    logApiEvent('error', event, error);
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
     throw new CmsRequestError(operation.localKey, message, errorStatus(error), {
       ...responseErrorEvidence(error),

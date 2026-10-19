@@ -1,3 +1,5 @@
+import sinon from 'sinon';
+import { runWithInvocationLogging } from '../../src/logging.js';
 import { prepareCmsConnection } from '../../src/api-policy.js';
 import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
@@ -89,6 +91,22 @@ function query(call: { url: string }): string {
 }
 
 describe('bounded native retrieve inventory', () => {
+  it('logs every native query before validation without changing shadow receivers or request counts', async () => {
+    const fixture = setup();
+    const log = sinon.spy();
+    await runWithInvocationLogging(
+      { filePath: 'unused', log, close: async () => {} },
+      () => fixture.family(),
+      true,
+    );
+    const starts = log.args.filter(([, phase]) => phase === 'CMS JSON request');
+    const ends = log.args.filter(([, phase]) => phase === 'CMS JSON response');
+    expect(starts).to.have.length(fixture.calls.length);
+    expect(ends).to.have.length(starts.length);
+    expect(starts.map((call) => call[2].url)).to.deep.equal(fixture.calls.map((call) => call.url));
+    expect(ends[0][2].parsedResponse.records[0].Id).to.equal(variantId);
+    expect(fixture.calls.every((call) => call.refresh === undefined)).to.equal(true);
+  });
   it('uses the exact API67 projection, workspace/family scope, terminal keysets, counts and repeat parity', async () => {
     const fixture = setup();
     const result = await fixture.family();

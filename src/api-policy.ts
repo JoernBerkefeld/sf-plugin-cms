@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { randomUUID } from 'node:crypto';
+import { logApiEvent } from './logging.js';
 
 export const DEFAULT_API_VERSION = 'latest';
 export const FALLBACK_API_VERSION = '67.0';
@@ -102,11 +104,26 @@ function unsupportedRoute(error: unknown): boolean {
 
 async function preflight(connection: PolicyConnection, version: string): Promise<void> {
   const prefix = apiDataPath(version);
-  await connection.request({ method: 'GET', url: `${prefix}/connect/cms/spaces?pageSize=1` });
-  await connection.request({
-    method: 'GET',
-    url: `${prefix}/query?q=${encodeURIComponent('SELECT Id FROM ManagedContentVariant LIMIT 1')}`,
-  });
+  for (const url of [
+    `${prefix}/connect/cms/spaces?pageSize=1`,
+    `${prefix}/query?q=${encodeURIComponent('SELECT Id FROM ManagedContentVariant LIMIT 1')}`,
+  ]) {
+    const event = {
+      requestId: randomUUID(),
+      startedAt: Date.now(),
+      method: 'GET',
+      url,
+      operationKey: 'api.preflight',
+    };
+    logApiEvent('request', event);
+    try {
+      const data = await connection.request({ method: 'GET', url });
+      logApiEvent('response', event, data);
+    } catch (error) {
+      logApiEvent('error', event, error);
+      throw error;
+    }
+  }
 }
 
 export async function prepareCmsConnection<T extends PolicyConnection>(
@@ -125,7 +142,22 @@ export async function prepareCmsConnection<T extends PolicyConnection>(
   }
 
   // Ask the server directly: Core's retrieveMaxApiVersion may return cached auth state.
-  const advertised = await connection.request<unknown>({ method: 'GET', url: '/services/data' });
+  const event = {
+    requestId: randomUUID(),
+    startedAt: Date.now(),
+    method: 'GET',
+    url: '/services/data',
+    operationKey: 'api.discovery',
+  };
+  logApiEvent('request', event);
+  let advertised: unknown;
+  try {
+    advertised = await connection.request<unknown>({ method: 'GET', url: '/services/data' });
+    logApiEvent('response', event, advertised);
+  } catch (error) {
+    logApiEvent('error', event, error);
+    throw error;
+  }
   const versions = Array.isArray(advertised)
     ? advertised
         .map((entry: unknown) =>

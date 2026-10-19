@@ -17,6 +17,8 @@ import sinon from 'sinon';
 import { CmsCommand, apiVersionFlag } from '../src/command-base.js';
 import { getCmsApiSelection } from '../src/api-policy.js';
 
+import { requestJson, getSelectedOperation } from '../src/transport/json-request.js';
+
 class Command extends CmsCommand<void> {
   public async run(): Promise<void> {}
   public context(version: string) {
@@ -34,6 +36,13 @@ class LifecycleCommand extends CmsCommand<{ ok: boolean }> {
   public async run(): Promise<{ ok: boolean }> {
     if (this.stage === 'parse') await this.parse({ flags: {} }, ['--unknown']);
     if (this.stage === 'run') throw new Error('run sentinel');
+    if (this.stage === 'api') {
+      await this.parse(LifecycleCommand);
+      await requestJson(
+        { request: sinon.stub().resolves({ body: 'API fixture customer body' }) },
+        getSelectedOperation('workspace.list'),
+      );
+    }
     if (this.stage === 'table') this.table({ data: [{ id: 'workspace', name: 'Fixture' }] });
     if (this.stage === 'styled') this.styledJSON({ name: 'Fixture', password: 'disk-secret' });
     this.log('hello %s', 'world');
@@ -109,6 +118,20 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
         .map((line) => JSON.parse(line)),
     );
   };
+  it('binds API verbosity from parsed flags only for that invocation', async () => {
+    for (const enabled of [true, false]) {
+      const config = command(false).config;
+      config.runHook = sinon.stub().resolves({ successes: [], failures: [] });
+      const instance = new LifecycleCommand(enabled ? ['--api', 'log'] : [], config);
+      instance.stage = 'api';
+      await instance._run();
+    }
+    const responses = records().filter((record) => record.message === 'CMS JSON response');
+    expect(responses).to.have.length(2);
+    expect(JSON.stringify(responses[0])).to.include('API fixture customer body');
+    expect(JSON.stringify(responses[1])).not.to.include('API fixture customer body');
+  });
+
   for (const json of [false, true]) {
     for (const stage of ['setup', 'project', 'init', 'parse', 'run', 'success']) {
       it(`flushes ${stage} in ${json ? 'JSON' : 'human'} mode exactly once`, async () => {

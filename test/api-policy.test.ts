@@ -13,6 +13,8 @@ import {
   prepareCmsConnection,
 } from '../src/api-policy.js';
 
+import { runWithInvocationLogging } from '../src/logging.js';
+
 function fakeConnection() {
   const request = sinon.stub().resolves({});
   request.onCall(0).resolves([{ version: '67.0' }, { version: '9.0' }, { version: '68.0' }]);
@@ -39,6 +41,33 @@ async function rejection(action: Promise<unknown>): Promise<unknown> {
 }
 
 describe('CMS API policy', () => {
+  it('logs every discovery/latest/fallback call without extra dispatch or inferred status', async () => {
+    const { connection, request } = fakeConnection();
+    request.onCall(1).rejects({
+      errorCode: 'INVALID_VERSION',
+      data: [{ message: 'password=SECRET' }, { message: 'second error' }],
+    });
+    const log = sinon.spy();
+    await runWithInvocationLogging(
+      { filePath: 'unused', log, close: async () => {} },
+      () => prepareCmsConnection(connection),
+      true,
+    );
+    const starts = log.args.filter(([, phase]) => phase === 'CMS JSON request');
+    const ends = log.args.filter(([, phase]) => phase !== 'CMS JSON request');
+    expect(starts).to.have.length(4);
+    expect(request.callCount).to.equal(4);
+    expect(starts.map((call) => call[2].url)).to.deep.equal(
+      request.args.map(([input]) => input.url),
+    );
+    expect(ends.map((call) => call[2].requestId)).to.deep.equal(
+      starts.map((call) => call[2].requestId),
+    );
+    expect(ends.every((call) => call[2].status.includes('unavailable'))).to.equal(true);
+    const text = JSON.stringify(log.args);
+    expect(text).not.to.include('SECRET');
+    expect(text).to.include('second error');
+  });
   it('validates numeric versions and builds distinct REST roots', () => {
     expect(DEFAULT_API_VERSION).to.equal('latest');
     expect(FALLBACK_API_VERSION).to.equal('67.0');

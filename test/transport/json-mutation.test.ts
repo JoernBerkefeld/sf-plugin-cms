@@ -6,6 +6,7 @@ import { getSelectedOperation, CmsRequestError } from '../../src/transport/json-
 import { requestEmptyMutation, requestJsonMutation } from '../../src/transport/json-mutation.js';
 
 import { prepareCmsConnection } from '../../src/api-policy.js';
+import { runWithInvocationLogging, type InvocationLogger } from '../../src/logging.js';
 
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
@@ -21,6 +22,75 @@ function ignoreRejection(): void {}
 
 describe('JSON mutation transport', () => {
   afterEach(() => sinon.restore());
+
+  it('logs one-shot mutation payload and parsed result with the actual receiver and no stream access', async () => {
+    const log = sinon.spy();
+    const logger: InvocationLogger = { filePath: 'unused', log, close: async () => {} };
+    const stream = sinon.spy(() => new PassThrough());
+    const request = sinon
+      .stub(JsforceConnection.prototype, 'request')
+      .returns(Object.assign(Promise.resolve({ id: 'created', password: 'SECRET' }), { stream }));
+    const caller = new JsforceConnection({
+      accessToken: 'token',
+      instanceUrl: 'https://example.my.salesforce.com',
+      version: '67.0',
+    });
+    await runWithInvocationLogging(
+      logger,
+      () =>
+        requestJsonMutation(caller, getSelectedOperation('content.create'), {
+          title: 'customer title',
+          nested: { password: 'SECRET' },
+        }),
+      true,
+    );
+    expect(request.calledOnce).to.equal(true);
+    expect(request.thisValues[0]).not.to.equal(caller);
+    expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
+    expect(stream.called).to.equal(false);
+    expect(log.firstCall.args[2]).to.include({
+      method: 'POST',
+      url: '/connect/cms/contents',
+    });
+    expect(log.firstCall.args[2].requestPayload.nested.password).to.equal('[REDACTED]');
+    expect(log.secondCall.args[2].parsedResponse.id).to.equal('created');
+    expect(log.firstCall.args[2].requestId).to.equal(log.secondCall.args[2].requestId);
+    expect(JSON.stringify(log.args)).not.to.include('SECRET');
+  });
+
+  it('correlates mutation cancellation without retry or reading its stream', async () => {
+    const log = sinon.spy();
+    const logger: InvocationLogger = { filePath: 'unused', log, close: async () => {} };
+    const controller = new AbortController();
+    const stream = new PassThrough();
+    const streamAccess = sinon.spy(() => stream);
+    const pending = new Promise<never>((_resolve, reject) => stream.once('error', reject));
+    const request = sinon.stub().returns(Object.assign(pending, { stream: streamAccess }));
+    const result = runWithInvocationLogging(
+      logger,
+      () =>
+        requestJsonMutation(
+          { request },
+          getSelectedOperation('content.create'),
+          { title: 'title' },
+          {},
+          { allowCallerConnection: true, signal: controller.signal },
+        ),
+      true,
+    );
+    controller.abort();
+    try {
+      await result;
+      expect.fail('expected cancellation');
+    } catch (error) {
+      expect((error as Error).message).to.equal('CMS request cancelled');
+    }
+    expect(request.calledOnce).to.equal(true);
+    expect(streamAccess.calledOnce).to.equal(true);
+    expect(stream.readableFlowing).to.equal(null);
+    expect(log.secondCall.args[1]).to.equal('CMS JSON error');
+    expect(log.firstCall.args[2].requestId).to.equal(log.secondCall.args[2].requestId);
+  });
 
   it('sends the exact POST URL, JSON header, direct object body, timeout, and no-retry option', async () => {
     const request = sinon.stub().returns(fakeRequest({ id: 'created' }));

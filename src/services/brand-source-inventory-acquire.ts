@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import type { Duplex } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -62,16 +64,32 @@ async function query(
   const timeout = options.timeoutMs ?? 30_000;
   if (!Number.isFinite(timeout) || timeout <= 0 || options.signal?.aborted)
     throw new TypeError('Brand acquisition timeout/cancellation');
-  const request = connection.request<unknown>(
-    { method: 'GET', url: `/services/data/v${apiVersion}/query?q=${encodeURIComponent(soql)}` },
-    { timeout },
-  ) as Promise<unknown> & { stream(): Duplex };
+  const event = {
+    requestId: randomUUID(),
+    startedAt: Date.now(),
+    method: 'GET',
+    url: `/services/data/v${apiVersion}/query?q=${encodeURIComponent(soql)}`,
+    operationKey: 'inventory.brand',
+  };
+  logApiEvent('request', event);
+  let request: Promise<unknown> & { stream(): Duplex };
+  try {
+    request = connection.request<unknown>(
+      { method: 'GET', url: event.url },
+      { timeout },
+    ) as typeof request;
+  } catch (error) {
+    logApiEvent('error', event, error);
+    throw error;
+  }
   const cancel = (): void => {
     request.stream().destroy(new Error('Brand acquisition cancelled'));
   };
   options.signal?.addEventListener('abort', cancel, { once: true });
   try {
-    const response = structuredClone(await request);
+    const data = await request;
+    logApiEvent('response', event, data);
+    const response = structuredClone(data);
     assertExactKeys(response, ['totalSize', 'done', 'records'], 'Brand query response');
     if (
       response.done !== true ||
@@ -81,6 +99,7 @@ async function query(
       throw new TypeError('Brand acquisition incomplete query/count response');
     return response;
   } catch (error) {
+    logApiEvent('error', event, error);
     throw new TypeError(redactSecrets(error instanceof Error ? error.message : String(error)));
   } finally {
     options.signal?.removeEventListener('abort', cancel);

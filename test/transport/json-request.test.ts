@@ -8,6 +8,8 @@ import {
   requestJson,
 } from '../../src/transport/json-request.js';
 
+import { runWithInvocationLogging, type InvocationLogger } from '../../src/logging.js';
+
 type FakeRequest<T> = Promise<T> & { stream(): PassThrough };
 
 function fakeRequest<T>(promise: Promise<T>, stream = new PassThrough()): FakeRequest<T> {
@@ -15,6 +17,109 @@ function fakeRequest<T>(promise: Promise<T>, stream = new PassThrough()): FakeRe
 }
 
 describe('CMS JSON request transport', () => {
+  it('isolates concurrent API opt-in, correlates phases and never inspects success streams', async () => {
+    const logs = [sinon.spy(), sinon.spy()];
+    const stream = new PassThrough();
+    const streamAccess = sinon.spy(() => stream);
+    const data = {
+      nested: { accessToken: 'SECRET', body: 'customer body' },
+      stream,
+      binary: Buffer.from('binary'),
+    };
+    const receivers: unknown[] = [];
+    await Promise.all(
+      logs.map(async (log, index) => {
+        const connection = {
+          request<T>() {
+            receivers.push(this);
+            return Object.assign(Promise.resolve(data as T), { stream: streamAccess });
+          },
+        };
+        const logger: InvocationLogger = { filePath: 'unused', log, close: async () => {} };
+        const result = await runWithInvocationLogging(
+          logger,
+          () => requestJson(connection, getSelectedOperation('workspace.list')),
+          index === 0,
+        );
+        expect(result.data).to.equal(data);
+        expect(receivers).to.include(connection);
+      }),
+    );
+    expect(streamAccess.called).to.equal(false);
+    expect(stream.readableFlowing).to.equal(null);
+    for (const [index, log] of logs.entries()) {
+      expect(log.callCount).to.equal(2);
+      const request = log.firstCall.args[2];
+      const response = log.secondCall.args[2];
+      expect(request.requestId).to.equal(response.requestId);
+      expect(response.status).to.include('unavailable');
+      expect(response.rawBody).to.include('unavailable');
+      expect(JSON.stringify(log.args)).not.to.include('SECRET');
+      if (index === 0) {
+        expect(response.parsedResponse.stream).to.deep.equal({ omitted: 'stream (not consumed)' });
+        expect(response.parsedResponse.binary).to.deep.equal({ omitted: 'binary', byteLength: 6 });
+      } else expect(response).not.to.have.property('parsedResponse');
+    }
+    expect(logs[0].firstCall.args[2].requestId).not.to.equal(logs[1].firstCall.args[2].requestId);
+  });
+
+  it('keeps exposed SDK error causes automatically and does not invent observed status', async () => {
+    for (const status of [undefined, 503]) {
+      const log = sinon.spy();
+      const original = Object.assign(new Error('failed', { cause: new Error('password=SECRET') }), {
+        errorCode: 'NOT_FOUND',
+        ...(status ? { response: { status } } : {}),
+      });
+      const logger: InvocationLogger = { filePath: 'unused', log, close: async () => {} };
+      try {
+        await runWithInvocationLogging(logger, () =>
+          requestJson(
+            { request: sinon.stub().returns(fakeRequest(Promise.reject(original))) },
+            getSelectedOperation('workspace.list'),
+          ),
+        );
+        expect.fail('expected error');
+      } catch (error) {
+        expect(error).to.be.instanceOf(CmsRequestError);
+      }
+      expect(log.secondCall.args[0]).to.equal('error');
+      const details = log.secondCall.args[2];
+      expect(details.error.cause.message).to.equal('password=[REDACTED]');
+      if (status) expect(details.status).to.equal(status);
+      else expect(details.status).to.include('unavailable');
+    }
+  });
+
+  it('preserves success and synchronous rejection when the diagnostic sink throws', async () => {
+    const logger: InvocationLogger = {
+      filePath: 'unused',
+      log: () => {
+        throw new Error('disk');
+      },
+      close: async () => {},
+    };
+    const request = sinon.stub().returns(fakeRequest(Promise.resolve('success')));
+    const success = await runWithInvocationLogging(
+      logger,
+      () => requestJson({ request }, getSelectedOperation('workspace.list')),
+      true,
+    );
+    expect(success.data).to.equal('success');
+    const error = new Error('synchronous SDK failure');
+    request.resetBehavior();
+    request.throws(error);
+    try {
+      await runWithInvocationLogging(
+        logger,
+        () => requestJson({ request }, getSelectedOperation('workspace.list')),
+        true,
+      );
+      expect.fail('expected rejection');
+    } catch (error_) {
+      expect(error_).to.equal(error);
+    }
+    expect(request.callCount).to.equal(2);
+  });
   it('constructs encoded paths and deterministic query strings', () => {
     expect(
       buildOperationUrl(getSelectedOperation('content.get'), {

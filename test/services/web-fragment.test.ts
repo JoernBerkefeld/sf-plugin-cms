@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { runWithInvocationLogging } from '../../src/logging.js';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -284,7 +285,18 @@ describe('web fragment create-only profile', () => {
       dataspaceName: 'default',
       status: 'ReAdY',
     });
-    await validateDataGraphPrerequisites({ request, version: '68.0' }, [prerequisite]);
+    const log = sinon.spy();
+    await runWithInvocationLogging(
+      { filePath: 'unused', log, close: async () => {} },
+      () => validateDataGraphPrerequisites({ request, version: '68.0' }, [prerequisite]),
+      true,
+    );
+    expect(log.callCount).to.equal(2);
+    expect(log.firstCall.args[2].url).to.equal(
+      '/services/data/v68.0/ssot/data-graphs/Marketing%20Graph%2FOne',
+    );
+    expect(log.secondCall.args[2].parsedResponse.name).to.equal('Marketing Graph/One');
+    expect(log.secondCall.args[2].requestId).to.equal(log.firstCall.args[2].requestId);
     expect(
       request.calledOnceWithExactly({
         method: 'GET',
