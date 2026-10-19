@@ -705,7 +705,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       'Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged',
     );
     expect(deployHelp).to.include(
-      'Native Audio CREATE/UPDATE and two-org qualification remain pending',
+      'Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile',
     );
     expect(retrieveHelp).not.to.include('Audio deployment is not enabled');
     const deletion = await runSf(['cms', 'delete', 'content', '--help']);

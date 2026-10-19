@@ -177,7 +177,7 @@ describe('current public documentation', () => {
     expect(RetrieveContent.flags['content-type'].summary).to.include('sfdc_cms__ names');
   });
 
-  it('documents retrieve defaults, exact operation aliases and limited Audio evidence', async () => {
+  it('documents retrieve defaults, exact operation aliases and bounded two-org Audio evidence', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
       'sf cms retrieve content -W "Content Workspace for Marketing Cloud"',
@@ -196,10 +196,10 @@ describe('current public documentation', () => {
       '`content.deploy.audio.create`',
       '`content.deploy.audio.update`',
       '`content.deploy.audio.unchanged`',
-      'all **unqualified**; native Audio CREATE/UPDATE and two-org qualification remain pending',
+      'all **unqualified**; bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile, not general-format or released-package qualification',
       'Do not infer native qualification from capability discovery or command availability.',
-      '844-byte primary WAV',
-      'Native Audio CREATE/UPDATE and two-org qualification remain pending',
+      'tested 844-byte WAV profile',
+      'zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks',
       '**0.19.0**',
       'Current Document profile bounds and unsupported Video operations remain unchanged',
     ])
@@ -224,9 +224,16 @@ describe('current public documentation', () => {
     expect(readme).not.to.include('Audio deployment is not enabled');
     expect(readme).not.to.include('not yet listed in the offline capability registry');
     expect(readme).not.to.include('deploy accepts the first four');
-    expect(RetrieveContent.description).to.include(
-      'native CREATE/UPDATE and two-org qualification remain pending',
-    );
+    for (const text of [readme, RetrieveContent.description, DeployContent.description]) {
+      expect(text).to.include(
+        'two-org development-artifact acceptance covers the tested 844-byte WAV profile',
+      );
+      expect(text).to.include('general-format or released-package qualification');
+      expect(text).not.to.match(
+        /native (?:Audio )?CREATE\/UPDATE and two-org qualification remain pending/iu,
+      );
+      expect(text).not.to.include('only an 844-byte primary WAV');
+    }
     expect(DeployContent.summary).to.include('Audio');
     expect(DeployContent.flags['content-type'].summary).to.include('audio');
     expect(DeployContent.description).to.include(
