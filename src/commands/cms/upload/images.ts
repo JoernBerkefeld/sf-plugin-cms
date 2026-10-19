@@ -140,7 +140,8 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
         }
       }
       await planImageUploadFiles(flags.file);
-    } catch {
+    } catch (error) {
+      this.logDiagnosticError('image upload local validation failed', error);
       return finish('blocked', 'IMAGE_UPLOAD_LOCAL_VALIDATION_FAILED');
     }
     try {

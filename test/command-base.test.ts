@@ -5,6 +5,7 @@ import { ConfigAggregator, Org, SfProject } from '@salesforce/core';
 import { SfCommand, Ux } from '@salesforce/sf-plugins-core';
 import { ux } from '@oclif/core';
 import Info from '../src/commands/cms/info.js';
+import UploadImages from '../src/commands/cms/upload/images.js';
 import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
@@ -231,6 +232,42 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
     expect(JSON.stringify(diagnostic)).to.include('UNSUPPORTED_CONTRACT_VERSION');
     expect(entries.some((entry) => entry.message === 'command failure')).to.equal(false);
     expect(JSON.parse(output(stdout))).to.have.property('status', 'blocked');
+  });
+
+  it('logs the originating upload validation reason without extending the public result', async () => {
+    const instance = new UploadImages(['--json'], command(true).config);
+    sinon.stub(instance, 'init').resolves();
+    sinon
+      .stub(instance as unknown as { pluginVersion: string }, 'pluginVersion')
+      .get(() => '0.18.0');
+    sinon.stub(instance, 'parse').resolves({
+      flags: {
+        'target-org': { getUsername: () => 'target' },
+        'contract-version': 1,
+        'api-version': 'latest',
+        'workspace-id': 'workspace',
+        file: ['.unsafe.png'],
+        apply: false,
+      },
+    } as never);
+    // A filename with a leading dot is rejected before filesystem/org access.
+    const context = sinon.stub(Org, 'create');
+    const result = await instance._run();
+    expect(result).to.have.property('status', 'blocked');
+    const entries = records();
+    const failure = entries.find(
+      (entry) => entry.message === 'image upload local validation failed',
+    );
+    expect(failure?.details).to.have.property('message', 'Unsafe or unsupported image filename');
+    expect(failure?.details.stack).to.be.a('string');
+    expect(context.called).to.equal(false);
+    const visible = output(stdout);
+    expect(JSON.parse(visible)).to.deep.equal(result);
+    expect(visible).not.to.include('Unsafe or unsupported image filename');
+    expect(JSON.parse(visible).diagnostics.errors[0].code).to.equal(
+      'IMAGE_UPLOAD_LOCAL_VALIDATION_FAILED',
+    );
+    expect(entries.some((entry) => entry.message === 'command failure')).to.equal(false);
   });
 
   it('retains the received alias tokens and isolates repeated instances', async () => {

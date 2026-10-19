@@ -189,6 +189,10 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
     }
   }
 
+  protected logDiagnosticError(message: string, error: unknown): void {
+    this.invocationLogger?.log('error', message, error);
+  }
+
   protected get pluginVersion(): string {
     return getPluginVersion(this.config);
   }
