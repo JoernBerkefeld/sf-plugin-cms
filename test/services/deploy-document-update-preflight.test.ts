@@ -270,7 +270,22 @@ describe('private read-only Document UPDATE admission', () => {
         f.media.url = f.media.url.replace(/fileHash=[^&]+/u, `fileHash=${'0'.repeat(32)}`);
       await rejects(f.run());
     });
-  for (const kind of ['invalid-utf8', 'empty', 'response-mime'] as const)
+  it('preserves independently observed invalid UTF-8 and opaque selected bytes', async () => {
+    const f = await fixture();
+    const current = Buffer.from([195, 40]);
+    await writeFile(f.companion, Buffer.from([255, 0, 195, 40]));
+    f.media.source.size = current.length;
+    f.media.url = f.media.url.replace(
+      /fileHash=[^&]+/u,
+      `fileHash=${createHash('md5').update(current).digest('hex')}`,
+    );
+    f.fetcher.callsFake(
+      async () => new Response(current, { headers: { 'content-type': 'text/plain' } }),
+    );
+    await f.run();
+    expect(f.fetcher.called).to.equal(true);
+  });
+  for (const kind of ['empty', 'response-mime'] as const)
     it(`rejects current binary ${kind} independently of valid selected bytes`, async () => {
       const f = await fixture();
       const current = kind === 'empty' ? Buffer.alloc(0) : Buffer.from([195, 40]);
@@ -289,14 +304,13 @@ describe('private read-only Document UPDATE admission', () => {
       );
       await rejects(f.run(), /Document|document|media|Media|UTF-8|encoded data/u);
     });
-  for (const kind of ['metadata', 'language', 'root', 'mime', 'utf8', 'filename', 'url'] as const)
+  for (const kind of ['metadata', 'language', 'root', 'mime', 'filename', 'url'] as const)
     it(`rejects unsupported local ${kind}`, async () => {
       const f = await fixture();
       if (kind === 'metadata') f.definition.title = 'Other';
       if (kind === 'language') f.definition.language = 'de';
       if (kind === 'root') f.definition.folderPath = ['nested'];
       if (kind === 'mime') f.definition.media.mimeType = 'application/pdf';
-      if (kind === 'utf8') await writeFile(f.companion, Buffer.from([195, 40]));
       if (kind === 'filename') {
         f.definition.media.companion.path = 'Guide.cms-document.media.pdf';
         await writeFile(path.join(f.directory, f.definition.media.companion.path), f.bytes);
@@ -304,7 +318,8 @@ describe('private read-only Document UPDATE admission', () => {
       if (kind === 'url') f.definition.urlName = '';
       await f.save();
       await rejects(f.run());
-      expect(f.fetcher.called).to.equal(false);
+      // Safe suffixes reach native filename identity comparison; metadata differences stay local.
+      if (kind !== 'filename') expect(f.fetcher.called).to.equal(false);
     });
   for (const kind of [
     'source-bytes',

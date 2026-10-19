@@ -5,6 +5,9 @@ import {
   type DocumentUpdateInput,
 } from '../../src/transport/multipart-document-update.js';
 import { CmsRequestError } from '../../src/transport/json-request.js';
+import sinon from 'sinon';
+import { createDocumentContent } from '../../src/transport/multipart-image-create.js';
+import { sendVariantUpdateMultipart } from '../../src/transport/multipart-image-update.js';
 
 const input: DocumentUpdateInput = {
   apiName: 'CMSQ_Doc_8f3ca5070a2c',
@@ -118,8 +121,6 @@ describe('pure native Document UPDATE multipart builder', () => {
   it('rejects unsafe or unproven filenames and binary profiles', () => {
     for (const name of [
       '',
-      'a.TXT',
-      'a.pdf',
       '../a.txt',
       'a/b.txt',
       String.raw`a\b.txt`,
@@ -129,13 +130,81 @@ describe('pure native Document UPDATE multipart builder', () => {
       'a\u007F.txt',
     ])
       expect(() => build(input, name)).to.throw(CmsRequestError);
-    for (const data of [
-      new Uint8Array(),
-      Buffer.from([195, 40]),
-      Buffer.alloc(10 * 1024 * 1024 + 1),
-    ])
+    for (const data of [new Uint8Array()])
       expect(() => build(input, filename, data)).to.throw(CmsRequestError);
     expect(() => build(input, filename, 'text' as unknown as Uint8Array)).to.throw(CmsRequestError);
+  });
+
+  for (const method of ['CREATE', 'UPDATE']) {
+    for (const rejected of [false, true]) {
+      it(`preserves >10 MiB opaque Document MIME/bytes through ${method}, API rejection ${rejected}, without replay`, async () => {
+        const binary = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
+        const nativeOptions = { ...options, mimeType: 'application/pdf' };
+        const failure = Object.assign(new Error('native format rejected'), { statusCode: 415 });
+        const response =
+          method === 'CREATE'
+            ? { contentKey: 'key', managedContentId: 'parent', managedContentVariantId: 'variant' }
+            : {
+                language: 'en_US',
+                managedContentId: 'parent',
+                managedContentVariantId: 'variant',
+                contentBody: {},
+                isPublished: false,
+              };
+        const request = sinon
+          .stub()
+          .callsFake(() => (rejected ? Promise.reject(failure) : Promise.resolve(response)));
+        const multipart = buildDocumentUpdateMultipart(input, 'native.PDF', binary, nativeOptions);
+        const invoke = () =>
+          method === 'CREATE'
+            ? createDocumentContent(
+                { request },
+                { apiName: input.apiName, title: input.title, contentSpaceOrFolderId: 'workspace' },
+                'native.PDF',
+                binary,
+                nativeOptions,
+              )
+            : sendVariantUpdateMultipart({ request }, 'variant', multipart);
+        if (rejected) {
+          try {
+            await invoke();
+            expect.fail('expected native rejection');
+          } catch (error) {
+            expect(error).to.be.instanceOf(CmsRequestError);
+            expect((error as CmsRequestError).status).to.equal(415);
+            expect((error as Error).message).to.equal('native format rejected');
+          }
+        } else expect(await invoke()).to.deep.equal(response);
+        expect(request.calledOnce).to.equal(true);
+        const wire = request.firstCall.args[0].body as Buffer;
+        expect(
+          wire.includes(
+            Buffer.from('filename="native.PDF"\r\nContent-Type: application/pdf\r\n\r\n'),
+          ),
+        ).to.equal(true);
+        const start = wire.indexOf(binary);
+        expect(start).to.be.greaterThan(0);
+        expect(
+          createHash('sha256')
+            .update(wire.subarray(start, start + binary.length))
+            .digest('hex'),
+        ).to.equal(createHash('sha256').update(binary).digest('hex'));
+        expect(request.firstCall.args[1].retry).to.deep.equal({ maxRetries: 0 });
+      });
+    }
+  }
+
+  it('rejects unsafe MIME before framing', () => {
+    for (const mimeType of [
+      'application/pdf\r\nInjected: true',
+      'text/plain; charset=UTF-8',
+      '',
+      'café/pdf',
+    ]) {
+      expect(() =>
+        buildDocumentUpdateMultipart(input, 'native.bin', bytes, { mimeType }),
+      ).to.throw();
+    }
   });
 
   it('regenerates JSON/binary collisions and bounds collision exhaustion', () => {

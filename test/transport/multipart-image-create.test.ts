@@ -485,14 +485,7 @@ describe('multipart Document create transport', () => {
 
   it('rejects unqualified extensions, injection and overrides before any request', async () => {
     const request = sinon.stub();
-    for (const filename of [
-      'owned.pdf',
-      'owned',
-      'owned.TXT',
-      'owned.txt.exe',
-      '../owned.txt',
-      'a".txt',
-    ]) {
+    for (const filename of ['../owned.txt', 'a".txt']) {
       try {
         await createDocumentContent({ request }, input, filename, Buffer.from('document'));
         expect.fail('expected invalid Document filename');
@@ -543,7 +536,7 @@ describe('multipart Document create transport', () => {
     expect(request.called).to.equal(false);
   });
 
-  it('keeps Document text/plain framing even when Image MIME options are supplied', () => {
+  it('threads safe native Document MIME into framing', () => {
     const options = { boundaryFactory: constantBoundary('safe'), mimeType: 'image/avif' };
     const built = buildDocumentCreateMultipart(
       input,
@@ -551,12 +544,31 @@ describe('multipart Document create transport', () => {
       Buffer.from('document'),
       options,
     );
-    expect(built.body.toString('ascii')).to.include('Content-Type: text/plain\r\n\r\n');
-    expect(built.body.toString('ascii')).not.to.include('image/avif');
+    expect(built.body.toString('ascii')).to.include('Content-Type: image/avif\r\n\r\n');
   });
 
-  it('preserves caps and bounded boundary collision rejection', () => {
-    for (const bytes of [Buffer.alloc(0), Buffer.alloc(MAX_IMAGE_BYTES + 1)]) {
+  it('rejects unsafe Document MIME before any request', async () => {
+    const request = sinon.stub();
+    for (const mimeType of [
+      'application/pdf\r\nInjected: true',
+      'text/plain; charset=UTF-8',
+      '',
+      'café/pdf',
+    ]) {
+      try {
+        await createDocumentContent({ request }, input, 'native.bin', Buffer.from([255]), {
+          mimeType,
+        });
+        expect.fail('expected unsafe MIME rejection');
+      } catch (error) {
+        expect(error).to.be.instanceOf(Error);
+      }
+    }
+    expect(request.called).to.equal(false);
+  });
+
+  it('preserves nonempty bytes and bounded boundary collision rejection', () => {
+    for (const bytes of [Buffer.alloc(0)]) {
       expect(() => buildDocumentCreateMultipart(input, 'owned.txt', bytes)).to.throw(
         CmsRequestError,
       );

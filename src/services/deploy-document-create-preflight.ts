@@ -22,7 +22,7 @@ export type DeployDocumentCreatePreflightInput = {
 
 /**
  * Observe bounded portable Document CREATE intent without journal or org mutation authority.
- * The text/plain, UTF-8, ASCII .txt and 10 MiB bounds are this profile, not Salesforce limits.
+ * Native opaque bytes retain source integrity and safe ASCII filename checks.
  * Executors must independently reacquire observations before any journaled transport call.
  * @param {DestinationConnection} connection - Explicit destination connection.
  * @param {DeployDocumentCreatePreflightInput} input - Local item and exact destination scope.

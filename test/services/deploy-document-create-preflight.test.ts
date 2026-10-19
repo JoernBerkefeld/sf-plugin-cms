@@ -223,8 +223,8 @@ describe('portable Document CREATE preflight (read-only)', () => {
     await failure(invalid.run({ workspaceId: 'wrong' }), /workspace ID/u);
     expect(invalid.calls).to.have.length(0);
   });
-  it('rejects missing, empty and currently over-profile CREATE bytes before org access', async () => {
-    for (const bytes of [Buffer.alloc(0), Buffer.alloc(10 * 1024 * 1024 + 1, 65)]) {
+  it('rejects missing and empty CREATE bytes before org access', async () => {
+    for (const bytes of [Buffer.alloc(0)]) {
       const f = await fixture();
       await writeFile(f.companion, bytes);
       await failure(f.run(), /nonempty|byte limit/u);
@@ -237,7 +237,7 @@ describe('portable Document CREATE preflight (read-only)', () => {
   });
   it('preserves opaque source bytes through the existing CREATE preflight', async () => {
     const f = await fixture();
-    const bytes = Buffer.from([255, 0, 195, 40]);
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
     await writeFile(f.companion, bytes);
     const result = await f.run();
     expect(result.source.source).to.have.nested.property('binary.bytes').deep.equal(bytes);

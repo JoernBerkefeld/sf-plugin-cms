@@ -205,8 +205,12 @@ export function buildDocumentCreateMultipart(
   input: ImageCreateInput,
   filename: string,
   document: Uint8Array,
-  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> = {},
+  options: Pick<
+    MultipartImageCreateOptions,
+    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
+  > = {},
 ): MultipartParts {
+  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
   validateFilename(filename);
   // ASCII framing truncates Unicode code points, potentially introducing header delimiters.
   if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
@@ -214,9 +218,6 @@ export function buildDocumentCreateMultipart(
       OPERATION_KEY,
       'Document filename must contain only ASCII characters',
     );
-  }
-  if (!filename.endsWith('.txt')) {
-    throw new CmsRequestError(OPERATION_KEY, 'Document filename must end with .txt');
   }
   return buildFileCreateMultipart(input, filename, document, 'sfdc_cms__document', options);
 }
@@ -242,10 +243,6 @@ function buildFileCreateMultipart(
   if (!Number.isSafeInteger(image.byteLength) || image.byteLength > bufferConstants.MAX_LENGTH) {
     throw new CmsRequestError(OPERATION_KEY, 'Binary size cannot be represented by a Buffer');
   }
-  if (contentType === 'sfdc_cms__document' && image.byteLength > MAX_IMAGE_BYTES) {
-    throw new CmsRequestError(OPERATION_KEY, `Image exceeds ${MAX_IMAGE_BYTES} byte limit`);
-  }
-
   const managedContentInput = {
     ...input,
     contentType,
@@ -264,9 +261,10 @@ function buildFileCreateMultipart(
     'ascii',
   );
   const binaryContentType =
-    contentType === 'sfdc_cms__document'
+    options.mimeType ??
+    (contentType === 'sfdc_cms__document'
       ? 'text/plain'
-      : (options.mimeType ?? 'application/octet-stream; charset=ISO-8859-1');
+      : 'application/octet-stream; charset=ISO-8859-1');
   const secondHeader = Buffer.from(
     `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: ${binaryContentType}\r\n\r\n`,
     'ascii',

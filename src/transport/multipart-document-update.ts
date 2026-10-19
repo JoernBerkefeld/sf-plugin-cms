@@ -1,4 +1,3 @@
-import { isUtf8 } from 'node:buffer';
 import { CmsRequestError } from './json-request.js';
 import {
   buildImageUpdateMultipart,
@@ -14,7 +13,7 @@ export type DocumentUpdateInput = {
 
 export type MultipartDocumentUpdateOptions = Pick<
   MultipartImageUpdateOptions,
-  'boundaryFactory' | 'maxBoundaryAttempts'
+  'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
 >;
 
 function assertExactKeys(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
@@ -31,10 +30,10 @@ function assertExactKeys(value: unknown, keys: string[]): asserts value is Recor
 
 /**
  * Build only the evidenced native Document UPDATE envelope; never issue a request.
- * These UTF-8, text/plain, ASCII .txt and 10 MiB bounds are a local profile, not API limits.
+ * Preserve opaque bytes and safe native MIME/filename identity without format or size policy.
  * @param {DocumentUpdateInput} input - Exact accepted metadata combination, without server fields.
- * @param {string} filename - Unchanged native ASCII filename ending in lowercase .txt.
- * @param {Uint8Array} bytes - Nonempty UTF-8 bytes, preserved without re-encoding.
+ * @param {string} filename - Unchanged safe native ASCII filename.
+ * @param {Uint8Array} bytes - Nonempty opaque bytes, preserved without re-encoding.
  * @param {MultipartDocumentUpdateOptions} options - Bounded collision-free boundary selection.
  * @returns {object} Detached multipart bytes, boundary and native metadata.
  */
@@ -54,15 +53,6 @@ export function buildDocumentUpdateMultipart(
     if (typeof input[field] !== 'string' || !input[field].trim())
       throw new CmsRequestError('variant.update', `Invalid Document UPDATE field: ${field}`);
   }
-  if (typeof filename !== 'string' || !filename.endsWith('.txt'))
-    throw new CmsRequestError('variant.update', 'Document filename must end with .txt');
-  if (!(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > 10 * 1024 * 1024)
-    throw new CmsRequestError(
-      'variant.update',
-      'Document UPDATE requires nonempty binary up to 10 MiB',
-    );
-  if (!isUtf8(bytes))
-    throw new CmsRequestError('variant.update', 'Document UPDATE bytes must be valid UTF-8');
   // Reuse pure framing only: the existing primitive constructs the exact accepted media node.
   return buildImageUpdateMultipart(
     { apiName: input.apiName, title: input.title, urlName: input.urlName },
@@ -71,7 +61,7 @@ export function buildDocumentUpdateMultipart(
     {
       boundaryFactory: options.boundaryFactory,
       maxBoundaryAttempts: options.maxBoundaryAttempts,
-      mimeType: 'text/plain',
+      mimeType: options.mimeType ?? 'text/plain',
     },
   );
 }
