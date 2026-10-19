@@ -5,6 +5,58 @@ import RetrieveContent from '../src/commands/cms/retrieve/content.js';
 
 const readmeFile = new URL('../README.md', import.meta.url);
 
+const launcher = async (): Promise<{
+  createCoverageRun: () => Promise<{ root: string; raw: string }>;
+  validateTemp: (environment?: NodeJS.ProcessEnv, actualTemp?: string) => void;
+  runCommand: (args: string[]) => Promise<{ code: number | null; signal: string | null }>;
+}> => import(new URL('../scripts/test-coverage.mjs', import.meta.url).href);
+
+describe('coverage launcher configuration', () => {
+  it('allocates distinct marked registered raw roots without mixing stale runs', async () => {
+    const { createCoverageRun } = await launcher();
+    const first = await createCoverageRun();
+    const second = await createCoverageRun();
+    const { tmpdir } = await import('node:os');
+    const { default: path } = await import('node:path');
+    const { readdir } = await import('node:fs/promises');
+    expect(path.dirname(first.root)).to.equal(tmpdir());
+    expect(first.root).not.to.equal(second.root);
+    expect(path.dirname(first.raw)).to.equal(first.root);
+    expect(await readdir(first.raw)).to.deep.equal([]);
+    expect(await readdir(second.raw)).to.deep.equal([]);
+    const marker = await readFile(path.join(first.root, '.sf-cms-run-owner'), 'utf8');
+    expect(marker).to.match(/^[\da-f-]{36}$/u);
+    expect(
+      JSON.parse(await readFile(path.join(first.root, 'registered-paths.json'), 'utf8')),
+    ).to.deep.equal({ marker, paths: [first.raw] });
+  });
+
+  it('fails closed on relative or mismatched temp environment and actual tmpdir', async () => {
+    const { validateTemp } = await launcher();
+    expect(() => validateTemp({ ...process.env, TEMP: 'relative' })).to.throw();
+    expect(() => validateTemp({ ...process.env, TMP: 'relative' })).to.throw();
+    expect(() => validateTemp({ ...process.env, TMPDIR: 'relative' })).to.throw();
+    expect(() => validateTemp(process.env, 'relative')).to.throw();
+    validateTemp();
+  });
+
+  it('propagates child failure status without converting it to success', async () => {
+    const { runCommand } = await launcher();
+    expect(await runCommand(['-e', 'process.exit(7)'])).to.deep.equal({ code: 7, signal: null });
+  });
+
+  it('pins ESM-native c8 while preserving full compile and Mocha discovery', async () => {
+    const manifest = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    );
+    expect(manifest.devDependencies.c8).to.equal('12.0.0');
+    expect(manifest.scripts.test).to.equal('npm run compile && node scripts/test-coverage.mjs');
+    const config = await readFile(new URL('../.mocharc.cjs', import.meta.url), 'utf8');
+    expect(config).to.include('test/**/*.test.ts');
+    expect(config).to.include('loader=ts-node/esm');
+  });
+});
+
 describe('current public documentation', () => {
   it('omits historical command and internal-engine appendices', async () => {
     const readme = await readFile(readmeFile, 'utf8');

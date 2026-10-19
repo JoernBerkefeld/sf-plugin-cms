@@ -1,7 +1,33 @@
 import { expect } from 'chai';
-import { redactSecrets } from '../../src/transport/redact-secrets.js';
+import { redactSecrets, redactLogValue, redactArgv } from '../../src/transport/redact-secrets.js';
 
 describe('transport secret redaction', () => {
+  it('sanitizes JSON headers, form credentials and encoded bodies without hiding guard prose', () => {
+    for (const text of [
+      '{"Authorization":"Basic SECRET", "nested":{"clientSecret":"SECRET"}, "reason":"selector required"}',
+      'client_secret=SECRET&access_token=SECRET&safe=value',
+      encodeURIComponent('{"cookie":"SECRET","reason":"selector required"}'),
+    ]) {
+      expect(redactSecrets(text)).not.to.include('SECRET');
+    }
+    expect(redactArgv(['content', '--password=SECRET', '--name=a b'])).to.deep.equal([
+      'content',
+      '--password=[REDACTED]',
+      '--name=a b',
+    ]);
+    const value: Record<string, unknown> = { message: 'selector required' };
+    value.self = value;
+    Object.defineProperty(value, 'getter', {
+      get() {
+        throw new Error('must not invoke');
+      },
+    });
+    expect(redactLogValue(value)).to.deep.equal({
+      message: 'selector required',
+      self: '[omitted circular reference]',
+      getter: '[omitted accessor]',
+    });
+  });
   it('redacts sensitive headers case-insensitively', () => {
     const message = [
       'AUTHORIZATION: Bearer auth-secret',

@@ -58,7 +58,7 @@
     "lint:fix": "eslint src test eslint.config.js --fix",
     "intake:check": "npm run compile && node scripts/intake-openapi.mjs resources/openapi/connect-rest-api-cms-v67.yaml --canonical",
     "prepare": "husky || true",
-    "test": "npm run compile && nyc mocha",
+    "test": "npm run compile && node scripts/test-coverage.mjs",
     "validate:package": "node scripts/validate-package.mjs"
   },
   "publishConfig": {
@@ -68,7 +68,8 @@
     "@jsforce/jsforce-node": "3.10.16",
     "@oclif/core": "4.13.2",
     "@salesforce/core": "8.31.3",
-    "@salesforce/sf-plugins-core": "12.2.0"
+    "@salesforce/sf-plugins-core": "12.2.0",
+    "winston": "3.19.0"
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
@@ -80,6 +81,7 @@
     "@types/mocha": "10.0.10",
     "@types/node": "24.10.1",
     "@types/sinon": "17.0.4",
+    "c8": "12.0.0",
     "chai": "4.5.0",
     "eslint": "9.39.4",
     "eslint-config-prettier": "10.1.8",
@@ -89,7 +91,6 @@
     "globals": "17.9.0",
     "husky": "9.1.7",
     "mocha": "11.8.0",
-    "nyc": "17.1.0",
     "prettier": "3.9.6",
     "semver": "7.8.5",
     "sinon": "18.0.1",
