@@ -1,5 +1,6 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import { constants as bufferConstants } from 'node:buffer';
 import { assertMediaMimeType } from '../services/editable-media-source.js';
 import type { Connection } from '@salesforce/core';
@@ -42,6 +43,7 @@ type MultipartParts = {
   body: Buffer;
   boundary: string;
   input: Readonly<Record<string, unknown>>;
+  file: { name: string; mimeType: string; byteLength: number };
 };
 
 const OPERATION_KEY = 'content.create';
@@ -280,6 +282,7 @@ function buildFileCreateMultipart(
     body: Buffer.concat(parts, length),
     boundary,
     input: managedContentInput,
+    file: { name: filename, mimeType: binaryContentType, byteLength: image.byteLength },
   };
 }
 
@@ -354,26 +357,45 @@ async function sendFileCreateMultipart(
     throw new CmsRequestError(OPERATION_KEY, 'CMS image create cancelled');
   }
 
-  const request = withoutRefreshReplay(connection).request<unknown>(
-    {
-      body: multipart.body,
-      headers: {
-        'content-length': String(multipart.body.byteLength),
-        'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
-      },
-      method: 'POST',
-      url: '/connect/cms/contents',
-    },
-    { retry: { maxRetries: 0 }, timeout: timeoutMs },
-  ) as RequestStream<unknown>;
+  const details = {
+    requestId: randomUUID(),
+    method: 'POST' as const,
+    url: '/connect/cms/contents',
+    operationKey: OPERATION_KEY,
+    startedAt: Date.now(),
+    transport: 'multipart' as const,
+  };
+  const headers = {
+    'content-length': String(multipart.body.byteLength),
+    'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
+  };
+  logApiEvent('request', details, {
+    headers,
+    json: multipart.input,
+    file: multipart.file,
+    binary: 'omitted: multipart binary bytes',
+  });
+  let request: RequestStream<unknown>;
+  try {
+    request = withoutRefreshReplay(connection).request<unknown>(
+      { body: multipart.body, headers, method: details.method, url: details.url },
+      { retry: { maxRetries: 0 }, timeout: timeoutMs },
+    ) as RequestStream<unknown>;
+  } catch (error) {
+    logApiEvent('error', details, error);
+    throw error;
+  }
   const cancel = (): void => {
     request.stream().destroy(new Error('CMS image create cancelled'));
   };
   options.signal?.addEventListener('abort', cancel, { once: true });
 
   try {
-    return parseManagedContentDocument(await request);
+    const data = await request;
+    logApiEvent('response', details, data);
+    return parseManagedContentDocument(data);
   } catch (error) {
+    logApiEvent('error', details, error);
     if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted
       ? 'CMS image create cancelled'

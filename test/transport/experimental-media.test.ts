@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import sinon from 'sinon';
+import { runWithInvocationLogging, type InvocationLogger } from '../../src/logging.js';
 import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
@@ -34,6 +35,124 @@ describe('experimental CMS media transport', () => {
     );
     const retainedRoot = await lstat(run.root);
     expect(retainedRoot.isDirectory()).to.equal(true);
+  });
+
+  it('logs every redirect and streamed completion without secrets or binary dumps', async () => {
+    for (const apiEnabled of [false, true]) {
+      const records: unknown[] = [];
+      const logger: InvocationLogger = {
+        filePath: '',
+        close: async () => {},
+        log: (_level, _message, details) => {
+          records.push(details);
+        },
+      };
+      const fetcher = sinon.stub();
+      fetcher.onFirstCall().resolves(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: 'https://tenant.file.force.com/media?sig=SECRETsignature&safe=yes',
+          },
+        }),
+      );
+      fetcher.onSecondCall().resolves(
+        new Response(PNG, {
+          status: 200,
+          headers: { 'content-type': 'image/png', 'content-length': String(PNG.length) },
+        }),
+      );
+      const outputFile = path.join(root, `logged-${apiEnabled}.png`);
+      await runWithInvocationLogging(
+        logger,
+        () =>
+          downloadExperimentalCmsMedia(
+            new URL(
+              'https://tenant.my.salesforce.com/cms/media/key?fileName=image.png&token=SECRETquery',
+            ),
+            {
+              accessToken: 'SECRETauth',
+              expectedMd5: createHash('md5').update(PNG).digest('hex'),
+              expectedMimeType: 'image/png',
+              expectedSize: PNG.length,
+              fetch: fetcher,
+              instanceUrl: 'https://tenant.my.salesforce.com',
+              outputFile,
+            },
+          ),
+        apiEnabled,
+      );
+      expect(fetcher.callCount).to.equal(2);
+      expect(await readFile(outputFile)).to.deep.equal(PNG);
+      const text = JSON.stringify(records);
+      expect(text)
+        .to.include('302')
+        .and.include('200')
+        .and.include('complete')
+        .and.include('safe=yes')
+        .and.not.include('SECRET');
+      expect(text.includes('requestPayload')).to.equal(apiEnabled);
+      expect(text).not.to.include(PNG.toString('base64'));
+      expect(
+        (records as Array<{ requestId: string }>).filter((record) => record.requestId).length,
+      ).to.equal(5);
+    }
+  });
+
+  it('preserves streaming rejection identity and available diagnostics even with a broken sink', async () => {
+    const original = Object.assign(new Error('stream Bearer SECRET'), {
+      data: ['useful stream detail'],
+    });
+    for (const broken of [false, true]) {
+      const records: unknown[] = [];
+      const logger: InvocationLogger = {
+        filePath: '',
+        close: async () => {},
+        log: (_level, _message, details) => {
+          if (broken) throw new Error('sink failed');
+          records.push(details);
+        },
+      };
+      const fetcher = sinon.stub().resolves(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(PNG);
+              controller.error(original);
+            },
+          }),
+          { headers: { 'content-type': 'image/png' } },
+        ),
+      );
+      try {
+        await runWithInvocationLogging(
+          logger,
+          () =>
+            downloadExperimentalCmsMedia(
+              new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.png'),
+              {
+                accessToken: 'SECRET',
+                expectedMd5: createHash('md5').update(PNG).digest('hex'),
+                expectedMimeType: 'image/png',
+                expectedSize: PNG.length,
+                fetch: fetcher,
+                instanceUrl: 'https://tenant.my.salesforce.com',
+                outputFile: path.join(root, `failed-${broken}.png`),
+              },
+            ),
+          true,
+        );
+        expect.fail('Expected original rejection');
+      } catch (error) {
+        expect(error).to.equal(original);
+      }
+      expect(fetcher.calledOnce).to.equal(true);
+      if (!broken)
+        expect(JSON.stringify(records))
+          .to.include('useful stream detail')
+          .and.include('failed')
+          .and.not.include('SECRET');
+    }
   });
 
   it('accepts only a strict IDNA-normalized HTTPS file.force.com subdomain', () => {

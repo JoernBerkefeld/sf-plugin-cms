@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import { constants as bufferConstants } from 'node:buffer';
 import { assertMediaMimeType } from '../services/editable-media-source.js';
 import { domainToASCII } from 'node:url';
@@ -138,134 +139,185 @@ export async function downloadExperimentalCmsMedia(
   const fetcher = options.fetch ?? fetch;
   let current = source;
   let response: Response | undefined;
-  for (let redirects = 0; redirects <= EXPERIMENTAL_MEDIA_POLICY.maxRedirects; redirects += 1) {
-    const onInstance = sameOrigin(current, instance);
-    if (!onInstance && !isApprovedSalesforceMediaUrl(current)) {
-      throw new TypeError(
-        'Experimental media redirect target is outside the approved Salesforce class',
-      );
-    }
-    const accept =
-      contentType === 'sfdc_cms__image'
-        ? 'image/*,application/octet-stream;q=0.8'
-        : options.expectedMimeType;
-    response = await fetcher(current, {
-      headers: {
-        accept,
-        authorization: `Bearer ${options.accessToken}`,
-      },
-      redirect: 'manual',
-    });
-    if (!REDIRECT_STATUSES.has(response.status)) break;
-    if (redirects === EXPERIMENTAL_MEDIA_POLICY.maxRedirects) {
-      throw new TypeError('Experimental media redirect count exceeded');
-    }
-    const location = response.headers.get('location');
-    if (location === null) throw new TypeError('Experimental media redirect has no location');
-    const target = new URL(location, current);
-    assertSafeHttps(target);
-    if (!isApprovedSalesforceMediaUrl(target) && !sameOrigin(target, instance)) {
-      throw new TypeError(
-        'Experimental media redirect target is outside the approved Salesforce class',
-      );
-    }
-    current = target;
-  }
-  if (response === undefined || !response.ok || response.body === null) {
-    throw Object.assign(
-      new TypeError(`Experimental media request failed with status ${response?.status ?? 0}`),
-      { status: response?.status },
-    );
-  }
-  const responseHeader = response.headers.get('content-type');
-  // HTTP parameters describe the response, not the parameter-free native/upload MIME.
-  const responseType = responseHeader?.split(';', 1)[0].trim().toLowerCase();
-  if (
-    responseHeader === null ||
-    !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+(?:[\t ]*;[\t ]*[A-Za-z0-9!#$%&'*+.^_`|~-]+=(?:[A-Za-z0-9!#$%&'*+.^_`|~-]+|"(?:[\t !#-[\]-~]|\\[\t -~])*"))*[\t ]*$/u.test(
-      responseHeader,
-    ) ||
-    responseType === undefined
-  ) {
-    throw new TypeError(
-      'Experimental media response Content-Type must be safe ASCII HTTP media type',
-    );
-  }
-  const sameMime = responseType.toLowerCase() === options.expectedMimeType.toLowerCase();
-  if (!sameMime && (responseType === 'text/html' || responseType.includes('json'))) {
-    throw new TypeError('Experimental media response is not binary image content');
-  }
-  if (
-    !sameMime &&
-    !(
-      contentType === 'sfdc_cms__image' && responseType.toLowerCase() === 'application/octet-stream'
-    )
-  ) {
-    throw new TypeError('Experimental media response MIME type changed');
-  }
-  const declaredLengthText = response.headers.get('content-length');
-  const declaredLength = declaredLengthText === null ? undefined : Number(declaredLengthText);
-  const familyLimit = bufferConstants.MAX_LENGTH;
-  const configuredLimit = options.maxBytes ?? familyLimit;
-  if (!Number.isSafeInteger(configuredLimit) || configuredLimit <= 0) {
-    throw new TypeError('Experimental media byte cap must be a positive safe integer');
-  }
-  const limit = Math.min(configuredLimit, familyLimit);
-  if (
-    declaredLength !== undefined &&
-    (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > limit)
-  ) {
-    throw new TypeError('Experimental media Content-Length is invalid or exceeds the cap');
-  }
-  const fileName = source.searchParams.get('fileName');
-  if (
-    fileName === null ||
-    fileName.length === 0 ||
-    fileName.includes('/') ||
-    fileName.includes('\\')
-  ) {
-    throw new TypeError('Experimental media filename is invalid');
-  }
-  const md5 = createHash('md5');
-  const sha256 = createHash('sha256');
+  let details = {
+    requestId: '',
+    method: 'GET',
+    url: source.href,
+    operationKey: 'media.download',
+    startedAt: Date.now(),
+    transport: 'download' as const,
+    status: undefined as number | undefined,
+    rawBody: 'omitted: binary response stream (not consumed for logging)',
+  };
   let bytes = 0;
-  const handle = await (options.openFile ?? (async (file) => open(file, 'wx')))(options.outputFile);
-  const unlinkFile = options.unlinkFile ?? unlink;
-  let closeAttempted = false;
   try {
-    for await (const chunkValue of Readable.fromWeb(response.body as never)) {
-      const chunk = Buffer.isBuffer(chunkValue)
-        ? chunkValue
-        : Buffer.from(chunkValue as Uint8Array);
-      if (chunk.length > limit - bytes) {
-        throw new TypeError('Experimental media response exceeds the byte cap');
+    for (let redirects = 0; redirects <= EXPERIMENTAL_MEDIA_POLICY.maxRedirects; redirects += 1) {
+      const onInstance = sameOrigin(current, instance);
+      if (!onInstance && !isApprovedSalesforceMediaUrl(current)) {
+        throw new TypeError(
+          'Experimental media redirect target is outside the approved Salesforce class',
+        );
       }
-      bytes += chunk.length;
-      md5.update(chunk);
-      sha256.update(chunk);
-      await handle.write(chunk);
+      const accept =
+        contentType === 'sfdc_cms__image'
+          ? 'image/*,application/octet-stream;q=0.8'
+          : options.expectedMimeType;
+      details = {
+        ...details,
+        requestId: randomUUID(),
+        url: current.href,
+        startedAt: Date.now(),
+        status: undefined,
+      };
+      logApiEvent('request', details, { headers: { accept }, redirect: 'manual' });
+      response = await fetcher(current, {
+        headers: {
+          accept,
+          authorization: `Bearer ${options.accessToken}`,
+        },
+        redirect: 'manual',
+      });
+      details.status = response.status;
+      logApiEvent('response', {
+        ...details,
+        responseMetadata: {
+          stage: 'headers',
+          contentType: response.headers.get('content-type'),
+          contentLength: response.headers.get('content-length'),
+          location: response.headers.get('location'),
+        },
+      });
+      if (!REDIRECT_STATUSES.has(response.status)) break;
+      if (redirects === EXPERIMENTAL_MEDIA_POLICY.maxRedirects) {
+        throw new TypeError('Experimental media redirect count exceeded');
+      }
+      const location = response.headers.get('location');
+      if (location === null) throw new TypeError('Experimental media redirect has no location');
+      const target = new URL(location, current);
+      assertSafeHttps(target);
+      if (!isApprovedSalesforceMediaUrl(target) && !sameOrigin(target, instance)) {
+        throw new TypeError(
+          'Experimental media redirect target is outside the approved Salesforce class',
+        );
+      }
+      current = target;
     }
-    if (declaredLength !== undefined && bytes !== declaredLength) {
-      throw new TypeError('Experimental media byte count differs from Content-Length');
+    if (response === undefined || !response.ok || response.body === null) {
+      throw Object.assign(
+        new TypeError(`Experimental media request failed with status ${response?.status ?? 0}`),
+        { status: response?.status },
+      );
     }
-    if (bytes !== options.expectedSize) {
-      throw new TypeError('Experimental media byte count differs from authoring metadata');
+    const responseHeader = response.headers.get('content-type');
+    // HTTP parameters describe the response, not the parameter-free native/upload MIME.
+    const responseType = responseHeader?.split(';', 1)[0].trim().toLowerCase();
+    if (
+      responseHeader === null ||
+      !/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+(?:[\t ]*;[\t ]*[A-Za-z0-9!#$%&'*+.^_`|~-]+=(?:[A-Za-z0-9!#$%&'*+.^_`|~-]+|"(?:[\t !#-[\]-~]|\\[\t -~])*"))*[\t ]*$/u.test(
+        responseHeader,
+      ) ||
+      responseType === undefined
+    ) {
+      throw new TypeError(
+        'Experimental media response Content-Type must be safe ASCII HTTP media type',
+      );
     }
-    const actualMd5 = md5.digest('hex');
-    if (actualMd5 !== options.expectedMd5.toLowerCase()) {
-      throw new TypeError('Experimental media MD5 differs from the authoring URL');
+    const sameMime = responseType.toLowerCase() === options.expectedMimeType.toLowerCase();
+    if (!sameMime && (responseType === 'text/html' || responseType.includes('json'))) {
+      throw new TypeError('Experimental media response is not binary image content');
     }
-    // Format admission belongs to the API; preserve opaque bytes and native MIME.
-    closeAttempted = true;
-    await handle.close();
-    return {
-      bytes,
-      ...(declaredLength === undefined ? {} : { contentLength: declaredLength }),
-      md5: actualMd5,
-      mimeType: options.expectedMimeType,
-      sha256: sha256.digest('hex'),
-    };
+    if (
+      !sameMime &&
+      !(
+        contentType === 'sfdc_cms__image' &&
+        responseType.toLowerCase() === 'application/octet-stream'
+      )
+    ) {
+      throw new TypeError('Experimental media response MIME type changed');
+    }
+    const declaredLengthText = response.headers.get('content-length');
+    const declaredLength = declaredLengthText === null ? undefined : Number(declaredLengthText);
+    const familyLimit = bufferConstants.MAX_LENGTH;
+    const configuredLimit = options.maxBytes ?? familyLimit;
+    if (!Number.isSafeInteger(configuredLimit) || configuredLimit <= 0) {
+      throw new TypeError('Experimental media byte cap must be a positive safe integer');
+    }
+    const limit = Math.min(configuredLimit, familyLimit);
+    if (
+      declaredLength !== undefined &&
+      (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > limit)
+    ) {
+      throw new TypeError('Experimental media Content-Length is invalid or exceeds the cap');
+    }
+    const fileName = source.searchParams.get('fileName');
+    if (
+      fileName === null ||
+      fileName.length === 0 ||
+      fileName.includes('/') ||
+      fileName.includes('\\')
+    ) {
+      throw new TypeError('Experimental media filename is invalid');
+    }
+    const md5 = createHash('md5');
+    const sha256 = createHash('sha256');
+    const handle = await (options.openFile ?? (async (file) => open(file, 'wx')))(
+      options.outputFile,
+    );
+    const unlinkFile = options.unlinkFile ?? unlink;
+    let closeAttempted = false;
+    try {
+      for await (const chunkValue of Readable.fromWeb(response.body as never)) {
+        const chunk = Buffer.isBuffer(chunkValue)
+          ? chunkValue
+          : Buffer.from(chunkValue as Uint8Array);
+        if (chunk.length > limit - bytes) {
+          throw new TypeError('Experimental media response exceeds the byte cap');
+        }
+        bytes += chunk.length;
+        md5.update(chunk);
+        sha256.update(chunk);
+        await handle.write(chunk);
+      }
+      if (declaredLength !== undefined && bytes !== declaredLength) {
+        throw new TypeError('Experimental media byte count differs from Content-Length');
+      }
+      if (bytes !== options.expectedSize) {
+        throw new TypeError('Experimental media byte count differs from authoring metadata');
+      }
+      const actualMd5 = md5.digest('hex');
+      if (actualMd5 !== options.expectedMd5.toLowerCase()) {
+        throw new TypeError('Experimental media MD5 differs from the authoring URL');
+      }
+      // Format admission belongs to the API; preserve opaque bytes and native MIME.
+      closeAttempted = true;
+      await handle.close();
+      logApiEvent('response', {
+        ...details,
+        responseMetadata: {
+          stage: 'complete',
+          bytes,
+          mimeType: options.expectedMimeType,
+          md5: actualMd5,
+        },
+      });
+      return {
+        bytes,
+        ...(declaredLength === undefined ? {} : { contentLength: declaredLength }),
+        md5: actualMd5,
+        mimeType: options.expectedMimeType,
+        sha256: sha256.digest('hex'),
+      };
+    } catch (error) {
+      return await cleanupFailedDownload(
+        handle,
+        options.outputFile,
+        error,
+        unlinkFile,
+        closeAttempted,
+      );
+    }
   } catch (error) {
-    return cleanupFailedDownload(handle, options.outputFile, error, unlinkFile, closeAttempted);
+    logApiEvent('error', { ...details, responseMetadata: { stage: 'failed', bytes } }, error);
+    throw error;
   }
 }

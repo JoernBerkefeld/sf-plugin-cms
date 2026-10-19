@@ -45,6 +45,10 @@ export function logApiEvent(
     url: string;
     operationKey: string;
     startedAt: number;
+    transport?: 'multipart' | 'download';
+    status?: number;
+    rawBody?: string;
+    responseMetadata?: unknown;
   },
   value?: unknown,
 ): void {
@@ -73,15 +77,19 @@ export function logApiEvent(
           ].find((entry) => typeof entry === 'number' && Number.isInteger(entry));
     context.logger.log(
       phase === 'error' ? 'error' : 'debug',
-      `CMS JSON ${phase}`,
+      `CMS ${details.transport ?? 'JSON'} ${phase}`,
       redactLogValue({
         ...details,
         elapsedMs: Date.now() - details.startedAt,
         ...(phase === 'request'
           ? {}
           : {
-              status: status ?? 'unavailable: parsed SDK boundary did not expose HTTP status',
-              rawBody: 'unavailable: parsed SDK boundary does not expose raw body',
+              status:
+                details.status ??
+                status ??
+                'unavailable: parsed SDK boundary did not expose HTTP status',
+              rawBody:
+                details.rawBody ?? 'unavailable: parsed SDK boundary does not expose raw body',
             }),
         ...(phase === 'error' ? { error: value } : {}),
         ...(context.apiEnabled && phase === 'request' ? { requestPayload: value ?? null } : {}),

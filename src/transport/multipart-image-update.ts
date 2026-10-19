@@ -1,5 +1,6 @@
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { logApiEvent } from '../logging.js';
 import type { Connection } from '@salesforce/core';
 import type { Duplex } from 'node:stream';
 import { inheritCmsApiSelection } from '../api-policy.js';
@@ -8,6 +9,13 @@ import { CmsRequestError, type JsonRequestOptions } from './json-request.js';
 import { constants as bufferConstants } from 'node:buffer';
 import { assertMediaMimeType } from '../services/editable-media-source.js';
 import { redactSecrets } from './redact-secrets.js';
+
+export type VariantMultipart = {
+  body: Buffer;
+  boundary: string;
+  input?: Readonly<Record<string, unknown>>;
+  file?: { name: string; mimeType: string; byteLength: number };
+};
 
 export type ImageUpdateInput = {
   apiName?: string;
@@ -55,7 +63,7 @@ export function buildImageUpdateMultipart(
     MultipartImageUpdateOptions,
     'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
   > = {},
-): { body: Buffer; boundary: string; input: Readonly<Record<string, unknown>> } {
+): VariantMultipart & { input: Readonly<Record<string, unknown>> } {
   if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
   if (!isRecord(input)) {
     throw new CmsRequestError(OPERATION_KEY, 'Image update input must be an object');
@@ -131,7 +139,16 @@ export function buildImageUpdateMultipart(
     if (!Number.isSafeInteger(length) || length > bufferConstants.MAX_LENGTH) {
       throw new CmsRequestError(OPERATION_KEY, 'Multipart size cannot be represented by a Buffer');
     }
-    return { boundary, input: managedContentVariantInput, body: Buffer.concat(parts, length) };
+    return {
+      boundary,
+      input: managedContentVariantInput,
+      body: Buffer.concat(parts, length),
+      file: {
+        name: filename,
+        mimeType: options.mimeType ?? 'application/octet-stream; charset=ISO-8859-1',
+        byteLength: image.byteLength,
+      },
+    };
   }
   throw new CmsRequestError(OPERATION_KEY, 'Unable to generate collision-free multipart boundary');
 }
@@ -200,7 +217,7 @@ export async function updateImageContent(
 export async function sendVariantUpdateMultipart(
   connection: RequestConnection,
   variantId: string,
-  multipart: { body: Buffer; boundary: string },
+  multipart: VariantMultipart,
   options: JsonRequestOptions = {},
   observeResponse?: (data: unknown) => Promise<void>,
   onDispatch?: () => void,
@@ -215,28 +232,46 @@ export async function sendVariantUpdateMultipart(
   }
   const receiver = withoutRefreshReplay(connection);
   onDispatch?.();
-  const request = receiver.request<unknown>(
-    {
-      body: multipart.body,
-      headers: {
-        'content-length': String(multipart.body.byteLength),
-        'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
-      },
-      method: 'PUT',
-      url: `/connect/cms/contents/variants/${encodeURIComponent(variantId)}`,
-    },
-    { retry: { maxRetries: 0 }, timeout: timeoutMs },
-  ) as RequestStream;
+  const details = {
+    requestId: randomUUID(),
+    method: 'PUT' as const,
+    url: `/connect/cms/contents/variants/${encodeURIComponent(variantId)}`,
+    operationKey: OPERATION_KEY,
+    startedAt: Date.now(),
+    transport: 'multipart' as const,
+  };
+  const headers = {
+    'content-length': String(multipart.body.byteLength),
+    'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
+  };
+  logApiEvent('request', details, {
+    headers,
+    json: multipart.input ?? 'unavailable: caller supplied bytes only',
+    file: multipart.file ?? 'unavailable: caller supplied bytes only',
+    binary: 'omitted: multipart binary bytes',
+  });
+  let request: RequestStream;
+  try {
+    request = receiver.request<unknown>(
+      { body: multipart.body, headers, method: details.method, url: details.url },
+      { retry: { maxRetries: 0 }, timeout: timeoutMs },
+    ) as RequestStream;
+  } catch (error) {
+    logApiEvent('error', details, error);
+    throw error;
+  }
   const cancel = (): void => {
     request.stream().destroy(new Error('CMS image update cancelled'));
   };
   options.signal?.addEventListener('abort', cancel, { once: true });
   try {
     const data = await request;
+    logApiEvent('response', details, data);
     // Durable journal consumers must see even partial identities before strict rejection.
     await observeResponse?.(data);
     return validateUpdatedVariant(data);
   } catch (error) {
+    logApiEvent('error', details, error);
     if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted
       ? 'CMS image update cancelled'

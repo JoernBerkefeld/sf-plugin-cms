@@ -4,10 +4,14 @@ import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
+import { runWithInvocationLogging, type InvocationLogger } from '../../src/logging.js';
+import { buildAudioUpdateMultipart } from '../../src/transport/multipart-audio-update.js';
+import { buildDocumentUpdateMultipart } from '../../src/transport/multipart-document-update.js';
 import sinon from 'sinon';
 import {
   buildImageUpdateMultipart,
   updateImageContent,
+  sendVariantUpdateMultipart,
 } from '../../src/transport/multipart-image-update.js';
 import { MAX_IMAGE_BYTES } from '../../src/transport/multipart-image-create.js';
 import { CmsRequestError } from '../../src/transport/json-request.js';
@@ -40,6 +44,106 @@ async function rejects(action: () => Promise<unknown>, message?: string): Promis
 
 describe('private multipart Image UPDATE transport', () => {
   afterEach(() => sinon.restore());
+
+  it('logs all shared UPDATE builders without changing bytes or partial-response observation', async () => {
+    const records: unknown[] = [];
+    const logger: InvocationLogger = {
+      filePath: '',
+      close: async () => {},
+      log: (_level, _message, details) => {
+        records.push(details);
+      },
+    };
+    for (const apiEnabled of [false, true]) {
+      for (const multipart of [
+        buildImageUpdateMultipart(input, 'image.png', bytes, options),
+        buildAudioUpdateMultipart({ title: 'Audio' }, 'audio.bin', bytes, {
+          mimeType: 'audio/mpeg',
+          boundaryFactory: () => 'safe',
+        }),
+        buildDocumentUpdateMultipart(
+          {
+            apiName: 'doc',
+            title: 'Document',
+            urlName: 'doc',
+            contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
+          },
+          'file.txt',
+          Buffer.from('document'),
+          options,
+        ),
+      ]) {
+        records.length = 0;
+        const request = sinon.stub().returns(fakeRequest(Promise.resolve(response)));
+        await runWithInvocationLogging(
+          logger,
+          () => sendVariantUpdateMultipart({ request }, 'variant', multipart),
+          apiEnabled,
+        );
+        expect(request.firstCall.args[0].body).to.equal(multipart.body);
+        const text = JSON.stringify(records);
+        expect(text.includes('requestPayload')).to.equal(apiEnabled);
+        if (apiEnabled)
+          expect(text).to.include('file').and.include('byteLength').and.include('parsedResponse');
+      }
+    }
+    records.length = 0;
+    const partial = { managedContentVariantId: 'partial', data: ['useful partial'] };
+    const observe = sinon.spy(async () => {});
+    await runWithInvocationLogging(
+      logger,
+      () =>
+        rejects(() =>
+          sendVariantUpdateMultipart(
+            { request: sinon.stub().returns(fakeRequest(Promise.resolve(partial))) },
+            'variant',
+            buildImageUpdateMultipart(input, 'image.png', bytes),
+            {},
+            observe,
+          ),
+        ),
+      true,
+    );
+    expect(observe.calledOnceWithExactly(partial)).to.equal(true);
+    expect(JSON.stringify(records)).to.include('useful partial');
+  });
+
+  it('keeps cancellation and original exposed rejection details with logging enabled', async () => {
+    const controller = new AbortController();
+    const stream = new PassThrough();
+    const failure = Object.assign(new Error('cancel Bearer SECRET'), {
+      data: ['available detail'],
+    });
+    const pending = new Promise<unknown>((_resolve, reject) =>
+      stream.on('error', () => reject(failure)),
+    );
+    const records: unknown[] = [];
+    const logger: InvocationLogger = {
+      filePath: '',
+      close: async () => {},
+      log: (_level, _message, details) => {
+        records.push(details);
+      },
+    };
+    const request = sinon.stub().returns(fakeRequest(pending, stream));
+    await runWithInvocationLogging(
+      logger,
+      async () => {
+        const result = rejects(
+          () =>
+            updateImageContent({ request }, 'variant', input, 'image.png', bytes, {
+              signal: controller.signal,
+            }),
+          'cancelled',
+        );
+        controller.abort();
+        await result;
+      },
+      true,
+    );
+    expect(request.calledOnce).to.equal(true);
+    expect(JSON.stringify(records)).to.include('available detail').and.not.include('SECRET');
+  });
 
   it('threads generic MIME and opaque bytes above 10 MiB with exact framing and no replay', async () => {
     for (const mimeType of ['image/avif', 'image/svg+xml', 'application/x-future-format']) {

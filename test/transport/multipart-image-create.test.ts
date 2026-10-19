@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { expect } from 'chai';
+import { runWithInvocationLogging, type InvocationLogger } from '../../src/logging.js';
 import sinon from 'sinon';
 import {
   buildAudioCreateMultipart,
@@ -35,6 +36,97 @@ const input = {
 function constantBoundary(value: string): () => string {
   return () => value;
 }
+
+describe('shared multipart CREATE logging', () => {
+  for (const apiEnabled of [false, true]) {
+    it(`logs shared Image/Document/Audio parsed boundaries with API ${apiEnabled}`, async () => {
+      for (const family of ['image', 'document', 'audio']) {
+        const records: unknown[] = [];
+        const logger: InvocationLogger = {
+          filePath: '',
+          close: async () => {},
+          log: (_level, _message, details) => {
+            records.push(details);
+          },
+        };
+        const data = {
+          contentKey: 'key',
+          managedContentId: 'parent',
+          managedContentVariantId: 'variant',
+        };
+        const request = sinon.stub().returns(fakeRequest(Promise.resolve(data)));
+        const bytes = Buffer.from('SECRETbinary');
+        await runWithInvocationLogging(
+          logger,
+          () => {
+            if (family === 'audio')
+              return createAudioContent({ request }, input, 'sound.bin', bytes, {
+                mimeType: 'audio/mpeg',
+              });
+            if (family === 'document')
+              return createDocumentContent({ request }, input, 'file.txt', bytes);
+            return createImageContent({ request }, input, 'image.png', bytes);
+          },
+          apiEnabled,
+        );
+        expect(request.calledOnce).to.equal(true);
+        const text = JSON.stringify(records);
+        expect(text).not.to.include('SECRETbinary');
+        expect(text).to.include('unavailable: parsed SDK boundary');
+        expect(text.includes('requestPayload')).to.equal(apiEnabled);
+        expect(text.includes('parsedResponse')).to.equal(apiEnabled);
+        if (apiEnabled) expect(text).to.include(`sfdc_cms__${family}`).and.include('byteLength');
+      }
+    });
+  }
+  it('retains exposed rejection data automatically and ignores a failing sink', async () => {
+    const original = Object.assign(new Error('Bearer SECRETtoken'), {
+      statusCode: 422,
+      data: [{ message: 'useful validation', token: 'SECRETdata' }],
+    });
+    const records: unknown[] = [];
+    const logger: InvocationLogger = {
+      filePath: '',
+      close: async () => {},
+      log: (_level, _message, details) => {
+        records.push(details);
+      },
+    };
+    const request = sinon.stub().callsFake(() => fakeRequest(Promise.reject(original)));
+    await runWithInvocationLogging(logger, async () => {
+      try {
+        await createImageContent({ request }, input, 'image.png', Buffer.from('x'));
+        expect.fail();
+      } catch (error) {
+        expect(error).to.be.instanceOf(CmsRequestError);
+      }
+    });
+    expect(JSON.stringify(records))
+      .to.include('useful validation')
+      .and.include('422')
+      .and.not.include('SECRET');
+    const broken = {
+      ...logger,
+      log: () => {
+        throw new Error('sink failed');
+      },
+    };
+    const data = {
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    };
+    const success = sinon.stub().returns(fakeRequest(Promise.resolve(data)));
+    expect(
+      await runWithInvocationLogging(
+        broken,
+        () => createImageContent({ request: success }, input, 'image.png', Buffer.from('x')),
+        true,
+      ),
+    ).to.deep.equal(data);
+    expect(success.calledOnce).to.equal(true);
+  });
+});
 
 describe('pure multipart Audio CREATE preparation', () => {
   it('frames exact sliced opaque bytes with explicit MIME and Audio input, without sending', () => {
