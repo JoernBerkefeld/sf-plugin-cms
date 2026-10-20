@@ -27,8 +27,8 @@ import { createContent } from './write.js';
 type CreateConnection = Pick<Connection, 'request' | 'getApiVersion'>;
 export type ExecuteDeployCreateInput = DeployCreatePreflightInput & {
   destinationOrgId: string;
-  /** New file in an existing caller-owned directory; existing journals are never resumed. */
-  reportFile: string;
+  /** Optional new file in a caller-owned directory; existing reports are never resumed. */
+  reportFile?: string;
 };
 
 /**
@@ -39,7 +39,8 @@ export type ExecuteDeployCreateInput = DeployCreatePreflightInput & {
  * @param {JsonRequestOptions} options - Bounded timeout/cancellation options.
  * @param {WorkspaceImportReportPersistence} persistence - Internal failure-injection seam.
  * @param {Function} beforeExecute - Internal batch boundary check; cannot replace executor proof.
- * @returns {Promise<object>} Unqualified completion and durable importer-compatible journal.
+ * @param {Function} onReport - Internal synchronous assignment-only evidence handoff.
+ * @returns {Promise<object>} Unqualified completion and in-memory evidence, optionally persisted.
  */
 export async function executeDeployCreate(
   connection: CreateConnection,
@@ -47,12 +48,18 @@ export async function executeDeployCreate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeExecute?: () => Promise<void>,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: WorkspaceImportRunReport }> {
+  onReport?: (report: WorkspaceImportRunReport) => void,
+): Promise<{
+  qualification: 'unqualified';
+  reportFile?: string;
+  report: WorkspaceImportRunReport;
+}> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('CREATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployCreate(connection, selected, requestOptions);
   const load = async () => selectDeploySources({ 'source-dir': [preflight.definitionFile] });
   const source = await load();
@@ -74,18 +81,23 @@ export async function executeDeployCreate(
     preflight.payload,
   );
   report.operations.push(operation);
-  // Exclusive initial allocation records pending intent before any possible remote mutation.
-  await writeExclusive(reportFile, report);
+  // Hand off the live evidence before persistence or any possible remote mutation.
+  onReport?.(report);
+  // When requested, exclusive allocation records pending intent before dispatch.
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let mutationStarted = false;
   try {
-    await rewrite(reportFile, report);
-    // Reacquire complete absence, root/default language and local files after durable intent.
+    if (reportFile !== undefined) await rewrite(reportFile, report);
+    // Reacquire complete absence, root/default language and local files after pending intent.
     const fresh = await preflightDeployCreate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(fresh, preflight) || !isDeepStrictEqual(await load(), source))
       throw new TypeError('CREATE local or destination binding drifted before write');
     await beforeExecute?.();
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('CREATE durable intent changed before write');
     if (requestOptions.signal?.aborted) throw new TypeError('CREATE cancelled before write');
     // Shadow refresh replay even on caller-supplied test/custom connections.
@@ -93,7 +105,7 @@ export async function executeDeployCreate(
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
     mutationStarted = true;
     const response = await createContent(receiver, fresh.payload, requestOptions);
-    // Persist all returned identities BEFORE interpreting whether they are valid or owned.
+    // Capture all returned identities BEFORE interpreting whether they are valid or owned.
     operation.result = {
       contentId: [response.managedContentId, response.id, response.contentId].find(
         (value): value is string => typeof value === 'string',
@@ -106,7 +118,8 @@ export async function executeDeployCreate(
       ].find((value): value is string => typeof value === 'string'),
     };
     report.state = 'ownership-uncertain';
-    await persistOperationResult(reportFile, report, operation, rewrite);
+    if (reportFile !== undefined)
+      await persistOperationResult(reportFile, report, operation, rewrite);
     const created = validateParentResponse(response, operation.result?.contentKey ?? '');
     if (
       !/^20Y[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(created.contentId) ||
@@ -165,15 +178,15 @@ export async function executeDeployCreate(
     report.createdParents.push(created);
     operation.state = 'succeeded';
     report.state = 'completed';
-    // Identities are already durable; a completion failure must never erase them.
-    await rewrite(reportFile, report);
+    // Captured identities, persisted when requested, must survive completion failure.
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {
     operation.state = mutationStarted ? 'pending' : 'failed';
     report.state = mutationStarted ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       // Preserve the exclusive pending intent if persistence itself is unavailable.
     }

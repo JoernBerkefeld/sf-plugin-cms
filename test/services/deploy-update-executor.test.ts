@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -17,13 +17,14 @@ const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(template = false, v2 = false) {
+async function fixture(template = false, v2 = false, reporting = true) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-update-executor-'));
   const definitionFile = path.join(
     directory,
     `Welcome.cms-${template ? 'email-template' : 'email'}.json`,
   );
   const reportFile = path.join(directory, 'run.json');
+  let evidence: WorkspaceImportRunReport | undefined;
   const definition = {
     contract: 'sf-cms-source-definition' as const,
     contractVersion: '1.0.0' as const,
@@ -116,7 +117,9 @@ async function fixture(template = false, v2 = false) {
       if (input.method === 'PUT') {
         puts += 1;
         expect(options?.retry?.maxRetries).to.equal(0);
-        const journal = JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport;
+        const journal = reporting
+          ? (JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport)
+          : evidence!;
         expect(journal.operations[0].state).to.equal('pending');
         expect(journal.operations[0].target).to.deep.equal({ contentId, variantId });
         expect(journal.operations[0].operationKind).to.equal('update-variant');
@@ -230,7 +233,19 @@ async function fixture(template = false, v2 = false) {
     },
     save: () => writeFile(definitionFile, JSON.stringify(definition)),
     journal: async () => JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport,
-    run: (rewrite = rewriteAtomic) => executeDeployUpdate(connection, input, {}, { rewrite }),
+    evidence: () => evidence,
+    files: () => readdir(directory),
+    run: (rewrite = rewriteAtomic, beforeExecute?: () => Promise<void>) =>
+      executeDeployUpdate(
+        connection,
+        { ...input, reportFile: reporting ? reportFile : undefined },
+        {},
+        { rewrite },
+        beforeExecute,
+        (report) => {
+          evidence = report;
+        },
+      ),
   };
 }
 async function failure(promise: Promise<unknown>, pattern: RegExp) {
@@ -245,6 +260,37 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 
 describe('internal portable identity-preserving UPDATE executor', () => {
   afterEach(() => sinon.restore());
+  for (const scenario of ['success', 'boundary', 'lost-response', 'readback', 'malformed'] as const)
+    it(`keeps journal-free UPDATE ${scenario} evidence without persistence or replacement files`, async () => {
+      const f = await fixture(false, false, false);
+      const files = await f.files();
+      let rewrites = 0;
+      const rewrite: typeof rewriteAtomic = async () => {
+        rewrites += 1;
+        throw new Error('Unexpected persistence');
+      };
+      if (scenario === 'lost-response') f.fail();
+      if (scenario === 'readback') f.mismatch();
+      if (scenario === 'malformed') f.response.managedContentId = 'unexpected-parent';
+      const run = f.run(rewrite, async () => {
+        expect(f.evidence()?.operations[0].target).to.deep.equal({ contentId, variantId });
+        if (scenario === 'boundary') throw new Error('Boundary drift');
+      });
+      if (scenario === 'success') {
+        const result = await run;
+        expect(result.reportFile).to.equal(undefined);
+        expect(result.report).to.equal(f.evidence());
+      } else await failure(run, /Boundary drift|Lost response|readback|returned identity/u);
+      expect(f.puts()).to.equal(scenario === 'boundary' ? 0 : 1);
+      let expectedState = 'ownership-uncertain';
+      if (scenario === 'success') expectedState = 'completed';
+      if (scenario === 'boundary') expectedState = 'failed';
+      expect(f.evidence()?.state).to.equal(expectedState);
+      if (scenario === 'malformed')
+        expect(f.evidence()?.operations[0].result?.contentId).to.equal('unexpected-parent');
+      expect(rewrites).to.equal(0);
+      expect(await f.files()).to.deep.equal(files);
+    });
   for (const template of [false, true])
     for (const v2 of [false, true]) {
       it(`updates one ${template ? 'Template' : 'Email'} from v${v2 ? 2 : 1} with durable destination IDs`, async () => {

@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import type { Connection } from '@salesforce/core';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -14,10 +14,15 @@ const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture() {
+async function fixture(reporting = true) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-create-executor-'));
   const definitionFile = path.join(directory, 'Welcome.cms-email.json');
   const reportFile = path.join(directory, 'run.json');
+  let evidence: WorkspaceImportRunReport | undefined;
+  const currentReport = async () =>
+    reporting
+      ? (JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport)
+      : evidence!;
   const body = {
     'sfdc_cms:title': 'Welcome',
     'sfdc_cms:urlName': 'welcome',
@@ -102,9 +107,7 @@ async function fixture() {
         if (input.method === 'POST') {
           expect(this._refreshDelegate).to.equal(undefined);
           posts += 1;
-          const journal = JSON.parse(
-            await readFile(reportFile, 'utf8'),
-          ) as WorkspaceImportRunReport;
+          const journal = await currentReport();
           expect(journal.operations[0].state).to.equal('pending');
           expect(journal.operations[0].result).to.equal(undefined);
           expect(JSON.parse(input.body!).contentKey).to.equal(undefined);
@@ -124,7 +127,7 @@ async function fixture() {
             }));
           return { records: structuredClone(records), done: true, totalSize: records.length };
         }
-        const journal = JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport;
+        const journal = await currentReport();
         expect(journal.operations[0].result?.contentId).to.equal(contentId);
         expect(journal.state).to.equal('ownership-uncertain');
         return structuredClone(detail);
@@ -156,7 +159,19 @@ async function fixture() {
     },
     journal: async () => JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport,
     save: () => writeFile(definitionFile, JSON.stringify(definition)),
-    run: (rewrite = rewriteAtomic) => executeDeployCreate(connection, input, {}, { rewrite }),
+    evidence: () => evidence,
+    files: () => readdir(directory),
+    run: (rewrite = rewriteAtomic, beforeExecute?: () => Promise<void>) =>
+      executeDeployCreate(
+        connection,
+        { ...input, reportFile: reporting ? reportFile : undefined },
+        {},
+        { rewrite },
+        beforeExecute,
+        (report) => {
+          evidence = report;
+        },
+      ),
   };
 }
 async function failure(promise: Promise<unknown>, pattern: RegExp) {
@@ -170,6 +185,37 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 }
 
 describe('internal journaled portable CREATE executor', () => {
+  for (const scenario of ['success', 'boundary', 'lost-response', 'readback'] as const)
+    it(`keeps journal-free CREATE ${scenario} evidence without persistence or replacement files`, async () => {
+      const f = await fixture(false);
+      const files = await f.files();
+      let rewrites = 0;
+      const rewrite: typeof rewriteAtomic = async () => {
+        rewrites += 1;
+        throw new Error('Unexpected persistence');
+      };
+      if (scenario === 'lost-response') f.failPost();
+      if (scenario === 'readback') f.detail.isPublished = true;
+      const run = f.run(rewrite, async () => {
+        expect(f.evidence()?.operations[0].state).to.equal('pending');
+        if (scenario === 'boundary') throw new Error('Boundary drift');
+      });
+      if (scenario === 'success') {
+        const result = await run;
+        expect(result.reportFile).to.equal(undefined);
+        expect(result.report).to.equal(f.evidence());
+        expect(result.report.state).to.equal('completed');
+      } else await failure(run, /Boundary drift|Lost response|readback/u);
+      expect(f.posts()).to.equal(scenario === 'boundary' ? 0 : 1);
+      let expectedState = 'ownership-uncertain';
+      if (scenario === 'success') expectedState = 'completed';
+      if (scenario === 'boundary') expectedState = 'failed';
+      expect(f.evidence()?.state).to.equal(expectedState);
+      if (scenario === 'readback')
+        expect(f.evidence()?.operations[0].result?.contentId).to.equal(contentId);
+      expect(rewrites).to.equal(0);
+      expect(await f.files()).to.deep.equal(files);
+    });
   it('creates once after durable intent and independently verifies inventory/parent/detail', async () => {
     const f = await fixture();
     const result = await f.run();

@@ -25,7 +25,7 @@ export type ExecuteDeployUpdateInput = {
   workspaceId: string;
   language: string;
   destinationOrgId: string;
-  reportFile: string;
+  reportFile?: string;
 };
 export type ExecuteDeployUpdateResult = {
   qualification: 'unqualified';
@@ -129,6 +129,7 @@ export async function preflightDeployUpdate(
  * @param {JsonRequestOptions} options - Timeout/cancellation options only.
  * @param {WorkspaceImportReportPersistence} persistence - Internal journal failure-injection seam.
  * @param {Function} beforeExecute - Internal batch boundary check; cannot replace executor proof.
+ * @param {Function} onReport - Internal synchronous assignment-only evidence handoff.
  * @returns {Promise<ExecuteDeployUpdateResult>} Unqualified outcome and destination identities.
  */
 export async function executeDeployUpdate(
@@ -137,6 +138,7 @@ export async function executeDeployUpdate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeExecute?: () => Promise<void>,
+  onReport?: (report: WorkspaceImportRunReport) => void,
 ): Promise<ExecuteDeployUpdateResult> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
@@ -159,7 +161,8 @@ export async function executeDeployUpdate(
     await beforeExecute?.();
     return { qualification: 'unqualified', outcome: 'unchanged', target: baseline.target };
   }
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const report: WorkspaceImportRunReport = {
     createdParents: [],
     destinationOrgId: selected.destinationOrgId,
@@ -182,16 +185,20 @@ export async function executeDeployUpdate(
     baselineSha256: sha(baseline),
   };
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let mutationStarted = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     const fresh = await preflightDeployUpdate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(fresh, baseline))
       throw new TypeError('UPDATE prewrite snapshot drifted');
     await beforeExecute?.();
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('UPDATE durable intent changed before write');
     if (requestOptions.signal?.aborted) throw new TypeError('UPDATE cancelled before write');
     mutationStarted = true;
@@ -209,7 +216,8 @@ export async function executeDeployUpdate(
             : {}),
         };
         report.state = 'ownership-uncertain';
-        await persistOperationResult(reportFile, report, operation, rewrite);
+        if (reportFile !== undefined)
+          await persistOperationResult(reportFile, report, operation, rewrite);
       },
     );
     if (
@@ -248,7 +256,7 @@ export async function executeDeployUpdate(
       );
     operation.state = 'succeeded';
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return {
       qualification: 'unqualified',
       outcome: 'updated',
@@ -261,7 +269,7 @@ export async function executeDeployUpdate(
     report.state = mutationStarted ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       // Exclusive pending intent remains the reconciliation authority; never replay.
     }
