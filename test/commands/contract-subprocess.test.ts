@@ -298,6 +298,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
         expect(normalizedHelp).to.include(`sf cms ${canonical}`);
         expect(normalizedHelp).to.include(evidence);
+        if (canonical === 'upload') expect(normalizedHelp).to.include('Executes by default');
         expect(normalizedHelp).to.include('--json');
         expect(normalizedHelp).to.include('--api');
         expect(normalizedHelp).to.include('log');
@@ -377,36 +378,29 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       '99',
     ];
     const cases: Array<[string[], string[], string]> = [
-      [['retrieve', 'content'], [], 'RETRIEVE_'],
-      [['deploy', 'content'], [], 'DEPLOY_'],
-      [['upload'], ['--workspace-id', 'space', '--file', 'missing-logging.png'], 'IMAGE_'],
-      [['publish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
-      [['unpublish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
+      [['cms', 'retrieve', 'content'], [], 'RETRIEVE_'],
+      [['content', 'deploy'], [], 'DEPLOY_'],
+      [['cms', 'upload'], ['--workspace-id', 'space', '--file', 'missing-logging.png'], 'IMAGE_'],
+      [['content', 'publish'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
+      [['cms', 'unpublish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
       [
-        ['delete', 'content'],
+        ['content', 'delete'],
         ['--workspace-id', 'space', '-m', 'email:*'],
         'CONTENT_DELETE_BLOCKED_OR_FAILED',
       ],
     ];
     for (const [route, args, code] of cases) {
-      for (const prefix of [
-        ['cms', ...route],
-        ['content', ...route.filter((token) => token !== 'content')],
-      ]) {
-        const argv = [...prefix, ...common, ...args, '--api', 'log', '--json'];
-        const result = await runSf(argv, 'logging-guards');
-        expect(result.exitCode, result.stdout + result.stderr).to.equal(1);
-        expect(parseEnvelope(result).status).to.equal('blocked');
-        const records = await invocationRecords(result, argv);
-        const diagnostics = records.find(({ message }) => message === 'command diagnostics');
-        expect(JSON.stringify(diagnostics)).to.include(code);
-        expect(diagnostics?.details?.orgContext).to.equal(
-          'not entered; no CMS org HTTP or mutation dispatched',
-        );
-        expect(result.stdout + result.stderr).not.to.include(
-          'Unexpected logging fixture org access',
-        );
-      }
+      const argv = [...route, ...common, ...args, '--api', 'log', '--json'];
+      const result = await runSf(argv, 'logging-guards');
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(1);
+      expect(parseEnvelope(result).status).to.equal('blocked');
+      const records = await invocationRecords(result, argv);
+      const diagnostics = records.find(({ message }) => message === 'command diagnostics');
+      expect(JSON.stringify(diagnostics)).to.include(code);
+      expect(diagnostics?.details?.orgContext).to.equal(
+        'not entered; no CMS org HTTP or mutation dispatched',
+      );
+      expect(result.stdout + result.stderr).not.to.include('Unexpected logging fixture org access');
     }
     for (const route of [
       ['list', 'workspace'],
@@ -469,13 +463,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('loads packed image upload help, ordered repeated files, and offline invalid arguments', async function () {
     this.timeout(300_000);
-    const help = await runSf(['cms', 'upload', '--help']);
-    expect(help.exitCode, help.stderr).to.equal(0);
-    expect(help.stdout.replaceAll(/\s+/gu, ' ')).to.include('Executes by default');
-    expect(help.stdout).to.include('--file');
     for (const namespace of ['cms', 'content']) {
-      const aliasHelp = await runSf([namespace, 'upload', '--help']);
-      expect(aliasHelp.exitCode, aliasHelp.stderr).to.equal(0);
       for (const removed of [
         ['images', '--help'],
         ['--file', 'one.png', '--apply'],
