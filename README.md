@@ -1,6 +1,6 @@
 # sf-plugin-cms
 
-Download supported Salesforce CMS content to your computer, edit it in your editor, and preview changes before saving supported Email, Image, Document or Audio content back to Salesforce. Saving creates or updates **Drafts**: it does not publish or send them. Documents support CREATE, bytes-only UPDATE and exact unchanged; bounded two-org development-artifact acceptance covers the tested text/plain profile. Audio implements unqualified CREATE, bytes-only UPDATE and exact unchanged; bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile. These implementations are not released-package qualification.
+Download supported Salesforce CMS content to your computer, edit it in your editor, and preview changes before saving supported Email, Image, Document or Audio content back to Salesforce. Saving creates or updates **Drafts**: it does not publish or send them.
 
 The `sf content …` spellings used here are aliases in the upcoming 0.19 release, with identical flags and behavior to their canonical commands: `sf cms retrieve content`, `sf cms deploy content`, `sf cms upload images`, `sf cms publish content`, `sf cms unpublish content` and `sf cms delete content`. For discovery and information, `sf content list workspace`, `sf content list channel` and `sf content info` correspond to `sf cms list workspace`, `sf cms list channel` and `sf cms info`.
 
@@ -15,7 +15,7 @@ This is a plugin for the Salesforce `sf` command-line tool. It is **not a comple
 
 ## Content type support
 
-**Retrieve** means `sf content retrieve`. **Create** and **Update** mean `sf content deploy`. **Delete** means `sf content delete`—not general deletion in Salesforce. Loose-file image upload is separate and is **not** Image create support through deploy.
+**Retrieve** means `sf content retrieve`. **Create** and **Update** mean `sf content deploy`. **Delete** means `sf content delete`.
 
 **Available (limited)** means implemented with the restrictions below, not universal or fully qualified support. **Planned** means unavailable now and subject to API discovery and operation-specific qualification; no release version or date is promised. **Not supported** in the Delete column also means no delete rollout is committed in the current roadmap. “Not verified” is deliberately not a guessed API name.
 
@@ -47,14 +47,14 @@ This is a plugin for the Salesforce `sf` command-line tool. It is **not a comple
 | WhatsApp Session Message                   | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
 | WhatsApp Template Message                  | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
 
-Image admission is API-led for retrieval, portable deployment and loose-file upload: the client has no Image format whitelist, signature-matching requirement or 10 MiB cap. Safe MIME, paths, nonempty runtime-representable bytes and existing identity/drift safeguards still apply; bytes and MIME are not converted. Salesforce determines acceptance. Salesforce documents a 25 MB Image limit, but the exact byte boundary has not been proven and the client does NOT cap at 25 MB. **Live qualification pending:** local admission does not establish that all formats are accepted, and exact-artifact API acceptance/rejection must still be tested.
+Salesforce documents a 25 MB Image limit.
 
 Current operation limits:
 
 - Retrieve admits only supported root-level, single-variant Email, Email Template, Image, Document and Audio shapes in an explicitly selected workspace; language defaults to that workspace's default. Images can have downloaded native media or external URL-only evidence; retrieving them does not make them deployable.
 - Deploy admits dependency-free raw-HTML Email/Email Template sources, API-led binary Images, API-led binary Documents and binary Audio for CREATE, bytes-only UPDATE or exact unchanged. Create makes an unpublished Draft. Existing Email/Template update changes **HTML only** and requires an eligible Draft; differing JSON metadata or text companions block the whole selection. Image deploy requires a Marketing workspace, its default language and root placement; existing Images require one unpublished primary Draft and exact metadata, filename and MIME. Only the binary bytes may change. Additional variants, non-root placement and unresolved dependencies remain blocked. Authoring-baseline conflict and sibling-aware update safeguards are not integrated into deploy.
 - Delete requires strict ownership evidence, unchanged content, an unpublished Draft and a single-variant parent. It is not deletion by name alone. Email Template additionally requires its strict completed CREATE journal and unchanged source artifacts. A normal portable deploy report is not automatically accepted as delete ownership evidence.
-- Offline `sf content info --json` labels Email/Template/Image retrieval and deletion **experimental**, and Document/Audio retrieval, deploy and loose-image upload **unqualified**. Narrow installed Email/Template and same-org PNG Image evidence does not qualify every source shape. Cross-org Image acceptance is pending; loose-image upload has no live-upload proof. Internal family profiles do not add public operation support.
+- Offline `sf content info --json` labels Email/Template/Image retrieval and deletion **experimental**; Document/Audio retrieval, deploy and loose-image upload are also listed. Narrow installed Email/Template and same-org PNG Image evidence does not qualify every source shape. Cross-org Image acceptance is pending; loose-image upload has no live-upload proof. Internal family profiles do not add public operation support.
 
 ## Installation and getting started
 
