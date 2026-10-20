@@ -43,8 +43,8 @@ import {
 
 export type ExecuteDeployBatchInput = DeployBatchPreflightInput & {
   destinationOrgId: string;
-  /** Exclusive new batch journal, in an existing caller-owned directory. Never resumed. */
-  reportFile: string;
+  /** Optional exclusive new batch journal, in an existing caller-owned directory. Never resumed. */
+  reportFile?: string;
 };
 export type DeployBatchReport = {
   qualification: 'unqualified';
@@ -58,9 +58,10 @@ export type DeployBatchReport = {
   items: Array<{
     source: DeployLocalSelection['items'][number];
     proposed: 'create' | 'update' | 'unchanged' | 'blocked';
-    reportFile: string;
+    reportFile?: string;
     outcome: 'unattempted' | 'created' | 'updated' | 'unchanged' | 'failed' | 'uncertain';
     target?: { contentId: string; variantId: string };
+    returned?: WorkspaceImportRunReport['operations'][number]['result'];
     error?: string;
   }>;
   summary: {
@@ -353,7 +354,8 @@ export async function revalidateDeployBatchAudioBoundary(
  * @param {string} operation - Explicit Document CREATE, UPDATE or unchanged; never Image fallback.
  * @param {Function} boundary - Fresh whole-batch intent, source and inventory callback.
  * @param {JsonRequestOptions} options - Read/cancellation options.
- * @param {WorkspaceImportReportPersistence} persistence - Existing item journal persistence seam.
+ * @param {WorkspaceImportReportPersistence} persistence - Existing optional item persistence seam.
+ * @param {Function} onReport - Internal synchronous assignment-only live report handoff.
  * @returns {Promise<object>} Verified item outcome; uncertainty is never returned as completed.
  */
 export async function executeDeployBatchDocumentItem(
@@ -363,6 +365,7 @@ export async function executeDeployBatchDocumentItem(
   boundary: () => Promise<void>,
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
+  onReport?: (report: WorkspaceImportRunReport) => void,
 ): Promise<{
   target: { contentId: string; variantId: string };
   outcome: 'created' | 'updated' | 'unchanged';
@@ -376,6 +379,7 @@ export async function executeDeployBatchDocumentItem(
       options,
       persistence,
       boundary,
+      onReport,
     );
     const updated = result.report.operations[0];
     if (
@@ -407,6 +411,7 @@ export async function executeDeployBatchDocumentItem(
     options,
     persistence,
     boundary,
+    onReport,
   );
   if (result.report.state !== 'completed' || result.report.createdParents.length !== 1)
     throw new TypeError('Document journal incomplete');
@@ -424,7 +429,8 @@ export async function executeDeployBatchDocumentItem(
  * @param {string} operation - Explicit Audio CREATE, bytes-only UPDATE or exact unchanged.
  * @param {Function} boundary - Awaited whole-batch revalidation before mutation.
  * @param {JsonRequestOptions} options - Read/cancellation options.
- * @param {WorkspaceImportReportPersistence} persistence - Existing item persistence seam.
+ * @param {WorkspaceImportReportPersistence} persistence - Existing optional item persistence seam.
+ * @param {Function} onReport - Internal synchronous assignment-only live report handoff.
  * @returns {Promise<object>} Verified item identity/outcome, never uncertain completion.
  */
 export async function executeDeployBatchAudioItem(
@@ -434,6 +440,7 @@ export async function executeDeployBatchAudioItem(
   boundary: () => Promise<void>,
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
+  onReport?: (report: WorkspaceImportRunReport) => void,
 ): Promise<{
   target: { contentId: string; variantId: string };
   outcome: 'created' | 'updated' | 'unchanged';
@@ -455,6 +462,7 @@ export async function executeDeployBatchAudioItem(
       options,
       persistence,
       boundary,
+      onReport,
     );
     const updated = result.report.operations[0];
     if (
@@ -472,7 +480,14 @@ export async function executeDeployBatchAudioItem(
       outcome: 'updated',
     };
   }
-  const result = await executeDeployAudioCreate(connection, input, options, persistence, boundary);
+  const result = await executeDeployAudioCreate(
+    connection,
+    input,
+    options,
+    persistence,
+    boundary,
+    onReport,
+  );
   if (result.report.state !== 'completed' || result.report.createdParents.length !== 1)
     throw new TypeError('Audio journal incomplete');
   const created = result.report.createdParents[0];
@@ -501,7 +516,7 @@ export async function executeDeployBatch(
   input: ExecuteDeployBatchInput,
   options: JsonRequestOptions = {},
   persistence?: DeployBatchPersistence,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: DeployBatchReport }> {
+): Promise<{ qualification: 'unqualified'; reportFile?: string; report: DeployBatchReport }> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
@@ -526,7 +541,8 @@ export async function executeDeployBatch(
   const verifiedCreatedRows: NativeInventoryRow[] = [];
   const verifiedUpdatedRows: DeployBatchVerifiedUpdateRow[] = [];
   const reselect = () => selectDeploySources(selected.sources);
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const runId = randomUUID();
   const report: DeployBatchReport = {
     qualification: 'unqualified',
@@ -543,7 +559,7 @@ export async function executeDeployBatch(
     items: baseline.items.map((item, index) => ({
       source: baseline.selection.items[index],
       proposed: item.proposed,
-      reportFile: `${reportFile}.${runId}.${index + 1}.json`,
+      reportFile: reportFile === undefined ? undefined : `${reportFile}.${runId}.${index + 1}.json`,
       outcome: 'unattempted',
     })),
     summary: {
@@ -557,7 +573,7 @@ export async function executeDeployBatch(
       unattempted: baseline.items.length,
     },
   };
-  await writeExclusive(reportFile, report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   const recount = () => {
     for (const outcome of [
@@ -573,11 +589,16 @@ export async function executeDeployBatch(
       report.summary.created + report.summary.updated + report.summary.unchanged;
   };
   let active: DeployBatchReport['items'][number] | undefined;
+  let activeReport: WorkspaceImportRunReport | undefined;
+  const onReport = (current: WorkspaceImportRunReport) => {
+    activeReport = current;
+  };
   try {
     if (!baseline.eligible) return { qualification: 'unqualified', reportFile, report };
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     for (const [index, item] of report.items.entries()) {
       active = undefined;
+      activeReport = undefined;
       const scope = {
         definitionFile: item.source.definitionPath,
         workspaceId: selected.workspaceId,
@@ -615,6 +636,7 @@ export async function executeDeployBatch(
         if (!isDeepStrictEqual(await reselect(), baseline.selection))
           throw new TypeError('Batch selection changed before execution');
         if (
+          reportFile !== undefined &&
           JSON.stringify(JSON.parse(await readFile(reportFile, 'utf8'))) !== JSON.stringify(report)
         )
           throw new TypeError('Batch durable intent changed before execution');
@@ -708,6 +730,7 @@ export async function executeDeployBatch(
         if (requestOptions.signal?.aborted)
           throw new TypeError('Batch cancelled at execution boundary');
         if (
+          reportFile !== undefined &&
           JSON.stringify(JSON.parse(await readFile(reportFile, 'utf8'))) !== JSON.stringify(report)
         )
           throw new TypeError('Batch durable intent changed at execution boundary');
@@ -735,6 +758,7 @@ export async function executeDeployBatch(
             boundary,
             requestOptions,
             persistence?.item,
+            onReport,
           );
           item.target = result.target;
           item.outcome = result.outcome;
@@ -749,6 +773,7 @@ export async function executeDeployBatch(
             boundary,
             requestOptions,
             persistence?.item,
+            onReport,
           );
           item.target = result.target;
           item.outcome = result.outcome;
@@ -763,6 +788,7 @@ export async function executeDeployBatch(
             requestOptions,
             persistence?.item,
             boundary,
+            onReport,
           );
           if ('report' in result) {
             if (result.report.state !== 'completed')
@@ -792,6 +818,7 @@ export async function executeDeployBatch(
               requestOptions,
               persistence?.item,
               boundary,
+              onReport,
             );
             const created = result.report.createdParents[0];
             item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
@@ -803,6 +830,7 @@ export async function executeDeployBatch(
               requestOptions,
               persistence?.item,
               boundary,
+              onReport,
             );
             item.target = result.target;
             item.outcome = result.outcome;
@@ -831,11 +859,19 @@ export async function executeDeployBatch(
         verifiedCreatedRows.push(structuredClone(row));
       } else if (item.outcome === 'updated') {
         // Item success alone cannot authorize erasing any native inventory drift.
-        const journal = JSON.parse(
-          await readFile(item.reportFile, 'utf8'),
-        ) as WorkspaceImportRunReport;
-        const operation = journal.operations[0];
+        const journal =
+          item.reportFile === undefined
+            ? activeReport
+            : (JSON.parse(await readFile(item.reportFile, 'utf8')) as WorkspaceImportRunReport);
+        const operation = journal?.operations[0];
         if (
+          !journal ||
+          !operation ||
+          journal.destinationOrgId !== selected.destinationOrgId ||
+          journal.destinationWorkspaceId !== selected.workspaceId ||
+          operation.destinationOrgId !== selected.destinationOrgId ||
+          operation.destinationWorkspaceId !== selected.workspaceId ||
+          operation.language !== selected.language ||
           journal.state !== 'completed' ||
           journal.createdParents.length > 0 ||
           journal.operations.length !== 1 ||
@@ -869,10 +905,10 @@ export async function executeDeployBatch(
       // Mark verified outcomes before summary persistence: failures must not erase the prefix.
       active = undefined;
       recount();
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     }
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
   } catch (error) {
     const message = redactSecrets(
       error instanceof Error ? error.message : 'Batch execution failed',
@@ -882,24 +918,37 @@ export async function executeDeployBatch(
       active.error = message;
       // Missing/unreadable/pending journals cannot establish that no mutation occurred.
       active.outcome = active.proposed === 'unchanged' ? 'failed' : 'uncertain';
+      // The live handoff survives persistence/transport failures and is reset for every item.
+      const returned = activeReport?.operations[0]?.result;
+      if (returned) active.returned = { ...returned };
       try {
-        const journal = JSON.parse(
-          await readFile(active.reportFile, 'utf8'),
-        ) as WorkspaceImportRunReport;
+        const journal =
+          active.reportFile === undefined
+            ? activeReport
+            : (JSON.parse(await readFile(active.reportFile, 'utf8')) as WorkspaceImportRunReport);
         if (
-          journal.runId &&
+          journal?.runId &&
+          journal.destinationOrgId === selected.destinationOrgId &&
+          journal.destinationWorkspaceId === selected.workspaceId &&
           journal.state === 'failed' &&
-          journal.operations.every((operation) => operation.state === 'failed')
+          journal.operations.length > 0 &&
+          journal.operations.every(
+            (operation) =>
+              operation.state === 'failed' &&
+              operation.destinationOrgId === selected.destinationOrgId &&
+              operation.destinationWorkspaceId === selected.workspaceId &&
+              operation.language === selected.language,
+          )
         )
           active.outcome = 'failed';
       } catch {
-        // Preserve uncertainty and the exact exclusive item path for manual reconciliation.
+        // Unreadable enabled journals never establish that no mutation occurred.
       }
     }
     recount();
     report.state = report.summary.completed > 0 ? 'partial' : 'blocked';
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       report.blockedReasons.push(
         'Batch summary persistence failed; inspect per-item journals before any new run',

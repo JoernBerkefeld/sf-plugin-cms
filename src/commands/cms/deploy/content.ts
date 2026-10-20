@@ -316,7 +316,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         for (const item of report.items)
           if (item.error !== undefined) item.error = redactSecrets(item.error);
         result.mutationEnabled = true;
-        result.reportFile = applied.reportFile;
+        result.reportFile = applied.reportFile ?? null;
         result.report = report;
         result.selection = report.selection;
         result.items = report.items;

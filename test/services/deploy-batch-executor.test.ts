@@ -2,13 +2,15 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { createHash } from 'node:crypto';
 import {
   executeDeployBatch,
+  executeDeployBatchDocumentItem,
+  executeDeployBatchAudioItem,
   revalidateDeployBatchAudioBoundary,
   reconcileDeployBatchInventory,
   type DeployBatchPersistence,
@@ -16,6 +18,8 @@ import {
 } from '../../src/services/deploy-batch-executor.js';
 import type { NativeInventory } from '../../src/services/retrieve-native-inventory.js';
 import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
+import { executeDeployCreate } from '../../src/services/deploy-create-executor.js';
+import { executeDeployImage } from '../../src/services/deploy-image-executor.js';
 import { DEPLOY_SOURCE_CONTENT_TYPES } from '../../src/services/deploy-source-selection.js';
 import {
   buildAudioCreateMultipart,
@@ -33,7 +37,13 @@ import {
 
 const workspaceId = '0Zu000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(existing = false, mixed = false, document = false, audio = false) {
+async function fixture(
+  existing = false,
+  mixed = false,
+  document = false,
+  audio = false,
+  reporting = true,
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-batch-executor-'));
   const reportFile = path.join(directory, 'batch.json');
   const definitions = ['Alpha', 'Beta', 'Gamma'].map((apiName) => ({
@@ -53,6 +63,7 @@ async function fixture(existing = false, mixed = false, document = false, audio 
     definitions[1].companions.rawHtml = 'Beta.cms-email-template.html';
   }
   const imageBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
+  let currentImageBytes = imageBytes;
   const imageName = 'Gamma.cms-image.media.svg';
   const files = definitions.map((definition, index) =>
     path.join(
@@ -223,15 +234,18 @@ async function fixture(existing = false, mixed = false, document = false, audio 
         ) as Row;
         const name = String(
           body.apiName ??
-            (audio ? details.get(url.pathname.split('/').at(-1)!)?.apiName : undefined),
+            (binary ? details.get(url.pathname.split('/').at(-1)!)?.apiName : undefined),
         );
         mutations.push(name);
-        const batch = JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport;
-        const item = batch.items.find((entry) => entry.source.targetIdentity.apiName === name)!;
-        const journal = JSON.parse(
-          await readFile(item.reportFile, 'utf8'),
-        ) as WorkspaceImportRunReport;
-        expect(journal.operations[0].state).to.equal('pending');
+        let journal: WorkspaceImportRunReport | undefined;
+        if (reporting) {
+          const batch = JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport;
+          const item = batch.items.find((entry) => entry.source.targetIdentity.apiName === name)!;
+          journal = JSON.parse(
+            await readFile(item.reportFile!, 'utf8'),
+          ) as WorkspaceImportRunReport;
+          expect(journal.operations[0].state).to.equal('pending');
+        }
         if (name === failName) throw new Error('Authorization: Bearer secret-token');
         if (input.method === 'POST') {
           const index = definitions.findIndex((definition) => definition.identity.apiName === name);
@@ -291,9 +305,17 @@ async function fixture(existing = false, mixed = false, document = false, audio 
                 framing,
               );
           expect((input.body as Buffer).equals(expected.body)).to.equal(true);
-          expect(journal.createdParents).to.deep.equal([]);
+          if (reporting) expect(journal!.createdParents).to.deep.equal([]);
           currentDocumentBytes = desired;
           detail.contentBody = mediaBody(3);
+        } else if (binary && name === 'Gamma') {
+          currentImageBytes = await readFile(path.join(directory, imageName));
+          detail.contentBody = {
+            'sfdc_cms:media': {
+              source: { type: 'file', size: currentImageBytes.length, mimeType: 'image/svg+xml' },
+              url: `/cms/media/MCKEY3?version=2&fileHash=${createHash('md5').update(currentImageBytes).digest('hex')}&fileName=${imageName}`,
+            },
+          };
         } else {
           detail.contentBody = {
             ...(body.contentBody as Row),
@@ -352,7 +374,7 @@ async function fixture(existing = false, mixed = false, document = false, audio 
   if (mixed)
     sinon.stub(globalThis, 'fetch').callsFake(async (input) => {
       const isDocument = String(input).includes('MCKEY4');
-      return new Response(isDocument ? currentDocumentBytes : imageBytes, {
+      return new Response(isDocument ? currentDocumentBytes : currentImageBytes, {
         headers: { 'content-type': isDocument ? documentMime : 'image/svg+xml' },
       });
     });
@@ -395,13 +417,21 @@ async function fixture(existing = false, mixed = false, document = false, audio 
       onRead = callback;
     },
     run: (persistence?: DeployBatchPersistence, options = {}) =>
-      executeDeployBatch(connection, input, options, persistence),
+      executeDeployBatch(
+        connection,
+        { ...input, reportFile: reporting ? reportFile : undefined },
+        options,
+        persistence,
+      ),
     journal: async () => JSON.parse(await readFile(reportFile, 'utf8')) as DeployBatchReport,
   };
 }
 
-async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update') {
-  const f = await fixture(operation !== 'create', true, true, true);
+async function audioBoundaryFixture(
+  operation: 'create' | 'unchanged' | 'update',
+  reporting = true,
+) {
+  const f = await fixture(operation !== 'create', true, true, true, reporting);
   const companion = path.join(f.directory, 'Zulu.cms-audio.media.bin');
   const current = Buffer.from([0, 255, 128, 13, 10]);
   const desired = operation === 'update' ? Buffer.from([255, 0, 129]) : current;
@@ -442,6 +472,231 @@ async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update'
   f.definitions[3].identity.type = 'Audio';
   return { ...f, companion, audioFile, definition };
 }
+
+describe('batch live and disk evidence routing', () => {
+  afterEach(() => sinon.restore());
+  for (const reporting of [false, true]) {
+    it(`keeps unattempted suffix after cancellation with reporting ${reporting}`, async () => {
+      const f = await fixture(false, false, false, false, reporting);
+      const controller = new AbortController();
+      f.onRead(async () => {
+        if (f.records.length === 1) controller.abort();
+      });
+      const result = await f.run(undefined, { signal: controller.signal });
+      expect(f.mutations).to.deep.equal(['Alpha']);
+      expect(result.report.items[0].outcome).to.equal('uncertain');
+      expect(result.report.items.slice(1).map((item) => item.outcome)).to.deep.equal([
+        'unattempted',
+        'unattempted',
+      ]);
+      expect(result.report.items[1].returned).to.equal(undefined);
+    });
+  }
+  for (const drift of ['org', 'workspace', 'language', 'empty', 'pending'] as const) {
+    it(`rejects completed UPDATE disk evidence with ${drift} binding drift`, async () => {
+      const f = await fixture(true);
+      const result = await f.run({
+        rewrite: rewriteAtomic,
+        item: {
+          rewrite: async (file, report) => {
+            await rewriteAtomic(file, report);
+            if (
+              report.state === 'completed' &&
+              report.operations[0].operationKind === 'update-variant'
+            ) {
+              const changed = structuredClone(report);
+              if (drift === 'org')
+                Object.assign(changed, { destinationOrgId: '00D000000000002AAA' });
+              if (drift === 'workspace')
+                Object.assign(changed, { destinationWorkspaceId: '0Zu000000000002AAA' });
+              if (drift === 'language') Object.assign(changed.operations[0], { language: 'de_DE' });
+              if (drift === 'empty') changed.operations.length = 0;
+              if (drift === 'pending') changed.operations[0].state = 'pending';
+              await rewriteAtomic(file, changed);
+            }
+          },
+        },
+      });
+      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+        'created',
+        'uncertain',
+        'unattempted',
+      ]);
+      expect(result.report.blockedReasons.join(';')).to.include(
+        'Verified UPDATE journal binding missing',
+      );
+      expect(f.mutations).to.deep.equal(['Alpha', 'Beta']);
+    });
+  }
+  for (const reporting of [false, true]) {
+    for (const family of ['rawHtml', 'Image', 'Document', 'Audio'] as const) {
+      for (const operation of ['create', 'update'] as const) {
+        it(`routes ${family} ${operation} with reporting ${reporting}`, async () => {
+          const existing = operation === 'update';
+          const f =
+            family === 'Audio'
+              ? await audioBoundaryFixture(operation, reporting)
+              : await fixture(
+                  existing,
+                  family !== 'rawHtml',
+                  family === 'Document',
+                  false,
+                  reporting,
+                );
+          if (existing && family === 'Document') {
+            const definition = JSON.parse(await readFile(f.files[3], 'utf8')) as Row;
+            definition.urlName = 'zulu';
+            await writeFile(f.files[3], JSON.stringify(definition));
+            f.records[2].UrlName = 'zulu';
+            f.details.get('MCKEY4')!.urlName = 'zulu';
+            await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Changed bytes');
+          }
+          if (existing && family === 'Image') {
+            await writeFile(
+              path.join(f.directory, 'Gamma.cms-image.media.svg'),
+              '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>',
+            );
+          }
+          const before = await readdir(f.directory);
+          const persistence = {
+            rewrite: async (file: string, report: DeployBatchReport) => {
+              expect(reporting).to.equal(true);
+              await rewriteAtomic(file, report);
+            },
+            item: {
+              rewrite: async (file: string, report: WorkspaceImportRunReport) => {
+                expect(reporting).to.equal(true);
+                await rewriteAtomic(file, report);
+              },
+            },
+          };
+          const result = await f.run(persistence);
+          expect(result.report.blockedReasons).to.deep.equal([]);
+          expect(result.report.state).to.equal('completed');
+          expect(result.report.items.every((item) => item.target)).to.equal(true);
+          expect(result.reportFile === undefined).to.equal(!reporting);
+          expect(result.report.items.every((item) => item.reportFile === undefined)).to.equal(
+            !reporting,
+          );
+          if (reporting) {
+            expect(await f.journal()).to.deep.equal(result.report);
+          } else {
+            expect(await readdir(f.directory)).to.deep.equal(before);
+          }
+        });
+      }
+      it(`preserves ${family} lost-response uncertainty with reporting ${reporting}`, async () => {
+        const f =
+          family === 'Audio'
+            ? await audioBoundaryFixture('create', reporting)
+            : await fixture(false, family !== 'rawHtml', family === 'Document', false, reporting);
+        const names = { rawHtml: 'Beta', Image: 'Gamma', Document: 'Zulu', Audio: 'Zulu' };
+        const name = names[family];
+        f.fail(name);
+        const before = await readdir(f.directory);
+        const result = await f.run();
+        const item = result.report.items.find(
+          (entry) => entry.source.targetIdentity.apiName === name,
+        )!;
+        expect(item.outcome).to.equal('uncertain');
+        expect(result.report.state).to.equal('partial');
+        expect(f.mutations.at(-1)).to.equal(name);
+        expect(result.report.summary.uncertain).to.equal(1);
+        expect(JSON.stringify(result)).not.to.include('secret-token');
+        if (!reporting) expect(await readdir(f.directory)).to.deep.equal(before);
+      });
+    }
+    for (const family of ['rawHtml', 'Image', 'Document', 'Audio'] as const) {
+      it(`hands off live ${family} evidence before predispatch failure with reporting ${reporting}`, async () => {
+        const f =
+          family === 'Audio'
+            ? await audioBoundaryFixture('create', reporting)
+            : await fixture(false, family !== 'rawHtml', family === 'Document', false, reporting);
+        const indices = { rawHtml: 0, Image: 2, Document: 3, Audio: 3 };
+        const index = indices[family];
+        const definitionFile =
+          family === 'Audio' ? f.input.sources['source-dir'][1] : f.files[index];
+        const input = {
+          definitionFile,
+          workspaceId,
+          language: 'en_US',
+          destinationOrgId: f.input.destinationOrgId,
+          reportFile: reporting ? path.join(f.directory, 'adapter.json') : undefined,
+        };
+        let live: WorkspaceImportRunReport | undefined;
+        const observe = (report: WorkspaceImportRunReport) => {
+          live = report;
+        };
+        const boundary = async () => {
+          if (live) {
+            expect(live.operations[0].state).to.equal('pending');
+            throw new Error('Stop before dispatch');
+          }
+        };
+        let caught = false;
+        try {
+          switch (family) {
+            case 'Document': {
+              await executeDeployBatchDocumentItem(
+                f.connection,
+                input,
+                'create',
+                boundary,
+                {},
+                undefined,
+                observe,
+              );
+              break;
+            }
+            case 'Audio': {
+              await executeDeployBatchAudioItem(
+                f.connection,
+                input,
+                'create',
+                boundary,
+                {},
+                undefined,
+                observe,
+              );
+              break;
+            }
+            case 'Image': {
+              await executeDeployImage(
+                f.connection,
+                { ...input, operation: 'create' },
+                {},
+                undefined,
+                boundary,
+                observe,
+              );
+              break;
+            }
+            default: {
+              await executeDeployCreate(f.connection, input, {}, undefined, boundary, observe);
+            }
+          }
+        } catch (error) {
+          caught = true;
+          expect((error as Error).message).to.equal('Stop before dispatch');
+        }
+        expect(caught).to.equal(true);
+        expect(live?.state).to.equal('failed');
+        expect(live?.operations[0].state).to.equal('failed');
+        expect(f.mutations).to.deep.equal([]);
+      });
+    }
+    for (const operation of ['create', 'update'] as const) {
+      it(`retains partial Audio ${operation} returned identity with reporting ${reporting}`, async () => {
+        const f = await audioBoundaryFixture(operation, reporting);
+        f.partialDocumentResponse();
+        const result = await f.run();
+        expect(result.report.items[1].outcome).to.equal('uncertain');
+        expect(result.report.items[1].returned?.contentId).to.equal('20Y000000000004AAA');
+        expect(f.mutations).to.deep.equal(['Alpha', 'Zulu']);
+      });
+    }
+  }
+});
 
 describe('Audio execution-boundary observations and private item routing', () => {
   beforeEach(() => {
