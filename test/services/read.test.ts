@@ -70,6 +70,30 @@ describe('CMS read services', () => {
     });
   });
 
+  it('preserves complete workspace records and page metadata with one list GET and no detail reads', async () => {
+    const workspace = {
+      id: '0Zufj000006rx4wCAA',
+      name: 'Content Workspace for Marketing Cloud',
+      type: 'Misleading',
+      spaceType: { apiName: 'marketing', label: 'Marketing', extra: { retained: true } },
+      isEnhancedSpace: true,
+      extras: [null, { nested: ['unchanged'] }],
+    };
+    const before = structuredClone(workspace);
+    const request = sinon
+      .stub()
+      .returns(fakeRequest({ spaces: [workspace], currentPage: 3, pageSize: 25, total: 80 }));
+    expect(await listWorkspaces({ request })).to.deep.equal({
+      items: [before],
+      page: 3,
+      pageSize: 25,
+      total: 80,
+    });
+    expect(workspace).to.deep.equal(before);
+    expect(request.calledOnce).to.equal(true);
+    expect(request.firstCall.args[0]).to.deep.equal({ method: 'GET', url: '/connect/cms/spaces' });
+  });
+
   it('returns direct live get records and maps requests to descriptors', async () => {
     const records = [
       { id: 'space', name: 'Main', channels: [{ id: 'channel' }] },

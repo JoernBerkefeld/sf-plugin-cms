@@ -31,7 +31,47 @@ export default class ListWorkspace extends CmsCommand<CmsPage> {
       page: flags.page,
       pageSize: flags['page-size'],
     });
-    this.showPage('CMS workspaces', result);
+    this.table({
+      title: 'CMS workspaces',
+      data: result.items.map((item) => {
+        const spaceType = item.spaceType;
+        const apiName =
+          spaceType !== null && typeof spaceType === 'object' && !Array.isArray(spaceType)
+            ? spaceType.apiName
+            : undefined;
+        let type = 'Unknown';
+        if (typeof apiName === 'string' && apiName.trim().length > 0) {
+          switch (apiName) {
+            case 'marketing': {
+              type = 'Marketing';
+              break;
+            }
+            case 'content': {
+              type = 'Content';
+              break;
+            }
+            case 'enablement': {
+              type = 'Enablement';
+              break;
+            }
+            default: {
+              type = apiName;
+            }
+          }
+        }
+        const title = typeof item.title === 'string' ? item.title : '';
+        const name = typeof item.name === 'string' && item.name.length > 0 ? item.name : title;
+        let enhanced = 'Unknown';
+        if (item.isEnhancedSpace === true) enhanced = 'Yes';
+        else if (item.isEnhancedSpace === false) enhanced = 'No';
+        return {
+          id: typeof item.id === 'string' ? item.id : '',
+          name,
+          type,
+          enhanced,
+        };
+      }),
+    });
     return result;
   }
 }

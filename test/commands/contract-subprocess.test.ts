@@ -407,7 +407,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       ['list', 'channel'],
     ]) {
       const argv = [
-        'content',
+        route[1] === 'workspace' ? 'cms' : 'content',
         ...route,
         ...common,
         ...(route[1] === 'channel' ? ['--workspace-id', 'space'] : []),
@@ -417,15 +417,55 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       ];
       const result = await runSf(argv, 'logging-table');
       expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
-      expect(JSON.parse(result.stdout).items[0].name).to.equal('Transcript fixture');
-      await invocationRecords(result, argv);
+      const expected =
+        route[1] === 'workspace'
+          ? {
+              items: [
+                {
+                  id: '0Zufj000006rx4wCAA',
+                  name: 'Content Workspace for Marketing Cloud',
+                  type: 'Content',
+                  spaceType: { apiName: 'marketing', label: 'Marketing' },
+                  isEnhancedSpace: true,
+                  extra: { retained: true },
+                },
+                {
+                  id: 'legacy',
+                  name: 'Marketing',
+                  type: 'Marketing',
+                  spaceType: { apiName: 'content' },
+                  isEnhancedSpace: false,
+                },
+                { id: 'unknown', name: 'Enhanced Marketing', type: 'Marketing' },
+              ],
+              page: 0,
+              pageSize: 25,
+              total: 3,
+            }
+          : {
+              items: [{ id: 'channel', name: 'Transcript fixture', type: 'Email' }],
+              page: 0,
+              pageSize: 25,
+              total: 1,
+            };
+      expect(JSON.parse(result.stdout)).to.deep.equal(expected);
+      const records = await invocationRecords(result, argv);
+      expect(records.some(({ message }) => message === 'terminal table')).to.equal(false);
+      expect(
+        records.some(
+          ({ message, details }) =>
+            message === 'terminal' &&
+            details?.channel === 'stdout' &&
+            String(details.text).includes('isEnhancedSpace'),
+        ),
+      ).to.equal(route[1] === 'workspace');
     }
   });
 
   it('logs packed native table data/errors and preserves JSON success after sink close failure', async () => {
-    for (const environment of [{}, { CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }]) {
+    for (const [index, environment] of [{}, { CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }].entries()) {
       const argv = [
-        'content',
+        index === 0 ? 'cms' : 'content',
         'list',
         'workspace',
         '--target-org',
@@ -435,12 +475,25 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       ];
       const result = await runSf(argv, 'logging-table', environment);
       expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
-      expect(result.stdout).to.include('Transcript fixture');
+      expect(result.stdout).to.include('CMS workspaces');
+      expect(result.stdout).to.match(/enhanced/iu);
       const records = await invocationRecords(result, argv);
       const table = records.find(({ message }) => message === 'terminal table');
-      expect(table?.details).to.have.property('columns').that.deep.equals(['id', 'name', 'type']);
-      expect(table?.details).to.have.property('rows').that.is.an('array').with.length(1);
-      expect(JSON.stringify(table)).to.include('Transcript fixture');
+      expect(table?.details).to.deep.equal({
+        channel: 'stdout',
+        title: 'CMS workspaces',
+        columns: ['id', 'name', 'type', 'enhanced'],
+        rows: [
+          {
+            id: '0Zufj000006rx4wCAA',
+            name: 'Content Workspace for Marketing Cloud',
+            type: 'Marketing',
+            enhanced: 'Yes',
+          },
+          { id: 'legacy', name: 'Marketing', type: 'Content', enhanced: 'No' },
+          { id: 'unknown', name: 'Enhanced Marketing', type: 'Unknown', enhanced: 'Unknown' },
+        ],
+      });
     }
     const argv = ['cms', 'list', 'workspace', '--target-org', 'unused'];
     const failed = await runSf(argv, 'logging-error');

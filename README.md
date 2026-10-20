@@ -347,6 +347,8 @@ Info reports `latest` as the default REST preference and `67.0` as the tested fa
 
 Lists one bounded page of CMS workspaces. Use `--name-fragment` to filter workspace names, and use `--page` with `--page-size` to request a specific page.
 
+The human table's Type uses the API's `spaceType.apiName`: `marketing`, `content` and `enablement` display as Marketing, Content and Enablement; other nonempty values display unchanged. Enhanced shows Yes only for `isEnhancedSpace: true`, No only for `false`, and Unknown when unavailable or malformed. Missing or malformed Type is also Unknown. Neither column is inferred from workspace names or the other column. JSON retains the complete normalized API records and page metadata unchanged; listing makes no workspace-detail requests.
+
 ```sh
 sf content list workspace
 sf content list workspace --name-fragment Marketing

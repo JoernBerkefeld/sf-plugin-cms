@@ -23,10 +23,46 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
       if (contractCase === 'logging-error')
         throw new Error('list failure sentinel Authorization: Bearer disk-secret');
       return {
-        request: async () => ({
-          items: [{ id: 'space', name: 'Transcript fixture', type: 'Marketing' }],
-          total: 1,
-        }),
+        request: async ({ method, url }) => {
+          if (method !== 'GET') throw new Error('Unexpected logging fixture mutation');
+          if (url === '/connect/cms/spaces')
+            return {
+              spaces: [
+                {
+                  id: '0Zufj000006rx4wCAA',
+                  name: 'Content Workspace for Marketing Cloud',
+                  type: 'Content',
+                  spaceType: { apiName: 'marketing', label: 'Marketing' },
+                  isEnhancedSpace: true,
+                  extra: { retained: true },
+                },
+                {
+                  id: 'legacy',
+                  name: 'Marketing',
+                  type: 'Marketing',
+                  spaceType: { apiName: 'content' },
+                  isEnhancedSpace: false,
+                },
+                { id: 'unknown', name: 'Enhanced Marketing', type: 'Marketing' },
+              ],
+              currentPage: 0,
+              pageSize: 25,
+              total: 3,
+            };
+          if (url === '/connect/cms/spaces/space/channels')
+            return {
+              spaceChannels: [
+                {
+                  channelSummary: { id: 'channel', name: 'Transcript fixture', type: 'Email' },
+                  role: 'CONTRIBUTOR',
+                },
+              ],
+              currentPage: 0,
+              pageSize: 25,
+              totalSpaceChannels: 1,
+            };
+          throw new Error(`Unexpected logging fixture request: ${url}`);
+        },
       };
     };
   }

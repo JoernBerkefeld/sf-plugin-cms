@@ -58,6 +58,22 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents workspace presentation independently from unchanged JSON and list requests', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    const workspace = readme
+      .split('### `sf content list workspace`')[1]
+      .split('### `sf content list channel`')[0];
+    for (const claim of [
+      'spaceType.apiName',
+      'Marketing, Content and Enablement',
+      'isEnhancedSpace: true',
+      'Unknown',
+      'Neither column is inferred',
+      'JSON retains the complete normalized API records and page metadata unchanged',
+      'no workspace-detail requests',
+    ])
+      expect(workspace).to.include(claim);
+  });
   it('documents project-local and explicit global org defaults with per-command overrides', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const gettingStarted = readme
