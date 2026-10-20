@@ -270,7 +270,7 @@ describe('journaled portable binary Image CREATE executor', () => {
         {
           ...f.input,
           reportFile: path.join(path.dirname(f.input.reportFile), 'batch.json'),
-          sources: { 'definition-file': [f.input.definitionFile] },
+          sources: { 'source-dir': [f.input.definitionFile] },
         },
         {},
         {
@@ -304,7 +304,7 @@ describe('journaled portable binary Image CREATE executor', () => {
     );
     const f = await fixture('Hero', 'image/svg+xml', bytes);
     await downloaded(f);
-    const sources = { 'definition-file': [f.input.definitionFile] };
+    const sources = { 'source-dir': [f.input.definitionFile] };
     const selection = await selectDeploySources(sources);
     expect(selection.items[0].mediaSha256).to.equal(
       createHash('sha256').update(bytes).digest('hex'),

@@ -54,7 +54,7 @@ export async function executeDeployCreate(
     throw new TypeError('CREATE requires exact destination org ID');
   const reportFile = path.resolve(selected.reportFile);
   const preflight = await preflightDeployCreate(connection, selected, requestOptions);
-  const load = async () => selectDeploySources({ 'definition-file': [preflight.definitionFile] });
+  const load = async () => selectDeploySources({ 'source-dir': [preflight.definitionFile] });
   const source = await load();
   const report: WorkspaceImportRunReport = {
     createdParents: [],

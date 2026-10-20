@@ -222,7 +222,7 @@ describe('journaled portable Document CREATE executor', () => {
         }),
       );
       const planned = await preflightDeployBatch(f.connection, {
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
         workspaceId,
         language: 'en_US',
       });

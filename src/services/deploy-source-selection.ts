@@ -11,6 +11,7 @@ import {
 import {
   assertSourceDefinition,
   SOURCE_EMAIL_PROFILES,
+  sourcePathSegment,
   type SourceDefinition,
 } from '../contracts/source-definition.js';
 import type { JsonValue } from '../contracts/capability-registry.js';
@@ -32,7 +33,10 @@ export const DEPLOY_SOURCE_CONTENT_TYPES = [
 ] as const;
 
 export interface DeploySourceSelectionFlags {
-  'definition-file'?: readonly string[];
+  /** Resolved destination workspace API name, required only for conventional metadata selection. */
+  workspaceApiName?: string;
+  /** Invocation directory captured before preflight and subsequent selection rechecks. */
+  cwd?: string;
   'source-dir'?: readonly string[];
   'content-type'?: readonly string[];
   metadata?: readonly string[];
@@ -50,7 +54,7 @@ export interface DeployLocalItem {
 }
 
 export interface DeployLocalSelection {
-  mode: 'definition-file' | 'source-dir';
+  mode: 'metadata' | 'source-dir';
   items: DeployLocalItem[];
 }
 
@@ -125,22 +129,19 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
 
 /**
  * Select local Email/Template/binary Image/Document/Audio sources without apply authority or org access.
- * @param {DeploySourceSelectionFlags} flags - Explicit files or directories with optional directory filters.
+ * @param {DeploySourceSelectionFlags} flags - Explicit paths or conventional metadata and resolved workspace scope.
  * @returns {Promise<DeployLocalSelection>} Deterministic admitted sources and destination-relative identities.
  */
 export async function selectDeploySources(
   flags: DeploySourceSelectionFlags,
 ): Promise<DeployLocalSelection> {
-  const files = values(flags['definition-file']);
   const directories = values(flags['source-dir']);
   const types = values(flags['content-type']);
   const metadata = values(flags.metadata);
-  if (Number(files !== undefined) + Number(directories !== undefined) !== 1)
-    throw new TypeError('Deploy requires exactly one source mode: definition-file or source-dir');
-  if (types !== undefined && metadata !== undefined)
-    throw new TypeError('Deploy content-type and metadata filters are exclusive');
-  if (files !== undefined && (types !== undefined || metadata !== undefined))
-    throw new TypeError('Deploy filters require source-dir mode');
+  if (Number(metadata !== undefined) + Number(directories !== undefined) !== 1)
+    throw new TypeError('Deploy requires exactly one source mode: metadata or source-dir');
+  if (types !== undefined && directories === undefined)
+    throw new TypeError('Deploy content-type filters require source-dir mode');
   const normalizedSelectors: Selector[] | undefined = metadata
     ? metadata.map((value) => metadataSelector(value))
     : types?.map((value) => ({ contentType: contentType(value) }));
@@ -151,15 +152,33 @@ export async function selectDeploySources(
       ) === index,
   );
   const candidates = new Set<string>();
-  for (const file of files ?? []) {
-    await assertEditableDirectoryPath(path.dirname(file), false);
-    candidates.add(path.resolve(file));
+  let roots = directories;
+  if (metadata !== undefined) {
+    if (typeof flags.workspaceApiName !== 'string' || !flags.workspaceApiName)
+      throw new TypeError('Deploy metadata requires the resolved destination workspace API name');
+    sourcePathSegment(flags.workspaceApiName);
+    const cwd = flags.cwd ?? process.cwd();
+    await assertEditableDirectoryPath(cwd, false);
+    roots = [
+      ...new Set(
+        selectors!.map((selector) =>
+          path.join(
+            cwd,
+            'cms',
+            flags.workspaceApiName!,
+            selector.contentType.slice('sfdc_cms__'.length),
+          ),
+        ),
+      ),
+    ];
   }
-  for (const directory of directories ?? []) {
+  for (const directory of roots ?? []) {
     // Validate the original route before resolving; files share the existing guarded loaders.
     await assertEditableDirectoryPath(path.dirname(directory), false);
     const information = await lstat(directory);
     if (information.isFile()) {
+      if (metadata !== undefined)
+        throw new TypeError('Deploy metadata requires a canonical type directory');
       candidates.add(path.resolve(directory));
       continue;
     }
@@ -178,6 +197,17 @@ export async function selectDeploySources(
   const identities = new Set<string>();
   for (const file of [...candidates].toSorted()) {
     const definition = await readDefinition(file);
+    if (metadata !== undefined) {
+      const typeRoot = path.join(
+        flags.cwd ?? process.cwd(),
+        'cms',
+        flags.workspaceApiName!,
+        definition.contentType.slice('sfdc_cms__'.length),
+      );
+      const relative = path.relative(typeRoot, file);
+      if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+        throw new TypeError('Deploy metadata definition is outside its canonical type subtree');
+    }
     if (selectors && !selectors.some((selector) => matches(definition, selector))) continue;
     const media =
       definition.contract === 'sf-cms-media-source'
@@ -234,5 +264,5 @@ export async function selectDeploySources(
       );
   }
   if (items.length === 0) throw new TypeError('Deploy source selection is empty');
-  return { mode: files === undefined ? 'source-dir' : 'definition-file', items };
+  return { mode: metadata === undefined ? 'source-dir' : 'metadata', items };
 }

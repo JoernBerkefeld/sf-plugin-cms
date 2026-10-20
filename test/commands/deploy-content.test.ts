@@ -20,7 +20,7 @@ const flags = {
   'workspace-id': 'destination-space',
   language: 'en_US',
   'default-language': false,
-  'definition-file': ['local.json'],
+  'source-dir': ['local.json'],
   apply: false,
 };
 const source = {
@@ -68,7 +68,7 @@ function command(extra: Record<string, unknown> = {}) {
     .resolves({ id: 'resolved-destination', workspace: { defaultLanguage: 'en_US' } });
   const selectSources = sinon
     .stub()
-    .resolves({ mode: 'definition-file', items: [structuredClone(source)] });
+    .resolves({ mode: 'source-dir', items: [structuredClone(source)] });
   const preparation: DeployDestinationPreparation = {
     workspaceId: 'resolved-destination',
     language: 'en_US',
@@ -132,15 +132,15 @@ describe('cms deploy content command', () => {
 
   it('parses repeatable non-greedy local selectors and defaults to dry-run', async () => {
     for (const args of [
-      ['--definition-file', 'a.json', '--definition-file', 'b.json'],
+      ['--source-dir', 'a.json', '--source-dir', 'b.json'],
       ['-d', './a', '-d', './b', '-t', 'sfdc_cms__email', '-t', 'sfdc_cms__emailTemplate'],
-      ['-d', './a', '-m', 'sfdc_cms__email:Welcome', '-m', 'sfdc_cms__emailTemplate'],
-      ['-d', './a', '-m', 'email:Welcome', '-m', 'emailTemplate'],
+      ['-m', 'sfdc_cms__email:Welcome', '-m', 'sfdc_cms__emailTemplate'],
+      ['-m', 'email:Welcome', '-m', 'emailTemplate'],
       ['-d', './a', '-t', 'email', '-t', 'emailTemplate'],
       ['-d', './a', '-t', 'audio'],
       ['-d', './a', '-t', 'sfdc_cms__audio'],
-      ['-d', './a', '-m', 'audio:Chime'],
-      ['-d', './a', '-m', 'sfdc_cms__audio:Chime'],
+      ['-m', 'audio:Chime'],
+      ['-m', 'sfdc_cms__audio:Chime'],
     ]) {
       const parsed = await Parser.parse(['-o', 'destination', '-W', 'Marketing', '-L', ...args], {
         flags: DeployContent.flags,
@@ -150,17 +150,66 @@ describe('cms deploy content command', () => {
       expect(parsed.flags['target-org'].getUsername()).to.equal('destination');
     }
     const parsed = await Parser.parse(
-      ['-o', 'destination', '--definition-file', 'a', '--definition-file', 'b'],
+      ['-o', 'destination', '--source-dir', 'a', '--source-dir', 'b'],
       { flags: DeployContent.flags },
     );
-    expect(parsed.flags['definition-file']).to.deep.equal(['a', 'b']);
+    expect(parsed.flags['source-dir']).to.deep.equal(['a', 'b']);
     const apply = await Parser.parse(
-      ['-o', 'destination', '-W', 'Marketing', '-L', '-f', 'a', '-a', '-r', './reports'],
+      ['-o', 'destination', '-W', 'Marketing', '-L', '-d', 'a', '-a', '-r', './reports'],
       { flags: DeployContent.flags },
     );
     expect(apply.flags.apply).to.equal(true);
     expect(apply.flags['report-dir']).to.equal('./reports');
-    expect(apply.flags['definition-file']).to.deep.equal(['a']);
+    expect(apply.flags['source-dir']).to.deep.equal(['a']);
+  });
+
+  it('rejects removed definition-file and mixed source/metadata parser routes', async () => {
+    for (const args of [
+      ['--definition-file', 'a.json'],
+      ['-f', 'a.json'],
+      ['-d', './cms', '-m', 'email'],
+      ['-m', 'email', '-t', 'email'],
+    ]) {
+      let rejected = false;
+      try {
+        await Parser.parse(['-o', 'destination', ...args], { flags: DeployContent.flags });
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).to.equal(true);
+    }
+  });
+
+  it('binds metadata selection and subsequent preflight to the resolved API name and invocation cwd', async () => {
+    const s = command({ 'source-dir': undefined, metadata: ['email:Welcome', 'emailTemplate'] });
+    s.resolveDestinationWorkspace.resolves({
+      id: 'resolved-destination',
+      workspace: { apiName: 'Actual_API_Name', defaultLanguage: 'en_US' },
+    });
+    const result = await s.instance.run();
+    expect(result.status).to.equal('success');
+    expect(s.resolveDestinationWorkspace.calledBefore(s.selectSources)).to.equal(true);
+    const expected = {
+      'source-dir': undefined,
+      'content-type': undefined,
+      metadata: ['email:Welcome', 'emailTemplate'],
+      workspaceApiName: 'Actual_API_Name',
+      cwd: process.cwd(),
+    };
+    expect(s.selectSources.firstCall.args).to.deep.equal([expected]);
+    expect(s.preflightBatch.firstCall.args[1].sources).to.deep.equal(expected);
+    expect(s.executeBatch.notCalled).to.equal(true);
+  });
+
+  it('blocks metadata without a resolved workspace API name before planning or report allocation', async () => {
+    const s = command({ 'source-dir': undefined, metadata: ['email:Welcome'] });
+    Object.assign(s.instance, { selectSources: selectDeploySources });
+    const result = await s.instance.run();
+    expect(result.status).to.equal('blocked');
+    expect(result.result!.blockedReasons.join(',')).to.include(
+      'resolved destination workspace API name',
+    );
+    expect(s.preflightBatch.notCalled && s.executeBatch.notCalled).to.equal(true);
   });
 
   it('has no private Image qualification flag', async () => {
@@ -202,8 +251,8 @@ describe('cms deploy content command', () => {
       path.join(root, 'Hero.cms-image.media.svg'),
       `<svg><!--${' '.repeat(10 * 1024 * 1024)}--></svg>`,
     );
-    const s = command({ 'definition-file': [file] });
-    const selected = await selectDeploySources({ 'definition-file': [file] });
+    const s = command({ 'source-dir': [file] });
+    const selected = await selectDeploySources({ 'source-dir': [file] });
     s.preparation.items[0].source = selected.items[0];
     Object.assign(s.instance, { selectSources: selectDeploySources });
     const result = await s.instance.run();
@@ -241,13 +290,12 @@ describe('cms deploy content command', () => {
       const bytes = Buffer.from('Unicode café\r\nexact bytes\n');
       await writeFile(path.join(root, 'Notes.cms-document.media.txt'), bytes);
       const s = command({
-        'definition-file': undefined,
         'source-dir': [root],
-        metadata: ['sfdc_cms__document:Notes'],
+        'content-type': ['sfdc_cms__document'],
       });
       const selected = await selectDeploySources({
         'source-dir': [root],
-        metadata: ['sfdc_cms__document:Notes'],
+        'content-type': ['sfdc_cms__document'],
       });
       const item = preparedItem(proposed);
       item.source = selected.items[0];
@@ -265,8 +313,8 @@ describe('cms deploy content command', () => {
       expect(envelope.result!.summary.plannedUpdate).to.equal(proposed === 'update' ? 1 : 0);
       expect(envelope.result!.selection!.items[0]).to.deep.equal(selected.items[0]);
       expect(envelope.result!.selection!.items[0].mediaSha256).to.match(/^[a-f0-9]{64}$/u);
-      expect(s.preflightBatch.firstCall.args[1].sources.metadata).to.deep.equal([
-        'sfdc_cms__document:Notes',
+      expect(s.preflightBatch.firstCall.args[1].sources['content-type']).to.deep.equal([
+        'sfdc_cms__document',
       ]);
       expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
       if (proposed === 'blocked') {
@@ -307,8 +355,8 @@ describe('cms deploy content command', () => {
       );
       await writeFile(companion, bytes);
       for (const type of ['audio', 'sfdc_cms__audio']) {
-        for (const selector of [{ 'content-type': [type] }, { metadata: [`${type}:Chime`] }]) {
-          const s = command({ 'definition-file': undefined, 'source-dir': [root], ...selector });
+        for (const selector of [{ 'content-type': [type] }]) {
+          const s = command({ 'source-dir': [root], ...selector });
           const selected = await selectDeploySources({ 'source-dir': [root], ...selector });
           const item = preparedItem(proposed);
           item.source = selected.items[0];
@@ -339,7 +387,7 @@ describe('cms deploy content command', () => {
   it('forwards ordinary Image selection without private admission options', async () => {
     const s = command();
     s.selectSources.resolves({
-      mode: 'definition-file',
+      mode: 'source-dir',
       items: [
         { ...source, targetIdentity: { ...source.targetIdentity, contentType: 'sfdc_cms__image' } },
       ],
@@ -380,7 +428,7 @@ describe('cms deploy content command', () => {
         destinationOrgId: '00D000000000001EAA',
         workspaceId: 'resolved-destination',
         language: 'en_US',
-        selection: { mode: 'definition-file', items: [source] },
+        selection: { mode: 'source-dir', items: [source] },
         state,
         blockedReasons: state === 'completed' ? [] : ['Bearer batch-secret'],
         items: [
@@ -432,8 +480,7 @@ describe('cms deploy content command', () => {
         s.connection,
         {
           sources: {
-            'definition-file': ['local.json'],
-            'source-dir': undefined,
+            'source-dir': ['local.json'],
             'content-type': undefined,
             metadata: undefined,
           },
@@ -516,8 +563,8 @@ describe('cms deploy content command', () => {
   it('rejects all local source and scope errors for apply before auth or report allocation', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-local-'));
     for (const extra of [
-      { 'definition-file': undefined },
-      { 'source-dir': ['./a'] },
+      { 'source-dir': undefined },
+      { 'source-dir': ['./a'], metadata: ['email'] },
       { 'content-type': ['sfdc_cms__email'] },
       { 'workspace-name': 'ambiguous' },
       { 'default-language': true },
@@ -535,11 +582,10 @@ describe('cms deploy content command', () => {
 
   it('rejects invalid source combinations through the real selector before authentication', async () => {
     for (const extra of [
-      { 'definition-file': undefined },
-      { 'source-dir': ['./a'] },
+      { 'source-dir': undefined },
+      { 'source-dir': ['./a'], metadata: ['email'] },
       { 'content-type': ['sfdc_cms__email'] },
       {
-        'definition-file': undefined,
         'source-dir': ['./a'],
         'content-type': ['sfdc_cms__email'],
         metadata: ['sfdc_cms__email'],
@@ -595,8 +641,7 @@ describe('cms deploy content command', () => {
         s.connection,
         {
           sources: {
-            'definition-file': ['local.json'],
-            'source-dir': undefined,
+            'source-dir': ['local.json'],
             'content-type': undefined,
             metadata: undefined,
           },

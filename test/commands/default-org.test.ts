@@ -23,7 +23,7 @@ const commands = [
   {
     name: 'deploy content',
     command: DeployContent,
-    args: ['-W', 'Marketing', '-L', '-f', 'local.json'],
+    args: ['-W', 'Marketing', '-L', '-d', 'local.json'],
   },
   {
     name: 'delete content',

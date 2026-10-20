@@ -66,9 +66,9 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
   public static readonly description =
     'Uses your configured default org unless -o overrides it. Default dry-run reads explicit local sources and destination without writes. Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged for binary root/default-language sources with safe MIME and paths. Existing Audio must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile for CREATE, bytes-only UPDATE, zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks; this is not general-format or released-package qualification. --apply requires a new --report-dir, preflights the whole selection and journals sequential CREATE/UPDATE/unchanged execution, stopping on first failure. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language opaque nonempty runtime-representable bytes with safe native MIME and ASCII filename; no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Salesforce determines format and size acceptance; explicit caller download budgets still bind. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
   public static readonly examples = [
-    '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --definition-file ./Welcome.cms-email.json --json',
-    '<%= config.bin %> cms deploy content -W Marketing -L -d ./cms -m email:Welcome --json',
-    '<%= config.bin %> cms deploy content -W Marketing -L -d ./cms -m audio:Intro --json',
+    '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --source-dir ./Welcome.cms-email.json --json',
+    '<%= config.bin %> cms deploy content -W Marketing -L -m email:Welcome --json',
+    '<%= config.bin %> cms deploy content -W Marketing -L -m audio:Intro --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -90,17 +90,12 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       default: false,
       summary: 'Explicitly select the destination workspace default language.',
     }),
-    'definition-file': Flags.string({
-      char: 'f',
-      multiple: true,
-      multipleNonGreedy: true,
-      summary: 'Local item definition JSON; repeat. Exclusive of source-dir and filters.',
-    }),
     'source-dir': Flags.string({
       char: 'd',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Explicit local source directory; repeat. Never defaults to the current directory.',
+      summary: 'Explicit definition file or source directory; repeat. Exclusive of metadata.',
+      exclusive: ['metadata'],
     }),
     'content-type': Flags.string({
       char: 't',
@@ -114,7 +109,8 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Local directory filter short or qualified Type[:ApiName]; repeat. Exact members must exist.',
+        'Select cwd cms/<destinationWorkspaceApiName>/<type> by Type[:ApiName]; repeat. Exact members must exist.',
+      exclusive: ['source-dir', 'content-type'],
     }),
     apply: Flags.boolean({
       char: 'a',
@@ -135,6 +131,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
   public async run(): Promise<CmsEnvelope<DeployContentResult>> {
     const { flags } = await this.parse(DeployContent);
     const targetOrg = flags['target-org'].getUsername()!;
+    const invocationCwd = process.cwd();
     let orgId = 'unresolved-org';
     const result: DeployContentResult = {
       mode: flags.apply ? 'apply' : 'dry-run',
@@ -253,9 +250,21 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         if (!parent.isDirectory())
           throw new TypeError('Report parent must be an existing directory.');
       }
-      result.selection = await this.selectSources(flags);
-      result.summary.selected = result.selection.items.length;
-      result.unattempted = [...result.selection.items];
+      if ((flags.metadata !== undefined) === (flags['source-dir'] !== undefined))
+        throw new TypeError('Choose exactly one metadata or source-dir selection.');
+      if (flags.metadata !== undefined && flags['content-type'] !== undefined)
+        throw new TypeError('Content-type filters require source-dir selection.');
+      if (flags.metadata === undefined) {
+        result.selection = await this.selectSources(flags);
+      } else {
+        // Canonical paths require the resolved destination API name, never the display name.
+        if (flags.metadata.length === 0 || flags.metadata.some((value) => !value.trim()))
+          throw new TypeError('Deploy metadata selectors must be nonempty.');
+      }
+      if (result.selection) {
+        result.summary.selected = result.selection.items.length;
+        result.unattempted = [...result.selection.items];
+      }
     } catch (error) {
       result.blockedReasons.push(
         redactSecrets(error instanceof Error ? error.message : 'Invalid local selection.'),
@@ -272,6 +281,19 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         workspaceName: flags['workspace-name'],
       });
       result.scope.workspaceId = workspace.id;
+      const sources = {
+        'source-dir': flags['source-dir'],
+        'content-type': flags['content-type'],
+        metadata: flags.metadata,
+        ...(flags.metadata === undefined
+          ? {}
+          : { workspaceApiName: workspace.workspace.apiName as string, cwd: invocationCwd }),
+      };
+      if (result.selection === null) {
+        result.selection = await this.selectSources(sources);
+        result.summary.selected = result.selection.items.length;
+        result.unattempted = [...result.selection.items];
+      }
       const language = flags.language ?? workspace.workspace.defaultLanguage;
       sourcePathSegment(language as string);
       result.scope.language = language as string;
@@ -282,12 +304,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         await mkdir(directory);
         result.reportFile = path.join(directory, 'content-deploy-run.json');
         const applied = await this.executeBatch(context.connection, {
-          sources: {
-            'definition-file': flags['definition-file'],
-            'source-dir': flags['source-dir'],
-            'content-type': flags['content-type'],
-            metadata: flags.metadata,
-          },
+          sources,
           expectedSelection: result.selection,
           workspaceId: workspace.id,
           language: language as string,
@@ -315,12 +332,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         );
       }
       const preflight = await this.preflightBatch(context.connection, {
-        sources: {
-          'definition-file': flags['definition-file'],
-          'source-dir': flags['source-dir'],
-          'content-type': flags['content-type'],
-          metadata: flags.metadata,
-        },
+        sources,
         expectedSelection: result.selection,
         workspaceId: workspace.id,
         language: language as string,

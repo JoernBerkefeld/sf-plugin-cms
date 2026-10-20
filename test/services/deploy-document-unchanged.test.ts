@@ -153,7 +153,7 @@ async function fixture() {
     run: () => admitDeployDocumentUnchanged(connection, input),
     plan: async () =>
       prepareDeployDestination(connection, {
-        selection: await selectDeploySources({ 'definition-file': [definitionFile] }),
+        selection: await selectDeploySources({ 'source-dir': [definitionFile] }),
         workspaceId,
         language: 'en_US',
       }),

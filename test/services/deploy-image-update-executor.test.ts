@@ -428,7 +428,7 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
         {
           ...f.input,
           reportFile: path.join(path.dirname(f.input.reportFile), 'batch.json'),
-          sources: { 'definition-file': definitions },
+          sources: { 'source-dir': definitions },
         },
         {},
         {
@@ -509,7 +509,7 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
           {
             ...f.input,
             reportFile: path.join(directory, 'batch.json'),
-            sources: { 'definition-file': [createFile, f.input.definitionFile] },
+            sources: { 'source-dir': [createFile, f.input.definitionFile] },
           },
           {},
           {

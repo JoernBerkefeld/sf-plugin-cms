@@ -78,7 +78,7 @@ export type DeployDestinationPreparation = {
 
 async function bindMediaItem(item: DeployLocalItem): Promise<void> {
   if (item.definition.contentType !== 'sfdc_cms__audio') {
-    const fresh = await selectDeploySources({ 'definition-file': [item.definitionPath] });
+    const fresh = await selectDeploySources({ 'source-dir': [item.definitionPath] });
     if (!item.mediaSha256 || !isDeepStrictEqual(fresh.items, [item]))
       throw new TypeError('Image planning local snapshot changed');
     return;

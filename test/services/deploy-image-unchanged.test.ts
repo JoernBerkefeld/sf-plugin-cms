@@ -218,14 +218,14 @@ describe('private portable binary Image unchanged admission', () => {
   });
   it('admits ordinary Image selection and binds its binary snapshot', async () => {
     const f = await fixture();
-    const flags = { 'definition-file': [f.input.definitionFile] };
+    const flags = { 'source-dir': [f.input.definitionFile] };
     const selected = await selectDeploySources(flags);
     expect(selected.items[0].mediaSha256).to.equal(
       createHash('sha256').update(f.bytes).digest('hex'),
     );
     const directorySelection = await selectDeploySources({
       'source-dir': [f.directory],
-      metadata: ['sfdc_cms__image:Hero'],
+      'content-type': ['sfdc_cms__image'],
     });
     expect(directorySelection.items).to.deep.equal(selected.items);
     expect(f.methods).to.deep.equal([]);
@@ -237,10 +237,7 @@ describe('private portable binary Image unchanged admission', () => {
       address: 'https://example.invalid/image.png',
     } as unknown as typeof f.definition.media;
     await f.save();
-    await failure(
-      selectDeploySources({ 'definition-file': [f.input.definitionFile] }),
-      /binary Image/u,
-    );
+    await failure(selectDeploySources({ 'source-dir': [f.input.definitionFile] }), /binary Image/u);
     expect(f.methods).to.deep.equal([]);
   });
   for (const [mimeType, extension, bytes] of [
@@ -256,8 +253,8 @@ describe('private portable binary Image unchanged admission', () => {
       await writeFile(path.join(f.directory, companionName), bytes);
       await f.save();
       for (const flags of [
-        { 'definition-file': [f.input.definitionFile] },
-        { 'source-dir': [f.directory], metadata: ['sfdc_cms__image:Hero'] },
+        { 'source-dir': [f.input.definitionFile] },
+        { 'source-dir': [f.directory], 'content-type': ['sfdc_cms__image'] },
       ]) {
         const selected = await selectDeploySources(flags);
         expect(selected.items[0].mediaSha256).to.equal(
@@ -270,7 +267,7 @@ describe('private portable binary Image unchanged admission', () => {
   it('blocks changed selected binary snapshots without accepting a new plan', async () => {
     const f = await fixture();
     f.rows.length = 0;
-    const sources = { 'definition-file': [f.input.definitionFile] };
+    const sources = { 'source-dir': [f.input.definitionFile] };
     const expectedSelection = await selectDeploySources(sources);
     await writeFile(f.companion, Buffer.concat([f.bytes, Buffer.from([2])]));
     await failure(
@@ -296,7 +293,7 @@ describe('private portable binary Image unchanged admission', () => {
         f.rows.push({ ...structuredClone(f.row), Id: '9Ps000000000002AAA' });
       const input = {
         ...f.input,
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
       };
       const result = await preflightDeployBatch(f.connection, input);
       const supported = ['create', 'unchanged', 'update'].includes(operation);
@@ -343,7 +340,7 @@ describe('private portable binary Image unchanged admission', () => {
         await writeFile(f.companion, Buffer.concat([f.bytes, Buffer.from([3])]));
       const input = {
         ...f.input,
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
       };
       const result = await preflightDeployBatch(f.connection, input);
       expect(result.eligible, JSON.stringify(result)).to.equal(true);
@@ -379,7 +376,7 @@ describe('private portable binary Image unchanged admission', () => {
       });
       const result = await preflightDeployBatch(f.connection, {
         ...f.input,
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
       });
       expect(result.eligible).to.equal(false);
       expect(result.rootFolderId).to.equal('root');
@@ -394,7 +391,7 @@ describe('private portable binary Image unchanged admission', () => {
       f.connection,
       {
         ...f.input,
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
         destinationOrgId: TEST_IMAGE_SCOPE.orgId,
         reportFile: path.join(f.directory, 'root-drift.json'),
       },
@@ -449,7 +446,7 @@ describe('private portable binary Image unchanged admission', () => {
     await writeFile(path.join(f.directory, 'Alpha.cms-email.html'), '<p>Desired</p>');
     const execution = await executeDeployBatch(f.connection, {
       ...f.input,
-      sources: { 'definition-file': [emailFile, f.input.definitionFile] },
+      sources: { 'source-dir': [emailFile, f.input.definitionFile] },
       destinationOrgId: '00D000000000001AAA',
       reportFile: path.join(f.directory, 'mixed-blocked.json'),
     });
@@ -480,7 +477,7 @@ describe('private portable binary Image unchanged admission', () => {
     });
     const result = await preflightDeployBatch(f.connection, {
       ...f.input,
-      sources: { 'definition-file': [f.input.definitionFile] },
+      sources: { 'source-dir': [f.input.definitionFile] },
     });
     expect(result.eligible).to.equal(false);
     expect(result.items[0].proposed).to.equal('blocked');

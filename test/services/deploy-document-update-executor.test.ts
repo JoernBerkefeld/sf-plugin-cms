@@ -236,7 +236,7 @@ describe('private Document UPDATE guarded intent and one-shot executor', () => {
     it(`preserves >10 MiB opaque PDF through fresh UPDATE preflight and transport (${fault || 'accepted'})`, async () => {
       const f = await fixture(true, fault, true);
       const planned = await preflightDeployBatch(f.connection, {
-        sources: { 'definition-file': [f.input.definitionFile] },
+        sources: { 'source-dir': [f.input.definitionFile] },
         workspaceId: f.input.workspaceId,
         language: 'en_US',
       });

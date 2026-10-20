@@ -624,8 +624,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   it('routes packed Audio selectors through real CREATE planning with default-org or explicit override', async () => {
-    const sourceDirectory = file('audio-deploy-source');
-    await mkdir(sourceDirectory);
+    const sourceDirectory = file('cms/Destination/audio');
+    await mkdir(sourceDirectory, { recursive: true });
     const definition = path.join(sourceDirectory, 'Chime.cms-audio.json');
     const companion = path.join(sourceDirectory, 'Chime.cms-audio.media.bin');
     const bytes = Buffer.from([0, 255, 128, 13, 10]);
@@ -661,8 +661,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           'cms',
           'deploy',
           'content',
-          '-d',
-          sourceDirectory,
+          ...(override ? [] : ['-d', sourceDirectory]),
           ...selector,
           '--workspace-id',
           '0Zu000000000001AAA',

@@ -53,7 +53,7 @@ export async function preflightDeployUpdate(
 ) {
   input = structuredClone(input);
   options = { ...options };
-  const load = async () => selectDeploySources({ 'definition-file': [input.definitionFile] });
+  const load = async () => selectDeploySources({ 'source-dir': [input.definitionFile] });
   const source = await load();
   const prepared = await prepareDeployDestination(
     connection,

@@ -45,7 +45,7 @@ export async function preflightDeployCreate(
   sourcePathSegment(selected.language);
   if (!/^0Zu[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.workspaceId))
     throw new TypeError('CREATE requires exact destination workspace ID');
-  const load = async () => selectDeploySources({ 'definition-file': [selected.definitionFile] });
+  const load = async () => selectDeploySources({ 'source-dir': [selected.definitionFile] });
   const source = await load();
   const item = source.items[0];
   const definition = item.definition;

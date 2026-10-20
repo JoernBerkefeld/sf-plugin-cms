@@ -58,6 +58,19 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents conventional deploy metadata and file-or-directory alternatives without compatibility flags', async () => {
+    const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+    expect(readme).to.include('--metadata -m Type[:ApiName]');
+    expect(readme).to.include('No selectors means an error');
+    expect(readme).to.include('Source-dir accepts definition files or directories');
+    expect(readme).not.to.include('--definition-file ./');
+    expect(DeployContent.flags).not.to.have.property('definition-file');
+    expect(
+      DeployContent.examples.every(
+        (example) => !(example.includes('-d ') && example.includes('-m ')),
+      ),
+    ).to.equal(true);
+  });
   it('omits historical command and internal-engine appendices', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const obsolete of [
@@ -318,8 +331,8 @@ describe('current public documentation', () => {
       'sf content retrieve --workspace-name Marketing -m email\n',
       'sf content retrieve --workspace-name Marketing -m email -m emailTemplate\n',
       'sf content retrieve --workspace-name Marketing -m email:Welcome -m email:Reminder',
-      'sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001',
-      'sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing -m audio:Intro --json',
+      'sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001',
+      'sf content deploy --workspace-name Marketing --default-language -m audio:Intro --json',
       '--apply --acknowledge-no-send --report-dir ./cms-publish-report',
       '--ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report',
       'It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`.',

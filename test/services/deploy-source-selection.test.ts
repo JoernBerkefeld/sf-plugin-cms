@@ -96,13 +96,13 @@ describe('local deploy source selection', () => {
       await writeFile(file, JSON.stringify(candidate));
       await writeFile(path.join(root, 'Sound.cms-audio.media.wav'), Buffer.from('RIFF mock WAV'));
       if (representation === 'url-only') {
-        for (const flags of [{ 'definition-file': [file] }, { 'source-dir': [root] }])
+        for (const flags of [{ 'source-dir': [file] }, { 'source-dir': [root] }])
           await failure(
             selectDeploySources(flags),
             /Audio deploy selection requires a binary source/u,
           );
       } else {
-        const selected = await selectDeploySources({ 'definition-file': [file] });
+        const selected = await selectDeploySources({ 'source-dir': [file] });
         expect(selected.items[0].targetIdentity).to.deep.equal({
           contentType: 'sfdc_cms__audio',
           apiName: 'Sound',
@@ -152,23 +152,29 @@ describe('local deploy source selection', () => {
         );
         await writeFile(path.join(root, companion), 'Exact bytes');
       }
-      const expected = await selectDeploySources({ 'definition-file': [file] });
-      for (const filter of [
-        { 'content-type': Object.freeze([short, canonical, short]) },
-        { metadata: Object.freeze([short, `${short}:Exact`, canonical, `${canonical}:Exact`]) },
-      ]) {
-        const flags = Object.freeze({ 'source-dir': Object.freeze([root]), ...filter });
+      const expected = await selectDeploySources({ 'source-dir': [file] });
+      const canonicalDirectory = path.join(root, 'cms', 'Destination', short);
+      await mkdir(canonicalDirectory, { recursive: true });
+      for (const sourcePath of [file, ...expected.items[0].companionPaths])
+        await writeFile(
+          path.join(canonicalDirectory, path.basename(sourcePath)),
+          await readFile(sourcePath),
+        );
+      const conventional = await selectDeploySources({
+        cwd: root,
+        workspaceApiName: 'Destination',
+        metadata: [short, `${short}:Exact`, canonical, `${canonical}:Exact`],
+      });
+      expect(conventional.items).to.have.length(1);
+      expect(conventional.items[0].definition).to.deep.equal(expected.items[0].definition);
+      for (const filter of [{ 'content-type': Object.freeze([short, canonical, short]) }]) {
+        const flags = Object.freeze({ 'source-dir': Object.freeze([file]), ...filter });
         const before = JSON.stringify(flags);
         const selected = await selectDeploySources(flags);
         expect(selected.items).to.deep.equal(expected.items);
         expect(selected.items[0].targetIdentity.contentType).to.equal(canonical);
         expect(JSON.stringify(flags)).to.equal(before);
       }
-      for (const name of ['Exact:remaining:colons', ' Exact', 'Exact '])
-        await failure(
-          selectDeploySources({ 'source-dir': [root], metadata: [short, `${short}:${name}`] }),
-          /Exact deploy metadata member is missing/u,
-        );
     });
   }
 
@@ -200,7 +206,7 @@ describe('local deploy source selection', () => {
     await writeFile(file, JSON.stringify(candidate));
     await writeFile(companion, bytes);
     const before = await readFile(file);
-    const selected = await selectDeploySources({ 'definition-file': [file, file] });
+    const selected = await selectDeploySources({ 'source-dir': [file, file] });
     expect(selected.items).to.have.length(1);
     expect(selected.items[0].companionPaths).to.deep.equal([companion]);
     expect(selected.items[0].contentBody).to.deep.equal({
@@ -209,12 +215,7 @@ describe('local deploy source selection', () => {
     expect(selected.items[0].mediaSha256).to.equal(
       createHash('sha256').update(bytes).digest('hex'),
     );
-    for (const filter of [
-      {},
-      { 'content-type': ['audio', 'sfdc_cms__audio'] },
-      { metadata: ['audio', 'sfdc_cms__audio:Sound'] },
-      { metadata: ['audio:Sound'] },
-    ]) {
+    for (const filter of [{}, { 'content-type': ['audio', 'sfdc_cms__audio'] }]) {
       const result = await selectDeploySources({
         'source-dir': [root, directory, root],
         ...filter,
@@ -226,7 +227,7 @@ describe('local deploy source selection', () => {
     expect(afterDefinition.equals(before)).to.equal(true);
     expect(afterCompanion.equals(bytes)).to.equal(true);
     await writeFile(companion, Buffer.from([42, 0, 255]));
-    const changed = await selectDeploySources({ 'definition-file': [file] });
+    const changed = await selectDeploySources({ 'source-dir': [file] });
     expect(changed.items[0].mediaSha256).not.to.equal(selected.items[0].mediaSha256);
     for (const patch of [
       { media: { ...candidate.media, mimeType: 'audio/wav\r\nX-Evil: yes' } },
@@ -235,7 +236,7 @@ describe('local deploy source selection', () => {
     ]) {
       await writeFile(file, JSON.stringify({ ...candidate, ...patch }));
       await failure(
-        selectDeploySources({ 'definition-file': [file] }),
+        selectDeploySources({ 'source-dir': [file] }),
         /MIME|same-stem|Unsupported media type/u,
       );
     }
@@ -276,34 +277,24 @@ describe('local deploy source selection', () => {
     await writeFile(file, JSON.stringify(candidate));
     const companion = path.join(directory, candidate.media.companion.path);
     await writeFile(companion, 'Résumé 世界\r\nExact bytes\n');
-    const explicit = await selectDeploySources({ 'definition-file': [file] });
+    const explicit = await selectDeploySources({ 'source-dir': [file] });
     expect(explicit.items[0].targetIdentity.contentType).to.equal('sfdc_cms__document');
     expect(explicit.items[0].companionPaths).to.deep.equal([companion]);
     expect(explicit.items[0].mediaSha256).to.match(/^[a-f0-9]{64}$/u);
     const mixed = await selectDeploySources({ 'source-dir': [root, directory] });
     expect(mixed.items.map((item) => item.definitionPath)).to.deep.equal([email, file].toSorted());
-    for (const filter of [
-      { 'content-type': ['sfdc_cms__document'] },
-      { metadata: ['sfdc_cms__document', 'sfdc_cms__document:Guide'] },
-    ]) {
+    for (const filter of [{ 'content-type': ['sfdc_cms__document'] }]) {
       const selected = await selectDeploySources({ 'source-dir': [root], ...filter });
       expect(selected.items).to.deep.equal(explicit.items);
     }
-    await failure(
-      selectDeploySources({
-        'source-dir': [root],
-        metadata: ['sfdc_cms__document', 'sfdc_cms__document:Missing'],
-      }),
-      /Exact deploy metadata member is missing/u,
-    );
     await writeFile(companion, 'Changed bytes');
-    const changed = await selectDeploySources({ 'definition-file': [file] });
+    const changed = await selectDeploySources({ 'source-dir': [file] });
     expect(changed.items[0].mediaSha256).not.to.equal(explicit.items[0].mediaSha256);
     await writeFile(
       file,
       JSON.stringify({ ...candidate, media: { ...candidate.media, mimeType: 'application/pdf' } }),
     );
-    const opaque = await selectDeploySources({ 'definition-file': [file] });
+    const opaque = await selectDeploySources({ 'source-dir': [file] });
     expect(opaque.items).to.have.length(1);
     expect(opaque.items[0].mediaSha256).to.equal(changed.items[0].mediaSha256);
     for (const media of [
@@ -312,10 +303,7 @@ describe('local deploy source selection', () => {
       { ...candidate.media, companion: { role: 'media', path: '../escape.txt' } },
     ]) {
       await writeFile(file, JSON.stringify({ ...candidate, media }));
-      await failure(
-        selectDeploySources({ 'definition-file': [file] }),
-        /binary source|MIME|same-stem/u,
-      );
+      await failure(selectDeploySources({ 'source-dir': [file] }), /binary source|MIME|same-stem/u);
     }
     await writeFile(file, JSON.stringify(candidate));
     await unlink(companion);
@@ -368,10 +356,7 @@ describe('local deploy source selection', () => {
       },
     ]) {
       await writeFile(file, JSON.stringify({ ...candidate, ...patch }));
-      await failure(
-        selectDeploySources({ 'definition-file': [file] }),
-        /MIME|same-stem|binary Image/u,
-      );
+      await failure(selectDeploySources({ 'source-dir': [file] }), /MIME|same-stem|binary Image/u);
     }
   });
 
@@ -380,9 +365,9 @@ describe('local deploy source selection', () => {
     const file = await fixture(path.join(root, 'first'));
     const second = await fixture(path.join(root, 'second'), definition(true), true);
     const before = await readFile(file);
-    const flags = Object.freeze({ 'definition-file': Object.freeze([second, file, file]) });
+    const flags = Object.freeze({ 'source-dir': Object.freeze([second, file, file]) });
     const result = await selectDeploySources(flags);
-    expect(result.mode).to.equal('definition-file');
+    expect(result.mode).to.equal('source-dir');
     expect(result.items.map((item) => item.definitionPath)).to.deep.equal(
       [file, second].toSorted(),
     );
@@ -408,7 +393,7 @@ describe('local deploy source selection', () => {
     }
     const after = await readFile(file);
     expect(after.equals(before)).to.equal(true);
-    expect(flags['definition-file']).to.deep.equal([second, file, file]);
+    expect(flags['source-dir']).to.deep.equal([second, file, file]);
   });
 
   it('recurses through arbitrary folders and deterministically deduplicates overlapping roots', async () => {
@@ -433,33 +418,92 @@ describe('local deploy source selection', () => {
 
   it('unions per-type selectors and retains exact obligations underneath type-wide selectors', async () => {
     const root = await temporary();
-    await fixture(path.join(root, 'a'));
-    await fixture(path.join(root, 'b'), definition(true, 'Template'));
+    await fixture(path.join(root, 'cms', 'Destination', 'email'));
+    await fixture(
+      path.join(root, 'cms', 'Destination', 'emailTemplate'),
+      definition(true, 'Template'),
+      true,
+    );
+    // Neither unrelated workspaces nor unrelated type directories enter discovery.
+    await fixture(path.join(root, 'cms', 'Other', 'email'));
+    await mkdir(path.join(root, 'cms', 'Destination', 'image'));
+    await writeFile(
+      path.join(root, 'cms', 'Destination', 'image', 'Bad.cms-image.json'),
+      '{broken',
+    );
+    const scope = { cwd: root, workspaceApiName: 'Destination' };
     const result = await selectDeploySources({
-      'source-dir': [root],
-      metadata: ['sfdc_cms__email', 'sfdc_cms__email:Welcome', 'sfdc_cms__emailTemplate:Template'],
+      ...scope,
+      metadata: ['email', 'sfdc_cms__email:Welcome', 'email', 'sfdc_cms__emailTemplate:Template'],
     });
+    expect(result.mode).to.equal('metadata');
+    expect(
+      result.items.every((item) =>
+        item.definitionPath.startsWith(path.join(root, 'cms', 'Destination')),
+      ),
+    ).to.equal(true);
+    expect(result.items[0].definition.identity.context.workspaceApiName).to.equal('Marketing');
     expect(result.items).to.have.length(2);
     for (const name of ['Missing', 'Welcome:unchanged', ' Welcome', 'Welcome '])
       await failure(
         selectDeploySources({
-          'source-dir': [root],
+          ...scope,
           metadata: ['sfdc_cms__email', `sfdc_cms__email:${name}`],
         }),
         /Exact deploy metadata member is missing/u,
       );
   });
 
+  it('keeps canonical metadata selection bound to safe paths, companions and unique identities', async () => {
+    const cwd = await temporary();
+    const directory = path.join(cwd, 'cms', 'Destination', 'email');
+    const file = await fixture(directory);
+    const scope = { cwd, workspaceApiName: 'Destination', metadata: ['email:Welcome'] };
+    const first = await selectDeploySources(scope);
+    const repeated = await selectDeploySources({
+      ...scope,
+      metadata: ['email', 'email:Welcome', 'email:Welcome'],
+    });
+    expect(repeated).to.deep.equal(first);
+    await fixture(path.join(directory, 'wrong-type'), definition(true, 'Wrong'));
+    await failure(selectDeploySources(scope), /canonical type subtree/u);
+    await unlink(path.join(directory, 'wrong-type', 'Wrong.cms-email-template.json'));
+    const typeFileRoot = await temporary();
+    await mkdir(path.join(typeFileRoot, 'cms', 'Destination'), { recursive: true });
+    await writeFile(path.join(typeFileRoot, 'cms', 'Destination', 'email'), await readFile(file));
+    await failure(
+      selectDeploySources({ ...scope, cwd: typeFileRoot }),
+      /canonical type directory/u,
+    );
+    await failure(selectDeploySources({ ...scope, workspaceApiName: '../escape' }), /Unsafe/u);
+    await failure(selectDeploySources({ ...scope, metadata: ['image:Missing'] }), /ENOENT/u);
+    const duplicate = await fixture(path.join(directory, 'nested'));
+    await failure(selectDeploySources(scope), /collide at destination identity/u);
+    await unlink(duplicate);
+    await unlink(path.join(directory, 'Welcome.cms-email.html'));
+    await failure(selectDeploySources(scope), /missing/u);
+    await writeFile(path.join(directory, 'Welcome.cms-email.html'), '<p>restored</p>');
+    const outside = await temporary();
+    await fixture(outside);
+    await symlink(
+      outside,
+      path.join(directory, 'linked'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await failure(selectDeploySources(scope), /symlinks|reparse/u);
+    expect(await readFile(file, 'utf8')).to.include('Welcome');
+  });
+
   it('rejects invalid source modes and filters before filesystem access', async () => {
     const invalid: DeploySourceSelectionFlags[] = [
       {},
       { 'source-dir': [] },
-      { 'definition-file': [] },
-      { 'source-dir': ['x'], 'definition-file': ['y'] },
+      { metadata: ['email'] },
+      { metadata: [] },
+      { 'source-dir': ['x'], metadata: ['email'] },
       { 'source-dir': [' '] },
-      { 'definition-file': [''] },
-      { 'definition-file': ['x'], metadata: ['sfdc_cms__email'] },
-      { 'definition-file': ['x'], 'content-type': ['sfdc_cms__email'] },
+      { 'source-dir': [''] },
+      { 'source-dir': ['x'], metadata: ['sfdc_cms__email'] },
       { 'source-dir': ['x'], metadata: ['sfdc_cms__email'], 'content-type': ['sfdc_cms__email'] },
       { 'source-dir': ['x'], metadata: [] },
       { 'source-dir': ['x'], 'content-type': [] },
@@ -483,7 +527,7 @@ describe('local deploy source selection', () => {
     const file = await fixture(path.join(root, 'nested'));
     const second = await fixture(path.join(root, 'templates'), definition(true), true);
     const before = await readFile(file);
-    const explicit = await selectDeploySources({ 'definition-file': [file, second] });
+    const explicit = await selectDeploySources({ 'source-dir': [file, second] });
     const flags = Object.freeze({ 'source-dir': Object.freeze([file, root, second, file]) });
     const selected = await selectDeploySources(flags);
     expect(selected.mode).to.equal('source-dir');
@@ -510,8 +554,8 @@ describe('local deploy source selection', () => {
     );
     await failure(selectDeploySources({ 'source-dir': [path.join(root, 'missing')] }), /ENOENT/u);
     await failure(
-      selectDeploySources({ 'definition-file': [path.join(root, 'missing.json')] }),
-      /missing/u,
+      selectDeploySources({ 'source-dir': [path.join(root, 'missing.json')] }),
+      /ENOENT/u,
     );
     const selected = await selectDeploySources({ 'source-dir': [file] });
     expect(selected.items).to.have.length(1);
@@ -551,7 +595,7 @@ describe('local deploy source selection', () => {
       await writeFile(file, '{"contractVersion":"9.0.0"}');
       await failure(selectDeploySources({ 'source-dir': [root] }), /Invalid|Unsupported/u);
       await writeFile(file, '{"contract":1,"contract":2}');
-      await failure(selectDeploySources({ 'definition-file': [file] }), /duplicate/u);
+      await failure(selectDeploySources({ 'source-dir': [file] }), /duplicate/u);
     }
   });
 
@@ -561,7 +605,7 @@ describe('local deploy source selection', () => {
     const candidate = definition(true);
     await writeFile(file, JSON.stringify(candidate));
     await failure(
-      selectDeploySources({ 'source-dir': [root], metadata: ['sfdc_cms__emailTemplate'] }),
+      selectDeploySources({ 'source-dir': [root], 'content-type': ['sfdc_cms__emailTemplate'] }),
       /same-stem/u,
     );
     await writeFile(file, JSON.stringify({ ...candidate, extra: true }));

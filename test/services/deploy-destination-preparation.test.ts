@@ -164,7 +164,7 @@ function fixture(template = false) {
   const input: DeployDestinationInput = {
     workspaceId,
     language: 'en_US',
-    selection: { mode: 'definition-file', items: [source] },
+    selection: { mode: 'source-dir', items: [source] },
   };
   return {
     source,

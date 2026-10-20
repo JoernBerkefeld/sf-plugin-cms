@@ -127,7 +127,7 @@ The next examples assume the printed definition is `./cms/Marketing/email/Welcom
 ### 3. Preview the change
 
 ```sh
-sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json
+sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json
 ```
 
 There is no `--dry-run` flag: leaving out `--apply` means preview. Preview performs authenticated reads but no Salesforce writes and creates no report directory. Check that the proposal is UPDATE for the expected item, or unchanged if the supported content already matches. A CREATE proposal means no matching destination was found; stop if you intended to update an existing Email. Resolve any blockers before continuing. Preview does not guarantee a later apply will succeed.
@@ -135,7 +135,7 @@ There is no `--dry-run` flag: leaving out `--apply` means preview. Preview perfo
 ### 4. Apply deliberately
 
 ```sh
-sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001
+sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001
 ```
 
 The report directory must **not already exist**. Choose a fresh name for each apply, and keep the reports. The command checks the whole selection again before writes. This saves a Draft; it does not publish, activate or send anything. A failure can leave earlier successful changes in place: there is no automatic rollback or retry.
@@ -148,13 +148,13 @@ This PNG walkthrough is an example, not a format restriction; other binary Image
 
 ```sh
 sf content retrieve --workspace-name Marketing -m image:Hero
-sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/image/Hero.cms-image.json
+sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/image/Hero.cms-image.json
 ```
 
 Replace the example path with the printed `Definition:` path. Keep the `sf-cms-media-source@1` definition and its declared `.cms-image.media.png` companion together. An unchanged preview makes zero writes. To update, edit **only the PNG companion bytes**, preserving its filename, MIME, JSON metadata and identity. Preview again and require UPDATE for the intended unpublished primary Draft before applying:
 
 ```sh
-sf content deploy --workspace-name Marketing --default-language --definition-file ./cms/Marketing/image/Hero.cms-image.json --apply --report-dir ./reports/hero-001
+sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/image/Hero.cms-image.json --apply --report-dir ./reports/hero-001
 ```
 
 Use a fresh, nonexisting report directory for each apply. A missing destination proposes Draft CREATE; preview with explicit destination selectors first. This profile requires nonempty binary Image bytes with a safe declared MIME and companion path; API-led format and size acceptance applies as described above. For this Image workflow, URL-only sources, nested folders, multiple variants, published targets and metadata-changing UPDATE remain unsupported. Documents use the separate bounded CREATE/bytes-only UPDATE/exact unchanged profile below. Apply independently verifies exact bytes and stable native identity; unchanged requires matching metadata and bytes. Read-only drift checks are not an authoring-baseline conflict guard.
@@ -266,16 +266,16 @@ Deploy portable v2 Email/Email Template definitions or `sf-cms-media-source@1` b
 
 ```sh
 # Preview one retrieved item in the source org; no writes or report files.
-sf content deploy --target-org source-org --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json --json
+sf content deploy --target-org source-org --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json --json
 # After editing its HTML file, preview the target org.
-sf content deploy --target-org target-org --workspace-name Marketing --default-language --definition-file ./cms/Marketing/email/Welcome.cms-email.json --json
+sf content deploy --target-org target-org --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json --json
 # Apply a local Email/Template subset with an exclusive new report directory.
-sf content deploy --target-org target-org --workspace-name Marketing --default-language --source-dir ./cms/Marketing -m email -m emailTemplate --apply --report-dir ./reports/deploy-001 --json
+sf content deploy --target-org target-org --workspace-name Marketing --default-language -m email -m emailTemplate --apply --report-dir ./reports/deploy-001 --json
 # Preview Audio with the configured default org; support remains unqualified.
-sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing -m audio:Intro --json
+sf content deploy --workspace-name Marketing --default-language -m audio:Intro --json
 ```
 
-- Use the configured default org or override it with `--target-org -o`; require exactly one `--workspace-id -w` / `--workspace-name -W`, and exactly one `--language -l` / `--default-language -L`. Choose repeatable `--definition-file -f` or repeatable `--source-dir -d`, never both. Directory selection recursively finds recognized definitions, not arbitrary JSON or standalone companions; it never defaults to the current directory. Optional repeatable `--content-type -t` or `--metadata -m` filters are mutually exclusive and directory-only. Metadata accepts `Type` or exact `Type:ApiName`; a requested missing member blocks preflight. Overlapping paths deduplicate; distinct definitions targeting one identity block deployment.
+- Use the configured default org or override it with `--target-org -o`; require exactly one `--workspace-id -w` / `--workspace-name -W`, and exactly one `--language -l` / `--default-language -L`. Choose repeatable `--metadata -m Type[:ApiName]` or repeatable `--source-dir -d`, never both. For example, `sf content deploy -W Marketing -L -m email:Welcome` selects one item without an explicit path. Metadata selects only the conventional `cms/<destination workspace API name>/<type>/` subtree under the invocation directory after resolving the destination workspace; a requested missing exact member blocks preflight. No selectors means an error, not all local content. Source-dir accepts definition files or directories, including repeated overlapping paths; directory traversal finds recognized definitions, not arbitrary JSON or standalone companions. Optional repeatable `--content-type -t` filters apply only to source-dir. Both modes retain the existing same-stem companion and no-follow path guards. `--definition-file` is not supported. Overlapping paths deduplicate; distinct definitions targeting one identity block deployment.
 - Dry-run is the default: authenticated destination reads, no org writes, and no report directory. `--apply -a` requires a **new** `--report-dir -r`; report directories are forbidden for dry-run. No version-based mutation opt-in is required.
 - Match exact destination workspace, type, API name, and language using native inventory. No match proposes Draft CREATE, one supported match proposes UPDATE or unchanged, and ambiguous/conflicting matches block. Detached retrieval IDs never choose the destination. Only dependency-free raw-HTML Email/Email Template shapes, API-led binary Images, binary Audio and API-led binary Documents with independently proven root placement and a single native variant are admitted; unresolved references, additional variants, non-root folders and other families remain unsupported. Existing Documents may propose bytes-only UPDATE or exact unchanged; metadata, filename, MIME, language and type changes remain unsupported. There is no dependency auto-inclusion or general reference-mapping workflow in this command.
 - Email/Template CREATE uses admitted portable metadata and reconstructed supported HTML/text fields and creates an unpublished Draft. Existing-target Email/Template UPDATE supports **`rawHtml` only**, preserves the destination identity and other fields, and requires an eligible Draft. Differing JSON metadata or `.txt` bytes on an existing target block the **entire selection** before any write; they are not silently discarded or called unchanged. Equal supported content reports unchanged with zero writes. The local v2 loader's ability to reassemble text or JSON is not proof those fields can be updated.

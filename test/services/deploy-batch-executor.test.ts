@@ -423,7 +423,7 @@ async function audioBoundaryFixture(operation: 'create' | 'unchanged' | 'update'
   await writeFile(audioFile, JSON.stringify(definition));
   await writeFile(companion, desired);
   // Explicit files select Audio instead of the fixture's original Document definition.
-  Object.assign(f.input, { sources: { 'definition-file': [f.files[0], audioFile] } });
+  Object.assign(f.input, { sources: { 'source-dir': [f.files[0], audioFile] } });
   const detail = f.details.get('MCKEY4');
   if (detail) {
     Object.assign(detail, {
@@ -474,7 +474,7 @@ describe('Audio execution-boundary observations and private item routing', () =>
       await writeFile(file, JSON.stringify(definition));
       await writeFile(path.join(f.directory, 'Zzz.cms-email.html'), '<p>Desired</p>');
       f.definitions.push(definition);
-      Object.assign(f.input, { sources: { 'definition-file': [f.audioFile, file] } });
+      Object.assign(f.input, { sources: { 'source-dir': [f.audioFile, file] } });
       const result = await f.run();
       expect(result.report.blockedReasons).to.deep.equal([]);
       expect(result.report.state).to.equal('completed');
@@ -675,7 +675,7 @@ async function mixedAudioFixture(operation: 'create' | 'unchanged' | 'update') {
   await writeFile(path.join(f.directory, definition.companions.rawHtml), '<p>Desired</p>');
   f.definitions.push(definition);
   Object.assign(f.input, {
-    sources: { 'definition-file': [...f.files.slice(0, 3), f.audioFile, file] },
+    sources: { 'source-dir': [...f.files.slice(0, 3), f.audioFile, file] },
   });
   if (operation !== 'create')
     f.details.get('MCKEY2')!.contentBody = {

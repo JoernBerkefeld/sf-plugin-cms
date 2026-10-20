@@ -8,7 +8,7 @@ import sinon from 'sinon';
 import { createHash } from 'node:crypto';
 import type { EditableMediaDefinition } from '../../src/services/editable-media-source.js';
 import type { Connection } from '@salesforce/core';
-import { mkdtemp, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -156,7 +156,7 @@ async function audioFixture(operation: 'create' | 'unchanged' | 'update' = 'crea
   const audioFile = path.join(directory, 'Beta.cms-audio.json');
   await rename(f.files[1], audioFile);
   f.files[1] = audioFile;
-  const input: DeployBatchPreflightInput = { ...f.input, sources: { 'definition-file': f.files } };
+  const input: DeployBatchPreflightInput = { ...f.input, sources: { 'source-dir': f.files } };
   const companion = path.join(directory, 'Beta.cms-audio.media.bin');
   const current = Buffer.from([0, 255, 128, 13, 10, 1]);
   const desired = operation === 'update' ? Buffer.from([255, 0, 129]) : current;
@@ -244,7 +244,7 @@ describe('internal whole-selection deploy preflight', () => {
       await failure(
         preflightDeployBatch(f.connection, {
           ...f.input,
-          sources: { 'definition-file': [f.files[0]] },
+          sources: { 'source-dir': [f.files[0]] },
         }),
         contentType === 'sfdc_cms__audio'
           ? /Media definition must use exact same-stem filename/u
@@ -593,6 +593,34 @@ describe('internal whole-selection deploy preflight', () => {
     expect(result.eligible).to.equal(true);
     expect(result.items[1].proposed).to.equal('unchanged');
   });
+  it('reacquires canonical metadata selection and blocks companion drift before destination reads', async () => {
+    const f = await fixture();
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'cms-metadata-preflight-'));
+    const directory = path.join(cwd, 'cms', 'Destination', 'email');
+    await mkdir(directory, { recursive: true });
+    for (const definition of f.definitions) {
+      await writeFile(
+        path.join(directory, `${definition.identity.apiName}.cms-email.json`),
+        JSON.stringify(definition),
+      );
+      await writeFile(path.join(directory, definition.companions.rawHtml), '<p>Desired</p>');
+    }
+    const input = {
+      ...f.input,
+      sources: { cwd, workspaceApiName: 'Destination', metadata: ['email', 'email:Alpha'] },
+    };
+    const first = await preflightDeployBatch(f.connection, input);
+    expect(first.eligible).to.equal(true);
+    expect(first.selection.mode).to.equal('metadata');
+    await writeFile(path.join(directory, f.definitions[0].companions.rawHtml), 'Changed');
+    const count = f.calls.length;
+    await failure(
+      preflightDeployBatch(f.connection, { ...input, expectedSelection: first.selection }),
+      /since planning/u,
+    );
+    expect(f.calls).to.have.length(count);
+  });
+
   it('rejects changed expected selection before any additional destination read', async () => {
     const f = await fixture();
     const first = await f.run();
