@@ -331,13 +331,25 @@ describe('current public documentation', () => {
       'sf content retrieve --workspace-name Marketing -m email\n',
       'sf content retrieve --workspace-name Marketing -m email -m emailTemplate\n',
       'sf content retrieve --workspace-name Marketing -m email:Welcome -m email:Reminder',
-      'sf content deploy --workspace-name Marketing --default-language --source-dir ./cms/Marketing/email/Welcome.cms-email.json --apply --report-dir ./reports/welcome-001',
-      'sf content deploy --workspace-name Marketing --default-language -m audio:Intro --json',
+      'sf content deploy --workspace-name Marketing --default-language -m email:Welcome --report',
+      'sf content deploy --workspace-name Marketing --default-language -m audio:Intro --preview --json',
       '--apply --acknowledge-no-send --report-dir ./cms-publish-report',
       '--ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report',
       'It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`.',
     ])
       expect(readme, example).to.include(example);
+    expect(readme).to.include('Deploy executes by default');
+    expect(readme).to.include('./logs/cms/reports/<timestamp>-<unique-id>/');
+    expect(readme).to.include('no crash-surviving structured operation journal');
+    expect(DeployContent.flags).not.to.have.property('apply');
+    expect(DeployContent.flags).to.have.property('preview');
+    expect(DeployContent.flags).to.have.property('report');
+    expect(
+      readme
+        .split('\n')
+        .filter((line) => line.startsWith('sf content deploy '))
+        .every((line) => !line.includes('--apply')),
+    ).to.equal(true);
     expect(readme).not.to.include('./project/cms/');
     expect(readme).not.to.include('sf content retrieve -W');
     expect(readme).not.to.include('sf cms info --contract-version 1 --json');

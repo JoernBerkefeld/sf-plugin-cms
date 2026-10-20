@@ -21,7 +21,8 @@ const flags = {
   language: 'en_US',
   'default-language': false,
   'source-dir': ['local.json'],
-  apply: false,
+  preview: true,
+  report: false,
 };
 const source = {
   definitionPath: 'local.json',
@@ -130,7 +131,7 @@ describe('cms deploy content command', () => {
     process.exitCode = undefined;
   });
 
-  it('parses repeatable non-greedy local selectors and defaults to dry-run', async () => {
+  it('parses repeatable non-greedy local selectors and defaults to execution without reports', async () => {
     for (const args of [
       ['--source-dir', 'a.json', '--source-dir', 'b.json'],
       ['-d', './a', '-d', './b', '-t', 'sfdc_cms__email', '-t', 'sfdc_cms__emailTemplate'],
@@ -145,7 +146,8 @@ describe('cms deploy content command', () => {
       const parsed = await Parser.parse(['-o', 'destination', '-W', 'Marketing', '-L', ...args], {
         flags: DeployContent.flags,
       });
-      expect(parsed.flags.apply).to.equal(false);
+      expect(parsed.flags.preview).to.equal(false);
+      expect(parsed.flags.report).to.equal(false);
       expect(parsed.flags['default-language']).to.equal(true);
       expect(parsed.flags['target-org'].getUsername()).to.equal('destination');
     }
@@ -155,16 +157,19 @@ describe('cms deploy content command', () => {
     );
     expect(parsed.flags['source-dir']).to.deep.equal(['a', 'b']);
     const apply = await Parser.parse(
-      ['-o', 'destination', '-W', 'Marketing', '-L', '-d', 'a', '-a', '-r', './reports'],
+      ['-o', 'destination', '-W', 'Marketing', '-L', '-d', 'a', '--report', '-r', './reports'],
       { flags: DeployContent.flags },
     );
-    expect(apply.flags.apply).to.equal(true);
+    expect(apply.flags.report).to.equal(true);
+    expect(apply.flags.preview).to.equal(false);
     expect(apply.flags['report-dir']).to.equal('./reports');
     expect(apply.flags['source-dir']).to.deep.equal(['a']);
   });
 
   it('rejects removed definition-file and mixed source/metadata parser routes', async () => {
     for (const args of [
+      ['--apply'],
+      ['-a'],
       ['--definition-file', 'a.json'],
       ['-f', 'a.json'],
       ['-d', './cms', '-m', 'email'],
@@ -398,17 +403,16 @@ describe('cms deploy content command', () => {
     expect(s.preflightBatch.firstCall.args[1]).not.to.have.property('imageQualificationOrgId');
     expect(s.preflightBatch.firstCall.args[1]).not.to.have.property('includeUnqualifiedImages');
   });
-  it('blocks apply with missing or unsafe reports before local or org access', async () => {
+  it('blocks unsafe explicit reports before local or org access', async () => {
     for (const extra of [
-      { apply: true },
-      { apply: true, 'report-dir': '' },
-      { apply: true, 'report-dir': '../reports' },
+      { preview: false, 'report-dir': '' },
+      { preview: false, 'report-dir': '../reports' },
     ]) {
       const s = command(extra);
       const envelope = await s.instance.run();
       expect(envelope.status).to.equal('blocked');
       expect(envelope.result!.mutationEnabled).to.equal(false);
-      expect(envelope.result!.mode).to.equal('apply');
+      expect(envelope.result!.mode).to.equal('execute');
       expect(
         s.selectSources.notCalled && s.getOrgContext.notCalled && s.preflightBatch.notCalled,
       ).to.equal(true);
@@ -420,7 +424,7 @@ describe('cms deploy content command', () => {
     it(`retains the full ${state} apply report and truthful exit status`, async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-command-'));
       const directory = path.join(root, 'reports');
-      const s = command({ apply: true, 'report-dir': directory });
+      const s = command({ preview: false, 'report-dir': directory });
       const reportFile = path.join(directory, 'content-deploy-run.json');
       const report: DeployBatchReport = {
         qualification: 'unqualified',
@@ -502,6 +506,86 @@ describe('cms deploy content command', () => {
     });
   }
 
+  for (const state of ['completed', 'blocked', 'partial'] as const) {
+    it(`executes by default without report persistence and retains ${state} outcomes`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-no-report-'));
+      sinon.stub(process, 'cwd').returns(root);
+      const s = command({ preview: false });
+      const report = {
+        state,
+        selection: { mode: 'source-dir', items: [source] },
+        blockedReasons: state === 'completed' ? [] : ['Inspect returned outcomes'],
+        items: [
+          {
+            source,
+            proposed: 'create',
+            outcome: { completed: 'created', partial: 'uncertain', blocked: 'unattempted' }[state],
+          },
+        ],
+        summary: {
+          selected: 1,
+          created: state === 'completed' ? 1 : 0,
+          updated: 0,
+          unchanged: 0,
+          completed: state === 'completed' ? 1 : 0,
+          failed: 0,
+          uncertain: state === 'partial' ? 1 : 0,
+          unattempted: state === 'blocked' ? 1 : 0,
+        },
+      };
+      s.executeBatch.resolves({ report });
+      Object.assign(s.instance, { jsonEnabled: () => false });
+      const envelope = await s.instance.run();
+      expect(envelope.status).to.equal(state === 'completed' ? 'success' : state);
+      expect(envelope.result!.mode).to.equal('execute');
+      expect(envelope.result!.reportFile).to.equal(null);
+      expect(envelope.result!.report).to.deep.equal(report);
+      expect(s.executeBatch.firstCall.args[1]).not.to.have.property('reportFile');
+      expect(s.preflightBatch.notCalled).to.equal(true);
+      expect(s.log.args.flat().join('\n')).not.to.include('undefined');
+      expect(await readdir(root)).to.deep.equal([]);
+    });
+  }
+
+  it('preview performs preflight without report directories or dispatch', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-preview-'));
+    sinon.stub(process, 'cwd').returns(root);
+    const s = command();
+    const envelope = await s.instance.run();
+    expect(envelope.status).to.equal('success');
+    expect(envelope.result!.reportFile).to.equal(null);
+    expect(envelope.result!.report).to.equal(null);
+    expect(s.preflightBatch.calledOnce && s.executeBatch.notCalled).to.equal(true);
+    expect(await readdir(root)).to.deep.equal([]);
+  });
+
+  for (const custom of [false, true]) {
+    it(`opts into ${custom ? 'custom override' : 'default'} report allocation before dispatch`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-report-option-'));
+      sinon.stub(process, 'cwd').returns(root);
+      const directory = path.join(root, 'exact');
+      const s = command({
+        preview: false,
+        report: true,
+        ...(custom ? { 'report-dir': directory } : {}),
+      });
+      s.executeBatch.callsFake(async (_connection: unknown, input: { reportFile: string }) => {
+        const allocated = path.dirname(input.reportFile);
+        expect(custom ? allocated : path.dirname(allocated)).to.equal(
+          custom ? directory : path.join(root, 'logs', 'cms', 'reports'),
+        );
+        expect(await readdir(allocated)).to.deep.equal([]);
+        // A pending persistence failure must never be described as completed dispatch.
+        throw new Error('Pending report persistence failed');
+      });
+      const envelope = await s.instance.run();
+      expect(envelope.status).to.equal('blocked');
+      expect(envelope.result!.summary.completed).to.equal(0);
+      expect(s.executeBatch.calledOnce).to.equal(true);
+      expect(await readdir(root)).to.deep.equal([custom ? 'exact' : 'logs']);
+    });
+  }
+
   it('blocks existing, file and symlink report paths before authentication without writes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-report-path-'));
     const directory = path.join(root, 'existing');
@@ -511,7 +595,7 @@ describe('cms deploy content command', () => {
     await writeFile(file, 'preserve');
     await symlink(directory, link, 'junction');
     for (const reportDirectory of [directory, file, path.join(link, 'new')]) {
-      const s = command({ apply: true, 'report-dir': reportDirectory });
+      const s = command({ preview: false, 'report-dir': reportDirectory });
       const envelope = await s.instance.run();
       expect(envelope.status).to.equal('blocked');
       expect(s.getOrgContext.notCalled && s.executeBatch.notCalled).to.equal(true);
@@ -523,7 +607,7 @@ describe('cms deploy content command', () => {
   it('rechecks exclusive report allocation after authentication and preserves the winner', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-report-race-'));
     const directory = path.join(root, 'reports');
-    const s = command({ apply: true, 'report-dir': directory });
+    const s = command({ preview: false, 'report-dir': directory });
     s.resolveDestinationWorkspace.callsFake(async () => {
       await mkdir(directory);
       await writeFile(path.join(directory, 'winner'), 'preserve');
@@ -539,7 +623,7 @@ describe('cms deploy content command', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-prejournal-'));
     const directory = path.join(root, 'reports');
     const s = command({
-      apply: true,
+      preview: false,
       'report-dir': directory,
       'workspace-id': undefined,
       'workspace-name': 'Marketing',
@@ -571,7 +655,7 @@ describe('cms deploy content command', () => {
       { language: '' },
       { 'target-org': { getUsername: () => ' ' } },
     ]) {
-      const s = command({ apply: true, 'report-dir': path.join(root, 'reports'), ...extra });
+      const s = command({ preview: false, 'report-dir': path.join(root, 'reports'), ...extra });
       Object.assign(s.instance, { selectSources: selectDeploySources });
       const envelope = await s.instance.run();
       expect(envelope.status).to.equal('blocked');
@@ -608,7 +692,9 @@ describe('cms deploy content command', () => {
       { 'default-language': true },
       { language: '' },
       { 'workspace-id': ' ' },
+      { report: true },
       { 'report-dir': './reports' },
+      { report: true, 'report-dir': './reports' },
     ]) {
       const s = command(extra);
       const envelope = await s.instance.run();
@@ -626,7 +712,7 @@ describe('cms deploy content command', () => {
       expect(envelope.status).to.equal('success');
       expect(process.exitCode).to.equal(0);
       expect(envelope.metadata.operation).to.equal('content.deploy');
-      expect(result.mode).to.equal('dry-run');
+      expect(result.mode).to.equal('preview');
       expect(result.summary.completed).to.equal(0);
       expect(result.items[0]).to.deep.equal({
         ...s.preparation.items[0],
@@ -733,6 +819,8 @@ describe('cms deploy content command', () => {
     Object.assign(s.instance, { jsonEnabled: () => false });
     const result = await s.instance.run();
     expect(result.metadata.apiVersion).to.equal('67.0');
-    expect(s.log.firstCall.args[0]).to.include('No writes; all proposals unqualified');
+    expect(s.log.firstCall.args[0]).to.include(
+      'No mutations, content writes or reports; diagnostic logs remain',
+    );
   });
 });

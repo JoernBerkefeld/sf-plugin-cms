@@ -1,12 +1,14 @@
 import { Flags } from '@salesforce/sf-plugins-core';
-import { lstat, mkdir } from 'node:fs/promises';
+import {
+  allocateMutationReportDirectory,
+  validateMutationReportDirectory,
+} from '../../../services/mutation-report-directory.js';
 import path from 'node:path';
 import {
   executeDeployBatch,
   type DeployBatchReport,
 } from '../../../services/deploy-batch-executor.js';
 import { preflightDeployBatch } from '../../../services/deploy-batch-preflight.js';
-import { assertEditableDirectoryPath } from '../../../services/editable-raw-html-export.js';
 import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 import { type CmsEnvelope, type CmsStatus } from '../../../contracts/shared.js';
@@ -23,7 +25,7 @@ import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/res
 import { redactSecrets } from '../../../transport/redact-secrets.js';
 
 export type DeployContentResult = {
-  mode: 'dry-run' | 'apply';
+  mode: 'preview' | 'execute';
   mutationEnabled: boolean;
   qualification: 'unqualified';
   reportFile: string | null;
@@ -62,9 +64,9 @@ export type DeployContentResult = {
 export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentResult>> {
   public static readonly aliases = ['content:deploy'];
   public static readonly summary =
-    'Plan or apply portable Email, Email Template, Image, Document and Audio deployment.';
+    'Deploy portable Email, Email Template, Image, Document and Audio content.';
   public static readonly description =
-    'Uses your configured default org unless -o overrides it. Default dry-run reads explicit local sources and destination without writes. Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged for binary root/default-language sources with safe MIME and paths. Existing Audio must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile for CREATE, bytes-only UPDATE, zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks; this is not general-format or released-package qualification. --apply requires a new --report-dir, preflights the whole selection and journals sequential CREATE/UPDATE/unchanged execution, stopping on first failure. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language opaque nonempty runtime-representable bytes with safe native MIME and ASCII filename; no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Salesforce determines format and size acceptance; explicit caller download budgets still bind. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
+    'Uses your configured default org unless -o overrides it. Executes by default. --preview reads explicit local sources and destination with no org mutations, content writes or report allocation; existing diagnostic invocation logs remain enabled. Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged for binary root/default-language sources with safe MIME and paths. Existing Audio must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile for CREATE, bytes-only UPDATE, zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks; this is not general-format or released-package qualification. Whole-selection preflight precedes sequential CREATE/UPDATE/unchanged execution, stopping on first failure or uncertainty. Reporting is opt-in: --report allocates ./logs/cms/reports/<timestamp>-<unique-id>/ under invocation cwd; --report-dir implies reporting at that exact fresh directory. Without either flag no reports or hidden journals are written, and no crash-surviving structured journal is available. Preview rejects both reporting options. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language opaque nonempty runtime-representable bytes with safe native MIME and ASCII filename; no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Salesforce determines format and size acceptance; explicit caller download budgets still bind. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
   public static readonly examples = [
     '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --source-dir ./Welcome.cms-email.json --json',
     '<%= config.bin %> cms deploy content -W Marketing -L -m email:Welcome --json',
@@ -112,14 +114,18 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         'Select cwd cms/<destinationWorkspaceApiName>/<type> by Type[:ApiName]; repeat. Exact members must exist.',
       exclusive: ['source-dir', 'content-type'],
     }),
-    apply: Flags.boolean({
-      char: 'a',
+    preview: Flags.boolean({
       default: false,
-      summary: 'Execute unqualified deployment with whole-selection preflight and journals.',
+      summary:
+        'Read-only preflight; no mutations, content writes or reports (diagnostic logs remain).',
+    }),
+    report: Flags.boolean({
+      default: false,
+      summary: 'Persist reports in a unique cwd logs/cms/reports run directory; not with preview.',
     }),
     'report-dir': Flags.string({
       char: 'r',
-      summary: 'New exclusive report directory; required for apply and forbidden for dry-run.',
+      summary: 'Exact fresh report directory; implies report and overrides its default location.',
     }),
   };
 
@@ -134,7 +140,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
     const invocationCwd = process.cwd();
     let orgId = 'unresolved-org';
     const result: DeployContentResult = {
-      mode: flags.apply ? 'apply' : 'dry-run',
+      mode: flags.preview ? 'preview' : 'execute',
       mutationEnabled: false,
       qualification: 'unqualified',
       reportFile: null,
@@ -189,9 +195,9 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
             {
               code: 'DEPLOY_UNQUALIFIED',
               message:
-                result.mode === 'dry-run'
-                  ? 'Dry-run proposals are unqualified observations only. No mutations or readback were performed.'
-                  : 'Deployment capability remains unqualified; narrow same-org PNG acceptance does not establish cross-org Image qualification. Inspect batch and per-item journals for actual outcomes.',
+                result.mode === 'preview'
+                  ? 'Preview proposals are unqualified observations only. No mutations or mutation readback were performed; diagnostic invocation logs remain enabled.'
+                  : 'Deployment capability remains unqualified; narrow same-org PNG acceptance does not establish cross-org Image qualification. Inspect returned batch and per-item outcomes; durable reports exist only when requested.',
               retryable: false,
             },
           ],
@@ -200,7 +206,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
                 {
                   code,
                   message: result.report
-                    ? 'Deployment did not complete. Inspect outcomes, uncertain counts and batch/per-item journals before any new run.'
+                    ? 'Deployment did not complete. Inspect returned outcomes and uncertain counts before any new run; inspect durable reports only when reporting was enabled.'
                     : 'Deployment is blocked before batch execution; no org mutations occurred. Inspect blockedReasons.',
                   retryable: false,
                 },
@@ -211,16 +217,19 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       };
       if (!this.jsonEnabled()) {
         this.log(
-          result.mode === 'dry-run'
-            ? `Deploy dry-run: ${status}; planned create ${result.summary.plannedCreate}, update ${result.summary.plannedUpdate}, unchanged ${result.summary.plannedUnchanged}; blocked ${result.summary.blocked}, unattempted ${result.summary.unattempted}. No writes; all proposals unqualified.`
-            : `Deploy apply: ${status}; created ${result.summary.created}, updated ${result.summary.updated}, unchanged ${result.summary.unchanged}, failed ${result.summary.failed}, uncertain ${result.summary.uncertain}, unattempted ${result.summary.unattempted}. Capability unqualified.`,
+          result.mode === 'preview'
+            ? `Deploy preview: ${status}; planned create ${result.summary.plannedCreate}, update ${result.summary.plannedUpdate}, unchanged ${result.summary.plannedUnchanged}; blocked ${result.summary.blocked}, unattempted ${result.summary.unattempted}. No mutations, content writes or reports; diagnostic logs remain. All proposals unqualified.`
+            : `Deploy execution: ${status}; created ${result.summary.created}, updated ${result.summary.updated}, unchanged ${result.summary.unchanged}, failed ${result.summary.failed}, uncertain ${result.summary.uncertain}, unattempted ${result.summary.unattempted}. Capability unqualified.`,
         );
         if (result.reportFile) this.log(`Run report: ${result.reportFile}`);
         for (const reason of result.blockedReasons) this.log(reason);
         for (const item of result.items) {
           this.log(`${item.source.definitionPath}: ${item.proposed} (unqualified)`);
           if ('blockedReasons' in item) for (const reason of item.blockedReasons) this.log(reason);
-          if ('reportFile' in item) this.log(`${item.outcome}: ${item.reportFile}`);
+          if ('outcome' in item)
+            this.log(
+              `${item.outcome}${'reportFile' in item && item.reportFile ? `: ${item.reportFile}` : ''}`,
+            );
         }
       }
       return this.finishEnvelope(envelope, assertDeployContentResult);
@@ -234,22 +243,16 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         !targetOrg.trim() ||
         flags['workspace-id']?.trim() === '' ||
         flags['workspace-name']?.trim() === '' ||
-        (!flags.apply && flags['report-dir'] !== undefined)
+        (flags.preview && (flags.report || flags['report-dir'] !== undefined))
       )
         throw new TypeError(
-          'Explicit nonempty destination selectors are required; report-dir is apply-only.',
+          'Explicit nonempty destination selectors are required; preview forbids report and report-dir.',
         );
       if ((flags.language !== undefined) === flags['default-language'])
         throw new TypeError('Choose exactly one explicit language or default-language.');
       if (flags.language !== undefined) sourcePathSegment(flags.language);
-      if (flags.apply) {
-        if (flags['report-dir'] === undefined)
-          throw new TypeError('--report-dir is required when --apply is set.');
-        await assertEditableDirectoryPath(flags['report-dir']);
-        const parent = await lstat(path.dirname(path.resolve(flags['report-dir'])));
-        if (!parent.isDirectory())
-          throw new TypeError('Report parent must be an existing directory.');
-      }
+      if (flags['report-dir'] !== undefined)
+        await validateMutationReportDirectory(flags['report-dir']);
       if ((flags.metadata !== undefined) === (flags['source-dir'] !== undefined))
         throw new TypeError('Choose exactly one metadata or source-dir selection.');
       if (flags.metadata !== undefined && flags['content-type'] !== undefined)
@@ -297,19 +300,20 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       const language = flags.language ?? workspace.workspace.defaultLanguage;
       sourcePathSegment(language as string);
       result.scope.language = language as string;
-      if (flags.apply) {
-        // Allocate once, without recursive creation or reuse; the executor owns exclusive journals.
-        await assertEditableDirectoryPath(flags['report-dir']!);
-        const directory = path.resolve(flags['report-dir']!);
-        await mkdir(directory);
-        result.reportFile = path.join(directory, 'content-deploy-run.json');
+      if (!flags.preview) {
+        const directory = await allocateMutationReportDirectory(
+          flags.report,
+          flags['report-dir'],
+          invocationCwd,
+        );
+        result.reportFile = directory ? path.join(directory, 'content-deploy-run.json') : null;
         const applied = await this.executeBatch(context.connection, {
           sources,
           expectedSelection: result.selection,
           workspaceId: workspace.id,
           language: language as string,
           destinationOrgId: context.orgId,
-          reportFile: result.reportFile,
+          ...(result.reportFile ? { reportFile: result.reportFile } : {}),
         });
         const report = structuredClone(applied.report);
         report.blockedReasons = report.blockedReasons.map((reason) => redactSecrets(reason));

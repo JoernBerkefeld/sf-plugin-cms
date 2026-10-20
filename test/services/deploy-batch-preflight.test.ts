@@ -263,7 +263,7 @@ describe('internal whole-selection deploy preflight', () => {
     'native-url',
     'update-proof',
   ] as const)
-    it(`default command dry-run blocks ${scenario} using real read-only operation preflight`, async () => {
+    it(`command preview blocks ${scenario} using real read-only operation preflight`, async () => {
       const f = await fixture();
       if (scenario === 'nondefault-language') {
         f.input.language = 'de';
@@ -322,7 +322,8 @@ describe('internal whole-selection deploy preflight', () => {
             language: f.input.language,
             'default-language': false,
             'source-dir': f.input.sources['source-dir'],
-            apply: false,
+            preview: true,
+            report: false,
           },
         }),
         getOrgContext: async () => ({ connection: f.connection, orgId: '00D000000000001AAA' }),

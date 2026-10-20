@@ -608,6 +608,10 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     );
     expect(helpText).not.to.include('pending current immutable-artifact');
     expect(helpText).not.to.include('Document UPDATE is unsupported');
+    expect(helpText).to.include('--preview');
+    expect(helpText).to.include('--report');
+    expect(helpText).to.include('Executes by default');
+    expect(helpText).not.to.include('--apply');
     expect(result.internalRegistry.scope).to.equal('internal-engine-only');
     expect(result.internalRegistry.version).to.equal('1.0.0');
     for (const declaration of result.internalRegistry.declarations) {
@@ -661,6 +665,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           'cms',
           'deploy',
           'content',
+          '--preview',
           ...(override ? [] : ['-d', sourceDirectory]),
           ...selector,
           '--workspace-id',
@@ -689,7 +694,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         summary: { plannedCreate: number; completed: number };
         items: Array<{ proposed: string; outcome: string }>;
       };
-      expect(result.mode).to.equal('dry-run');
+      expect(result.mode).to.equal('preview');
       expect(result.mutationEnabled).to.equal(false);
       expect(result.qualification).to.equal('unqualified');
       expect(result.scope.targetOrg).to.equal(
