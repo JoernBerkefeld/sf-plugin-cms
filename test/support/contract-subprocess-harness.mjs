@@ -12,8 +12,18 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
   const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
   const installedRequire = createRequire(path.join(pluginRoot, 'package.json'));
-  const { Org } = installedRequire('@salesforce/core');
-  Org.create = async (options) => ({ getUsername: () => options?.aliasOrUsername ?? 'unused' });
+  const { Org, StateAggregator } = installedRequire('@salesforce/core');
+  Org.create = async (options) => ({
+    getUsername: () =>
+      contractCase.startsWith('logging-notice')
+        ? 'user@example.com'
+        : (options?.aliasOrUsername ?? 'unused'),
+  });
+  if (contractCase.startsWith('logging-notice')) {
+    StateAggregator.getInstance = async () => ({
+      aliases: { getUsername: (alias) => (alias === 'chosen' ? 'user@example.com' : undefined) },
+    });
+  }
   const { CmsCommand } = await import(pathToFileURL(path.join(pluginRoot, 'lib/command-base.js')));
   CmsCommand.prototype.getOrgContext = async () => {
     throw new Error('Unexpected logging fixture org access');

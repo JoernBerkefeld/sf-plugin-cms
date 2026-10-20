@@ -1,7 +1,8 @@
 import { format, inspect } from 'node:util';
 import { ux } from '@oclif/core';
 import type { TableOptions } from '@oclif/table';
-import { Org, SfError } from '@salesforce/core';
+import type { Input, ParserOutput } from '@oclif/core/interfaces';
+import { Org, SfError, StateAggregator } from '@salesforce/core';
 import { Flags, SfCommand, Ux } from '@salesforce/sf-plugins-core';
 import {
   createInvocationLogger,
@@ -64,12 +65,53 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
   private catchEntered = false;
   private finalizationEntered = false;
   private orgContextEntered = false;
+  private orgNoticeEntered = false;
+
+  protected async parse<
+    F extends Record<string, unknown>,
+    B extends Record<string, unknown>,
+    A extends Record<string, unknown>,
+  >(options?: Input<F, B, A>, argv?: string[]): Promise<ParserOutput<F, B, A>> {
+    const result = await super.parse(options, argv);
+    const org = result.flags['target-org'] as Org | undefined;
+    if (!this.orgNoticeEntered && org && !this.jsonEnabled()) {
+      this.orgNoticeEntered = true;
+      const username = org.getUsername();
+      if (username) {
+        let selection: unknown;
+        try {
+          // Raw tokens reflect host preparse expansion, including --flags-dir.
+          const token = result.raw.findLast(
+            (entry) => entry.type === 'flag' && entry.flag === 'target-org',
+          );
+          selection = token?.input;
+          if (!token && result.metadata.flags['target-org']?.setFromDefault)
+            selection = this.configAggregator.getInfo('target-org').value;
+          if (typeof selection === 'string' && selection !== username) {
+            const state = await StateAggregator.getInstance();
+            if (state.aliases.getUsername(selection) !== username) selection = undefined;
+          }
+        } catch {
+          // Display enrichment must never interfere with the selected org or command.
+          this.invocationLogger?.log('debug', 'org notice alias lookup unavailable');
+          selection = undefined;
+        }
+        const display =
+          typeof selection === 'string' && selection !== username
+            ? `${selection} (${username})`
+            : username;
+        this.logToStderr(`Using org ${safeOrgNotice(display)}`);
+      }
+    }
+    return result;
+  }
 
   public async _run<R>(): Promise<R> {
     const startedAt = Date.now();
     this.catchEntered = false;
     this.finalizationEntered = false;
     this.orgContextEntered = false;
+    this.orgNoticeEntered = false;
     this.invocationLogger = createInvocationLogger({
       cwd: process.cwd(),
       argv: this.invocationArgv(),
@@ -299,6 +341,10 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
   protected showRecord(record: CmsRecord): void {
     if (!this.jsonEnabled()) this.styledJSON(record);
   }
+}
+
+function safeOrgNotice(value: string): string {
+  return redactSecrets(value).replaceAll(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ');
 }
 
 function isCmsEnvelope(value: unknown): value is CmsEnvelope<unknown> {

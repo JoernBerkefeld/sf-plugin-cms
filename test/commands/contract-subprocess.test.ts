@@ -366,6 +366,39 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
+  it('shows the verified packed org notice for explicit and implicit selections', async () => {
+    const flagsDirectory = file('notice-flags');
+    await mkdir(flagsDirectory);
+    await writeFile(path.join(flagsDirectory, 'target-org'), 'chosen');
+    for (const [selection, environment] of [
+      [['-o', 'chosen'], {}],
+      [['--target-org=chosen'], {}],
+      [[], { SF_TARGET_ORG: 'chosen' }],
+      [['--flags-dir', flagsDirectory], {}],
+    ] as Array<[string[], NodeJS.ProcessEnv]>) {
+      const argv = ['content', 'retrieve', ...selection];
+      const result = await runSf(argv, 'logging-notice', environment);
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(1);
+      expect(result.stderr.match(/^Using org chosen \(user@example.com\)$/gmu)).to.have.length(1);
+      const records = await invocationRecords(result, argv);
+      expect(
+        records.some(
+          ({ message, details }) =>
+            message === 'terminal' && details?.text === 'Using org chosen (user@example.com)\n',
+        ),
+      ).to.equal(true);
+    }
+    for (const argv of [
+      ['content', 'info'],
+      ['content', 'retrieve', '-o', 'chosen', '--json'],
+      ['content', 'retrieve', '-o', 'chosen', '--invalid'],
+      ['content', 'retrieve', '--help'],
+    ]) {
+      const result = await runSf(argv, 'logging-notice');
+      expect(result.stdout + result.stderr).not.to.include('Using org ');
+    }
+  });
+
   it('records packed all-command local guards and plain list results with valid API opt-in', async () => {
     await writeFile(file('logging-ownership.json'), '{}');
     const common = ['--target-org', 'unused', '--api-version', '67.0'];
@@ -480,7 +513,16 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
       expect(result.stdout).to.include('CMS workspaces');
       expect(result.stdout).to.match(/enhanced/iu);
+      expect(result.stderr.match(/^Using org unused$/gmu)).to.have.length(1);
       const records = await invocationRecords(result, argv);
+      const noticeIndex = records.findIndex(
+        ({ message, details }) =>
+          message === 'terminal' && String(details?.text).startsWith('Using org '),
+      );
+      expect(noticeIndex).to.be.greaterThan(-1);
+      expect(noticeIndex).to.be.lessThan(
+        records.findIndex(({ message }) => message === 'terminal table'),
+      );
       const table = records.find(({ message }) => message === 'terminal table');
       expect(table?.details).to.deep.equal({
         channel: 'stdout',

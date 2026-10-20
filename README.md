@@ -58,6 +58,8 @@ Current operation limits:
 
 ## Installation and getting started
 
+Org-backed commands print a neutral `Using org my-org (user@example.com)` notice to stderr after successful parsing, before command work, for both explicit `--target-org` / `-o` selections and implicit configured selections. The alias appears only when the selected spelling can be verified against the resolved username; otherwise the notice shows only the username. JSON mode, offline `info`, help and failed parsing do not print this notice.
+
 ### Prerequisites
 
 - Node.js 22.19 or later, below Node.js 25 (`>=22.19 <25`).

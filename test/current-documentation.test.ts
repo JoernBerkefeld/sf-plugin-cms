@@ -58,6 +58,16 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents neutral resolved org notices and suppression boundaries', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const claim of [
+      'Using org my-org (user@example.com)',
+      'both explicit',
+      'implicit configured selections',
+      'JSON mode, offline `info`, help and failed parsing',
+    ])
+      expect(readme).to.include(claim);
+  });
   it('documents matching workspace and channel pagination semantics', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const resource of ['workspace', 'channel']) {
