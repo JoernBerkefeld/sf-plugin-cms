@@ -58,6 +58,26 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents matching workspace and channel pagination semantics', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const resource of ['workspace', 'channel']) {
+      const section = readme.split(`### \`sf content list ${resource}\``)[1].split('\n### ')[0];
+      for (const claim of [
+        'all pages',
+        'one-based page number',
+        '`--page-size` alone requests only the first page',
+        'both flags select page N',
+        'Enumeration safety failures are errors',
+      ])
+        expect(section).to.include(claim);
+      const messages = await readFile(
+        new URL(`../messages/cms.list.${resource}.md`, import.meta.url),
+        'utf8',
+      );
+      expect(messages).to.include('One-based page number (first page is 1).');
+      expect(messages).to.include('Supply --page or --page-size to select one page.');
+    }
+  });
   it('documents workspace presentation independently from unchanged JSON and list requests', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const workspace = readme
@@ -69,7 +89,9 @@ describe('current public documentation', () => {
       'isEnhancedSpace: true',
       'Unknown',
       'Neither column is inferred',
-      'JSON retains the complete normalized API records and page metadata unchanged',
+      'JSON retains the complete normalized API records',
+      'Aggregate output is `{ items, total }`',
+      'Explicit single-page output preserves API metadata unchanged',
       'no workspace-detail requests',
     ])
       expect(workspace).to.include(claim);

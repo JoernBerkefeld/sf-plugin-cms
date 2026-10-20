@@ -19,33 +19,33 @@ This is a plugin for the Salesforce `sf` command-line tool. It is **not a comple
 
 **Available (limited)** means implemented with the restrictions below, not universal or fully qualified support. **Planned** means unavailable now and subject to API discovery and operation-specific qualification; no release version or date is promised. **Not supported** in the Delete column also means no delete rollout is committed in the current roadmap. “Not verified” is deliberately not a guessed API name.
 
-| Type label                                 | Type API name                   | Retrieve support    | Create support          | Update support         | Delete support               |
-| ------------------------------------------ | ------------------------------- | ------------------- | ----------------------- | ---------------------- | ---------------------------- |
-| Audio                                      | `sfdc_cms__audio`               | Available (limited) | Available (unqualified) | Available (bytes only) | Available (API-led)           |
-| Brand                                      | `sfdc_cms__brand`               | Planned             | Planned                 | Planned                | Not supported                |
-| Consent Banner                             | `sfdc_cms__consentBanner`       | Planned             | Planned                 | Planned                | Not supported                |
-| Contact Card (VCF)                         | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Content Block: Email (Email Fragment)      | `sfdc_cms__emailFragment`       | Planned             | Planned                 | Planned                | Not supported                |
-| Content Block: Landing Page (Web Fragment) | `sfdc_cms__webFragment`         | Planned             | Planned                 | Planned                | Not supported                |
-| Custom Font                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Document                                   | `sfdc_cms__document`            | Available (limited) | Available (API-led)  | Available (bytes only) | Available (API-led)           |
+| Type label                                 | Type API name                   | Retrieve support    | Create support          | Update support         | Delete support      |
+| ------------------------------------------ | ------------------------------- | ------------------- | ----------------------- | ---------------------- | ------------------- |
+| Audio                                      | `sfdc_cms__audio`               | Available (limited) | Available (unqualified) | Available (bytes only) | Available (API-led) |
+| Brand                                      | `sfdc_cms__brand`               | Planned             | Planned                 | Planned                | Not supported       |
+| Consent Banner                             | `sfdc_cms__consentBanner`       | Planned             | Planned                 | Planned                | Not supported       |
+| Contact Card (VCF)                         | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Content Block: Email (Email Fragment)      | `sfdc_cms__emailFragment`       | Planned             | Planned                 | Planned                | Not supported       |
+| Content Block: Landing Page (Web Fragment) | `sfdc_cms__webFragment`         | Planned             | Planned                 | Planned                | Not supported       |
+| Custom Font                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Document                                   | `sfdc_cms__document`            | Available (limited) | Available (API-led)     | Available (bytes only) | Available (API-led) |
 | Email                                      | `sfdc_cms__email`               | Available (limited) | Available (limited)     | Available (HTML only)  | Available (API-led) |
 | Email Template                             | `sfdc_cms__emailTemplate`       | Available (limited) | Available (limited)     | Available (HTML only)  | Available (API-led) |
-| Expression                                 | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Form                                       | `sfdc_cms__form`                | Planned             | Planned                 | Planned                | Not supported                |
-| Form Handler                               | `sfdc_cms__formHandler`         | Planned             | Planned                 | Planned                | Not supported                |
-| Image                                      | `sfdc_cms__image`               | Available (limited) | Available (API-led)     | Available (bytes only) | Available (API-led)           |
-| In-App Message                             | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Landing Page                               | `sfdc_cms__landingPage`         | Planned             | Planned                 | Planned                | Not supported                |
-| Landing Page Template                      | `sfdc_cms__landingPageTemplate` | Planned             | Planned                 | Planned                | Not supported                |
-| Preference Page                            | `sfdc_cms__preferencePage`      | Planned             | Planned                 | Planned                | Not supported                |
-| Push Notification Message                  | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| RCS Message                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| SMS and MMS                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Tracked Link                               | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| Video                                      | `sfdc_cms__video`               | Planned             | Planned                 | Planned                | Not supported                |
-| WhatsApp Session Message                   | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
-| WhatsApp Template Message                  | Not verified                    | Planned             | Planned                 | Planned                | Not supported                |
+| Expression                                 | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Form                                       | `sfdc_cms__form`                | Planned             | Planned                 | Planned                | Not supported       |
+| Form Handler                               | `sfdc_cms__formHandler`         | Planned             | Planned                 | Planned                | Not supported       |
+| Image                                      | `sfdc_cms__image`               | Available (limited) | Available (API-led)     | Available (bytes only) | Available (API-led) |
+| In-App Message                             | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Landing Page                               | `sfdc_cms__landingPage`         | Planned             | Planned                 | Planned                | Not supported       |
+| Landing Page Template                      | `sfdc_cms__landingPageTemplate` | Planned             | Planned                 | Planned                | Not supported       |
+| Preference Page                            | `sfdc_cms__preferencePage`      | Planned             | Planned                 | Planned                | Not supported       |
+| Push Notification Message                  | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| RCS Message                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| SMS and MMS                                | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Tracked Link                               | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| Video                                      | `sfdc_cms__video`               | Planned             | Planned                 | Planned                | Not supported       |
+| WhatsApp Session Message                   | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
+| WhatsApp Template Message                  | Not verified                    | Planned             | Planned                 | Planned                | Not supported       |
 
 Salesforce documents a 25 MB Image limit.
 
@@ -130,7 +130,7 @@ Run these commands from a folder where you want to keep your project, using the 
 sf content list workspace
 ```
 
-This lists one page; use `--page 1` for the next page if needed. In the examples below, replace `Marketing` with your workspace name and `Welcome` with the exact **API name** of an eligible Email, not its display title. Quote workspace names containing spaces. Choose a simple raw-HTML Email without dependencies and with only one variant; unsupported shapes are blocked rather than converted approximately.
+This lists all pages; use `--page 1` for only the first page if needed. In the examples below, replace `Marketing` with your workspace name and `Welcome` with the exact **API name** of an eligible Email, not its display title. Quote workspace names containing spaces. Choose a simple raw-HTML Email without dependencies and with only one variant; unsupported shapes are blocked rather than converted approximately.
 
 ### 1. Download the Email
 
@@ -230,10 +230,10 @@ For scripts, add `--json` and inspect both the exit code and item diagnostics: `
 | `sf content list channel`   | [List workspace channels](#sf-content-list-channel)                                           |
 | `sf content retrieve`       | [Retrieve supported Email, Template, Image, Document and Audio sources](#sf-content-retrieve) |
 | `sf content deploy`         | [Deploy supported Email, Template, Image, Document and Audio sources](#sf-content-deploy)     |
-| `sf content upload`  | [Upload local images](#sf-content-upload)                                              |
+| `sf content upload`         | [Upload local images](#sf-content-upload)                                                     |
 | `sf content publish`        | [Publish a Draft Email](#sf-content-publish)                                                  |
 | `sf content unpublish`      | [Unpublish a Published Email](#sf-content-unpublish)                                          |
-| `sf content delete`         | [Delete exact items and languages](#sf-content-delete)                                          |
+| `sf content delete`         | [Delete exact items and languages](#sf-content-delete)                                        |
 
 All eight org-backed commands use your configured Salesforce CLI default org when `--target-org <username-or-alias>` (short form `-o`) is omitted. An explicit `-o` overrides that default; without either, the standard Salesforce CLI org-resolution error applies. Offline `content info` needs no org. Org defaults do not supply or broaden workspace, language, source, mutation or ownership selectors. They prefer the `/services/data/latest` REST routes by default, while keeping a numeric Core/JSforce connection version. Read-only CMS and native-query capability checks run before command operations; only an explicit unsupported-version or missing-route response permits a temporary `67.0` fallback. Authentication, permission and transport failures do not trigger fallback. Pass `--api-version <numeric-version>` to select a numbered API explicitly (without automatic fallback), or `--api-version latest` to request the default policy. Add `--json` for machine-readable Salesforce CLI output. Without `--json`, list commands print compact tables; other commands render their command-specific human-readable output.
 
@@ -337,7 +337,7 @@ sf content info --json
 
 The current info contract lists the nine public commands and Email, Email Template, Image, Document and Audio retrieval capabilities. Audio capability entries are `content.retrieve.audio`, `content.deploy.audio.create`, `content.deploy.audio.update` and `content.deploy.audio.unchanged`, all **unqualified**; bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile, not general-format or released-package qualification. Do not infer native qualification from capability discovery or command availability. Document capability entries are `content.retrieve.document`, `content.deploy.document.create`, `content.deploy.document.update` and `content.deploy.document.unchanged`, all **unqualified**; bounded two-org development-artifact acceptance covers the tested text/plain profile; released-package verification remains separate. Portable deploy covers Email/Email Template create/update/unchanged, binary Image and Audio create/bytes-only-update/unchanged and API-led binary Document create/bytes-only-update/exact unchanged. All deploy operations remain **unqualified** in runtime capability output; Image evidence is same-org only, with cross-org acceptance pending. Loose-image upload is a separate unqualified CREATE workflow, not portable Image deployment. Authoring-baseline and sibling-aware update safeguards are not integrated into deploy.
 
-`contracts.commandResults` describes only public commands with CMS-owned envelopes; list workspace/channel retain their existing bounded page results. The family registry is available as `internalRegistry` with `scope: "internal-engine-only"`, including its fixture identity and provider-package bounds. Those internal retrieval/reference profiles do not extend public retrieve/deploy family support or accept workspace export packages through those commands. There is one current info contract; `--contract-version 2` blocks.
+`contracts.commandResults` describes only public commands with CMS-owned envelopes; list workspace/channel return plain aggregate results by default, or normalized single-page results when pagination flags are supplied. The family registry is available as `internalRegistry` with `scope: "internal-engine-only"`, including its fixture identity and provider-package bounds. Those internal retrieval/reference profiles do not extend public retrieve/deploy family support or accept workspace export packages through those commands. There is one current info contract; `--contract-version 2` blocks.
 
 Info reports `latest` as the default REST preference and `67.0` as the tested fallback baseline. Operation-specific API qualification is not broadened by capability discovery. Installation alone does not prove org permissions or endpoint availability.
 
@@ -345,9 +345,9 @@ Info reports `latest` as the default REST preference and `67.0` as the tested fa
 
 ### `sf content list workspace`
 
-Lists one bounded page of CMS workspaces. Use `--name-fragment` to filter workspace names, and use `--page` with `--page-size` to request a specific page.
+Lists all pages of CMS workspaces by default. Use `--name-fragment` to filter workspace names on every request. Supplying either `--page` or `--page-size` selects exactly one page.
 
-The human table's Type uses the API's `spaceType.apiName`: `marketing`, `content` and `enablement` display as Marketing, Content and Enablement; other nonempty values display unchanged. Enhanced shows Yes only for `isEnhancedSpace: true`, No only for `false`, and Unknown when unavailable or malformed. Missing or malformed Type is also Unknown. Neither column is inferred from workspace names or the other column. JSON retains the complete normalized API records and page metadata unchanged; listing makes no workspace-detail requests.
+The human table's Type uses the API's `spaceType.apiName`: `marketing`, `content` and `enablement` display as Marketing, Content and Enablement; other nonempty values display unchanged. Enhanced shows Yes only for `isEnhancedSpace: true`, No only for `false`, and Unknown when unavailable or malformed. Missing or malformed Type is also Unknown. Neither column is inferred from workspace names or the other column. JSON retains the complete normalized API records. Aggregate output is `{ items, total }`, where total is the number of unique returned records; it omits page metadata. Explicit single-page output preserves API metadata unchanged, including zero-based `page`; listing makes no workspace-detail requests.
 
 ```sh
 sf content list workspace
@@ -358,14 +358,14 @@ sf content list workspace --page 1 --page-size 25 --json
 Key flags:
 
 - `--name-fragment <text>`: return workspaces whose names contain the value.
-- `--page <number>`: zero-based page number; the first page is `0`.
+- `--page <number>`: one-based page number; the first page is `1`. Zero, negative and fractional values are invalid.
 - `--page-size <number>`: maximum number of items requested for that page; must be at least `1`.
 
-The command requests only the selected page; it does not automatically follow subsequent pages.
+Without either flag, the command aggregates all pages in first-seen order, deduplicating IDs. `--page-size` alone requests only the first page; `--page N` requests only page N; both flags select page N with the requested size. Enumeration safety failures are errors, not successful truncated results.
 
 ### `sf content list channel`
 
-Lists one bounded page of channels assigned to a specific workspace.
+Lists all pages of channels assigned to a specific workspace by default, retaining that workspace selector on every request. JSON uses the same aggregate and explicit single-page metadata behavior as workspace listing.
 
 ```sh
 sf content list channel --workspace-id 0Zu...
@@ -375,10 +375,10 @@ sf content list channel --workspace-id 0Zu... --page 1 --page-size 25
 Key flags:
 
 - `--workspace-id <id>`: required CMS workspace content-space ID.
-- `--page <number>`: zero-based page number.
+- `--page <number>`: one-based page number, starting at `1`; must be a positive integer.
 - `--page-size <number>`: maximum number of channels requested; must be at least `1`.
 
-The command requests only the selected page; it does not automatically follow subsequent pages.
+Without either flag, the command aggregates all pages in first-seen order, deduplicating IDs. `--page-size` alone requests only the first page; `--page N` requests only page N; both flags select page N with the requested size. Enumeration safety failures are errors, not successful truncated results.
 
 ## Additional public lifecycle commands
 
@@ -431,7 +431,7 @@ Preview rejects `--report` and `--report-dir` before org access and allocates no
 - `--target-org <username-or-alias>` / `-o <username-or-alias>` selects the authenticated org. When omitted, all eight org-backed CMS commands use the configured Salesforce CLI default org; an explicit value overrides it.
 - `--api-version <numeric-version|latest>` overrides the default `latest` CMS REST preference. An explicit numeric selection never falls back automatically. API selection is settled by read-only capability checks before command operations; failed mutations are never replayed at a fallback version.
 - `--json` returns the command result in Salesforce CLI JSON mode for scripts and automation.
-- `--page` is zero-based, and `--page-size` controls only the requested page size. Run another command with the next page number to continue paging.
+- Workspace/channel lists aggregate all pages unless `--page` or `--page-size` is supplied. Public `--page` is one-based; explicit single-page JSON retains zero-based API metadata.
 
 Use `sf <command> --help` to inspect the installed command's current flags, for example:
 

@@ -4,7 +4,7 @@ List Marketing Cloud CMS workspaces.
 
 # description
 
-Lists one bounded page of CMS workspaces through the authenticated Salesforce connection.
+Lists all CMS workspaces by default. Supply --page or --page-size to select one page.
 
 # examples
 
@@ -26,7 +26,7 @@ Return workspaces whose names contain this value.
 
 # flags.page.summary
 
-Zero-based page number.
+One-based page number (first page is 1).
 
 # flags.page-size.summary
 

@@ -1,4 +1,6 @@
-import { Plugin } from '@oclif/core';
+import { Parser, Plugin } from '@oclif/core';
+import { Org } from '@salesforce/core';
+import sinon from 'sinon';
 import { expect } from 'chai';
 import ListChannel from '../../src/commands/cms/list/channel.js';
 import ListWorkspace from '../../src/commands/cms/list/workspace.js';
@@ -6,6 +8,33 @@ import ListWorkspace from '../../src/commands/cms/list/workspace.js';
 const commands = [ListChannel, ListWorkspace];
 
 describe('CMS read command definitions', () => {
+  afterEach(() => sinon.restore());
+
+  for (const command of commands) {
+    it(`${command.name} keeps pagination optional without defaults`, async () => {
+      sinon.stub(Org, 'create').resolves({ getUsername: () => 'unused' } as Org);
+      const args = command === ListChannel ? ['--workspace-id', 'space'] : [];
+      const parsed = await Parser.parse(['--target-org', 'unused', ...args], {
+        flags: command.flags,
+      });
+      expect(parsed.flags.page).to.equal(undefined);
+      expect(parsed.flags['page-size']).to.equal(undefined);
+    });
+    for (const flag of ['--page', '--page-size']) {
+      for (const value of ['0', '-1', '1.5']) {
+        it(`${command.name} rejects ${flag} ${value} before org access`, async () => {
+          const org = sinon.stub(Org, 'create').rejects(new Error('unexpected org access'));
+          try {
+            await Parser.parse([flag, value], { flags: command.flags });
+            expect.fail('expected parser rejection');
+          } catch (error) {
+            expect((error as Error).message).to.include(flag);
+          }
+          expect(org.called).to.equal(false);
+        });
+      }
+    }
+  }
   it('requires explicit target-org on every retained list command', () => {
     for (const command of commands) {
       expect(command.flags['target-org'].required, command.name).to.equal(true);

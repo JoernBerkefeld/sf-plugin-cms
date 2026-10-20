@@ -25,7 +25,10 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
       return {
         request: async ({ method, url }) => {
           if (method !== 'GET') throw new Error('Unexpected logging fixture mutation');
-          if (url === '/connect/cms/spaces')
+          const parsed = new URL(url, 'https://fixture.invalid');
+          const page = Number(parsed.searchParams.get('page') ?? 0);
+          if (![0, 1].includes(page)) throw new Error(`Unexpected logging fixture page: ${page}`);
+          if (parsed.pathname === '/connect/cms/spaces')
             return {
               spaces: [
                 {
@@ -44,22 +47,35 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
                   isEnhancedSpace: false,
                 },
                 { id: 'unknown', name: 'Enhanced Marketing', type: 'Marketing' },
-              ],
-              currentPage: 0,
+              ].slice(page === 0 ? 0 : 2, page === 0 ? 2 : 3),
+              currentPage: page,
               pageSize: 25,
               total: 3,
+              nextPageUrl: page === 0 ? '/connect/cms/spaces?page=1' : null,
             };
-          if (url === '/connect/cms/spaces/space/channels')
+          if (parsed.pathname === '/connect/cms/spaces/space/channels')
             return {
               spaceChannels: [
                 {
                   channelSummary: { id: 'channel', name: 'Transcript fixture', type: 'Email' },
                   role: 'CONTRIBUTOR',
                 },
-              ],
-              currentPage: 0,
+                ...(page === 1
+                  ? [
+                      {
+                        channelSummary: {
+                          id: 'later-channel',
+                          name: 'Later channel',
+                          type: 'Email',
+                        },
+                      },
+                    ]
+                  : []),
+              ].filter((item) => page === 0 || item.channelSummary.id === 'later-channel'),
+              currentPage: page,
               pageSize: 25,
-              totalSpaceChannels: 1,
+              totalSpaceChannels: 2,
+              nextPageUrl: page === 0 ? '/connect/cms/spaces/space/channels?page=1' : null,
             };
           throw new Error(`Unexpected logging fixture request: ${url}`);
         },

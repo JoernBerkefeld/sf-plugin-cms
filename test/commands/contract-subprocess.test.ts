@@ -438,15 +438,14 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
                 },
                 { id: 'unknown', name: 'Enhanced Marketing', type: 'Marketing' },
               ],
-              page: 0,
-              pageSize: 25,
               total: 3,
             }
           : {
-              items: [{ id: 'channel', name: 'Transcript fixture', type: 'Email' }],
-              page: 0,
-              pageSize: 25,
-              total: 1,
+              items: [
+                { id: 'channel', name: 'Transcript fixture', type: 'Email' },
+                { id: 'later-channel', name: 'Later channel', type: 'Email' },
+              ],
+              total: 2,
             };
       expect(JSON.parse(result.stdout)).to.deep.equal(expected);
       const records = await invocationRecords(result, argv);
@@ -464,6 +463,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('logs packed native table data/errors and preserves JSON success after sink close failure', async () => {
     for (const [index, environment] of [{}, { CI: 'true' }, { OCLIF_TABLE_LIMIT: '1' }].entries()) {
+      let pagination: string[] = [];
+      if (index === 1) pagination = ['--page', '2'];
+      else if (index === 2) pagination = ['--page-size', '25'];
       const argv = [
         index === 0 ? 'cms' : 'content',
         'list',
@@ -472,6 +474,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         'unused',
         '--api-version',
         '67.0',
+        ...pagination,
       ];
       const result = await runSf(argv, 'logging-table', environment);
       expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
@@ -492,7 +495,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           },
           { id: 'legacy', name: 'Marketing', type: 'Content', enhanced: 'No' },
           { id: 'unknown', name: 'Enhanced Marketing', type: 'Unknown', enhanced: 'Unknown' },
-        ],
+        ].slice(index === 1 ? 2 : 0, index === 2 ? 2 : 3),
       });
     }
     const argv = ['cms', 'list', 'workspace', '--target-org', 'unused'];

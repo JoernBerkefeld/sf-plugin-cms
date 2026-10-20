@@ -4,7 +4,7 @@ List channels assigned to a CMS workspace.
 
 # description
 
-Retrieves one page of channels for an explicit workspace.
+Lists all channels for an explicit workspace by default. Supply --page or --page-size to select one page.
 
 # examples
 
@@ -26,7 +26,7 @@ CMS workspace content-space ID.
 
 # flags.page.summary
 
-Zero-based page number.
+One-based page number (first page is 1).
 
 # flags.page-size.summary
 

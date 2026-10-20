@@ -1,5 +1,9 @@
 import { Flags } from '@salesforce/sf-plugins-core';
-import { listWorkspaceChannels, type CmsPage } from '../../../services/read.js';
+import {
+  listAllWorkspaceChannels,
+  listWorkspaceChannels,
+  type CmsPage,
+} from '../../../services/read.js';
 import {
   apiVersionFlag,
   CmsCommand,
@@ -11,7 +15,8 @@ import {
 export default class ListChannel extends CmsCommand<CmsPage> {
   public static readonly aliases = ['content:list:channel'];
   public static readonly summary = 'List channels assigned to a CMS workspace.';
-  public static readonly description = 'Retrieves one page of channels for an explicit workspace.';
+  public static readonly description =
+    'Lists all channels for an explicit workspace by default. Supply --page or --page-size to select one page.';
   public static readonly examples = [
     '<%= config.bin %> cms list channel --target-org my-org --workspace-id 0Zu...',
   ];
@@ -27,10 +32,13 @@ export default class ListChannel extends CmsCommand<CmsPage> {
     const { flags } = await this.parse(ListChannel);
     const targetOrg = flags['target-org'].getUsername()!;
     const connection = await this.getConnection(targetOrg, flags['api-version']);
-    const result = await listWorkspaceChannels(connection, flags['workspace-id'], {
-      page: flags.page,
-      pageSize: flags['page-size'],
-    });
+    const result =
+      flags.page === undefined && flags['page-size'] === undefined
+        ? await listAllWorkspaceChannels(connection, flags['workspace-id'])
+        : await listWorkspaceChannels(connection, flags['workspace-id'], {
+            page: (flags.page ?? 1) - 1,
+            pageSize: flags['page-size'],
+          });
     this.showPage('CMS channels', result);
     return result;
   }

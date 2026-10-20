@@ -41,7 +41,10 @@ export const apiVersionFlag = Flags.string({
   },
 });
 
-export const pageFlag = Flags.integer({ min: 0, summary: 'Zero-based page number.' });
+export const pageFlag = Flags.integer({
+  min: 1,
+  summary: 'One-based page number (first page is 1).',
+});
 export const pageSizeFlag = Flags.integer({ min: 1, summary: 'Maximum items requested per page.' });
 
 export abstract class CmsCommand<T> extends SfCommand<T> {

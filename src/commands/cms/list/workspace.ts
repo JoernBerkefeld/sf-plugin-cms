@@ -1,5 +1,5 @@
 import { Flags } from '@salesforce/sf-plugins-core';
-import { listWorkspaces, type CmsPage } from '../../../services/read.js';
+import { listAllWorkspaces, listWorkspaces, type CmsPage } from '../../../services/read.js';
 import {
   apiVersionFlag,
   CmsCommand,
@@ -12,7 +12,7 @@ export default class ListWorkspace extends CmsCommand<CmsPage> {
   public static readonly aliases = ['content:list:workspace'];
   public static readonly summary = 'List Marketing Cloud CMS workspaces.';
   public static readonly description =
-    'Lists one bounded page of CMS workspaces through the authenticated Salesforce connection.';
+    'Lists all CMS workspaces by default. Supply --page or --page-size to select one page.';
   public static readonly examples = ['<%= config.bin %> cms list workspace --target-org my-org'];
   public static readonly flags = {
     'target-org': targetOrgFlag,
@@ -26,11 +26,15 @@ export default class ListWorkspace extends CmsCommand<CmsPage> {
     const { flags } = await this.parse(ListWorkspace);
     const targetOrg = flags['target-org'].getUsername()!;
     const connection = await this.getConnection(targetOrg, flags['api-version']);
-    const result = await listWorkspaces(connection, {
-      nameFragment: flags['name-fragment'],
-      page: flags.page,
-      pageSize: flags['page-size'],
-    });
+    const query = { nameFragment: flags['name-fragment'] };
+    const result =
+      flags.page === undefined && flags['page-size'] === undefined
+        ? await listAllWorkspaces(connection, query)
+        : await listWorkspaces(connection, {
+            ...query,
+            page: (flags.page ?? 1) - 1,
+            pageSize: flags['page-size'],
+          });
     this.table({
       title: 'CMS workspaces',
       data: result.items.map((item) => {
