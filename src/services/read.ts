@@ -17,7 +17,79 @@ export type CmsPage = {
   total?: number;
 };
 
+export type CmsCollection = {
+  items: CmsRecord[];
+  total: number;
+};
+
 type RequestConnection = Pick<Connection, 'request'>;
+
+const LIST_PAGE_CAP = 1000;
+
+function aggregateItems(data: unknown, operationKey: string): CmsRecord[] {
+  let values: unknown = data;
+  if (isRecord(data)) {
+    const key = ['items', 'spaces', 'contentSpaces', 'channels', 'spaceChannels'].find(
+      (candidate) => Object.hasOwn(data, candidate),
+    );
+    values = key === undefined ? undefined : data[key];
+    if (key === 'spaceChannels' && Array.isArray(values)) {
+      values = values.map((item: unknown) => (isRecord(item) ? item.channelSummary : undefined));
+    }
+  }
+  if (!Array.isArray(values) || !values.every(isRecord))
+    throw new TypeError(`Unexpected ${operationKey} aggregate response shape`);
+  return values as CmsRecord[];
+}
+
+async function collect(
+  connection: RequestConnection,
+  operationKey: 'workspace.channel.list' | 'workspace.list',
+  path: OperationParameterValues,
+  query: OperationParameterValues,
+  options: JsonRequestOptions,
+): Promise<CmsCollection> {
+  const items = new Map<string, CmsRecord>();
+  const foldedIds = new Map<string, string>();
+  for (let page = 0; page < LIST_PAGE_CAP; page += 1) {
+    const response = await requestJson<unknown>(
+      connection,
+      getSelectedOperation(operationKey),
+      { path, query: { ...query, page } },
+      options,
+    );
+    const records = aggregateItems(response.data, operationKey);
+    const hasNext = isRecord(response.data) && Object.hasOwn(response.data, 'nextPageUrl');
+    const next = isRecord(response.data) ? response.data.nextPageUrl : undefined;
+    if (hasNext && next !== null && (typeof next !== 'string' || next.trim().length === 0))
+      throw new TypeError(`Unexpected ${operationKey} nextPageUrl at page ${page}`);
+    if (records.length === 0) {
+      if (hasNext && next !== null)
+        throw new Error(`${operationKey} returned an empty page with nextPageUrl at page ${page}`);
+      return { items: [...items.values()], total: items.size };
+    }
+    let additions = 0;
+    for (const record of records) {
+      const id = record.id;
+      if (typeof id !== 'string' || id.length === 0)
+        throw new TypeError(`${operationKey} page ${page} contains a missing or malformed ID`);
+      const folded = id.normalize('NFKC').toLocaleLowerCase('en-US');
+      const existingId = foldedIds.get(folded);
+      if (existingId !== undefined && existingId !== id)
+        throw new Error(
+          `${operationKey} IDs ${existingId} and ${id} differ only by case or Unicode normalization and are ambiguous`,
+        );
+      foldedIds.set(folded, id);
+      if (!items.has(id)) {
+        items.set(id, record);
+        additions += 1;
+      }
+    }
+    if (additions === 0) throw new Error(`${operationKey} made no progress at page ${page}`);
+    if (hasNext && next === null) return { items: [...items.values()], total: items.size };
+  }
+  throw new Error(`${operationKey} exceeded the ${LIST_PAGE_CAP}-page safety limit`);
+}
 
 function isRecord(value: unknown): value is CmsRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -102,6 +174,23 @@ export function listWorkspaces(
   options: JsonRequestOptions = {},
 ): Promise<CmsPage> {
   return list(connection, 'workspace.list', {}, query, options);
+}
+
+export function listAllWorkspaces(
+  connection: RequestConnection,
+  query: OperationParameterValues = {},
+  options: JsonRequestOptions = {},
+): Promise<CmsCollection> {
+  return collect(connection, 'workspace.list', {}, query, options);
+}
+
+export function listAllWorkspaceChannels(
+  connection: RequestConnection,
+  contentSpaceId: string,
+  query: OperationParameterValues = {},
+  options: JsonRequestOptions = {},
+): Promise<CmsCollection> {
+  return collect(connection, 'workspace.channel.list', { contentSpaceId }, query, options);
 }
 
 export function getWorkspace(
