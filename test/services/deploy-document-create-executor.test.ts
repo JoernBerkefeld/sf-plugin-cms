@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -103,8 +103,12 @@ async function fixture(opaque = false, rejected = false) {
   let posts = 0;
   let collision = false;
   let lost = false;
+  let liveReport: WorkspaceImportRunReport | undefined;
+  let memoryOnly = false;
   const journal = async () =>
-    JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport;
+    memoryOnly
+      ? liveReport!
+      : (JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport);
   const connection = {
     _refreshDelegate: () => {
       throw new Error('Replay forbidden');
@@ -178,6 +182,13 @@ async function fixture(opaque = false, rejected = false) {
   return {
     connection,
     input,
+    capture: (report: WorkspaceImportRunReport) => {
+      liveReport = report;
+    },
+    withoutReport: () => {
+      memoryOnly = true;
+    },
+    live: () => liveReport,
     bytes,
     companion,
     definition,
@@ -213,6 +224,68 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 
 describe('journaled portable Document CREATE executor', () => {
   afterEach(() => sinon.restore());
+  for (const reporting of [false, true])
+    for (const fault of ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected'])
+      it(`retains live CREATE evidence (${reporting ? 'disk' : 'memory'}, ${fault || 'success'})`, async () => {
+        const f = await fixture(false, fault === 'rejected');
+        if (!reporting) f.withoutReport();
+        const before = await readdir(path.dirname(f.input.definitionFile));
+        const writer = sinon.spy(rewriteAtomic);
+        sinon.stub(globalThis, 'fetch').callsFake(async () => {
+          if (fault === 'read') throw new Error('Read unavailable');
+          return new Response(f.bytes, { headers: { 'content-type': 'text/plain' } });
+        });
+        if (fault === 'lost') f.lose();
+        if (fault === 'partial') delete f.response.managedContentVariantId;
+        const controller = new AbortController();
+        const invoke = executeDeployDocumentCreate(
+          f.connection,
+          { ...f.input, reportFile: reporting ? f.input.reportFile : undefined },
+          { signal: controller.signal },
+          { rewrite: writer },
+          async () => {
+            expect(f.live()?.operations[0].state).to.equal('pending');
+            if (fault === 'drift') f.workspace.rootFolderId = 'other';
+            if (fault === 'cancel') controller.abort();
+          },
+          f.capture,
+        );
+        if (fault) await failure(invoke, /./u);
+        else {
+          const result = await invoke;
+          expect(result.report).to.equal(f.live());
+          expect(result.reportFile).to.equal(reporting ? f.input.reportFile : undefined);
+        }
+        const report = f.live()!;
+        const blocked = ['drift', 'cancel'].includes(fault);
+        expect(f.posts()).to.equal(blocked ? 0 : 1);
+        expect(report.state).to.equal(
+          fault ? (blocked ? 'failed' : 'ownership-uncertain') : 'completed',
+        );
+        if (fault === 'partial')
+          expect(report.operations[0].result).to.deep.equal({
+            contentId,
+            contentKey: 'MCGENERATED',
+          });
+        if (fault === 'read') expect(report.operations[0].result?.contentId).to.equal(contentId);
+        if (reporting) expect(await f.journal()).to.deep.equal(report);
+        else {
+          expect(writer.called).to.equal(false);
+          expect(await readdir(path.dirname(f.input.definitionFile))).to.deep.equal(before);
+        }
+        expect(await readFile(f.companion)).to.deep.equal(f.bytes);
+      });
+  it('hands CREATE evidence off before exclusive allocation failure', async () => {
+    const f = await fixture();
+    await writeFile(f.input.reportFile, 'existing');
+    await failure(
+      executeDeployDocumentCreate(f.connection, f.input, {}, undefined, undefined, f.capture),
+      /EEXIST/u,
+    );
+    expect(f.live()?.operations[0].state).to.equal('pending');
+    expect(f.posts()).to.equal(0);
+    expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
+  });
   for (const rejected of [false, true])
     it(`preserves >10 MiB opaque PDF through fresh CREATE preflight and transport (rejected=${rejected})`, async () => {
       const f = await fixture(true, rejected);

@@ -28,18 +28,19 @@ type DocumentConnection = Pick<Connection, 'request' | 'getApiVersion'> &
 export type ExecuteDeployDocumentCreateInput = DeployDocumentCreatePreflightInput & {
   destinationOrgId: string;
   /** New journal in an existing caller-owned directory; never resume or overwrite. */
-  reportFile: string;
+  reportFile?: string;
 };
 
 /**
- * Journal one unqualified Document CREATE; this is not public deploy or Salesforce qualification.
+ * Execute one unqualified Document CREATE with optional durable intent and native readback.
  * Safe native MIME and opaque nonempty bytes retain identity and integrity checks.
  * @param {DocumentConnection} connection - Explicit destination connection.
  * @param {ExecuteDeployDocumentCreateInput} input - Local source, destination and new journal.
  * @param {JsonRequestOptions} options - Cancellation and bounded request options.
  * @param {WorkspaceImportReportPersistence} persistence - Internal persistence failure injection.
  * @param {Function} beforeMutation - Awaited boundary, followed by independent revalidation.
- * @returns {Promise<object>} Durable completion only after independently verified ownership.
+ * @param {Function} onReport - Internal synchronous assignment-only live evidence handoff.
+ * @returns {Promise<object>} Completion only after independently verified ownership.
  */
 export async function executeDeployDocumentCreate(
   connection: DocumentConnection,
@@ -47,12 +48,18 @@ export async function executeDeployDocumentCreate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: WorkspaceImportRunReport }> {
+  onReport?: (report: WorkspaceImportRunReport) => void,
+): Promise<{
+  qualification: 'unqualified';
+  reportFile?: string;
+  report: WorkspaceImportRunReport;
+}> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Document CREATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   // Detached preflight results supplied by callers are never accepted as mutation authority.
   const preflight = await preflightDeployDocumentCreate(connection, selected, requestOptions);
   if (preflight.source.source.representation !== 'binary')
@@ -88,16 +95,21 @@ export async function executeDeployDocumentCreate(
     },
   );
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  // Synchronous assignment-only handoff retains live evidence even when execution throws.
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let mutationStarted = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     if (beforeMutation) await beforeMutation();
     const fresh = await preflightDeployDocumentCreate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(fresh, preflight))
       throw new TypeError('Document CREATE local or destination binding drifted before write');
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('Document CREATE durable intent changed before write');
     if (requestOptions.signal?.aborted)
       throw new TypeError('Document CREATE cancelled before write');
@@ -122,7 +134,8 @@ export async function executeDeployDocumentCreate(
                 : {}),
             };
             report.state = 'ownership-uncertain';
-            await persistOperationResult(reportFile, report, operation, rewrite);
+            if (reportFile !== undefined)
+              await persistOperationResult(reportFile, report, operation, rewrite);
           }
           return raw;
         });
@@ -231,7 +244,7 @@ export async function executeDeployDocumentCreate(
     report.createdParents.push({ ...created, childVariantIds: [] });
     operation.state = 'succeeded';
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {
     // Retain independently verified ownership evidence if final completion persistence fails.
@@ -240,7 +253,7 @@ export async function executeDeployDocumentCreate(
     report.state = mutationStarted ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       /* Preserve exclusive pending intent when persistence is unavailable. */
     }

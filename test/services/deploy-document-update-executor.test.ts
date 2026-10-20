@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import { PassThrough } from 'node:stream';
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sinon from 'sinon';
@@ -216,9 +216,31 @@ async function fixture(execute = false, fault = '', opaque = false) {
     destinationOrgId: '00D000000000001AAA',
     reportFile: path.join(directory, 'run.json'),
   };
+  let liveReport: WorkspaceImportRunReport | undefined;
+  let memoryOnly = false;
   const journal = async () =>
-    JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport;
-  return { connection, input, journal, current, bytes, companion, workspace, row, detail, methods };
+    memoryOnly
+      ? liveReport!
+      : (JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport);
+  return {
+    connection,
+    input,
+    journal,
+    current,
+    bytes,
+    companion,
+    workspace,
+    row,
+    detail,
+    methods,
+    capture: (report: WorkspaceImportRunReport) => {
+      liveReport = report;
+    },
+    withoutReport: () => {
+      memoryOnly = true;
+    },
+    live: () => liveReport,
+  };
 }
 async function rejects(operation: Promise<unknown>, pattern = /./u) {
   try {
@@ -232,6 +254,69 @@ async function rejects(operation: Promise<unknown>, pattern = /./u) {
 
 describe('private Document UPDATE guarded intent and one-shot executor', () => {
   afterEach(() => sinon.restore());
+  for (const reporting of [false, true])
+    for (const fault of ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected', 'prepare'])
+      it(`retains live UPDATE evidence (${reporting ? 'disk' : 'memory'}, ${fault || 'success'})`, async () => {
+        const f = await fixture(true, fault);
+        if (!reporting) f.withoutReport();
+        const before = await readdir(path.dirname(f.input.definitionFile));
+        const writer = sinon.spy(rewriteAtomic);
+        const controller = new AbortController();
+        const execute =
+          fault === 'prepare' ? prepareDeployDocumentUpdateIntent : executeDeployDocumentUpdate;
+        const invoke = execute(
+          f.connection,
+          { ...f.input, reportFile: reporting ? f.input.reportFile : undefined },
+          { signal: controller.signal },
+          { rewrite: writer },
+          async () => {
+            expect(f.live()?.operations[0].state).to.equal('pending');
+            if (fault === 'drift') f.workspace.rootFolderId = 'other';
+            if (fault === 'cancel') controller.abort();
+          },
+          f.capture,
+        );
+        if (fault && fault !== 'prepare') await rejects(invoke);
+        else {
+          const result = await invoke;
+          expect(result.report).to.equal(f.live());
+          expect(result.reportFile).to.equal(reporting ? f.input.reportFile : undefined);
+        }
+        const report = f.live()!;
+        const blocked = ['drift', 'cancel'].includes(fault);
+        expect(f.methods.filter((method) => method === 'PUT')).to.have.length(
+          blocked || fault === 'prepare' ? 0 : 1,
+        );
+        let expectedState = 'completed';
+        if (fault) expectedState = blocked ? 'failed' : 'ownership-uncertain';
+        if (fault === 'prepare') expectedState = 'applying';
+        expect(report.state).to.equal(expectedState);
+        expect(report.createdParents).to.deep.equal([]);
+        if (fault === 'partial')
+          expect(report.operations[0].result).to.deep.equal({
+            contentId: '20Y000000000001AAA',
+            contentKey: 'MCGENERATED',
+          });
+        if (fault === 'read')
+          expect(report.operations[0].result?.variantId).to.equal('9Ps000000000001AAA');
+        if (reporting) expect(await f.journal()).to.deep.equal(report);
+        else {
+          expect(writer.called).to.equal(false);
+          expect(await readdir(path.dirname(f.input.definitionFile))).to.deep.equal(before);
+        }
+        expect(await readFile(f.companion)).to.deep.equal(f.bytes);
+      });
+  it('hands UPDATE evidence off before exclusive allocation failure', async () => {
+    const f = await fixture(true);
+    await writeFile(f.input.reportFile, 'existing');
+    await rejects(
+      executeDeployDocumentUpdate(f.connection, f.input, {}, undefined, undefined, f.capture),
+      /EEXIST/u,
+    );
+    expect(f.live()?.operations[0].state).to.equal('pending');
+    expect(f.methods).not.to.include('PUT');
+    expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
+  });
   for (const fault of ['', 'rejected'])
     it(`preserves >10 MiB opaque PDF through fresh UPDATE preflight and transport (${fault || 'accepted'})`, async () => {
       const f = await fixture(true, fault, true);

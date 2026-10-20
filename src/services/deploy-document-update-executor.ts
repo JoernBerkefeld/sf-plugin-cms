@@ -28,7 +28,7 @@ type DocumentConnection = Pick<Connection, 'request' | 'getApiVersion'> &
 export type ExecuteDeployDocumentUpdateInput = DeployDocumentUpdatePreflightInput & {
   destinationOrgId: string;
   /** Absent journal in an existing caller-owned directory; never resume or overwrite. */
-  reportFile: string;
+  reportFile?: string;
 };
 type Preflight = Awaited<ReturnType<typeof preflightDeployDocumentUpdate>>;
 
@@ -40,6 +40,7 @@ export const prepareDeployDocumentUpdateIntent = (
     JsonRequestOptions?,
     WorkspaceImportReportPersistence?,
     (() => Promise<void>)?,
+    ((report: WorkspaceImportRunReport) => void)?,
   ]
 ) => runDocumentUpdate(...args);
 
@@ -50,7 +51,8 @@ export const executeDeployDocumentUpdate = (
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
-) => runDocumentUpdate(connection, input, options, persistence, beforeMutation, true);
+  onReport?: (report: WorkspaceImportRunReport) => void,
+) => runDocumentUpdate(connection, input, options, persistence, beforeMutation, onReport, true);
 
 function journalEvidence(preflight: Preflight) {
   const { source, destination, ...binding } = preflight;
@@ -80,7 +82,7 @@ function journalEvidence(preflight: Preflight) {
 }
 
 /**
- * Prepare fresh durable intent and optionally execute one private Document replacement.
+ * Prepare fresh intent with optional persistence and optionally execute one Document replacement.
  * Returned observations confer neither reusable mutation permission nor atomic conflict protection.
  * UPDATE never records created-parent ownership; journals must never be replayed.
  * @param {DocumentConnection} connection - Explicit destination connection.
@@ -88,8 +90,9 @@ function journalEvidence(preflight: Preflight) {
  * @param {JsonRequestOptions} options - Bounded reads and cancellation controls.
  * @param {WorkspaceImportReportPersistence} persistence - Internal persistence failure injection.
  * @param {Function} beforeMutation - Awaited boundary followed by independent revalidation.
+ * @param {Function} onReport - Internal synchronous assignment-only live evidence handoff.
  * @param {boolean} execute - Execute only within this fresh invocation after guarded preparation.
- * @returns {Promise<object>} Pending preparation or independently verified durable completion.
+ * @returns {Promise<object>} Pending preparation or independently verified completion.
  */
 async function runDocumentUpdate(
   connection: DocumentConnection,
@@ -97,13 +100,15 @@ async function runDocumentUpdate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
+  onReport?: (report: WorkspaceImportRunReport) => void,
   execute = false,
 ) {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Document UPDATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployDocumentUpdate(connection, selected, requestOptions);
   const evidence = journalEvidence(preflight);
   const report: WorkspaceImportRunReport = {
@@ -126,11 +131,13 @@ async function runDocumentUpdate(
     },
   );
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  // Synchronous assignment-only handoff retains live evidence even when execution throws.
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let dispatched = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     if (
       !isDeepStrictEqual(
         journalEvidence(await preflightDeployDocumentUpdate(connection, selected, requestOptions)),
@@ -142,7 +149,10 @@ async function runDocumentUpdate(
     const fresh = await preflightDeployDocumentUpdate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(journalEvidence(fresh), evidence))
       throw new TypeError('Document UPDATE binding drifted during boundary');
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('Document UPDATE durable intent changed before write');
     if (requestOptions.signal?.aborted)
       throw new TypeError('Document UPDATE cancelled before write');
@@ -172,7 +182,8 @@ async function runDocumentUpdate(
             ...(typeof record.contentKey === 'string' ? { contentKey: record.contentKey } : {}),
           };
           report.state = 'ownership-uncertain';
-          await persistOperationResult(reportFile, report, operation, rewrite);
+          if (reportFile !== undefined)
+            await persistOperationResult(reportFile, report, operation, rewrite);
         },
         () => {
           dispatched = true;
@@ -246,7 +257,7 @@ async function runDocumentUpdate(
         throw new TypeError('Document UPDATE destination drifted during readback');
       operation.state = 'succeeded';
       report.state = 'completed';
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     }
     return { qualification: 'unqualified' as const, reportFile, report, preflight: fresh };
   } catch (error) {
@@ -254,7 +265,7 @@ async function runDocumentUpdate(
     report.state = dispatched ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       /* Preserve exclusive pending intent when persistence is unavailable. */
     }
