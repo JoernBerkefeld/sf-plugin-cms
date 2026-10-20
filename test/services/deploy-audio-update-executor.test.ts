@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -23,7 +23,7 @@ type Row = Record<string, unknown>;
 const hash = (bytes: Buffer, algorithm = 'sha256') =>
   createHash(algorithm).update(bytes).digest('hex');
 
-async function fixture(urlName?: string, large = false) {
+async function fixture(urlName?: string, large = false, memory = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-audio-update-executor-'));
   const fileName = 'Sound.cms-audio.media.bin';
   const bytes = large
@@ -117,8 +117,11 @@ async function fixture(urlName?: string, large = false) {
   const siblings: Row[] = [];
   let siblingCount = 1;
   let dispatchError: Error | undefined;
+  let live: WorkspaceImportRunReport | undefined;
   const journal = async () =>
-    JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport;
+    memory
+      ? live!
+      : (JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport);
   const connection = {
     _refreshDelegate: () => {
       throw new Error('Replay forbidden');
@@ -278,7 +281,17 @@ async function fixture(urlName?: string, large = false) {
       rewrite: (file: string, report: WorkspaceImportRunReport) => Promise<void> = rewriteAtomic,
       before?: () => Promise<void>,
       options: JsonRequestOptions = {},
-    ) => executeDeployAudioUpdate(connection, input, options, { rewrite }, before),
+    ) =>
+      executeDeployAudioUpdate(
+        connection,
+        { ...input, reportFile: memory ? undefined : input.reportFile },
+        options,
+        { rewrite },
+        before,
+        (report) => {
+          live = report;
+        },
+      ),
   };
 }
 async function failure(promise: Promise<unknown>, pattern = /./u) {
@@ -306,6 +319,89 @@ async function assertUncertain(f: Fixture) {
 
 describe('private journaled Audio UPDATE executor adversarial matrix', () => {
   afterEach(() => sinon.restore());
+  for (const memory of [false, true])
+    for (const kind of [
+      'success',
+      'lost',
+      'partial',
+      'readback',
+      'drift',
+      'cancel',
+      'rejected',
+      'dispatch',
+      'inflight-cancel',
+    ])
+      it(`preserves live UPDATE evidence (${kind}, memory ${memory})`, async () => {
+        const f = await fixture(undefined, false, memory);
+        const directory = path.dirname(f.input.definitionFile);
+        const files = await readdir(directory);
+        const source = await readFile(f.input.definitionFile);
+        const rewrite = sinon.spy(rewriteAtomic);
+        const controller = new AbortController();
+        if (kind === 'lost') f.failTransport(new Error('Lost response'));
+        if (kind === 'dispatch') f.failDispatch(new Error('Synchronous dispatch failed'));
+        if (kind === 'partial') delete f.response.managedContentVariantId;
+        if (kind === 'inflight-cancel') f.afterPut(() => controller.abort());
+        if (kind === 'readback')
+          f.afterPut(() => {
+            f.detail.title = 'Other';
+          });
+        const running = f.run(
+          rewrite,
+          async () => {
+            const pending = await f.journal();
+            expect(pending.operations[0].state).to.equal('pending');
+            if (kind === 'drift') f.workspace.apiName = 'Other';
+            if (kind === 'cancel') controller.abort();
+            if (kind === 'rejected') throw new Error('Boundary rejected');
+          },
+          { signal: controller.signal },
+        );
+        if (kind === 'success') {
+          const result = await running;
+          expect(result.reportFile).to.equal(memory ? undefined : f.input.reportFile);
+          if (memory) expect(result.report).to.equal(await f.journal());
+        } else await failure(running);
+        const report = await f.journal();
+        const prewrite = ['drift', 'cancel', 'rejected'].includes(kind);
+        expect(f.puts()).to.equal(prewrite ? 0 : 1);
+        let expectedState = 'ownership-uncertain';
+        let expectedOperation = 'pending';
+        if (prewrite) {
+          expectedState = 'failed';
+          expectedOperation = 'failed';
+        }
+        if (kind === 'success') {
+          expectedState = 'completed';
+          expectedOperation = 'succeeded';
+        }
+        expect(report.state).to.equal(expectedState);
+        expect(report.operations[0].state).to.equal(expectedOperation);
+        expect(report.createdParents).to.deep.equal([]);
+        if (['success', 'partial', 'readback', 'inflight-cancel'].includes(kind))
+          expect(report.operations[0].result).to.include({ contentId, contentKey: 'MCGENERATED' });
+        if (kind !== 'success') expect(report.operations[0].error).to.be.a('string');
+        if (memory) {
+          expect(rewrite.callCount).to.equal(0);
+          expect(await readdir(directory)).to.deep.equal(files);
+        } else expect(rewrite.callCount).to.be.greaterThan(0);
+        expect(await readFile(f.input.definitionFile)).to.deep.equal(source);
+        expect(await readFile(f.companion)).to.deep.equal(f.bytes);
+      });
+  it('hands off pending UPDATE evidence before exclusive allocation can fail', async () => {
+    const f = await fixture();
+    await writeFile(f.input.reportFile, 'existing');
+    let live: WorkspaceImportRunReport | undefined;
+    await failure(
+      executeDeployAudioUpdate(f.connection, f.input, {}, undefined, undefined, (report) => {
+        live = report;
+      }),
+      /EEXIST/u,
+    );
+    expect(live?.operations[0].state).to.equal('pending');
+    expect(f.puts()).to.equal(0);
+    expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
+  });
   it('accepts mock-only opaque non-WAV bytes above the revoked local cap', async () => {
     const f = await fixture(undefined, true);
     const result = await f.run();

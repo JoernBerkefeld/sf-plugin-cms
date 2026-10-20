@@ -30,7 +30,7 @@ type AudioConnection = Pick<Connection, 'request' | 'getApiVersion'> &
 export type ExecuteDeployAudioUpdateInput = DeployAudioUpdatePreflightInput & {
   destinationOrgId: string;
   /** Absent journal in an existing caller-owned directory; never resume or overwrite. */
-  reportFile: string;
+  reportFile?: string;
 };
 type Preflight = Awaited<ReturnType<typeof preflightDeployAudioUpdate>>;
 
@@ -68,13 +68,14 @@ function journalEvidence(preflight: Preflight) {
 }
 
 /**
- * Execute one private unqualified Audio replacement with durable, non-replayable intent.
+ * Execute one private unqualified Audio replacement with optional, non-replayable persistence.
  * Local candidate framing is not evidence of native Audio UPDATE acceptance.
  * @param {AudioConnection} connection - Explicit destination connection.
  * @param {ExecuteDeployAudioUpdateInput} input - Source, scope and absent journal.
  * @param {JsonRequestOptions} options - Bounded reads and cancellation controls.
  * @param {WorkspaceImportReportPersistence} persistence - Internal persistence failure injection.
  * @param {Function} beforeMutation - Awaited boundary followed by fresh independent preflight.
+ * @param {Function} onReport - Internal synchronous assignment-only live evidence handoff.
  * @returns {Promise<object>} Independently verified completion after resolved persistence.
  */
 export async function executeDeployAudioUpdate(
@@ -83,7 +84,12 @@ export async function executeDeployAudioUpdate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: WorkspaceImportRunReport }> {
+  onReport?: (report: WorkspaceImportRunReport) => void,
+): Promise<{
+  qualification: 'unqualified';
+  reportFile?: string;
+  report: WorkspaceImportRunReport;
+}> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   const checkCancellation = (): void => {
@@ -91,7 +97,8 @@ export async function executeDeployAudioUpdate(
   };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Audio UPDATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployAudioUpdate(connection, selected, requestOptions);
   const evidence = journalEvidence(preflight);
   const report: WorkspaceImportRunReport = {
@@ -114,18 +121,23 @@ export async function executeDeployAudioUpdate(
     },
   );
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  // Synchronous assignment-only handoff retains live evidence even when execution throws.
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let dispatched = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     checkCancellation();
     if (beforeMutation) await beforeMutation();
     checkCancellation();
     const fresh = await preflightDeployAudioUpdate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(journalEvidence(fresh), evidence))
       throw new TypeError('Audio UPDATE binding drifted during boundary');
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('Audio UPDATE durable intent changed before write');
     checkCancellation();
     if (fresh.source.source.representation !== 'binary')
@@ -161,7 +173,8 @@ export async function executeDeployAudioUpdate(
           ...(typeof value.contentKey === 'string' ? { contentKey: value.contentKey } : {}),
         };
         report.state = 'ownership-uncertain';
-        await persistOperationResult(reportFile, report, operation, rewrite);
+        if (reportFile !== undefined)
+          await persistOperationResult(reportFile, report, operation, rewrite);
       },
       () => {
         dispatched = true;
@@ -252,14 +265,14 @@ export async function executeDeployAudioUpdate(
     checkCancellation();
     operation.state = 'succeeded';
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {
     operation.state = dispatched ? 'pending' : 'failed';
     report.state = dispatched ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       /* Preserve exclusive pending intent when persistence is unavailable; never claim completion. */
     }
