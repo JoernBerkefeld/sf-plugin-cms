@@ -1,4 +1,3 @@
-import { fileURLToPath } from 'node:url';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,13 +10,12 @@ import DeployContent from '../../src/commands/cms/deploy/content.js';
 import DeleteContent from '../../src/commands/cms/delete/content.js';
 import ListWorkspace from '../../src/commands/cms/list/workspace.js';
 import ListChannel from '../../src/commands/cms/list/channel.js';
-import UploadImages from '../../src/commands/cms/upload/images.js';
+import UploadImages from '../../src/commands/cms/upload.js';
 import PublishContent from '../../src/commands/cms/publish/content.js';
 import UnpublishContent from '../../src/commands/cms/unpublish/content.js';
 import Info from '../../src/commands/cms/info.js';
 import { targetOrgFlag } from '../../src/command-base.js';
 
-const ownershipReport = fileURLToPath(new URL('../../README.md', import.meta.url));
 const commands = [
   { name: 'retrieve content', command: RetrieveContent, args: ['-W', 'Marketing'] },
   {
@@ -28,19 +26,12 @@ const commands = [
   {
     name: 'delete content',
     command: DeleteContent,
-    args: [
-      '--workspace-id',
-      'space',
-      '--api-name',
-      'Welcome',
-      '--ownership-report',
-      ownershipReport,
-    ],
+    args: ['--workspace-id', 'space', '-m', 'email:Welcome'],
   },
   { name: 'list workspace', command: ListWorkspace, args: [] },
   { name: 'list channel', command: ListChannel, args: ['--workspace-id', 'space'] },
   {
-    name: 'upload images',
+    name: 'upload',
     command: UploadImages,
     args: ['--workspace-id', 'space', '--file', 'local.png'],
   },

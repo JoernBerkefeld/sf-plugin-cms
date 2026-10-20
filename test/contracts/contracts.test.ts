@@ -41,99 +41,98 @@ async function loadFixture<T>(name: string): Promise<{ bytes: Buffer; value: Cms
 }
 
 describe('CMS contract foundation', () => {
-  it('validates the versioned bounded content delete result', () => {
+  const deleteTarget = {
+    contentId: 'parent',
+    variantId: 'variant',
+    contentType: 'sfdc_cms__audio',
+    apiName: 'Existing',
+    language: 'en_US',
+    variantType: 'Content',
+    isPrimary: true,
+    isPublished: true,
+    status: 'Published',
+    version: {},
+  };
+  it('validates the sole exact-item delete preview result', () => {
     expect(() =>
       assertContentDeleteResult(
         {
-          mode: 'dry-run',
+          mode: 'preview',
           outcome: 'ready',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            acknowledgementRequired: true,
-            baselineHash: 'a'.repeat(64),
-            currentHash: 'a'.repeat(64),
-            ownershipReport: 'report/workspace-import-run.json',
-            ownershipRequestSha256: 'b'.repeat(64),
-            inventoryVariantCount: 1,
-            siblingVariantCount: 1,
-          },
-          blockers: [],
+          workspaceId: 'space',
+          targets: [deleteTarget],
+          execution: null,
         },
         undefined,
         'success',
       ),
     ).not.to.throw();
   });
-
-  it('validates completed delete evidence when Salesforce removes the empty parent', () => {
-    expect(() =>
-      assertContentDeleteResult(
-        {
-          mode: 'apply',
-          outcome: 'completed',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            acknowledgedPermanentDelete: true,
-            baselineHash: 'a'.repeat(64),
-            ownershipReport: 'report/workspace-import-run.json',
-            ownershipRequestSha256: 'b'.repeat(64),
-            selectedInventoryMatches: 0,
+  it('validates completed delete evidence with observed parent absence and no report file', () => {
+    const execution = {
+      reportFile: null,
+      report: {
+        runId: 'run',
+        workspaceId: 'space',
+        apiVersion: '67.0',
+        state: 'completed',
+        operations: [
+          {
+            target: deleteTarget,
+            state: 'completed',
             exactVariantAbsent: true,
             parentBehavior: 'not-found',
-            remainingEmailVariantCount: 0,
           },
-          blockers: [],
-          reportFile: 'report/content-delete-run.json',
+        ],
+      },
+    };
+    expect(() =>
+      assertContentDeleteResult(
+        {
+          mode: 'execute',
+          outcome: 'completed',
+          workspaceId: 'space',
+          targets: [deleteTarget],
+          execution,
         },
         undefined,
         'success',
       ),
     ).not.to.throw();
-  });
-
-  it('rejects completed delete evidence without exact absence', () => {
+    delete (execution.report.operations[0] as { exactVariantAbsent?: true }).exactVariantAbsent;
     expect(() =>
       assertContentDeleteResult(
         {
-          mode: 'apply',
+          mode: 'execute',
           outcome: 'completed',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            acknowledgedPermanentDelete: true,
-            baselineHash: 'a'.repeat(64),
-            ownershipReport: 'report/workspace-import-run.json',
-            ownershipRequestSha256: 'b'.repeat(64),
-            selectedInventoryMatches: 1,
-            exactVariantAbsent: false,
-            parentBehavior: 'present',
-            parentIdentityPreserved: true,
-            remainingEmailVariantCount: 1,
-          },
-          blockers: [],
-          reportFile: 'report/content-delete-run.json',
+          workspaceId: 'space',
+          targets: [deleteTarget],
+          execution,
         },
         undefined,
         'success',
       ),
-    ).to.throw('completed delete evidence is invalid');
+    ).to.throw();
+  });
+  it('rejects legacy public delete shapes and fabricated completion without execution', () => {
+    expect(() =>
+      assertContentDeleteResult({
+        mode: 'dry-run',
+        outcome: 'ready',
+        target: {},
+        evidence: {},
+        blockers: [],
+      }),
+    ).to.throw();
+    expect(() =>
+      assertContentDeleteResult({
+        mode: 'execute',
+        outcome: 'completed',
+        workspaceId: 'space',
+        targets: [deleteTarget],
+        execution: null,
+      }),
+    ).to.throw();
   });
 
   it('validates the versioned bounded content publish result', () => {

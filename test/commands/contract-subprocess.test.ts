@@ -279,12 +279,12 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   for (const [alias, canonical, evidence] of [
     ['retrieve', 'retrieve content', '--metadata'],
     ['deploy', 'deploy content', '--source-dir'],
-    ['delete', 'delete content', '--ownership-report'],
+    ['delete', 'delete content', '--metadata'],
     ['publish', 'publish content', '--acknowledge-no-send'],
     ['unpublish', 'unpublish content', '--acknowledge-active-use-stops'],
     ['list workspace', 'list workspace', '--name-fragment'],
     ['list channel', 'list channel', '--workspace-id'],
-    ['upload images', 'upload images', '--file'],
+    ['upload', 'upload', '--file'],
     ['info', 'info', '--contract-version'],
   ]) {
     it(`resolves packed content ${alias} help to the canonical command`, async () => {
@@ -379,17 +379,13 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     const cases: Array<[string[], string[], string]> = [
       [['retrieve', 'content'], [], 'RETRIEVE_'],
       [['deploy', 'content'], [], 'DEPLOY_'],
-      [
-        ['upload', 'images'],
-        ['--workspace-id', 'space', '--file', 'missing-logging.png'],
-        'IMAGE_',
-      ],
+      [['upload'], ['--workspace-id', 'space', '--file', 'missing-logging.png'], 'IMAGE_'],
       [['publish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
       [['unpublish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
       [
         ['delete', 'content'],
-        [...lifecycle, '--ownership-report', 'logging-ownership.json'],
-        'UNSUPPORTED_CONTRACT_VERSION',
+        ['--workspace-id', 'space', '-m', 'email:*'],
+        'CONTENT_DELETE_BLOCKED_OR_FAILED',
       ],
     ];
     for (const [route, args, code] of cases) {
@@ -473,16 +469,28 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('loads packed image upload help, ordered repeated files, and offline invalid arguments', async function () {
     this.timeout(300_000);
-    const help = await runSf(['cms', 'upload', 'images', '--help']);
+    const help = await runSf(['cms', 'upload', '--help']);
     expect(help.exitCode, help.stderr).to.equal(0);
-    expect(help.stdout.replaceAll(/\s+/gu, ' ')).to.include('Dry-run is the default');
+    expect(help.stdout.replaceAll(/\s+/gu, ' ')).to.include('Executes by default');
     expect(help.stdout).to.include('--file');
+    for (const namespace of ['cms', 'content']) {
+      const aliasHelp = await runSf([namespace, 'upload', '--help']);
+      expect(aliasHelp.exitCode, aliasHelp.stderr).to.equal(0);
+      for (const removed of [
+        ['images', '--help'],
+        ['--file', 'one.png', '--apply'],
+        ['--file', 'one.png', '--contract-version', '1'],
+      ]) {
+        const invalid = await runSf([namespace, 'upload', ...removed]);
+        expect(invalid.exitCode, invalid.stdout + invalid.stderr).not.to.equal(0);
+      }
+    }
     const names = ['Banner with spaces.PNG', 'Logo.png'];
     for (const name of names)
       await writeFile(file(name), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]));
-    const common = ['cms', 'upload', 'images', '--target-org', 'unused', '--workspace-id', 'space'];
+    const common = ['cms', 'upload', '--target-org', 'unused', '--workspace-id', 'space'];
     const preview = await runSf(
-      [...common, ...names.flatMap((name) => ['--file', name]), '--json'],
+      [...common, ...names.flatMap((name) => ['--file', name]), '--preview', '--json'],
       'image-upload-preview',
     );
     expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
@@ -499,7 +507,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       target: { rootFolderId: string };
       reportFile: unknown;
     };
-    expect(result.mode).to.equal('dry-run');
+    expect(result.mode).to.equal('preview');
     expect(result.intents.map(({ filename }) => filename)).to.deep.equal(names);
     expect(result.target.rootFolderId).to.equal('root');
     expect(result.reportFile).to.equal(null);
@@ -508,14 +516,43 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       await readFile(file('image-upload-preview-transport.json'), 'utf8'),
     ) as Array<{ method?: string }>;
     expect(events.slice(1).every(({ method }) => method === 'GET')).to.equal(true);
-    const human = await runSf([...common, '--file', names[0]], 'image-upload-preview');
+    const human = await runSf([...common, '--file', names[0], '--preview'], 'image-upload-preview');
     expect(human.exitCode, human.stdout + human.stderr).to.equal(0);
     expect(human.stdout).to.include('Destination root folder: root');
     expect(human.stdout).to.include('Banner with spaces.PNG: 9 bytes');
+    const execution = await runSf(
+      [
+        'content',
+        'upload',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '--file',
+        names[0],
+        '--json',
+      ],
+      'image-upload-preview',
+    );
+    const executed = parseEnvelope(execution).result as {
+      mode: string;
+      outcome: string;
+      reportFile: unknown;
+      report: { operations: Array<{ state: string }> };
+    };
+    expect(execution.exitCode).to.equal(1);
+    expect(executed.mode).to.equal('execute');
+    expect(executed.outcome).to.equal('ownership-uncertain');
+    expect(executed.reportFile).to.equal(null);
+    expect(executed.report.operations[0].state).to.equal('pending');
+    const executionEvents = JSON.parse(
+      await readFile(file('image-upload-preview-transport.json'), 'utf8'),
+    ) as Array<{ method?: string }>;
+    expect(executionEvents.filter(({ method }) => method === 'POST')).to.have.length(1);
     for (const args of [
-      ['--file', names[0], '--apply'],
+      ['--file', names[0], '--preview', '--report'],
       ['--file', 'missing.png'],
-      ['--file', names[0], '--contract-version', '2'],
+      ['--file', names[0], '--preview', '--report-dir', './forbidden-upload-report'],
     ]) {
       const blocked = await runSf([...common, ...args, '--json'], 'image-upload-local');
       expect(blocked.exitCode, blocked.stdout + blocked.stderr).to.equal(1);
@@ -545,7 +582,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       'cms list channel',
       'cms retrieve content',
       'cms deploy content',
-      'cms upload images',
+      'cms upload',
       'cms delete content',
       'cms publish content',
       'cms unpublish content',
@@ -583,6 +620,12 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         transport: 'cli-json',
         contract: 'sf-cms-content-deploy@1',
       })),
+      {
+        id: 'content.delete.document',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@1',
+      },
     ]);
     expect(result.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([
       {
@@ -597,6 +640,12 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         transport: 'cli-json',
         contract: 'sf-cms-content-deploy@1',
       })),
+      {
+        id: 'content.delete.audio',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@1',
+      },
     ]);
     const deployHelp = await runSf(['cms', 'deploy', 'content', '--help']);
     expect(deployHelp.exitCode, deployHelp.stderr).to.equal(0);
@@ -950,207 +999,76 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(retrieveHelp).not.to.include('Audio deployment is not enabled');
     const deletion = await runSf(['cms', 'delete', 'content', '--help']);
     expect(deletion.exitCode, deletion.stderr).to.equal(0);
-    expect(deletion.stdout.replaceAll(/\s+/gu, ' ')).to.include('--content-type emailTemplate');
-    expect(deletion.stdout).not.to.include('sfdc_cms__audio');
-  });
-
-  it('previews one installed packed bounded Email Template delete v2', async function () {
-    this.timeout(300_000);
-    await writeFile(file('email-template-delete-journal.json'), '{}');
-    const preview = await runSf(
-      [
-        'cms',
-        'delete',
-        'content',
-        '--target-org',
-        'unused',
-        '--contract-version',
-        '2',
-        '--content-type',
-        'emailTemplate',
-        '--workspace-id',
-        'space',
-        '--api-name',
-        'pilot_template',
-        '--language',
-        'en_US',
-        '--ownership-report',
-        'email-template-delete-journal.json',
-        '--json',
-      ],
-      'email-template-delete-preview',
-    );
-    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
-    const envelope = parseEnvelope(preview);
-    expect(envelope).to.deep.include({
-      contract: 'sf-cms-content-delete',
-      contractVersion: '2.0.0',
-      status: 'success',
-    });
-    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.include({
-      contentType: 'sfdc_cms__emailTemplate',
-    });
-  });
-
-  it('applies one installed packed bounded Email Template delete v2', async function () {
-    this.timeout(300_000);
-    await writeFile(file('email-template-delete-journal.json'), '{}');
-    const applied = await runSf(
-      [
-        'cms',
-        'delete',
-        'content',
-        '--target-org',
-        'unused',
-        '--contract-version',
-        '2',
-        '--content-type',
-        'emailTemplate',
-        '--workspace-id',
-        'space',
-        '--api-name',
-        'pilot_template',
-        '--language',
-        'en_US',
-        '--ownership-report',
-        'email-template-delete-journal.json',
-        '--apply',
-        '--acknowledge-permanent-delete',
-        '--report-dir',
-        'email-template-delete-apply-report',
-        '--json',
-      ],
-      'email-template-delete-apply',
-    );
-    expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
-    const envelope = parseEnvelope(applied);
-    expect(envelope).to.deep.include({
-      contract: 'sf-cms-content-delete',
-      contractVersion: '2.0.0',
-      status: 'success',
-    });
-    expect(envelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
-    const evidence = (envelope.result as { evidence: Record<string, unknown> }).evidence;
-    expect(evidence).to.include({
-      contentType: 'sfdc_cms__emailTemplate',
-      exactVariantAbsent: true,
-      parentBehavior: 'not-found',
-      remainingFamilyVariantCount: 0,
-    });
-    expect(evidence).not.to.have.property('remainingEmailVariantCount');
-    const events = JSON.parse(
-      await readFile(file('email-template-delete-apply-transport.json'), 'utf8'),
-    ) as Array<{ method?: string }>;
-    expect(events.filter((event) => event.method === 'DELETE')).to.have.length(1);
-  });
-
-  it('previews and applies one installed packed bounded Email delete', async function () {
-    this.timeout(300_000);
-    const help = await runSf(['cms', 'delete', 'content', '--help']);
-    expect(help.exitCode, help.stderr).to.equal(0);
-    const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
-    expect(normalizedHelp).to.include('sf cms delete content');
-    expect(normalizedHelp).to.include('--ownership-report');
-    expect(normalizedHelp).to.include('--acknowledge-permanent-delete');
-    expect(normalizedHelp).to.include('Dry-run is the default');
-
-    await writeFile(file('email-delete-ownership.json'), '{}');
-    const common = [
-      'cms',
-      'delete',
-      'content',
-      '--target-org',
-      'unused',
-      '--workspace-id',
-      'space',
-      '--api-name',
-      'pilot_email',
-      '--language',
-      'en_US',
+    expect(deletion.stdout.replaceAll(/\s+/gu, ' ')).to.include('--metadata');
+    expect(deletion.stdout).to.include('audio');
+    for (const obsolete of [
       '--ownership-report',
-      'email-delete-ownership.json',
-    ];
-    const preview = await runSf(
-      [...common, '--content-type', 'email', '--json'],
-      'email-delete-preview',
-    );
-    expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
-    const previewEnvelope = parseEnvelope(preview);
-    expect(previewEnvelope).to.deep.include({
-      contract: 'sf-cms-content-delete',
-      contractVersion: '1.0.0',
-      status: 'success',
-    });
-    expect((previewEnvelope.provenance as { command: string }).command).to.equal(
-      'sf cms delete content',
-    );
-    expect(previewEnvelope.result).to.deep.include({
-      mode: 'dry-run',
-      outcome: 'ready',
-      target: {
-        workspaceId: 'space',
-        apiName: 'pilot_email',
-        language: 'en_US',
-        contentId: 'parent-email',
-        variantId: 'variant-en',
-      },
-    });
-    const previewEvents = JSON.parse(
-      await readFile(file('email-delete-preview-transport.json'), 'utf8'),
-    ) as Array<{ method?: string }>;
-    expect(previewEvents.some(({ method }) => method === 'DELETE')).to.equal(false);
-
-    const applied = await runSf(
-      [
-        ...common,
-        '--apply',
-        '--acknowledge-permanent-delete',
-        '--report-dir',
-        'email-delete-apply-report',
-        '--json',
-      ],
-      'email-delete-apply',
-    );
-    const deleteReport = await readFile(
-      file('email-delete-apply-report/content-delete-run.json'),
-      'utf8',
-    );
-    const deleteTransport = await readFile(file('email-delete-apply-transport.json'), 'utf8');
-    expect(
-      applied.exitCode,
-      `${applied.stdout}${applied.stderr}\n${deleteReport}\n${deleteTransport}`,
-    ).to.equal(0);
-    const appliedEnvelope = parseEnvelope(applied);
-    expect(appliedEnvelope).to.deep.include({
-      contract: 'sf-cms-content-delete',
-      status: 'success',
-    });
-    expect(appliedEnvelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
-    const completedReport = JSON.parse(deleteReport) as Record<string, unknown>;
-    expect(completedReport.state).to.equal('completed');
-    expect(completedReport).not.to.have.property('mutationError');
-    expect(
-      (appliedEnvelope.result as { evidence: Record<string, unknown> }).evidence,
-    ).to.deep.include({
-      exactVariantAbsent: true,
-      selectedInventoryMatches: 0,
-      parentBehavior: 'not-found',
-      remainingEmailVariantCount: 1,
-    });
-    const events = JSON.parse(
-      await readFile(file('email-delete-apply-transport.json'), 'utf8'),
-    ) as Array<{ method?: string; url?: string }>;
-    const deletes = events.filter(({ method }) => method === 'DELETE');
-    expect(deletes).to.deep.equal([
-      { method: 'DELETE', url: '/services/data/v67.0/connect/cms/contents/variants/variant-en' },
-    ]);
-    expect(
-      events.filter(
-        ({ method, url }) =>
-          method === 'GET' && url === '/connect/cms/contents/variants/variant-en',
-      ),
-    ).to.have.length(3);
+      '--contract-version',
+      '--apply',
+      '--acknowledge-permanent-delete',
+    ])
+      expect(deletion.stdout).not.to.include(obsolete);
   });
+
+  for (const family of ['email', 'emailTemplate']) {
+    for (const alias of [false, true]) {
+      it(`previews and executes packed exact ${family} delete alias=${alias}`, async function () {
+        this.timeout(300_000);
+        const route = alias ? ['content', 'delete'] : ['cms', 'delete', 'content'];
+        const common = [
+          ...route,
+          '--target-org',
+          'unused',
+          '--api-version',
+          '67.0',
+          '--workspace-id',
+          '0Zuaj000007dgL8CAI',
+          '-m',
+          `${family}:Existing`,
+          '--json',
+        ];
+        const caseName =
+          family === 'emailTemplate' ? 'native-delete-template' : 'native-delete-email';
+        const preview = await runSf([...common, '--preview'], `${caseName}-preview`);
+        expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(0);
+        const envelope = parseEnvelope(preview);
+        expect(envelope).to.deep.include({
+          contract: 'sf-cms-content-delete',
+          contractVersion: '1.0.0',
+          status: 'success',
+        });
+        expect(envelope.result).to.deep.include({
+          mode: 'preview',
+          outcome: 'ready',
+          execution: null,
+        });
+        const previewEvents = JSON.parse(
+          await readFile(file(`${caseName}-preview-transport.json`), 'utf8'),
+        ) as Array<{ method?: string }>;
+        expect(previewEvents.every(({ method }) => method === 'GET')).to.equal(true);
+        const applied = await runSf(
+          [...common, '--report-dir', `${caseName}-${alias}-report`],
+          `${caseName}-execute`,
+        );
+        expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+        const output = parseEnvelope(applied);
+        expect(output.result).to.deep.include({ mode: 'execute', outcome: 'completed' });
+        const report = JSON.parse(
+          await readFile(file(`${caseName}-${alias}-report/content-delete-run.json`), 'utf8'),
+        );
+        expect(report.state).to.equal('completed');
+        expect(report.operations[0]).to.include({
+          state: 'completed',
+          exactVariantAbsent: true,
+          parentBehavior: 'present',
+        });
+        const events = JSON.parse(
+          await readFile(file(`${caseName}-execute-transport.json`), 'utf8'),
+        ) as Array<{ method?: string }>;
+        expect(events.filter(({ method }) => method === 'DELETE')).to.have.length(1);
+      });
+    }
+  }
 
   it('previews one installed packed Email HTML update from its strict export baseline', async function () {
     this.timeout(300_000);

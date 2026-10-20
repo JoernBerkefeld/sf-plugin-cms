@@ -5,7 +5,7 @@ import { ConfigAggregator, Org, SfProject } from '@salesforce/core';
 import { SfCommand, Ux } from '@salesforce/sf-plugins-core';
 import { ux } from '@oclif/core';
 import Info from '../src/commands/cms/info.js';
-import UploadImages from '../src/commands/cms/upload/images.js';
+import UploadImages from '../src/commands/cms/upload.js';
 import {
   createRunOwnedDirectory,
   createRunOwnedTemp,
@@ -418,7 +418,7 @@ describe('CMS command API selection', () => {
       'list/channel',
       'retrieve/content',
       'deploy/content',
-      'upload/images',
+      'upload',
       'publish/content',
       'unpublish/content',
       'delete/content',

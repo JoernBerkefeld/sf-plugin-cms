@@ -216,6 +216,7 @@ async function fixture(
   let invalidFinalReadbackVersion = false;
   const requests: string[] = [];
   let failName: string | undefined;
+  let lostUpdateResponseName: string | undefined;
   let onRead: (() => Promise<void>) | undefined;
   const request = function (
     input: { method: string; url: string; body?: string | Buffer },
@@ -323,6 +324,7 @@ async function fixture(
           };
         }
         detail.managedContentVersionId = 'after';
+        if (name === lostUpdateResponseName) throw new Error('UPDATE response lost');
         if (binary && name === 'Zulu' && partialDocumentResponse)
           return { managedContentId: detail.managedContentId };
         return detail;
@@ -412,6 +414,9 @@ async function fixture(
     directory,
     fail: (name: string) => {
       failName = name;
+    },
+    loseUpdateResponse: (name: string) => {
+      lostUpdateResponseName = name;
     },
     onRead: (callback: () => Promise<void>) => {
       onRead = callback;
@@ -585,6 +590,74 @@ describe('batch live and disk evidence routing', () => {
           }
         });
       }
+      it(`preserves ${family} UPDATE target after lost response with reporting ${reporting}`, async () => {
+        const f =
+          family === 'Audio'
+            ? await audioBoundaryFixture('update', reporting)
+            : await fixture(true, family !== 'rawHtml', family === 'Document', false, reporting);
+        const index = { rawHtml: 1, Image: 2, Document: 3, Audio: 3 }[family];
+        const name = { rawHtml: 'Beta', Image: 'Gamma', Document: 'Zulu', Audio: 'Zulu' }[family];
+        if (family === 'Image')
+          await writeFile(
+            path.join(f.directory, 'Gamma.cms-image.media.svg'),
+            '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>',
+          );
+        if (family === 'Document') {
+          const definition = JSON.parse(await readFile(f.files[3], 'utf8')) as Row;
+          definition.urlName = 'zulu';
+          await writeFile(f.files[3], JSON.stringify(definition));
+          f.records[2].UrlName = 'zulu';
+          f.details.get('MCKEY4')!.urlName = 'zulu';
+          await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Changed bytes');
+        }
+        // Add a real selected suffix even when the uncertain media item normally sorts last.
+        const suffix = path.join(f.directory, 'Zzz.cms-email.json');
+        await writeFile(
+          suffix,
+          JSON.stringify({
+            ...f.definitions[0],
+            identity: { ...f.definitions[0].identity, apiName: 'Zzz' },
+            title: 'Zzz',
+            contentBody: { ...f.definitions[0].contentBody, 'sfdc_cms:title': 'Zzz' },
+            companions: { rawHtml: 'Zzz.cms-email.html' },
+          }),
+        );
+        await writeFile(path.join(f.directory, 'Zzz.cms-email.html'), '<p>Desired</p>');
+        if (family === 'Audio') f.input.sources['source-dir'].push(suffix);
+        f.loseUpdateResponse(name);
+        const before = await readdir(f.directory);
+        const result = await f.run();
+        const activeIndex = result.report.items.findIndex(
+          (item) => item.source.targetIdentity.apiName === name,
+        );
+        const active = result.report.items[activeIndex];
+        expect(active.proposed).to.equal('update');
+        expect(active.outcome, result.report.blockedReasons.join('; ')).to.equal('uncertain');
+        expect(active.target).to.deep.equal({
+          contentId: `20Y00000000000${index + 1}AAA`,
+          variantId: `9Ps00000000000${index + 1}AAA`,
+        });
+        expect(active.returned).to.equal(undefined);
+        expect(result.report.state).to.equal('partial');
+        expect(
+          result.report.items
+            .slice(0, activeIndex)
+            .every((item) => ['created', 'updated', 'unchanged'].includes(item.outcome)),
+        ).to.equal(true);
+        expect(result.report.items.slice(activeIndex + 1).map((item) => item.outcome))
+          .to.have.length.greaterThan(0)
+          .and.satisfy((outcomes: string[]) =>
+            outcomes.every((outcome) => outcome === 'unattempted'),
+          );
+        expect(result.report.summary.completed).to.equal(activeIndex);
+        expect(result.report.summary.uncertain).to.equal(1);
+        expect(f.mutations.filter((mutation) => mutation === name)).to.have.length(1);
+        expect(f.mutations.at(-1)).to.equal(name);
+        expect(f.puts()).to.equal(1);
+        expect(f.details.get(`MCKEY${index + 1}`)!.managedContentVersionId).to.equal('after');
+        if (reporting) expect(await f.journal()).to.deep.equal(result.report);
+        else expect(await readdir(f.directory)).to.deep.equal(before);
+      });
       it(`preserves ${family} lost-response uncertainty with reporting ${reporting}`, async () => {
         const f =
           family === 'Audio'

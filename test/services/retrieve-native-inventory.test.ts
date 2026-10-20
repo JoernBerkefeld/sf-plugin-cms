@@ -117,7 +117,7 @@ describe('bounded native retrieve inventory', () => {
       complete: true,
       pagesRequested: 6,
     });
-    const base = `SELECT Id, ManagedContentId, ContentTypeFullyQualifiedName, Language, IsPublished, ManagedContentVariantStatus, IsPrimary, Name, UrlName, ManagedContentKey, ManagedContent.AuthoredManagedContentSpaceId, ManagedContent.ApiName FROM ManagedContentVariant WHERE ManagedContent.AuthoredManagedContentSpaceId = '${workspaceId}' AND ContentTypeFullyQualifiedName IN ('sfdc_cms__email', 'sfdc_cms__emailTemplate') ORDER BY Id LIMIT 2000`;
+    const base = `SELECT Id, ManagedContentId, ContentTypeFullyQualifiedName, Language, VariantType, IsPublished, ManagedContentVariantStatus, IsPrimary, Name, UrlName, ManagedContentKey, ManagedContent.AuthoredManagedContentSpaceId, ManagedContent.ApiName FROM ManagedContentVariant WHERE ManagedContent.AuthoredManagedContentSpaceId = '${workspaceId}' AND ContentTypeFullyQualifiedName IN ('sfdc_cms__email', 'sfdc_cms__emailTemplate') ORDER BY Id LIMIT 2000`;
     expect(query(fixture.calls[0])).to.equal(base);
     expect(query(fixture.calls[1])).to.equal(
       base.replace(' ORDER BY Id', ` AND Id > '${variantId}' ORDER BY Id`),

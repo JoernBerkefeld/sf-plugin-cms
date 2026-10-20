@@ -556,12 +556,23 @@ export async function executeDeployBatch(
       ...baseline.blockedReasons,
       ...baseline.items.flatMap((item) => item.blockedReasons),
     ],
-    items: baseline.items.map((item, index) => ({
-      source: baseline.selection.items[index],
-      proposed: item.proposed,
-      reportFile: reportFile === undefined ? undefined : `${reportFile}.${runId}.${index + 1}.json`,
-      outcome: 'unattempted',
-    })),
+    items: baseline.items.map((item, index) => {
+      const update = item.imageUpdate ?? item.documentUpdate ?? item.audioUpdate;
+      // Preserve independently observed destination identity even when UPDATE returns no response.
+      const target =
+        item.proposed === 'update'
+          ? (item.update?.target ??
+            (update && { contentId: update.contentId, variantId: update.variantId }))
+          : undefined;
+      return {
+        source: baseline.selection.items[index],
+        proposed: item.proposed,
+        reportFile:
+          reportFile === undefined ? undefined : `${reportFile}.${runId}.${index + 1}.json`,
+        outcome: 'unattempted',
+        ...(target && { target: { ...target } }),
+      };
+    }),
     summary: {
       selected: baseline.items.length,
       created: 0,

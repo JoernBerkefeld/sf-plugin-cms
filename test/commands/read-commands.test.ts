@@ -42,7 +42,7 @@ describe('CMS read command definitions', () => {
       'cms:list:channel',
       'cms:retrieve:content',
       'cms:deploy:content',
-      'cms:upload:images',
+      'cms:upload',
       'cms:publish:content',
       'cms:unpublish:content',
       'cms:delete:content',
@@ -55,7 +55,7 @@ describe('CMS read command definitions', () => {
       ['cms:unpublish:content', 'content:unpublish'],
       ['cms:list:workspace', 'content:list:workspace'],
       ['cms:list:channel', 'content:list:channel'],
-      ['cms:upload:images', 'content:upload:images'],
+      ['cms:upload', 'content:upload'],
       ['cms:info', 'content:info'],
     ];
     for (const [canonical, alias] of aliasPairs) {
@@ -63,6 +63,8 @@ describe('CMS read command definitions', () => {
       expect(descriptor?.id, canonical).to.equal(canonical);
       expect(descriptor?.aliases, canonical).to.deep.equal([alias]);
     }
+    expect(await plugin.findCommand('cms:upload:images')).to.equal(undefined);
+    expect(await plugin.findCommand('content:upload:images')).to.equal(undefined);
     const aliases = plugin.commands.flatMap((command) => command.aliases ?? []);
     expect(aliases).to.have.members(aliasPairs.map(([, alias]) => alias));
     expect(new Set(aliases).size).to.equal(aliases.length);

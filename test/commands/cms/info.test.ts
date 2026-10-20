@@ -73,7 +73,7 @@ describe('cms info', () => {
       'cms list channel',
       'cms retrieve content',
       'cms deploy content',
-      'cms upload images',
+      'cms upload',
       'cms delete content',
       'cms publish content',
       'cms unpublish content',
@@ -122,6 +122,12 @@ describe('cms info', () => {
         transport: 'cli-json',
         contract: 'sf-cms-content-deploy@1',
       })),
+      {
+        id: 'content.delete.document',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@1',
+      },
     ]);
     expect(result?.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([
       {
@@ -136,6 +142,12 @@ describe('cms info', () => {
         transport: 'cli-json',
         contract: 'sf-cms-content-deploy@1',
       })),
+      {
+        id: 'content.delete.audio',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-delete@1',
+      },
     ]);
     expect(
       result?.capabilities.some(({ id }) =>

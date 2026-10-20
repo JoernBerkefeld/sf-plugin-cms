@@ -1,41 +1,40 @@
 import { Flags } from '@salesforce/sf-plugins-core';
-import { lstat } from 'node:fs/promises';
-import { getCmsApiSelection } from '../../../api-policy.js';
-import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
+import path from 'node:path';
+import { getCmsApiSelection } from '../../api-policy.js';
+import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../command-base.js';
 import {
   assertImageUploadCommandResult,
   type ImageUploadCommandResult,
   type PlannedImageUploadFile,
-} from '../../../contracts/image-upload.js';
-import { type CmsEnvelope, type CmsStatus } from '../../../contracts/shared.js';
+} from '../../contracts/image-upload.js';
+import { type CmsEnvelope, type CmsStatus } from '../../contracts/shared.js';
 import {
   applyImageUpload,
   ImageUploadApplyError,
   imageUploadReadServices,
   planImageUploadFiles,
   prepareImageUpload,
-} from '../../../services/image-upload.js';
-import { assertWorkspaceSelector } from '../../../services/resolve-workspace.js';
-import { getContent } from '../../../services/read.js';
+} from '../../services/image-upload.js';
+import { assertWorkspaceSelector } from '../../services/resolve-workspace.js';
+import { getContent } from '../../services/read.js';
+import {
+  allocateMutationReportDirectory,
+  validateMutationReportDirectory,
+} from '../../services/mutation-report-directory.js';
 
 export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadCommandResult>> {
-  public static readonly aliases = ['content:upload:images'];
+  public static readonly aliases = ['content:upload'];
   public static readonly summary =
-    'Preview or create local images in an enhanced CMS workspace root.';
+    'Create or preview local images in an enhanced CMS workspace root.';
   public static readonly description =
-    'Dry-run is the default: validates explicit image files and reads the exact enhanced workspace root and complete collision inventory, with no mutations. Repeat --file for each image; no JSON input map is needed. Titles retain the full filename including extension; API and URL names are derived from it. Apply requires a new --report-dir and creates Drafts sequentially with no retry, overwrite, publication, rollback, or resume. Metadata readback does not prove downloaded binary bytes.';
+    'Executes by default. --preview validates explicit image files and reads the exact enhanced workspace root and complete collision inventory, with no mutations, content writes or report allocation; diagnostic invocation logs remain enabled. Repeat --file for each image; no JSON input map is needed. Titles retain the full filename including extension; API and URL names are derived from it. Creates Drafts sequentially with no retry, overwrite, publication, rollback, or resume. Reporting is opt-in: --report allocates ./logs/cms/reports/<timestamp>-<unique-id>/ under invocation cwd; --report-dir implies reporting at that exact fresh directory. Neither flag means no reports or hidden journals and no crash-surviving structured journal. Preview rejects reporting options. Metadata readback does not prove downloaded binary bytes.';
   public static readonly examples = [
-    '<%= config.bin %> cms upload images --target-org my-org --workspace-name "Main Site" --file "./Banner with spaces.png" --file ./Logo.jpg',
-    '<%= config.bin %> cms upload images --target-org my-org --workspace-id 0ZuTARGET --file ./Logo.jpg --apply --report-dir ./image-upload-report --json',
+    '<%= config.bin %> cms upload --target-org my-org --workspace-name "Main Site" --file "./Banner with spaces.png" --file ./Logo.jpg --preview',
+    '<%= config.bin %> cms upload --target-org my-org --workspace-id 0ZuTARGET --file ./Logo.jpg --report --json',
   ];
   public static readonly flags = {
     'target-org': targetOrgFlag,
     'api-version': apiVersionFlag,
-    'contract-version': Flags.integer({
-      default: 1,
-      min: 1,
-      summary: 'Machine result contract major (supported: 1).',
-    }),
     'workspace-id': Flags.string({
       exclusive: ['workspace-name'],
       summary: 'Exact destination CMS workspace ID.',
@@ -50,28 +49,34 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
       multipleNonGreedy: true,
       summary: 'Explicit local image path; repeat this flag in desired upload order.',
     }),
-    apply: Flags.boolean({
+    preview: Flags.boolean({
       default: false,
-      summary: 'Create Draft images after complete preflight; otherwise preview only.',
+      summary:
+        'Read-only preflight; no mutations, content writes or reports (diagnostic logs remain).',
     }),
-    'report-dir': Flags.directory({
-      exists: false,
-      dependsOn: ['apply'],
-      summary: 'New directory required for durable apply reports.',
+    report: Flags.boolean({
+      default: false,
+      summary: 'Persist reports in a unique cwd logs/cms/reports run directory; not with preview.',
+    }),
+    'report-dir': Flags.string({
+      char: 'r',
+      summary: 'Exact fresh report directory; implies report and overrides its default location.',
     }),
   };
 
   public async run(): Promise<CmsEnvelope<ImageUploadCommandResult>> {
     const { flags } = await this.parse(UploadImages);
     const targetOrg = flags['target-org'].getUsername()!;
+    const invocationCwd = process.cwd();
     let orgId = 'unresolved-org';
     let result: ImageUploadCommandResult = {
-      mode: flags.apply ? 'apply' : 'dry-run',
+      mode: flags.preview ? 'preview' : 'execute',
       outcome: 'blocked',
       target: null,
       intents: [],
       byteProof: 'unavailable',
       reportFile: null,
+      report: null,
     };
     const finish = (status: CmsStatus, code?: string): CmsEnvelope<ImageUploadCommandResult> => {
       const envelope: CmsEnvelope<ImageUploadCommandResult> = {
@@ -87,7 +92,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
           producer: 'sf-plugin-cms',
           sourceOrgId: orgId,
           pluginVersion: this.pluginVersion,
-          command: 'sf cms upload images',
+          command: 'sf cms upload',
           generatedAt: new Date().toISOString(),
         },
         diagnostics: {
@@ -100,8 +105,8 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
                     code,
                     message:
                       code === 'IMAGE_UPLOAD_OWNERSHIP_UNCERTAIN'
-                        ? 'CREATE may have succeeded. Reconcile the durable report and destination before any new apply; do not retry.'
-                        : 'Image upload did not complete. Check local inputs, exact workspace selection, collision eligibility, and any durable report before proceeding.',
+                        ? 'CREATE may have succeeded. Inspect returned operation identities and reconcile the destination before any new execution; do not retry. Inspect durable reports only when reporting was enabled.'
+                        : 'Image upload did not complete. Check local inputs, exact workspace selection, collision eligibility and returned outcomes; inspect durable reports only when reporting was enabled.',
                     retryable: false,
                   },
                 ],
@@ -119,26 +124,23 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
             `${intent.filename}: ${intent.size} bytes; title=${intent.title}; apiName=${intent.apiName}; urlName=${intent.urlName}`,
           );
         if (result.reportFile !== null) this.log(`Run report: ${result.reportFile}`);
+        for (const operation of result.report?.operations ?? [])
+          this.log(
+            `${operation.file.filename}: ${operation.state}; identities=${JSON.stringify(operation.binding ?? {})}`,
+          );
         for (const error of envelope.diagnostics.errors) this.log(error.message);
       }
       return this.finishEnvelope(envelope, assertImageUploadCommandResult);
     };
     try {
-      if (flags['contract-version'] !== 1) return finish('blocked', 'UNSUPPORTED_CONTRACT_VERSION');
       assertWorkspaceSelector({
         workspaceId: flags['workspace-id'],
         workspaceName: flags['workspace-name'],
       });
-      if (flags.apply && flags['report-dir'] === undefined)
-        return finish('blocked', 'REPORT_DIRECTORY_REQUIRED');
-      if (flags['report-dir'] !== undefined) {
-        try {
-          await lstat(flags['report-dir']);
-          return finish('blocked', 'REPORT_DIRECTORY_EXISTS');
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
-      }
+      if (flags.preview && (flags.report || flags['report-dir'] !== undefined))
+        throw new TypeError('Preview forbids report and report-dir.');
+      if (flags['report-dir'] !== undefined)
+        await validateMutationReportDirectory(flags['report-dir']);
       await planImageUploadFiles(flags.file);
     } catch (error) {
       this.logDiagnosticError('image upload local validation failed', error);
@@ -164,14 +166,24 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
         target: Object.freeze({ ...preparation.root }),
         intents: Object.freeze(preparation.intents.map(({ file }) => summary(file))),
       };
-      if (!flags.apply) return finish('success');
+      if (flags.preview) return finish('success');
+      const directory = await allocateMutationReportDirectory(
+        flags.report,
+        flags['report-dir'],
+        invocationCwd,
+      );
       const applied = await applyImageUpload({
         preparation,
         services: { ...services, getContent: async (id) => getContent(context.connection, id) },
         connection: context.connection,
-        reportDirectory: flags['report-dir']!,
+        ...(directory ? { reportFile: path.join(directory, 'image-upload-run.json') } : {}),
       });
-      result = { ...result, outcome: 'completed', reportFile: applied.reportFile };
+      result = {
+        ...result,
+        outcome: 'completed',
+        reportFile: applied.reportFile,
+        report: applied.report,
+      };
       return finish('success');
     } catch (error) {
       result =
@@ -181,6 +193,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
               outcome:
                 error.report.state === 'ownership-uncertain' ? 'ownership-uncertain' : 'failed',
               reportFile: error.reportFile,
+              report: error.report,
             }
           : { ...result, outcome: 'failed' };
       return finish(

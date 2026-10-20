@@ -2,10 +2,10 @@ import { Parser } from '@oclif/core';
 import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import UploadImages from '../../src/commands/cms/upload/images.js';
+import UploadImages from '../../src/commands/cms/upload.js';
 import { assertImageUploadCommandResult } from '../../src/contracts/image-upload.js';
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
@@ -31,7 +31,8 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
         'contract-version': 1,
         'workspace-id': 'space',
         file: files,
-        apply: false,
+        preview: false,
+        report: false,
         ...extra,
       },
     }),
@@ -42,7 +43,7 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
   return { instance, events, request, getOrgContext, log };
 }
 
-describe('cms upload images command', () => {
+describe('cms upload command', () => {
   let directory: string;
   beforeEach(async () => {
     sinon.stub(Org, 'create').resolves({ getUsername: () => 'unused' } as Org);
@@ -73,21 +74,22 @@ describe('cms upload images command', () => {
         { flags: UploadImages.flags },
       );
       expect(parsed.flags.file).to.deep.equal(files);
-      expect(parsed.flags.apply).to.equal(false);
-      expect(parsed.flags['contract-version']).to.equal(1);
+      expect(parsed.flags.preview).to.equal(false);
+      expect(parsed.flags.report).to.equal(false);
+      expect(parsed.flags).not.to.have.property('execute');
     });
   }
 
   it('previews ordered names and sizes with zero mutations, no bytes, and distinct root', async () => {
     const files = [await image(), await image('Logo.jpg')];
     await writeFile(files[1], Buffer.from([255, 216, 255, 0]));
-    const subject = command(files);
+    const subject = command(files, { preview: true });
     (subject.instance as unknown as { jsonEnabled: sinon.SinonStub }).jsonEnabled.returns(false);
     const result = await subject.instance.run();
     expect(result.status).to.equal('success');
     expect(result.contractVersion).to.equal('1.0.0');
     expect(result.result).to.deep.include({
-      mode: 'dry-run',
+      mode: 'preview',
       outcome: 'ready',
       target: { workspaceId: 'space', rootFolderId: 'root', isEnhancedSpace: true },
     });
@@ -110,21 +112,21 @@ describe('cms upload images command', () => {
   });
 
   for (const scenario of [
-    'missing-report',
+    'preview-report',
+    'preview-report-dir',
     'missing-file',
     'no-selector',
     'both-selectors',
-    'unsupported-version',
   ]) {
     it(`blocks ${scenario} before org acquisition`, async () => {
       const files = [
         scenario === 'missing-file' ? path.join(directory, 'missing.png') : await image(),
       ];
       const extras: Record<string, Record<string, unknown>> = {
-        'missing-report': { apply: true },
+        'preview-report': { preview: true, report: true },
+        'preview-report-dir': { preview: true, 'report-dir': path.join(directory, 'forbidden') },
         'no-selector': { 'workspace-id': undefined },
         'both-selectors': { 'workspace-name': 'other' },
-        'unsupported-version': { 'contract-version': 2 },
       };
       const extra = extras[scenario] ?? {};
       const subject = command(files, extra);
@@ -137,7 +139,6 @@ describe('cms upload images command', () => {
 
   it('retains the ownership-uncertain durable report after exactly one failed multipart POST', async () => {
     const subject = command([await image()], {
-      apply: true,
       'report-dir': path.join(directory, 'report'),
     });
     const result = await subject.instance.run();
@@ -153,6 +154,106 @@ describe('cms upload images command', () => {
     expect(report.operations[0].file).not.to.have.property('bytes');
   });
 
+  it('returns completed no-report evidence after independent parent and variant readbacks', async () => {
+    const subject = command([await image('Logo.png')]);
+    const binding = {
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+      contentKey: 'key',
+    };
+    const detail = {
+      ...binding,
+      contentSpace: { id: 'space' },
+      folder: { id: 'root' },
+      contentType: { fullyQualifiedName: 'sfdc_cms__image' },
+      status: { status: 'Draft' },
+      isPublished: false,
+      title: 'Logo.png',
+      apiName: 'logo_png',
+      urlName: 'logo-png',
+    };
+    subject.request.callsFake(async (input: Record<string, unknown>) => {
+      subject.events.push(input);
+      if (input.method === 'POST') return binding;
+      const url = String(input.url);
+      if (url.includes('/items/search')) return { items: [], count: 0 };
+      if (url === '/connect/cms/spaces/space') return workspace;
+      if (url.endsWith('/parent') || url.endsWith('/variant')) return detail;
+      throw new Error(`Unexpected read ${url}`);
+    });
+    const envelope = await subject.instance.run();
+    expect(envelope.status).to.equal('success');
+    expect(envelope.result!.outcome).to.equal('completed');
+    expect(envelope.result!.reportFile).to.equal(null);
+    expect(envelope.result!.report!.operations[0].binding).to.deep.equal(binding);
+    expect(envelope.result!.report!.operations[0].state).to.equal('succeeded');
+    expect(subject.events.filter(({ method }) => method === 'POST')).to.have.length(1);
+    expect(
+      subject.events.filter(
+        ({ url }) => String(url).endsWith('/parent') || String(url).endsWith('/variant'),
+      ),
+    ).to.have.length(2);
+    expect(await readdir(directory)).to.deep.equal(['Logo.png']);
+  });
+
+  it('returns known response identities in human and JSON failures without reporting', async () => {
+    const subject = command([await image()]);
+    (subject.instance as unknown as { jsonEnabled: sinon.SinonStub }).jsonEnabled.returns(false);
+    subject.request.callsFake(async (input: Record<string, unknown>) => {
+      subject.events.push(input);
+      if (input.method === 'POST') return { managedContentId: 'known-parent' };
+      if (String(input.url).includes('/items/search')) return { items: [], count: 0 };
+      return workspace;
+    });
+    const envelope = await subject.instance.run();
+    expect(envelope.result!.outcome).to.equal('ownership-uncertain');
+    expect(envelope.result!.report!.operations[0].binding).to.deep.equal({
+      managedContentId: 'known-parent',
+    });
+    expect(subject.log.args.flat().join('\n')).to.include('known-parent');
+    expect(envelope.result!.reportFile).to.equal(null);
+  });
+
+  it('executes without report allocation by default and retains uncertain operation evidence', async () => {
+    const subject = command([await image(), await image('Second.png')]);
+    const result = await subject.instance.run();
+    expect(result.result!.mode).to.equal('execute');
+    expect(result.result!.outcome).to.equal('ownership-uncertain');
+    expect(result.result!.reportFile).to.equal(null);
+    expect(result.result!.report!.operations.map(({ state }) => state)).to.deep.equal([
+      'pending',
+      'planned',
+    ]);
+    expect(subject.events.filter(({ method }) => method === 'POST')).to.have.length(1);
+    expect(await readdir(directory)).to.have.members(['Banner with spaces.PNG', 'Second.png']);
+    expect(JSON.stringify(result)).not.to.include('SECRET');
+    expect(JSON.stringify(result)).not.to.include('bytes');
+  });
+
+  for (const options of [{ report: true }, { report: true, custom: true }, { custom: true }]) {
+    it(`allocates enabled reports using deploy conventions ${JSON.stringify(options)}`, async () => {
+      const cwd = sinon.stub(process, 'cwd').returns(directory);
+      try {
+        const custom = path.join(directory, 'custom');
+        const subject = command([await image()], {
+          report: options.report ?? false,
+          ...(options.custom ? { 'report-dir': custom } : {}),
+        });
+        const envelope = await subject.instance.run();
+        const reportFile = envelope.result!.reportFile!;
+        expect(path.dirname(reportFile)).to.match(
+          options.custom ? /custom$/u : /logs[\\/]cms[\\/]reports[\\/].+$/u,
+        );
+        expect(JSON.parse(await readFile(reportFile, 'utf8')).state).to.equal(
+          'ownership-uncertain',
+        );
+        expect(subject.events.filter(({ method }) => method === 'POST')).to.have.length(1);
+      } finally {
+        cwd.restore();
+      }
+    });
+  }
+
   it('returns a structured failed result for auth failures without unsafe error text', async () => {
     const subject = command([await image()]);
     subject.getOrgContext.rejects(new Error('arbitrary unsafe response SECRET'));
@@ -166,6 +267,8 @@ describe('cms upload images command', () => {
   it('rejects unknown flags, JSON input maps, missing files, and both selectors at the parser boundary', async () => {
     for (const args of [
       ['--unknown'],
+      ['--file', 'one.png', '--apply'],
+      ['--file', 'one.png', '--contract-version', '1'],
       ['--image-map', 'input.json'],
       ['--file', 'one.png', '--workspace-name', 'Other'],
       [],
@@ -184,15 +287,15 @@ describe('cms upload images command', () => {
   });
 
   it('blocks an existing apply report directory before org access', async () => {
-    const subject = command([await image()], { apply: true, 'report-dir': directory });
+    const subject = command([await image()], { 'report-dir': directory });
     const result = await subject.instance.run();
-    expect(result.diagnostics.errors[0].code).to.equal('REPORT_DIRECTORY_EXISTS');
+    expect(result.diagnostics.errors[0].code).to.equal('IMAGE_UPLOAD_LOCAL_VALIDATION_FAILED');
     expect(subject.getOrgContext.notCalled).to.equal(true);
   });
 
   it('rejects array and object enum values without coercion or report-invariant bypasses', () => {
     const valid = {
-      mode: 'apply',
+      mode: 'execute',
       outcome: 'completed',
       target: { workspaceId: 'space', rootFolderId: 'root', isEnhancedSpace: true },
       intents: [
@@ -209,10 +312,12 @@ describe('cms upload images command', () => {
       ],
       byteProof: 'unavailable',
       reportFile: 'run.json',
+      report: { runId: 'run', root: {}, operations: [], state: 'completed' },
     };
     expect(() => assertImageUploadCommandResult(valid)).not.to.throw();
-    for (const mode of ['dry-run', 'apply']) {
-      const base = mode === 'dry-run' ? { ...valid, outcome: 'ready', reportFile: null } : valid;
+    for (const mode of ['preview', 'execute']) {
+      const base =
+        mode === 'preview' ? { ...valid, outcome: 'ready', reportFile: null, report: null } : valid;
       expect(() => assertImageUploadCommandResult({ ...base, mode })).not.to.throw();
       for (const invalid of [[mode], { toString: () => mode }]) {
         expect(() => assertImageUploadCommandResult({ ...base, mode: invalid })).to.throw(
@@ -221,7 +326,16 @@ describe('cms upload images command', () => {
       }
     }
     for (const outcome of ['ready', 'completed', 'blocked', 'failed', 'ownership-uncertain']) {
-      expect(() => assertImageUploadCommandResult({ ...valid, outcome })).not.to.throw();
+      expect(() =>
+        assertImageUploadCommandResult({
+          ...valid,
+          outcome,
+          report: {
+            ...valid.report,
+            state: outcome === 'ownership-uncertain' ? outcome : 'completed',
+          },
+        }),
+      ).not.to.throw();
       for (const invalid of [[outcome], { toString: () => outcome }]) {
         expect(() => assertImageUploadCommandResult({ ...valid, outcome: invalid })).to.throw(
           TypeError,
@@ -234,20 +348,26 @@ describe('cms upload images command', () => {
       }
       if (outcome === 'completed' || outcome === 'ownership-uncertain') {
         expect(() =>
-          assertImageUploadCommandResult({ ...valid, outcome, reportFile: null }),
-        ).to.throw(TypeError);
+          assertImageUploadCommandResult({
+            ...valid,
+            outcome,
+            reportFile: null,
+            report: { ...valid.report, state: outcome },
+          }),
+        ).not.to.throw();
       }
     }
   });
 
   it('strictly rejects bytes and mismatched preview/apply result contracts', () => {
     const valid = {
-      mode: 'dry-run',
+      mode: 'preview',
       outcome: 'blocked',
       target: null,
       intents: [],
       byteProof: 'unavailable',
       reportFile: null,
+      report: null,
     };
     expect(() => assertImageUploadCommandResult(valid)).not.to.throw();
     expect(() => assertImageUploadCommandResult({ ...valid, bytes: [] })).to.throw();

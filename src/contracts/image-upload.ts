@@ -14,12 +14,13 @@ export type ImageUploadSummary = {
 };
 
 export type ImageUploadCommandResult = {
-  readonly mode: 'dry-run' | 'apply';
+  readonly mode: 'preview' | 'execute';
   readonly outcome: 'ready' | 'completed' | 'blocked' | 'failed' | 'ownership-uncertain';
   readonly target: ImageUploadRootEvidence | null;
   readonly intents: readonly ImageUploadSummary[];
   readonly byteProof: 'unavailable';
   readonly reportFile: string | null;
+  readonly report: ImageUploadReport | null;
 };
 
 export function assertImageUploadCommandResult(
@@ -27,13 +28,13 @@ export function assertImageUploadCommandResult(
 ): asserts value is ImageUploadCommandResult {
   assertExactKeys(
     value,
-    ['mode', 'outcome', 'target', 'intents', 'byteProof', 'reportFile'],
+    ['mode', 'outcome', 'target', 'intents', 'byteProof', 'reportFile', 'report'],
     'image upload result',
   );
   const { mode, outcome } = value;
   if (
     typeof mode !== 'string' ||
-    !['dry-run', 'apply'].includes(mode) ||
+    !['preview', 'execute'].includes(mode) ||
     typeof outcome !== 'string' ||
     !['ready', 'completed', 'blocked', 'failed', 'ownership-uncertain'].includes(outcome) ||
     value.byteProof !== 'unavailable' ||
@@ -70,8 +71,10 @@ export function assertImageUploadCommandResult(
       throw new TypeError('Invalid image intent');
   }
   if (
-    mode === 'dry-run' &&
-    (value.reportFile !== null || !['ready', 'blocked', 'failed'].includes(outcome))
+    mode === 'preview' &&
+    (value.reportFile !== null ||
+      value.report !== null ||
+      !['ready', 'blocked', 'failed'].includes(outcome))
   )
     throw new TypeError('Invalid dry-run outcome');
   if (
@@ -79,10 +82,38 @@ export function assertImageUploadCommandResult(
     (value.target === null || value.intents.length === 0)
   )
     throw new TypeError('Prepared intents required');
-  if (outcome === 'completed' && (mode !== 'apply' || value.reportFile === null))
-    throw new TypeError('Completed apply report required');
-  if (outcome === 'ownership-uncertain' && (mode !== 'apply' || value.reportFile === null))
-    throw new TypeError('Uncertain apply report required');
+  if (value.report !== null) {
+    if (typeof value.report !== 'object' || Array.isArray(value.report))
+      throw new TypeError('Invalid upload report');
+    assertExactKeys(
+      value.report,
+      ['runId', 'root', 'operations', 'state', ...('error' in value.report ? ['error'] : [])],
+      'report',
+    );
+    assertNonemptyString(value.report.runId, 'runId');
+    if (
+      !Array.isArray(value.report.operations) ||
+      typeof value.report.state !== 'string' ||
+      !['applying', 'completed', 'failed', 'ownership-uncertain'].includes(value.report.state)
+    )
+      throw new TypeError('Invalid upload report');
+    for (const operation of value.report.operations) {
+      if (
+        operation === null ||
+        typeof operation !== 'object' ||
+        !['planned', 'pending', 'succeeded'].includes(operation.state) ||
+        !operation.file ||
+        typeof operation.file !== 'object' ||
+        'bytes' in operation.file
+      )
+        throw new TypeError('Invalid upload operation');
+    }
+  }
+  if (
+    ['completed', 'ownership-uncertain'].includes(outcome) &&
+    (mode !== 'execute' || value.report === null || value.report.state !== outcome)
+  )
+    throw new TypeError('Execution outcome evidence required');
 }
 import type {
   ImageCreateInput,

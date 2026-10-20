@@ -62,7 +62,7 @@ const requiredCommands = [
   'commands/cms/list/channel.js',
   'commands/cms/retrieve/content.js',
   'commands/cms/deploy/content.js',
-  'commands/cms/upload/images.js',
+  'commands/cms/upload.js',
 ];
 for (const command of requiredCommands) {
   if (!shippedRuntimeFiles.some((file) => file.endsWith(command.replaceAll('/', path.sep)))) {

@@ -159,11 +159,12 @@ describe('no-JSON image upload preparation', () => {
 
   it('validates safe MIME without a closed format or 10 MiB summary gate', () => {
     const result = {
-      mode: 'dry-run',
+      mode: 'preview',
       outcome: 'ready',
       target: { workspaceId: 'space', rootFolderId: 'root', isEnhancedSpace: true },
       byteProof: 'unavailable',
       reportFile: null,
+      report: null,
       intents: [
         {
           action: 'create',

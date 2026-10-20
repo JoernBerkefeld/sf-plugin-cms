@@ -1,212 +1,306 @@
-import { fileURLToPath } from 'node:url';
-import { Parser } from '@oclif/core';
-import { DELETE_CONTENT_TYPES } from '../../src/services/email-delete.js';
-import { Org } from '@salesforce/core';
-import { TestContext } from '@salesforce/core/testSetup';
+import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
+import sinon from 'sinon';
+import { PassThrough } from 'node:stream';
+import path from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { createRunOwnedTemp } from '../../src/filesystem/runOwnedTemp.js';
+import { Parser } from '@oclif/core';
+import { Org } from '@salesforce/core';
 import DeleteContent from '../../src/commands/cms/delete/content.js';
+import { assertContentDeleteResult } from '../../src/contracts/content-delete.js';
 
-describe('cms delete content command', () => {
-  const context = new TestContext();
-  beforeEach(() => {
-    context.SANDBOX.stub(Org, 'create').resolves({ getUsername: () => 'org' } as Org);
-    process.exitCode = undefined;
-  });
-  afterEach(() => {
-    context.restore();
-    process.exitCode = undefined;
-  });
-
-  it('derives every CLI spelling from the canonical admitted delete list', () => {
-    expect(DeleteContent.flags['content-type'].options).to.deep.equal(
-      DELETE_CONTENT_TYPES.flatMap((type) => [type.slice('sfdc_cms__'.length), type]),
-    );
-    expect(DeleteContent.flags['content-type'].default).to.equal('sfdc_cms__email');
-  });
-
-  for (const canonical of DELETE_CONTENT_TYPES) {
-    for (const spelling of [canonical, canonical.slice('sfdc_cms__'.length)]) {
-      it(`parses and canonicalizes ${spelling} before contract and safety checks`, async () => {
-        const parsed = await Parser.parse(
-          [
-            '-o',
-            'unused',
-            '--content-type',
-            spelling,
-            '--contract-version',
-            canonical === 'sfdc_cms__emailTemplate' ? '2' : '1',
-            '--workspace-id',
-            'space',
-            '--api-name',
-            'Welcome',
-            '--ownership-report',
-            fileURLToPath(new URL('../../README.md', import.meta.url)),
-          ],
-          { flags: DeleteContent.flags },
-        );
-        const command = Object.create(DeleteContent.prototype) as DeleteContent;
-        const getOrgContext = context.SANDBOX.stub();
-        Object.assign(command, {
-          parse: context.SANDBOX.stub().resolves(parsed),
-          getOrgContext,
-          jsonEnabled: context.SANDBOX.stub().returns(true),
+const workspaceId = '0Zuaj000007dgL8CAI';
+const parentId = '20Yaj00000FaO1aEAF';
+const response = (value?: unknown) =>
+  Object.assign(Promise.resolve(value), { stream: () => new PassThrough() });
+function fixture(languages = ['en_US'], type = 'audio') {
+  const rows = languages.map((language, index) => ({
+    Id: `9Psaj00000J5ox${String.fromCodePoint(74 + index)}CAR`,
+    ManagedContentId: parentId,
+    ContentTypeFullyQualifiedName: `sfdc_cms__${type}`,
+    Language: language,
+    VariantType: index === 0 ? 'Content' : 'Translation',
+    IsPublished: true,
+    ManagedContentVariantStatus: 'Published',
+    IsPrimary: index === 0,
+    Name: 'Existing',
+    UrlName: null,
+    ManagedContentKey: 'EXISTING',
+    ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Existing' },
+  }));
+  let page = 0;
+  const requests: string[] = [];
+  const connection = {
+    version: '67.0',
+    accessToken: 'token',
+    instanceUrl: 'https://controlled.example',
+    getApiVersion: () => '67.0',
+    request: ({ url }: { url: string }) => {
+      requests.push(url);
+      if (url.includes('/query?')) {
+        const query = decodeURIComponent(url);
+        let records: unknown[];
+        if (query.includes('COUNT(Id)'))
+          records =
+            rows.length > 0 ? [{ ManagedContentId: parentId, siblingCount: rows.length }] : [];
+        else records = page++ % 2 === 0 ? rows : [];
+        return response({
+          done: true,
+          totalSize: records.length,
+          records: structuredClone(records),
         });
-        const result = await command.run();
-        expect(result.contractVersion).to.equal(
-          canonical === 'sfdc_cms__emailTemplate' ? '2.0.0' : '1.0.0',
+      }
+      if (url.endsWith(`/${parentId}`))
+        return response({
+          managedContentId: parentId,
+          contentSpace: { id: workspaceId },
+          contentType: { fullyQualifiedName: `sfdc_cms__${type}` },
+        });
+      const row = rows.find(({ Id }) => url.endsWith(`/${Id}`));
+      if (!row)
+        return Promise.reject(
+          Object.assign(new Error('Variant absent'), {
+            response: { status: 404 },
+            data: [{ errorCode: 'VARIANT_NOT_FOUND', message: 'Absent' }],
+          }),
         );
-        expect(result.diagnostics.errors[0].code).to.equal('LANGUAGE_SELECTOR_REQUIRED');
-        expect(getOrgContext.notCalled).to.equal(true);
+      return response({
+        managedContentId: parentId,
+        managedContentVariantId: row.Id,
+        contentType: { fullyQualifiedName: row.ContentTypeFullyQualifiedName },
+        contentSpace: { id: workspaceId },
+        language: row.Language,
+        apiName: 'Existing',
+        isPublished: row.IsPublished,
+        status: { status: row.ManagedContentVariantStatus },
       });
-    }
-  }
-
-  for (const unsupported of [
-    'audio',
-    'image',
-    'document',
-    'brand',
-    'futureType',
-    'Email',
-    ' email',
-  ]) {
-    for (const spelling of [unsupported, `sfdc_cms__${unsupported}`]) {
-      it(`rejects unsupported delete spelling ${JSON.stringify(spelling)} in the parser`, async () => {
-        try {
-          await Parser.parse(['--content-type', spelling], { flags: DeleteContent.flags });
-          expect.fail('Unsupported delete family must fail');
-        } catch (error) {
-          expect((error as Error).message).to.include('--content-type');
-        }
-      });
-    }
-  }
-
-  it('requires contract v2 for Email Template before org access', async () => {
-    const command = Object.create(DeleteContent.prototype) as DeleteContent;
-    const getOrgContext = context.SANDBOX.stub();
-    Object.assign(command, {
-      parse: context.SANDBOX.stub().resolves({
-        flags: {
-          'target-org': { getUsername: () => 'org' },
-          'api-version': '67.0',
-          'contract-version': 1,
-          'content-type': 'emailTemplate',
-          'workspace-id': 'space',
-          'api-name': 'Template',
-          language: 'en_US',
-          'default-language': false,
-          'ownership-report': 'ownership.json',
-          apply: false,
-        },
-      }),
-      getOrgContext,
-      jsonEnabled: context.SANDBOX.stub().returns(true),
-    });
-    const result = await command.run();
-    expect(result.status).to.equal('blocked');
-    expect(result.diagnostics.errors[0].code).to.equal('UNSUPPORTED_CONTRACT_VERSION');
-    expect(getOrgContext.notCalled).to.equal(true);
+    },
+  };
+  const deletes = sinon.stub(JsforceConnection.prototype, 'request').callsFake(((request: {
+    url: string;
+  }) => {
+    const index = rows.findIndex(({ Id }) => request.url.endsWith(`/${Id}`));
+    rows.splice(index, 1);
+    return response();
+  }) as never);
+  return { connection, requests, deletes };
+}
+function subject(overrides: Record<string, unknown> = {}, connection?: unknown) {
+  const command = Object.create(DeleteContent.prototype) as DeleteContent;
+  const getOrgContext = sinon.stub().resolves({ connection, orgId: '00DControlled' });
+  Object.assign(command, {
+    parse: sinon.stub().resolves({
+      flags: {
+        'target-org': { getUsername: () => 'org' },
+        'api-version': '67.0',
+        'workspace-id': workspaceId,
+        metadata: ['audio:Existing'],
+        preview: false,
+        report: false,
+        ...overrides,
+      },
+    }),
+    getOrgContext,
+    jsonEnabled: () => true,
+    log: sinon.stub(),
   });
+  return { command, getOrgContext };
+}
 
-  for (const invalid of [
-    {
-      label: 'missing language selector',
-      overrides: { language: undefined, 'default-language': false, apply: false },
-      diagnostic: 'LANGUAGE_SELECTOR_REQUIRED',
-    },
-    {
-      label: 'missing report directory',
-      overrides: { apply: true, 'acknowledge-permanent-delete': true, 'report-dir': undefined },
-      diagnostic: 'REPORT_DIRECTORY_REQUIRED',
-    },
-    {
-      label: 'missing acknowledgement',
-      overrides: { apply: true, 'acknowledge-permanent-delete': false, 'report-dir': 'report' },
-      diagnostic: 'PERMANENT_DELETE_ACKNOWLEDGEMENT_REQUIRED',
-    },
-  ]) {
-    it(`returns Template v2 for ${invalid.label} before org access`, async () => {
-      const command = Object.create(DeleteContent.prototype) as DeleteContent;
-      const getOrgContext = context.SANDBOX.stub();
-      Object.assign(command, {
-        parse: context.SANDBOX.stub().resolves({
-          flags: {
-            'target-org': { getUsername: () => 'org' },
-            'api-version': '67.0',
-            'contract-version': 2,
-            'content-type': 'sfdc_cms__emailTemplate',
-            'workspace-id': 'space',
-            'api-name': 'Template',
-            language: 'en_US',
-            'default-language': false,
-            'ownership-report': 'ownership.json',
-            ...invalid.overrides,
-          },
-        }),
-        getOrgContext,
-        jsonEnabled: context.SANDBOX.stub().returns(true),
-      });
-      const result = await command.run();
-      expect(result).to.deep.include({ contractVersion: '2.0.0', status: 'blocked' });
-      expect(result.diagnostics.errors[0].code).to.equal(invalid.diagnostic);
-      expect(result.result?.blockers[0]?.code).to.equal('EMAIL_TEMPLATE_DELETE_PREFLIGHT_BLOCKED');
-      expect(getOrgContext.notCalled).to.equal(true);
-    });
-  }
-
-  it('blocks apply without permanent-delete acknowledgement before org access', async () => {
-    const command = Object.create(DeleteContent.prototype) as DeleteContent;
-    const getOrgContext = context.SANDBOX.stub();
-    Object.assign(command, {
-      parse: context.SANDBOX.stub().resolves({
-        flags: {
-          'target-org': { getUsername: () => 'org' },
-          'api-version': '67.0',
-          'contract-version': 1,
-          'workspace-id': 'space',
-          'api-name': 'Email',
-          language: 'en_US',
-          'default-language': false,
-          'ownership-report': 'ownership.json',
-          apply: true,
-          'report-dir': 'report',
-          'acknowledge-permanent-delete': false,
-        },
-      }),
-      getOrgContext,
-      jsonEnabled: context.SANDBOX.stub().returns(true),
-    });
-    const result = await command.run();
-    expect(result.status).to.equal('blocked');
-    expect(result.diagnostics.errors[0].code).to.equal('PERMANENT_DELETE_ACKNOWLEDGEMENT_REQUIRED');
-    expect(getOrgContext.notCalled).to.equal(true);
+describe('cms delete exact-item CLI', () => {
+  afterEach(() => {
+    sinon.restore();
+    process.exitCode = undefined;
   });
-
-  it('blocks apply without fresh report directory before org access', async () => {
-    const command = Object.create(DeleteContent.prototype) as DeleteContent;
-    const getOrgContext = context.SANDBOX.stub();
-    Object.assign(command, {
-      parse: context.SANDBOX.stub().resolves({
-        flags: {
-          'target-org': { getUsername: () => 'org' },
-          'api-version': '67.0',
-          'contract-version': 1,
-          'workspace-id': 'space',
-          'api-name': 'Email',
-          language: 'en_US',
-          'default-language': false,
-          'ownership-report': 'ownership.json',
-          apply: true,
-          'acknowledge-permanent-delete': true,
-        },
-      }),
-      getOrgContext,
-      jsonEnabled: context.SANDBOX.stub().returns(true),
+  for (const metadata of [
+    undefined,
+    [],
+    ['audio'],
+    ['audio:*'],
+    ['audio:A?'],
+    ['audio:[A]'],
+    ['audio:'],
+    ['video:Existing'],
+  ]) {
+    for (const preview of [true, false])
+      it(`rejects ${JSON.stringify(metadata)} before org access preview=${preview}`, async () => {
+        const f = subject({ metadata, preview });
+        const result = await f.command.run();
+        expect(result.status).to.equal('blocked');
+        expect(f.getOrgContext.notCalled).to.equal(true);
+      });
+  }
+  for (const override of [{ report: true }, { 'report-dir': 'anything' }])
+    it('rejects reporting in preview before org access', async () => {
+      const f = subject({ preview: true, ...override });
+      const output = await f.command.run();
+      expect(output.status).to.equal('blocked');
+      expect(f.getOrgContext.notCalled).to.equal(true);
     });
-    const result = await command.run();
-    expect(result.status).to.equal('blocked');
-    expect(result.diagnostics.errors[0].code).to.equal('REPORT_DIRECTORY_REQUIRED');
-    expect(getOrgContext.notCalled).to.equal(true);
+  for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio'])
+    it(`previews existing Published ${type} with sole automatic locale`, async () => {
+      const f = fixture(['en_US'], type);
+      const s = subject({ preview: true, metadata: [`${type}:Existing`] }, f.connection);
+      const output = await s.command.run();
+      expect(output.status, JSON.stringify(output)).to.equal('success');
+      expect(output.result?.outcome).to.equal('ready');
+      expect(output.result?.targets[0]).to.include({ language: 'en_US', isPublished: true });
+      expect(f.deletes.notCalled).to.equal(true);
+    });
+  it('executes by default without reporting, ownership or Draft restriction', async () => {
+    const f = fixture(['en_US', 'de']);
+    const s = subject({ language: ['de'] }, f.connection);
+    const output = await s.command.run();
+    expect(output.status, JSON.stringify(output)).to.equal('success');
+    expect(output.result?.execution?.reportFile).to.equal(null);
+    expect(f.deletes.calledOnce).to.equal(true);
+    expect(output.result?.execution?.report.operations[0]).to.include({
+      state: 'completed',
+      exactVariantAbsent: true,
+    });
+  });
+  for (const defaultReport of [false, true])
+    it(`persists opt-in reports via allocator default=${defaultReport}`, async () => {
+      const f = fixture();
+      const run = await createRunOwnedTemp('cms-delete-cli-report-');
+      const originalCwd = process.cwd();
+      process.chdir(run.root);
+      try {
+        const output = await subject(
+          defaultReport ? { report: true } : { 'report-dir': path.join(run.root, 'report') },
+          f.connection,
+        ).command.run();
+        expect(output.status, JSON.stringify(output)).to.equal('success');
+        const execution = output.result!.execution!;
+        expect(JSON.parse(await readFile(execution.reportFile!, 'utf8'))).to.deep.equal(
+          execution.report,
+        );
+        if (defaultReport)
+          expect(path.dirname(path.dirname(execution.reportFile!))).to.equal(
+            path.join(run.root, 'logs', 'cms', 'reports'),
+          );
+        expect(f.deletes.calledOnce).to.equal(true);
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+  it('allocates no reports for no-report execution', async () => {
+    const f = fixture();
+    const run = await createRunOwnedTemp('cms-delete-cli-no-report-');
+    const before = await readdir(run.root);
+    const originalCwd = process.cwd();
+    process.chdir(run.root);
+    try {
+      const output = await subject({}, f.connection).command.run();
+      expect(output.status).to.equal('success');
+      expect(output.result?.execution?.reportFile).to.equal(null);
+      expect(await readdir(run.root)).to.deep.equal(before);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+  it('rejects ambiguous JSON languages clearly without mutation', async () => {
+    const f = fixture(['en_US', 'de']);
+    const s = subject({}, f.connection);
+    const output = await s.command.run();
+    expect(output.status).to.equal('blocked');
+    expect(output.diagnostics.errors[0].message).to.include('--language');
+    expect(f.deletes.notCalled).to.equal(true);
+  });
+  it('selects all actual languages explicitly in preview', async () => {
+    const f = fixture(['en_US', 'de']);
+    const s = subject({ preview: true, language: ['*'] }, f.connection);
+    const output = await s.command.run();
+    expect(output.status).to.equal('success');
+    expect(output.result?.targets.map(({ language }) => language)).to.deep.equal(['en_US', 'de']);
+    expect(f.deletes.notCalled).to.equal(true);
+  });
+  for (const input of [
+    { metadata: undefined, 'api-name': 'Existing', 'content-type': 'audio' },
+    { metadata: undefined, 'content-key-or-id': [parentId], 'content-type': 'audio' },
+  ])
+    it('preserves an exact alternative selector route', async () => {
+      const f = fixture();
+      const s = subject({ ...input, preview: true }, f.connection);
+      const output = await s.command.run();
+      expect(output.status).to.equal('success');
+    });
+  it('preserves rejected execution evidence without replay', async () => {
+    const f = fixture();
+    f.deletes.callsFake((() =>
+      Object.assign(
+        Promise.reject(
+          Object.assign(new Error('Rejected'), {
+            response: { status: 403 },
+            data: [{ errorCode: 'FORBIDDEN', message: 'Rejected' }],
+          }),
+        ),
+        { stream: () => new PassThrough() },
+      )) as never);
+    const output = await subject({}, f.connection).command.run();
+    expect(output.status).to.equal('failed');
+    expect(output.result?.outcome).to.equal('rejected');
+    expect(output.result?.execution?.reportFile).to.equal(null);
+    expect(f.deletes.calledOnce).to.equal(true);
+  });
+  for (const selection of [[], ['en_US'], ['en_US', 'de']])
+    it(`interactive selection ${JSON.stringify(selection)} resolves before dispatch`, async () => {
+      const f = fixture(['en_US', 'de']);
+      const s = subject({ preview: selection.length > 0 }, f.connection);
+      Object.assign(s.command, {
+        jsonEnabled: () => false,
+        selectLanguages: sinon.stub().resolves(selection),
+      });
+      const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+      const stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+      Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+      Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+      const priorCI = process.env.CI;
+      delete process.env.CI;
+      try {
+        const output = await s.command.run();
+        expect(output.status).to.equal('success');
+        expect(output.result?.outcome).to.equal(selection.length > 0 ? 'ready' : 'cancelled');
+        expect(output.result?.targets.map(({ language }) => language)).to.deep.equal(selection);
+        expect(f.deletes.notCalled).to.equal(true);
+      } finally {
+        if (priorCI === undefined) delete process.env.CI;
+        else process.env.CI = priorCI;
+        if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
+        else delete (process.stdin as { isTTY?: boolean }).isTTY;
+        if (stdoutTTY) Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+        else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      }
+    });
+  it('advertises only new flags and equivalent alias', async () => {
+    expect(DeleteContent.aliases).to.deep.equal(['content:delete']);
+    for (const flag of [
+      'apply',
+      'contract-version',
+      'ownership-report',
+      'acknowledge-permanent-delete',
+      'default-language',
+    ])
+      expect(DeleteContent.flags).not.to.have.property(flag);
+    sinon.stub(Org, 'create').resolves({ getUsername: () => 'org' } as Org);
+    const parsed = await Parser.parse(
+      ['--workspace-id', workspaceId, '-m', 'audio:Existing', '--language', '*'],
+      { flags: DeleteContent.flags },
+    );
+    expect(parsed.flags.metadata).to.deep.equal(['audio:Existing']);
+    expect(parsed.flags.preview).to.equal(false);
+  });
+  it('validates command status and rejects legacy result shapes', () => {
+    const result = {
+      mode: 'execute',
+      outcome: 'blocked',
+      workspaceId,
+      targets: [],
+      execution: null,
+    };
+    expect(() => assertContentDeleteResult(result, undefined, 'blocked')).not.to.throw();
+    expect(() => assertContentDeleteResult(result, undefined, 'success')).to.throw();
+    expect(() => assertContentDeleteResult({ ...result, ownershipReport: 'old' })).to.throw();
   });
 });

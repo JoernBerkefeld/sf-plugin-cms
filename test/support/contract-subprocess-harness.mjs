@@ -278,6 +278,7 @@ if (
   if (pluginVersion === undefined) throw new Error('Installed plugin version is unavailable');
   // Only public command fixtures parse native org flags; service-only fixtures stay offline.
   if (
+    contractCase.startsWith('native-delete-') ||
     contractCase.startsWith('audio-deploy-') ||
     contractCase.startsWith('image-upload-') ||
     contractCase.startsWith('email-publish-') ||
@@ -289,6 +290,90 @@ if (
     const { Org } = installedRequire('@salesforce/core');
     Org.create = async (options) => ({
       getUsername: () => options?.aliasOrUsername ?? 'controlled-default@example.test',
+    });
+  }
+  if (contractCase.startsWith('native-delete-')) {
+    const { default: Command } = await import(
+      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/delete/content.js'))
+    );
+    const require = createRequire(path.join(pluginRoot, 'package.json'));
+    const { Connection } = require('@jsforce/jsforce-node');
+    const events = [];
+    const evidenceFile = path.resolve(`${contractCase}-transport.json`);
+    const workspaceId = '0Zuaj000007dgL8CAI';
+    const parentId = '20Yaj00000FaO1aEAF';
+    const type = contractCase.includes('template') ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
+    let present = true;
+    let page = 0;
+    const row = {
+      Id: '9Psaj00000J5oxJCAR',
+      ManagedContentId: parentId,
+      ContentTypeFullyQualifiedName: type,
+      Language: 'en_US',
+      VariantType: 'Content',
+      IsPublished: true,
+      ManagedContentVariantStatus: 'Published',
+      IsPrimary: true,
+      Name: 'Existing',
+      UrlName: null,
+      ManagedContentKey: 'EXISTING',
+      ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Existing' },
+    };
+    const response = (value) =>
+      Object.assign(Promise.resolve(value), { stream: () => new PassThrough() });
+    Connection.prototype.request = function (request) {
+      events.push({ method: request.method, url: request.url });
+      writeFileSync(evidenceFile, JSON.stringify(events));
+      if (request.method !== 'DELETE') throw new Error('Unexpected fixture dispatch');
+      present = false;
+      return response();
+    };
+    Command.prototype.getOrgContext = async () => ({
+      orgId: '00DControlledSource',
+      connection: {
+        version: '67.0',
+        getApiVersion: () => '67.0',
+        accessToken: 'controlled-token',
+        instanceUrl: 'https://controlled.example',
+        request: ({ url, method }) => {
+          events.push({ method, url });
+          writeFileSync(evidenceFile, JSON.stringify(events));
+          if (method !== 'GET') throw new Error('Unexpected fixture mutation');
+          if (url.includes('/query?')) {
+            let records;
+            if (decodeURIComponent(url).includes('COUNT(Id)'))
+              records = present ? [{ ManagedContentId: parentId, siblingCount: 1 }] : [];
+            else records = page++ % 2 === 0 && present ? [row] : [];
+            return response({ done: true, totalSize: records.length, records });
+          }
+          if (url.endsWith(`/${parentId}`))
+            return response({
+              managedContentId: parentId,
+              contentSpace: { id: workspaceId },
+              contentType: { fullyQualifiedName: type },
+            });
+          if (!present)
+            return Object.assign(
+              Promise.reject(
+                Object.assign(new Error('Absent'), {
+                  response: { status: 404 },
+                  data: [{ errorCode: 'VARIANT_NOT_FOUND', message: 'Absent' }],
+                }),
+              ),
+              { stream: () => new PassThrough() },
+            );
+          return response({
+            managedContentId: parentId,
+            managedContentVariantId: row.Id,
+            language: 'en_US',
+            apiName: 'Existing',
+            contentType: { fullyQualifiedName: type },
+            contentSpace: { id: workspaceId },
+            isPublished: true,
+            status: { status: 'Published' },
+          });
+        },
+      },
     });
   }
   if (contractCase === 'audio-deploy-preview') {
@@ -327,7 +412,7 @@ if (
   }
   if (contractCase === 'image-upload-preview' || contractCase === 'image-upload-local') {
     const { default: Command } = await import(
-      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/upload/images.js'))
+      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/upload.js'))
     );
     Command.prototype.getOrgContext = async function () {
       if (contractCase === 'image-upload-local') throw new Error('Unexpected org access');
@@ -1294,7 +1379,7 @@ if (
     });
     process.stdout.write(JSON.stringify(result));
   } else {
-    if (contractCase !== 'audio-deploy-preview')
+    if (contractCase !== 'audio-deploy-preview' && !contractCase.startsWith('native-delete-'))
       throw new Error(`Unknown contract subprocess case: ${contractCase}`);
   }
 }

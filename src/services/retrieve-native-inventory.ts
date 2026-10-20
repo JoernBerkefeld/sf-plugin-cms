@@ -14,6 +14,8 @@ export type NativeInventoryRow = {
   ManagedContentId: string;
   ContentTypeFullyQualifiedName: string;
   Language: string;
+  /** Native classification, independent of locale, status and version. Missing evidence is not admission. */
+  VariantType?: string;
   IsPublished: boolean;
   ManagedContentVariantStatus: string;
   IsPrimary: boolean;
@@ -72,7 +74,7 @@ export class NativeInventoryRequestError extends TypeError {
   }
 }
 const PROJECTION =
-  'Id, ManagedContentId, ContentTypeFullyQualifiedName, Language, IsPublished, ManagedContentVariantStatus, IsPrimary, Name, UrlName, ManagedContentKey, ManagedContent.AuthoredManagedContentSpaceId, ManagedContent.ApiName';
+  'Id, ManagedContentId, ContentTypeFullyQualifiedName, Language, VariantType, IsPublished, ManagedContentVariantStatus, IsPrimary, Name, UrlName, ManagedContentKey, ManagedContent.AuthoredManagedContentSpaceId, ManagedContent.ApiName';
 
 function exactId(value: unknown, prefix: string): asserts value is string {
   if (
@@ -207,6 +209,8 @@ async function enumerate(
         if (
           typeof row.IsPublished !== 'boolean' ||
           typeof row.IsPrimary !== 'boolean' ||
+          (row.VariantType !== undefined &&
+            (typeof row.VariantType !== 'string' || row.VariantType.length === 0)) ||
           (row.UrlName !== null && typeof row.UrlName !== 'string') ||
           (row.ManagedContent.ApiName !== null && typeof row.ManagedContent.ApiName !== 'string')
         )

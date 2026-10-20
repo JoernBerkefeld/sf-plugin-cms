@@ -58,6 +58,40 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents project-local and explicit global org defaults with per-command overrides', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    const gettingStarted = readme
+      .split('## Installation and getting started')[1]
+      .split('## Download, edit and save one Email')[0];
+    const authentication = gettingStarted.split('### Authenticate an org')[1];
+    const defaults = authentication
+      .split('### Choose a default org')[1]
+      .split('### Install the plugin')[0];
+    expect(authentication).to.include('sf org login web --alias isolated-source\n');
+    expect(authentication).to.include('sf org display --target-org isolated-source');
+    expect(authentication).not.to.include('--set-default');
+    expect(authentication.indexOf('For a sandbox')).to.be.lessThan(
+      authentication.indexOf('### Choose a default org'),
+    );
+    expect(defaults).to.include(
+      '**only inside a valid Salesforce project containing `sfdx-project.json`**',
+    );
+    expect(defaults).to.include(
+      'sf config set target-org=isolated-source\nsf config get target-org',
+    );
+    expect(defaults).to.include(
+      'Outside a Salesforce project, pass `--target-org isolated-source` on each org-backed command',
+    );
+    expect(defaults).to.include(
+      'sf config set target-org=isolated-source --global\nsf config get target-org',
+    );
+    expect(defaults).to.include('A project-local default overrides the global default.');
+    expect(defaults).to.include(
+      'Explicit `-o` / `--target-org` overrides the configured default for that command only, without changing either default.',
+    );
+    expect(defaults).to.include('sf content list workspace --target-org isolated-target');
+  });
+
   it('documents conventional deploy metadata and file-or-directory alternatives without compatibility flags', async () => {
     const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
     expect(readme).to.include('--metadata -m Type[:ApiName]');
@@ -71,6 +105,16 @@ describe('current public documentation', () => {
       ),
     ).to.equal(true);
   });
+  it('documents upload execution, preview and opt-in operation evidence', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    const upload = readme.split('### `sf content upload`')[1].split('### `sf content info`')[0];
+    expect(upload).to.include('Execution is the default');
+    expect(upload).to.include('Preview rejects `--report` and `--report-dir`');
+    expect(upload).to.include('no crash-surviving structured journal');
+    expect(upload).to.include('in-memory');
+    expect(upload).not.to.include('--apply --report-dir');
+  });
+
   it('omits historical command and internal-engine appendices', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const obsolete of [
@@ -104,7 +148,7 @@ describe('current public documentation', () => {
       'content list channel',
       'content retrieve',
       'content deploy',
-      'content upload images',
+      'content upload',
       'content publish',
       'content unpublish',
       'content delete',
@@ -118,8 +162,6 @@ describe('current public documentation', () => {
       'sf-cms-content-deploy@1',
       'sf-cms-images-upload@1',
       'sf-cms-content-delete@1',
-      'sf-cms-content-delete@2',
-      'sf-cms-email-delete-ownership@1',
       'sf-cms-content-publish@1',
       'sf-cms-content-unpublish@1',
     ]) {
@@ -201,7 +243,7 @@ describe('current public documentation', () => {
       'Available (limited)',
       'Available (API-led)',
       'Available (bytes only)',
-      'Not supported',
+      'Available (API-led)',
     ]);
     for (const obsolete of [
       'Bounded Document retrieval (retrieval only)',
@@ -264,7 +306,7 @@ describe('current public documentation', () => {
       'Org defaults do not supply or broaden workspace, language, source, mutation or ownership selectors.',
       'Offline `content info` needs no org.',
       'Case and whitespace are not normalized',
-      'delete accepts only `email` and `emailTemplate`',
+      'retrieve, deploy and delete accept `email`, `emailTemplate`, `image`, `document`, `audio`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
       '`content.retrieve.audio`',
       '`content.deploy.audio.create`',
@@ -293,7 +335,7 @@ describe('current public documentation', () => {
       'Available (limited)',
       'Available (unqualified)',
       'Available (bytes only)',
-      'Not supported',
+      'Available (API-led)',
     ]);
     expect(readme).not.to.include('Audio deployment is not enabled');
     expect(readme).not.to.include('not yet listed in the offline capability registry');
@@ -322,8 +364,8 @@ describe('current public documentation', () => {
   it('keeps concise metadata examples without omitting required mutation scope', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const example of [
-      'sf org login web --alias my-org --set-default',
-      'aliases in the upcoming 0.19 release',
+      'sf org login web --alias isolated-source',
+      'spellings used here are aliases, with identical flags and behavior',
       'sf content retrieve --workspace-name Marketing -m email:Welcome\n',
       'sf content retrieve --workspace-name Marketing -m email\n',
       'sf content retrieve --workspace-name Marketing -m email -m emailTemplate\n',
@@ -331,7 +373,7 @@ describe('current public documentation', () => {
       'sf content deploy --workspace-name Marketing --default-language -m email:Welcome --report',
       'sf content deploy --workspace-name Marketing --default-language -m audio:Intro --preview --json',
       '--apply --acknowledge-no-send --report-dir ./cms-publish-report',
-      '--ownership-report ./delete-ownership.json --apply --acknowledge-permanent-delete --report-dir ./cms-delete-report',
+      'sf content delete --workspace-id 0Zu... -m image:Banner -m audio:Intro --language "*" --report --json',
       'It cannot be mixed with `--content-type`, `--api-name`, `--content-key-or-id`, or `--all`.',
     ])
       expect(readme, example).to.include(example);
@@ -381,8 +423,8 @@ describe('current public documentation', () => {
       'Do not replay a completed write or retry an unresolved one',
       'journals are not a resume mechanism',
       'new nonexisting report directory',
-      'workspace-import-run.json',
-      'VARIANT_NOT_FOUND',
+      'content-delete-run.json',
+      'Historical revisions, references and other collateral effects are not proven preserved',
       'ownership-uncertain',
       'differing JSON metadata or text companions block the whole selection',
       'no live image upload has been performed',

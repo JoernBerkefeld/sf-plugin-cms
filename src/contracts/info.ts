@@ -23,7 +23,7 @@ export const CMS_PUBLIC_COMMAND_RESULTS = {
   contentRetrieve: ['1.0.0'],
   contentDeploy: ['1.0.0'],
   imagesUpload: ['1.0.0'],
-  contentDelete: ['1.0.0', '2.0.0'],
+  contentDelete: ['1.0.0'],
   contentPublish: ['1.0.0'],
   contentUnpublish: ['1.0.0'],
 } as const;
@@ -34,7 +34,7 @@ export const CMS_PUBLIC_COMMANDS = [
   'cms list channel',
   'cms retrieve content',
   'cms deploy content',
-  'cms upload images',
+  'cms upload',
   'cms delete content',
   'cms publish content',
   'cms unpublish content',
@@ -184,8 +184,14 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
     id: 'content.delete.email-template',
     state: 'experimental',
     transport: 'cli-json',
-    contract: 'sf-cms-content-delete@2',
+    contract: 'sf-cms-content-delete@1',
   },
+  ...['image', 'document', 'audio'].map((family): CmsCapability => ({
+    id: `content.delete.${family}`,
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-delete@1',
+  })),
   {
     id: 'content.publish.email',
     state: 'experimental',
