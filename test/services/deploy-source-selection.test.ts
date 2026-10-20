@@ -478,7 +478,29 @@ describe('local deploy source selection', () => {
     for (const flags of invalid) await failure(selectDeploySources(flags), /Deploy|deploy/u);
   });
 
-  it('rejects empty discovery, empty filters, missing roots/files and files used as roots', async () => {
+  it('admits mixed file/directory sources with overlap deduplication and unchanged bytes', async () => {
+    const root = await temporary();
+    const file = await fixture(path.join(root, 'nested'));
+    const second = await fixture(path.join(root, 'templates'), definition(true), true);
+    const before = await readFile(file);
+    const explicit = await selectDeploySources({ 'definition-file': [file, second] });
+    const flags = Object.freeze({ 'source-dir': Object.freeze([file, root, second, file]) });
+    const selected = await selectDeploySources(flags);
+    expect(selected.mode).to.equal('source-dir');
+    expect(selected.items).to.deep.equal(explicit.items);
+    const after = await readFile(file);
+    expect(after.equals(before)).to.equal(true);
+    await failure(
+      selectDeploySources({ 'source-dir': [path.join(root, 'missing.cms-email.json')] }),
+      /ENOENT/u,
+    );
+    const companion = path.join(path.dirname(file), 'Welcome.cms-email.html');
+    await failure(selectDeploySources({ 'source-dir': [companion] }), /valid JSON/u);
+    await writeFile(file, '{broken');
+    await failure(selectDeploySources({ 'source-dir': [file] }), /valid JSON/u);
+  });
+
+  it('rejects empty discovery, empty filters and missing roots/files', async () => {
     const root = await temporary();
     await failure(selectDeploySources({ 'source-dir': [root] }), /empty/u);
     const file = await fixture(root);
@@ -491,7 +513,8 @@ describe('local deploy source selection', () => {
       selectDeploySources({ 'definition-file': [path.join(root, 'missing.json')] }),
       /missing/u,
     );
-    await failure(selectDeploySources({ 'source-dir': [file] }), /regular directories/u);
+    const selected = await selectDeploySources({ 'source-dir': [file] });
+    expect(selected.items).to.have.length(1);
     await failure(
       selectDeploySources({
         'source-dir': [`${root}${path.sep}..${path.sep}${path.basename(root)}`],
@@ -543,6 +566,19 @@ describe('local deploy source selection', () => {
     );
     await writeFile(file, JSON.stringify({ ...candidate, extra: true }));
     await failure(selectDeploySources({ 'source-dir': [root] }), /fields/u);
+  });
+
+  it('rejects linked source-dir entries with definition filenames without following them', async () => {
+    const root = await temporary();
+    const outside = await temporary();
+    const file = await fixture(outside);
+    const link = path.join(root, 'Linked.cms-email.json');
+    await symlink(
+      process.platform === 'win32' ? outside : file,
+      link,
+      process.platform === 'win32' ? 'junction' : 'file',
+    );
+    await failure(selectDeploySources({ 'source-dir': [link] }), /symlinks|reparse/u);
   });
 
   it('rejects symlink traversal at roots and nested directories', async function () {

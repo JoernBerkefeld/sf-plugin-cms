@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { lstat } from 'node:fs/promises';
 import { normalizeContentTypeAlias } from './content-type-alias.js';
 import { createHash } from 'node:crypto';
 import {
@@ -155,6 +156,13 @@ export async function selectDeploySources(
     candidates.add(path.resolve(file));
   }
   for (const directory of directories ?? []) {
+    // Validate the original route before resolving; files share the existing guarded loaders.
+    await assertEditableDirectoryPath(path.dirname(directory), false);
+    const information = await lstat(directory);
+    if (information.isFile()) {
+      candidates.add(path.resolve(directory));
+      continue;
+    }
     await assertEditableDirectoryPath(directory, false);
     const root = path.resolve(directory);
     // Reuse the package's no-follow recursive traversal, never a permissive new walker.
