@@ -16,6 +16,7 @@ import path from 'node:path';
 import type { ImageUploadReadServices } from '../../src/contracts/image-upload.js';
 import {
   applyImageUpload,
+  ImageUploadApplyError,
   imageUploadNames,
   imageUploadReadServices,
   planImageUploadFiles,
@@ -328,6 +329,155 @@ describe('no-JSON image upload preparation', () => {
       expect(report.state).to.equal(failAt === 1 ? 'failed' : 'ownership-uncertain');
     });
   }
+
+  it('completes without reports or persistence calls and retains exact in-memory evidence', async function () {
+    this.timeout(60_000);
+    const options = await execution();
+    const rewrite = sinon.stub().rejects(new Error('must not persist'));
+    options.request.resolves({
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    });
+    const before = await readdir(directory);
+    const result = await applyImageUpload({
+      ...options,
+      reportDirectory: undefined,
+      preparation: { ...options.preparation, intents: options.preparation.intents.slice(0, 1) },
+      reportPersistence: { rewrite },
+    });
+    expect(result.reportFile).to.equal(null);
+    expect(result.report.state).to.equal('completed');
+    expect(result.report.operations[0].state).to.equal('succeeded');
+    expect(result.report.operations[0].binding).to.deep.equal({
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    });
+    expect(result.report.operations[0].requestSha256).to.match(/^[a-f0-9]{64}$/u);
+    expect(rewrite.notCalled).to.equal(true);
+    expect(await readdir(directory)).to.deep.equal(before);
+  });
+
+  for (const failure of [
+    'rejection',
+    'lost-response',
+    'readback',
+    'malformed-response',
+    'preflight',
+  ]) {
+    it(`retains journal-free ${failure} evidence and never replays or attempts the suffix`, async function () {
+      this.timeout(60_000);
+      const options = await execution();
+      options.request.resolves({
+        contentKey: 'key',
+        managedContentId: 'parent',
+        managedContentVariantId: 'variant',
+      });
+      if (failure === 'rejection')
+        options.request.rejects(Object.assign(new Error('API rejection'), { statusCode: 400 }));
+      if (failure === 'lost-response') options.request.rejects(new Error('timeout'));
+      if (failure === 'readback')
+        options.services.getContent.rejects(new Error('readback unavailable'));
+      if (failure === 'malformed-response')
+        options.request.resolves({ managedContentId: 'known-parent' });
+      if (failure === 'preflight')
+        await writeFile(options.preparation.intents[1].file.path, Buffer.from('changed'));
+      const before = await readdir(directory);
+      let caught: unknown;
+      try {
+        await applyImageUpload({ ...options, reportDirectory: undefined });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).to.be.instanceOf(ImageUploadApplyError);
+      const error = caught as ImageUploadApplyError;
+      expect(error.reportFile).to.equal(null);
+      expect(error.report.state).to.equal(
+        failure === 'preflight' ? 'failed' : 'ownership-uncertain',
+      );
+      expect(error.report.operations[1].state).to.equal('planned');
+      expect(options.request.callCount).to.equal(failure === 'preflight' ? 0 : 1);
+      if (failure === 'readback')
+        expect(error.report.operations[0].binding?.managedContentId).to.equal('parent');
+      if (failure === 'malformed-response')
+        expect(error.report.operations[0].binding).to.deep.equal({
+          managedContentId: 'known-parent',
+        });
+      expect(await readdir(directory)).to.deep.equal(before);
+    });
+  }
+
+  it('keeps a verified prefix and uncertain active operation in memory without replay', async function () {
+    this.timeout(60_000);
+    const options = await execution();
+    let index = -1;
+    options.request.callsFake(async () => {
+      index += 1;
+      if (index === 1) throw new Error('response lost');
+      return { contentKey: 'key', managedContentId: 'parent', managedContentVariantId: 'variant' };
+    });
+    let caught: unknown;
+    try {
+      await applyImageUpload({ ...options, reportDirectory: undefined });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).to.be.instanceOf(ImageUploadApplyError);
+    const error = caught as ImageUploadApplyError;
+    expect(error.report.state).to.equal('ownership-uncertain');
+    expect(error.report.operations.map(({ state }) => state)).to.deep.equal([
+      'succeeded',
+      'pending',
+    ]);
+    expect(error.report.operations[0].binding?.managedContentId).to.equal('parent');
+    expect(options.request.callCount).to.equal(2);
+    expect(await readdir(directory)).not.to.include('report');
+  });
+
+  it('blocks cancelled dispatch without reporting and preserves failed in-memory intent', async function () {
+    this.timeout(60_000);
+    const options = await execution();
+    const controller = new AbortController();
+    controller.abort();
+    let caught: unknown;
+    try {
+      await applyImageUpload({
+        ...options,
+        reportDirectory: undefined,
+        createOptions: { signal: controller.signal },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).to.be.instanceOf(ImageUploadApplyError);
+    expect((caught as ImageUploadApplyError).report.state).to.equal('failed');
+    expect(options.request.notCalled).to.equal(true);
+  });
+
+  it('supports an exclusive reportFile and rejects tampered pending intent before POST', async function () {
+    this.timeout(60_000);
+    const options = await execution();
+    const reportFile = path.join(directory, 'explicit-report.json');
+    const rewrite = sinon.stub().callsFake(async (target: string, report: unknown) => {
+      await rewriteAtomic(target, { ...(report as object), runId: 'tampered' });
+    });
+    await rejected(
+      applyImageUpload({
+        ...options,
+        reportDirectory: undefined,
+        reportFile,
+        reportPersistence: { rewrite },
+      }),
+      'durable intent changed',
+    );
+    expect(options.request.notCalled).to.equal(true);
+    await rejected(
+      applyImageUpload({ ...options, reportDirectory: undefined, reportFile }),
+      'EEXIST',
+    );
+    expect(options.request.notCalled).to.equal(true);
+  });
 
   it('defines full filename naming, separator collapse, case folding and no truncation', () => {
     expect(imageUploadNames('Banner with spaces.PNG')).to.deep.equal({

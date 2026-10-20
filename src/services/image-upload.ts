@@ -3,7 +3,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
 import { constants as bufferConstants } from 'node:buffer';
-import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import type { BigIntStats } from 'node:fs';
 import type { Connection } from '@salesforce/core';
@@ -25,6 +26,7 @@ import {
   type ManagedContentDocumentBinding,
 } from '../transport/multipart-image-create.js';
 import { rewriteAtomic } from './import-workspace.js';
+import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import {
   getSelectedOperation,
@@ -37,7 +39,7 @@ import { assertWorkspaceSelector, resolveWorkspace } from './resolve-workspace.j
 export class ImageUploadApplyError extends Error {
   public constructor(
     public readonly report: ImageUploadReport,
-    public readonly reportFile: string,
+    public readonly reportFile: string | null,
   ) {
     super(report.error ?? 'Image upload failed');
     this.name = 'ImageUploadApplyError';
@@ -427,8 +429,8 @@ function verifyUploadReadback(
 
 /**
  * Execute only unchanged root uploads; stop permanently at the first uncertain mutation.
- * @param {ImageUploadApplyOptions} options - Prepared files, read dependencies, multipart transport and new report directory.
- * @returns {Promise<ImageUploadApplyResult>} Durable completed report, without downloaded byte proof.
+ * @param {ImageUploadApplyOptions} options - Prepared files, read dependencies, transport and optional report destination.
+ * @returns {Promise<ImageUploadApplyResult>} In-memory completed evidence and optional durable path, without downloaded byte proof.
  */
 export async function applyImageUpload(
   options: ImageUploadApplyOptions,
@@ -444,9 +446,19 @@ export async function applyImageUpload(
   };
   if (preparation.ready !== true || preparation.intents.length === 0)
     throw new TypeError('Nonempty ready upload preparation required');
-  if (!nonempty(options.reportDirectory)) throw new TypeError('New report directory required');
-  await mkdir(path.resolve(options.reportDirectory));
-  let reportFile = path.join(path.resolve(options.reportDirectory), 'image-upload-run.json');
+  if (options.reportFile !== undefined && options.reportDirectory !== undefined)
+    throw new TypeError('Specify reportFile or reportDirectory, not both');
+  let reportFile: string | null = null;
+  if (options.reportDirectory !== undefined) {
+    if (!nonempty(options.reportDirectory)) throw new TypeError('New report directory required');
+    await assertEditableDirectoryPath(path.dirname(path.resolve(options.reportDirectory)), false);
+    await mkdir(path.resolve(options.reportDirectory));
+    reportFile = path.join(path.resolve(options.reportDirectory), 'image-upload-run.json');
+  } else if (options.reportFile !== undefined) {
+    if (!nonempty(options.reportFile)) throw new TypeError('Report file must be nonempty');
+    reportFile = path.resolve(options.reportFile);
+  }
+  if (reportFile !== null) await assertEditableDirectoryPath(path.dirname(reportFile), false);
   const report: ImageUploadReport = {
     runId: randomUUID(),
     root: preparation.root,
@@ -457,15 +469,18 @@ export async function applyImageUpload(
       return { file: evidence, input, state: 'planned', byteProof: 'unavailable' };
     }),
   };
-  // Every ordered intent is recorded exclusively before any mutation; fsync before closing.
-  const initial = await open(reportFile, 'wx');
-  try {
-    await initial.writeFile(`${JSON.stringify(report, null, 2)}\n`);
-    await initial.sync();
-  } finally {
-    await initial.close();
+  // Optional durable intent never substitutes for the live in-memory evidence.
+  if (reportFile !== null) {
+    const initial = await open(reportFile, 'wx');
+    try {
+      await initial.writeFile(`${JSON.stringify(report, null, 2)}\n`);
+      await initial.sync();
+    } finally {
+      await initial.close();
+    }
   }
   const rewrite = async (): Promise<void> => {
+    if (reportFile === null) return;
     await (options.reportPersistence?.rewrite ?? rewriteAtomic)(reportFile, report);
     const handle = await open(reportFile, 'r+');
     try {
@@ -498,6 +513,12 @@ export async function applyImageUpload(
       operation.state = 'pending';
       report.state = 'ownership-uncertain';
       await rewrite();
+      if (
+        reportFile !== null &&
+        !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+      )
+        throw new TypeError('Image upload durable intent changed before write');
+      if (createOptions.signal?.aborted) throw new TypeError('Image upload cancelled before write');
       mutationUncertain = true;
       const binding = await createImageContent(
         options.connection,
@@ -505,6 +526,19 @@ export async function applyImageUpload(
         intent.file.filename,
         intent.file.bytes,
         createOptions,
+        async (raw) => {
+          const returned = isRecord(raw) ? raw : {};
+          operation.binding = {
+            ...(nonempty(returned.managedContentId)
+              ? { managedContentId: returned.managedContentId }
+              : {}),
+            ...(nonempty(returned.managedContentVariantId)
+              ? { managedContentVariantId: returned.managedContentVariantId }
+              : {}),
+            ...(nonempty(returned.contentKey) ? { contentKey: returned.contentKey } : {}),
+          };
+          await rewrite();
+        },
       );
       operation.binding = binding;
       await rewrite();
@@ -529,6 +563,8 @@ export async function applyImageUpload(
       await rewrite();
     } catch {
       // Independent exclusive fallback retains known bindings when the normal journal fails.
+      // No-report execution must never allocate a replacement journal.
+      if (reportFile === null) throw new ImageUploadApplyError(report, null);
       const fallbackFile = path.join(path.dirname(reportFile), `failure-${randomUUID()}.json`);
       try {
         const fallback = await open(fallbackFile, 'wx');

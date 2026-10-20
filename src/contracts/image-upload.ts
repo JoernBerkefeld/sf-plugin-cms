@@ -146,7 +146,7 @@ export type ImageUploadOperation = {
   readonly file: Omit<PlannedImageUploadFile, 'bytes'>;
   readonly input: ImageCreateInput;
   state: 'planned' | 'pending' | 'succeeded';
-  binding?: ManagedContentDocumentBinding;
+  binding?: Partial<ManagedContentDocumentBinding>;
   requestSha256?: string;
   readonly byteProof: 'unavailable';
 };
@@ -165,7 +165,8 @@ export type ImageUploadApplyOptions = {
     readonly getContent: (contentId: string) => Promise<CmsRecord>;
   };
   readonly connection: Pick<Connection, 'request'>;
-  readonly reportDirectory: string;
+  readonly reportDirectory?: string;
+  readonly reportFile?: string;
   readonly createOptions?: MultipartImageCreateOptions;
   readonly reportPersistence?: {
     readonly rewrite: (file: string, report: ImageUploadReport) => Promise<void>;
@@ -174,5 +175,5 @@ export type ImageUploadApplyOptions = {
 
 export type ImageUploadApplyResult = {
   readonly report: ImageUploadReport;
-  readonly reportFile: string;
+  readonly reportFile: string | null;
 };
