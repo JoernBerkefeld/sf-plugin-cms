@@ -13,6 +13,8 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
   const installedRequire = createRequire(path.join(pluginRoot, 'package.json'));
   const { Org, StateAggregator } = installedRequire('@salesforce/core');
+  const paginationEvents = [];
+  const paginationEvidence = path.resolve(`${contractCase}-transport.json`);
   Org.create = async (options) => ({
     getUsername: () =>
       contractCase.startsWith('logging-notice')
@@ -28,12 +30,24 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
   CmsCommand.prototype.getOrgContext = async () => {
     throw new Error('Unexpected logging fixture org access');
   };
+  if (contractCase === 'logging-pagination-invalid') {
+    // Native org flag parsing may resolve the fixture identity; connection access must not occur.
+    writeFileSync(paginationEvidence, '[]');
+    CmsCommand.prototype.getConnection = async () => {
+      paginationEvents.push({ phase: 'connection' });
+      writeFileSync(paginationEvidence, JSON.stringify(paginationEvents));
+      throw new Error('Unexpected pagination fixture connection access');
+    };
+  }
   if (contractCase === 'logging-table' || contractCase === 'logging-error') {
+    writeFileSync(paginationEvidence, '[]');
     CmsCommand.prototype.getConnection = async () => {
       if (contractCase === 'logging-error')
         throw new Error('list failure sentinel Authorization: Bearer disk-secret');
       return {
         request: async ({ method, url }) => {
+          paginationEvents.push({ method, url });
+          writeFileSync(paginationEvidence, JSON.stringify(paginationEvents));
           if (method !== 'GET') throw new Error('Unexpected logging fixture mutation');
           const parsed = new URL(url, 'https://fixture.invalid');
           const page = Number(parsed.searchParams.get('page') ?? 0);

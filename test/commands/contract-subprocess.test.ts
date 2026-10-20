@@ -303,11 +303,31 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         expect(normalizedHelp).to.include('--api');
         expect(normalizedHelp).to.include('log');
         // The host renders --help before constructing the CMS command.
-        // Help/invalid enum parsing needs no auth fixture or transport replacement.
-        const invalidArgv = [...route, '--api', 'cli', '--json'];
-        const invalid = await runSf(invalidArgv);
-        expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(1);
-        expect(JSON.parse(invalid.stdout).message).to.match(/--api.*(?:log|cli)/su);
+        // List page guards use an access sentinel; other routes retain invalid-enum coverage.
+        const list = canonical.startsWith('list ');
+        const invalidArgv = list
+          ? [
+              ...route,
+              '--page',
+              '0',
+              '--target-org',
+              'unused',
+              ...(canonical === 'list channel' ? ['--workspace-id', 'space'] : []),
+              '--json',
+            ]
+          : [...route, '--api', 'cli', '--json'];
+        const invalid = await runSf(invalidArgv, list ? 'logging-pagination-invalid' : undefined);
+        expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(list ? 2 : 1);
+        expect(JSON.parse(invalid.stdout).message).to.match(
+          list ? /--page.*(?:0|1)/su : /--api.*(?:log|cli)/su,
+        );
+        if (list) {
+          expect(
+            JSON.parse(await readFile(file('logging-pagination-invalid-transport.json'), 'utf8')),
+          ).to.deep.equal([]);
+          expect(invalid.stdout + invalid.stderr).not.to.include('Unexpected pagination fixture');
+          expect(invalid.stderr).not.to.include('Using org ');
+        }
         const records = await invocationRecords(invalid, invalidArgv);
         expect(records.some(({ message }) => message === 'command failure')).to.equal(true);
       }
@@ -492,6 +512,60 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         ),
       ).to.equal(route[1] === 'workspace');
     }
+  });
+
+  it('preserves packed canonical channel single-page metadata and aggregate human/logged rows', async () => {
+    const common = [
+      'cms',
+      'list',
+      'channel',
+      '--target-org',
+      'unused',
+      '--api-version',
+      '67.0',
+      '--workspace-id',
+      'space',
+    ];
+    const singleArgv = [...common, '--page', '2', '--page-size', '25', '--json'];
+    const single = await runSf(singleArgv, 'logging-table');
+    expect(single.exitCode, single.stdout + single.stderr).to.equal(0);
+    expect(JSON.parse(single.stdout)).to.deep.equal({
+      items: [{ id: 'later-channel', name: 'Later channel', type: 'Email' }],
+      page: 1,
+      pageSize: 25,
+      total: 2,
+    });
+    expect(JSON.parse(await readFile(file('logging-table-transport.json'), 'utf8'))).to.deep.equal([
+      { method: 'GET', url: '/connect/cms/spaces/space/channels?page=1&pageSize=25' },
+    ]);
+    expect(single.stderr).not.to.include('Using org ');
+    await invocationRecords(single, singleArgv);
+
+    const aggregate = await runSf(common, 'logging-table');
+    expect(aggregate.exitCode, aggregate.stdout + aggregate.stderr).to.equal(0);
+    expect(aggregate.stderr.match(/^Using org unused$/gmu)).to.have.length(1);
+    expect(aggregate.stdout).to.include('CMS channels');
+    expect(aggregate.stdout).to.include('Transcript fixture');
+    expect(aggregate.stdout).to.include('Later channel');
+    expect(JSON.parse(await readFile(file('logging-table-transport.json'), 'utf8'))).to.deep.equal([
+      { method: 'GET', url: '/connect/cms/spaces/space/channels?page=0' },
+      { method: 'GET', url: '/connect/cms/spaces/space/channels?page=1' },
+    ]);
+    const records = await invocationRecords(aggregate, common);
+    expect(records.find(({ message }) => message === 'terminal table')?.details).to.deep.equal({
+      channel: 'stdout',
+      title: 'CMS channels',
+      columns: ['id', 'name', 'type'],
+      rows: [
+        { id: 'channel', name: 'Transcript fixture', type: 'Email' },
+        { id: 'later-channel', name: 'Later channel', type: 'Email' },
+      ],
+    });
+    expect(
+      records.some(
+        ({ message, details }) => message === 'terminal' && details?.text === 'Using org unused\n',
+      ),
+    ).to.equal(true);
   });
 
   it('logs packed native table data/errors and preserves JSON success after sink close failure', async () => {
