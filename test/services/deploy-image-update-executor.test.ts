@@ -2,7 +2,7 @@ import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -160,8 +160,10 @@ async function fixture(
   let downloadOverride: Buffer | undefined;
   let extra = false;
   let failRead = false;
+  let liveReport: WorkspaceImportRunReport | undefined;
   const journal = async () =>
-    JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport;
+    liveReport ??
+    (JSON.parse(await readFile(input.reportFile, 'utf8')) as WorkspaceImportRunReport);
   const fetcher = sinon.stub(globalThis, 'fetch').callsFake(
     async (address) =>
       new Response(String(address).includes('/MCNEW?') ? bytes : (downloadOverride ?? remote), {
@@ -331,6 +333,9 @@ async function fixture(
     detail,
     response,
     journal,
+    capture: (report: WorkspaceImportRunReport) => {
+      liveReport = report;
+    },
     fetcher,
     puts: () => puts,
     posts: () => posts,
@@ -382,6 +387,65 @@ async function failure(operation: Promise<unknown>, pattern = /./u) {
 
 describe('private journaled bytes-only Image UPDATE executor', () => {
   afterEach(() => sinon.restore());
+  it('hands off pending UPDATE evidence before exclusive report allocation can fail', async () => {
+    const f = await fixture();
+    await writeFile(f.input.reportFile, 'existing');
+    let observed: WorkspaceImportRunReport | undefined;
+    await failure(
+      executeDeployImageUpdate(f.connection, f.input, {}, undefined, undefined, (report) => {
+        observed = report;
+      }),
+      /exist/u,
+    );
+    expect(observed!.operations[0].state).to.equal('pending');
+    expect(f.puts()).to.equal(0);
+    expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
+  });
+  for (const outcome of ['success', 'lost', 'partial', 'read', 'drift', 'cancel'])
+    it(`retains live journal-free UPDATE evidence for ${outcome} through the router`, async () => {
+      const f = await fixture();
+      const directory = path.dirname(f.input.definitionFile);
+      const before = await readdir(directory);
+      const rewrite = sinon.stub().rejects(new Error('Unexpected persistence'));
+      let observed: WorkspaceImportRunReport | undefined;
+      const controller = new AbortController();
+      if (outcome === 'lost') f.lose();
+      if (outcome === 'partial') delete f.response.managedContentVariantId;
+      if (outcome === 'read') f.failRead();
+      const operation = executeDeployImage(
+        f.connection,
+        { ...f.input, reportFile: undefined, operation: 'update' },
+        { signal: controller.signal },
+        { rewrite },
+        async () => {
+          if (outcome === 'drift') f.workspace.rootFolderId = 'changed';
+          if (outcome === 'cancel') controller.abort();
+        },
+        (report) => {
+          observed = report;
+          f.capture(report);
+        },
+      );
+      if (outcome === 'success') {
+        const result = await operation;
+        expect(result).to.have.property('report', observed);
+        expect(result).to.have.property('reportFile', undefined);
+      } else await failure(operation);
+      expect(rewrite.called).to.equal(false);
+      expect(await readdir(directory)).to.deep.equal(before);
+      expect(observed).not.to.equal(undefined);
+      const blocked = ['drift', 'cancel'].includes(outcome);
+      expect(f.puts()).to.equal(blocked ? 0 : 1);
+      if (outcome === 'success') {
+        expect(observed!.state).to.equal('completed');
+        expect(observed!.operations[0].state).to.equal('succeeded');
+      } else {
+        expect(observed!.state).to.equal(blocked ? 'failed' : 'ownership-uncertain');
+        expect(observed!.operations[0].state).to.equal(blocked ? 'failed' : 'pending');
+      }
+      if (['success', 'partial', 'read'].includes(outcome))
+        expect(observed!.operations[0].result?.contentId).to.equal(contentId);
+    });
   for (const drift of [
     'none',
     'batch-intent',

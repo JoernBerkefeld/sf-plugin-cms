@@ -306,11 +306,13 @@ export async function createImageContent(
   filename: string,
   image: Uint8Array,
   options: MultipartImageCreateOptions = {},
+  observeResponse?: (data: unknown) => Promise<void>,
 ): Promise<ManagedContentDocumentBinding> {
   return sendFileCreateMultipart(
     connection,
     buildImageCreateMultipart(input, filename, image, options),
     options,
+    observeResponse,
   );
 }
 
@@ -346,6 +348,7 @@ async function sendFileCreateMultipart(
   connection: RequestConnection,
   multipart: MultipartParts,
   options: MultipartImageCreateOptions,
+  observeResponse?: (data: unknown) => Promise<void>,
 ): Promise<ManagedContentDocumentBinding> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -391,6 +394,7 @@ async function sendFileCreateMultipart(
   try {
     const data = await request;
     logApiEvent('response', details, data);
+    await observeResponse?.(data);
     return parseManagedContentDocument(data);
   } catch (error) {
     logApiEvent('error', details, error);

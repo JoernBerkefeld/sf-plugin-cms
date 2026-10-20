@@ -26,18 +26,19 @@ type ImageConnection = Pick<Connection, 'request' | 'getApiVersion'> &
   Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version'>>;
 export type ExecuteDeployImageCreateInput = DeployImageCreatePreflightInput & {
   destinationOrgId: string;
-  /** New journal in an existing caller-owned directory. No resume or overwrite. */
-  reportFile: string;
+  /** Optional new journal in a caller-owned directory. No resume or overwrite. */
+  reportFile?: string;
 };
 
 /**
- * Journal one unqualified binary Image CREATE, then independently verify identity and media.
- * Malformed transport responses remain uncertain and may contain no captured identities.
+ * Execute one unqualified binary Image CREATE with optional durable intent and native readback.
+ * Malformed responses remain uncertain; capture any returned identities before strict parsing.
  * @param {ImageConnection} connection - Explicit authenticated destination.
  * @param {ExecuteDeployImageCreateInput} input - Local source, exact scope and new journal.
  * @param {JsonRequestOptions} options - Request cancellation and timeout options.
  * @param {WorkspaceImportReportPersistence} persistence - Internal journal failure injection.
  * @param {Function} beforeMutation - Internal batch boundary; never replaces Image proof.
+ * @param {Function} onReport - Internal synchronous assignment-only live evidence handoff.
  * @returns {Promise<object>} Completion only after independent native and binary readback.
  */
 export async function executeDeployImageCreate(
@@ -46,12 +47,18 @@ export async function executeDeployImageCreate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: WorkspaceImportRunReport }> {
+  onReport?: (report: WorkspaceImportRunReport) => void,
+): Promise<{
+  qualification: 'unqualified';
+  reportFile?: string;
+  report: WorkspaceImportRunReport;
+}> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Image CREATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployImageCreate(connection, selected, requestOptions);
   if (preflight.source.source.representation !== 'binary')
     throw new TypeError('Image CREATE requires binary source');
@@ -86,11 +93,13 @@ export async function executeDeployImageCreate(
     },
   );
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  // Synchronous assignment-only handoff retains live evidence even when execution throws.
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let mutationStarted = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     const fresh = await preflightDeployImageCreate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(fresh, preflight))
       throw new TypeError('Image CREATE local or destination binding drifted before write');
@@ -104,7 +113,10 @@ export async function executeDeployImageCreate(
       )
         throw new TypeError('Image CREATE binding drifted during batch boundary');
     }
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('Image CREATE durable intent changed before write');
     if (requestOptions.signal?.aborted) throw new TypeError('Image CREATE cancelled before write');
     const receiver = Object.create(connection) as ImageConnection;
@@ -116,15 +128,27 @@ export async function executeDeployImageCreate(
       binary.fileName,
       binary.bytes,
       { ...requestOptions, mimeType: binary.mimeType },
+      async (raw) => {
+        const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        operation.result = {
+          ...(typeof record.managedContentId === 'string'
+            ? { contentId: record.managedContentId }
+            : {}),
+          ...(typeof record.managedContentVariantId === 'string'
+            ? { primaryVariantId: record.managedContentVariantId }
+            : {}),
+          ...(typeof record.contentKey === 'string' ? { contentKey: record.contentKey } : {}),
+        };
+        report.state = 'ownership-uncertain';
+        if (reportFile !== undefined)
+          await persistOperationResult(reportFile, report, operation, rewrite);
+      },
     );
     const created = {
       contentId: response.managedContentId,
       contentKey: response.contentKey,
       primaryVariantId: response.managedContentVariantId,
     };
-    operation.result = created;
-    report.state = 'ownership-uncertain';
-    await persistOperationResult(reportFile, report, operation, rewrite);
     if (
       !/^20Y[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(created.contentId) ||
       !/^9Ps[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(created.primaryVariantId)
@@ -215,14 +239,14 @@ export async function executeDeployImageCreate(
     report.createdParents.push({ ...created, childVariantIds: [] });
     operation.state = 'succeeded';
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {
     operation.state = mutationStarted ? 'pending' : 'failed';
     report.state = mutationStarted ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       /* Preserve exclusive pending intent when persistence is unavailable. */
     }

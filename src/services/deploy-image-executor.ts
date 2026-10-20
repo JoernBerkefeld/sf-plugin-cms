@@ -5,7 +5,10 @@ import {
 } from './deploy-image-create-executor.js';
 import { executeDeployImageUpdate } from './deploy-image-update-executor.js';
 import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
-import type { WorkspaceImportReportPersistence } from './import-workspace.js';
+import type {
+  WorkspaceImportReportPersistence,
+  WorkspaceImportRunReport,
+} from './import-workspace.js';
 
 export type ExecuteDeployImageInput = ExecuteDeployImageCreateInput & {
   operation: 'create' | 'update' | 'unchanged';
@@ -19,7 +22,8 @@ export type ExecuteDeployImageInput = ExecuteDeployImageCreateInput & {
  * @param {JsonRequestOptions} options - Request timeout and cancellation controls.
  * @param {WorkspaceImportReportPersistence} persistence - Existing mutation journal persistence seam.
  * @param {Function} beforeMutation - Internal batch boundary forwarded to mutation engines only.
- * @returns {Promise<object>} Existing unqualified journal result or read-only unchanged evidence.
+ * @param {Function} onReport - Internal assignment-only live evidence handoff for mutation engines.
+ * @returns {Promise<object>} Existing unqualified report result or read-only unchanged evidence.
  */
 export async function executeDeployImage(
   connection: Parameters<typeof executeDeployImageCreate>[0],
@@ -27,16 +31,31 @@ export async function executeDeployImage(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
+  onReport?: (report: WorkspaceImportRunReport) => void,
 ): Promise<
   | Awaited<ReturnType<typeof executeDeployImageCreate>>
   | Awaited<ReturnType<typeof admitDeployImageUnchanged>>
 > {
   switch (input.operation) {
     case 'create': {
-      return executeDeployImageCreate(connection, input, options, persistence, beforeMutation);
+      return executeDeployImageCreate(
+        connection,
+        input,
+        options,
+        persistence,
+        beforeMutation,
+        onReport,
+      );
     }
     case 'update': {
-      return executeDeployImageUpdate(connection, input, options, persistence, beforeMutation);
+      return executeDeployImageUpdate(
+        connection,
+        input,
+        options,
+        persistence,
+        beforeMutation,
+        onReport,
+      );
     }
     case 'unchanged': {
       return admitDeployImageUnchanged(connection, input, options);

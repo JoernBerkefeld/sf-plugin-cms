@@ -26,8 +26,8 @@ type ImageConnection = Pick<Connection, 'request' | 'getApiVersion'> &
   Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version'>>;
 export type ExecuteDeployImageUpdateInput = DeployImageUpdatePreflightInput & {
   destinationOrgId: string;
-  /** New journal in an existing caller-owned directory; no resume or overwrite. */
-  reportFile: string;
+  /** Optional new journal in a caller-owned directory; no resume or overwrite. */
+  reportFile?: string;
 };
 type Preflight = Awaited<ReturnType<typeof preflightDeployImageUpdate>>;
 
@@ -59,14 +59,15 @@ function journalEvidence(preflight: Preflight) {
 }
 
 /**
- * Journal one private bytes-only Image UPDATE and independently verify its destination.
+ * Execute one private bytes-only Image UPDATE with optional persistence and native readback.
  * Observed snapshots are not an authoring baseline or atomic conflict protection.
  * @param {ImageConnection} connection - Explicit authenticated destination.
  * @param {ExecuteDeployImageUpdateInput} input - Source, exact scope and absent journal.
  * @param {JsonRequestOptions} options - Request cancellation and timeout controls.
  * @param {WorkspaceImportReportPersistence} persistence - Internal journal failure injection.
  * @param {Function} beforeMutation - Internal batch boundary; never replaces Image proof.
- * @returns {Promise<object>} Completion only after independent readback and durable completion.
+ * @param {Function} onReport - Internal synchronous assignment-only live evidence handoff.
+ * @returns {Promise<object>} Completion after independent readback and optional persistence.
  */
 export async function executeDeployImageUpdate(
   connection: ImageConnection,
@@ -74,12 +75,18 @@ export async function executeDeployImageUpdate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   beforeMutation?: () => Promise<void>,
-): Promise<{ qualification: 'unqualified'; reportFile: string; report: WorkspaceImportRunReport }> {
+  onReport?: (report: WorkspaceImportRunReport) => void,
+): Promise<{
+  qualification: 'unqualified';
+  reportFile?: string;
+  report: WorkspaceImportRunReport;
+}> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Image UPDATE requires exact destination org ID');
-  const reportFile = path.resolve(selected.reportFile);
+  const reportFile =
+    selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployImageUpdate(connection, selected, requestOptions);
   if (preflight.source.source.representation !== 'binary')
     throw new TypeError('Image UPDATE requires binary source');
@@ -106,11 +113,13 @@ export async function executeDeployImageUpdate(
     },
   );
   report.operations.push(operation);
-  await writeExclusive(reportFile, report);
+  // Synchronous assignment-only handoff retains live evidence even when execution throws.
+  onReport?.(report);
+  if (reportFile !== undefined) await writeExclusive(reportFile, report);
   const rewrite = persistence?.rewrite ?? rewriteAtomic;
   let mutationStarted = false;
   try {
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     const fresh = await preflightDeployImageUpdate(connection, selected, requestOptions);
     if (!isDeepStrictEqual(journalEvidence(fresh), evidence))
       throw new TypeError('Image UPDATE local or destination binding drifted before write');
@@ -124,7 +133,10 @@ export async function executeDeployImageUpdate(
       )
         throw new TypeError('Image UPDATE binding drifted during batch boundary');
     }
-    if (!isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report))
+    if (
+      reportFile !== undefined &&
+      !isDeepStrictEqual(JSON.parse(await readFile(reportFile, 'utf8')), report)
+    )
       throw new TypeError('Image UPDATE durable intent changed before write');
     if (requestOptions.signal?.aborted) throw new TypeError('Image UPDATE cancelled before write');
     const receiver = Object.create(connection) as ImageConnection;
@@ -149,7 +161,8 @@ export async function executeDeployImageUpdate(
           ...(typeof record.contentKey === 'string' ? { contentKey: record.contentKey } : {}),
         };
         report.state = 'ownership-uncertain';
-        await persistOperationResult(reportFile, report, operation, rewrite);
+        if (reportFile !== undefined)
+          await persistOperationResult(reportFile, report, operation, rewrite);
       },
     );
     if (
@@ -215,14 +228,14 @@ export async function executeDeployImageUpdate(
       throw new TypeError('Image UPDATE destination drifted during readback');
     operation.state = 'succeeded';
     report.state = 'completed';
-    await rewrite(reportFile, report);
+    if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {
     operation.state = mutationStarted ? 'pending' : 'failed';
     report.state = mutationStarted ? 'ownership-uncertain' : 'failed';
     operation.error = redactSecrets(error instanceof Error ? error.message : String(error));
     try {
-      await rewrite(reportFile, report);
+      if (reportFile !== undefined) await rewrite(reportFile, report);
     } catch {
       /* Preserve exclusive pending intent when persistence is unavailable. */
     }
