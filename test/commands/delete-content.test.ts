@@ -2,6 +2,7 @@ import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { PassThrough } from 'node:stream';
+import { Interface } from 'node:readline/promises';
 import path from 'node:path';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createRunOwnedTemp } from '../../src/filesystem/runOwnedTemp.js';
@@ -367,6 +368,58 @@ describe('cms delete exact-item CLI', () => {
         else delete (process.stdout as { isTTY?: boolean }).isTTY;
       }
     });
+  for (const json of [false, true])
+    it(`keeps delete outcomes live, readable and JSON human-silent json=${json}`, async () => {
+      const f = fixture(['en_US', 'de', 'fr']);
+      const s = subject({ language: ['*'] }, f.connection);
+      const log = sinon.stub();
+      Object.assign(s.command, { jsonEnabled: () => json, log });
+      const output = await s.command.run();
+      expect(output.status).to.equal('success');
+      expect(f.deletes.callCount).to.equal(3);
+      const text = log.args.flat().join('\n');
+      if (json) expect(text).to.equal('');
+      else {
+        expect(text).to.include('delete: Existing (en_US) — deleted');
+        expect(text).to.include('delete: Existing (de) — deleted');
+        expect(text).not.to.include(parentId);
+        expect(text).not.to.include('9Psaj');
+      }
+    });
+  it('keeps real language prompt readable while preserving All-first scope', async () => {
+    const s = subject();
+    const log = sinon.stub();
+    Object.assign(s.command, { log });
+    sinon.stub(Interface.prototype, 'question').resolves('0');
+    const target = { apiName: `Existing ${parentId}`, language: 'en_US' };
+    const languages = await (
+      s.command as unknown as {
+        selectLanguages: (item: unknown, ordinal: number) => Promise<string[]>;
+      }
+    ).selectLanguages(
+      { contentId: parentId, available: [target, { ...target, language: 'de' }] },
+      2,
+    );
+    expect(languages).to.deep.equal(['en_US', 'de']);
+    const text = log.args.flat().join('\n');
+    expect(text).to.include('delete: Existing — select languages\n0: All\n1: en_US\n2: de');
+    expect(text).not.to.include(parentId);
+  });
+  it('keeps human failures free of raw diagnostics while retaining JSON evidence', async () => {
+    const f = fixture();
+    f.deletes.callsFake((() =>
+      Promise.reject(new Error(`Lost response ${parentId} password=private-secret`))) as never);
+    const s = subject({}, f.connection);
+    const log = sinon.stub();
+    Object.assign(s.command, { jsonEnabled: () => false, log });
+    const output = await s.command.run();
+    expect(output.result?.outcome).to.equal('uncertain');
+    const text = log.args.flat().join('\n');
+    expect(text).to.include('delete: Existing (en_US) — uncertain');
+    expect(text).not.to.match(/20Yaj|Lost response|private-secret/u);
+    expect(output.result?.execution?.report.operations[0].error).to.include('Lost response');
+    expect(JSON.stringify(output)).not.to.include('private-secret');
+  });
   it('advertises only new flags and equivalent alias', async () => {
     expect(DeleteContent.aliases).to.deep.equal(['content:delete']);
     for (const flag of [

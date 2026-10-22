@@ -276,6 +276,40 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     });
   }
 
+  it('keeps installed native delete live outcomes readable and JSON stdout pure', async function () {
+    this.timeout(300_000);
+    const argv = [
+      'cms',
+      'delete',
+      'content',
+      '--api-version',
+      '67.0',
+      '-o',
+      'unused',
+      '--workspace-id',
+      '0Zuaj000007dgL8CAI',
+      '-m',
+      'emailTemplate:Existing',
+    ];
+    for (const json of [false, true]) {
+      const args = [...argv, ...(json ? ['--json'] : [])];
+      const result = await runSf(args, 'native-delete-template-execute');
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
+      const records = await invocationRecords(result, args);
+      const outcomes = records.filter(({ message }) => message === 'mutation item outcome');
+      expect(outcomes.map(({ details }) => details?.state)).to.deep.equal(['deleted']);
+      expect(outcomes[0].details?.target).to.deep.include({ contentId: '20Yaj00000FaO1aEAF' });
+      if (json) {
+        const envelope = parseEnvelope(result);
+        expect(envelope.contract).to.equal('sf-cms-content-delete');
+        expect(result.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
+      } else {
+        expect(result.stdout).to.include('delete: Existing (en_US) — deleted');
+        expect(result.stdout).not.to.match(/20Yaj00000FaO1aEAF|9Psaj00000J5oxJCAR/u);
+      }
+    }
+  });
+
   it('keeps installed deploy live outcomes readable and JSON stdout pure', async function () {
     this.timeout(300_000);
     const argv = [

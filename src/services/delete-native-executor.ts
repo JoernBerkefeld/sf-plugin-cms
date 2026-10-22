@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { notifyMutationOutcome, type MutationOutcomeObserver } from '../mutation-outcome.js';
 import { mkdir, open, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -27,6 +28,7 @@ import { redactSecrets } from '../transport/redact-secrets.js';
 
 export type NativeDeleteApplyOptions = {
   resolution: NativeDeleteResolution;
+  onOutcome?: MutationOutcomeObserver;
   localSource?: { projectRoot: string; workspaceApiName: string };
   reportDirectory?: string;
   reportDirectoryAllocated?: true;
@@ -111,6 +113,24 @@ export async function applyNativeDelete(
     : [];
   let active = report.operations[0];
   let dispatched = false;
+  let cleaningLocal = false;
+  const emitted = new Set<(typeof report.operations)[number]>();
+  const emit = (operation: (typeof report.operations)[number], state: string): void => {
+    if (emitted.has(operation)) return;
+    emitted.add(operation);
+    notifyMutationOutcome(options.onOutcome, {
+      operation: 'delete',
+      ordinal: report.operations.indexOf(operation) + 1,
+      label: operation.target.apiName ?? undefined,
+      language: operation.target.language,
+      state,
+      target: { workspaceId: report.workspaceId, ...operation.target },
+      reportFile: result.reportFile ?? undefined,
+      diagnostics: [operation.error, operation.localSource?.message, result.persistenceError]
+        .filter((value): value is string => value !== undefined)
+        .map((value) => ({ code: 'DELETE_OUTCOME', message: value })),
+    });
+  };
   const persist = async (): Promise<void> => {
     if (result.reportFile !== null)
       await (options.reportPersistence?.rewrite ?? rewriteAtomic)(result.reportFile, report);
@@ -212,6 +232,7 @@ export async function applyNativeDelete(
       operation.exactVariantAbsent = true;
       dispatched = false;
       if (localSource) {
+        cleaningLocal = true;
         const inspection = inspections[report.operations.indexOf(operation)];
         operation.localSource = await deleteLifecycleLocalSource(
           localSource.projectRoot,
@@ -223,12 +244,16 @@ export async function applyNativeDelete(
             `Remote deletion completed; local source ${operation.localSource.outcome}: ${operation.localSource.message ?? 'local cleanup failed'}. Never replay remote deletion.`,
           );
       }
+      cleaningLocal = false;
       await persist();
+      emit(operation, 'deleted');
     }
     report.state = 'completed';
     await persist();
     return result;
   } catch (error) {
+    const stoppedOperation = active;
+    const remoteCompleted = active.state === 'completed';
     if (active.state === 'completed') {
       if (!active.localSource || !['blocked', 'partial'].includes(active.localSource.outcome))
         result.persistenceError = message(error);
@@ -249,6 +274,17 @@ export async function applyNativeDelete(
       await persist();
     } catch (persistenceError) {
       result.persistenceError = message(persistenceError);
+    }
+    for (const operation of report.operations) {
+      let state: string = 'unattempted';
+      if (operation === stoppedOperation) {
+        state = operation.state;
+        if (remoteCompleted)
+          state = cleaningLocal
+            ? 'remote-completed-local-blocked'
+            : 'remote-completed-report-blocked';
+      }
+      emit(operation, state);
     }
     throw new NativeDeleteApplyError(result, error);
   }

@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import type { MutationOutcome } from '../../src/mutation-outcome.js';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
 import fs, { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -200,6 +201,117 @@ async function localFixture() {
 
 describe('API-led native delete executor', () => {
   afterEach(() => sinon.restore());
+  it('emits confirmed completion before later dispatch and isolates observer errors', async () => {
+    const f = fixture();
+    const events: MutationOutcome[] = [];
+    f.onDelete((id) => {
+      if (id === translatedId) expect(events.map(({ state }) => state)).to.deep.equal(['deleted']);
+    });
+    const result = await applyNativeDelete(f.connection, {
+      resolution: await f.resolve(),
+      onOutcome: (event) => {
+        events.push(event);
+        throw new Error('Observer unavailable');
+      },
+    });
+    expect(result.report.state).to.equal('completed');
+    expect(events.map(({ state }) => state)).to.deep.equal(['deleted', 'deleted']);
+    expect(f.deletes).to.deep.equal([variantId, translatedId]);
+  });
+  it('emits the uncertain active target and truly unattempted suffix without replay', async () => {
+    const f = fixture();
+    f.rows.push(row('9Psaj00000J5oxLCAR', 'fr', 'sfdc_cms__audio'));
+    const events: MutationOutcome[] = [];
+    f.onDelete((id) =>
+      id === translatedId ? new Error('Lost response password=private-secret') : undefined,
+    );
+    const resolution = await f.resolve();
+    await stopped(() =>
+      applyNativeDelete(f.connection, { resolution, onOutcome: (event) => events.push(event) }),
+    );
+    expect(events.map(({ state }) => state)).to.deep.equal(['deleted', 'uncertain', 'unattempted']);
+    expect(events.map(({ ordinal }) => ordinal)).to.deep.equal([1, 2, 3]);
+    expect(JSON.stringify(events)).not.to.include('private-secret');
+    expect(f.deletes).to.deep.equal([variantId, translatedId]);
+  });
+  it('distinguishes confirmed remote completion from local cleanup failure before stopping', async () => {
+    const f = fixture('sfdc_cms__email');
+    const local = await localFixture();
+    const events: MutationOutcome[] = [];
+    f.onDelete(() => {
+      writeFileSync(local.companion, 'Concurrent edit');
+    });
+    const resolution = await f.resolve();
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, {
+        resolution,
+        localSource: local.localSource,
+        onOutcome: (event) => events.push(event),
+      }),
+    );
+    expect(events.map(({ state }) => state)).to.deep.equal([
+      'remote-completed-local-blocked',
+      'unattempted',
+    ]);
+    expect(error.result.report.operations[0]).to.include({
+      state: 'completed',
+      exactVariantAbsent: true,
+    });
+    expect(f.deletes).to.deep.equal([variantId]);
+  });
+  it('keeps remote completion distinct from item report failure and untouched suffix', async () => {
+    const f = fixture();
+    const run = await createRunOwnedTemp('cms-delete-outcome-');
+    const events: MutationOutcome[] = [];
+    let writes = 0;
+    const resolution = await f.resolve();
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, {
+        resolution,
+        reportDirectory: path.join(run.root, 'report'),
+        onOutcome: (event) => events.push(event),
+        reportPersistence: {
+          rewrite: async (file, report) => {
+            if (++writes > 1) throw new Error('Report unavailable');
+            await writeFile(file, JSON.stringify(report));
+          },
+        },
+      }),
+    );
+    expect(events.map(({ state }) => state)).to.deep.equal([
+      'remote-completed-report-blocked',
+      'unattempted',
+    ]);
+    expect(error.result.report.operations.map(({ state }) => state)).to.deep.equal([
+      'completed',
+      'blocked',
+    ]);
+    expect(f.deletes).to.deep.equal([variantId]);
+  });
+  it('does not duplicate settled item outcomes when final aggregate persistence fails', async () => {
+    const f = fixture();
+    const run = await createRunOwnedTemp('cms-delete-final-outcome-');
+    const events: MutationOutcome[] = [];
+    const resolution = await f.resolve();
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, {
+        resolution,
+        reportDirectory: path.join(run.root, 'report'),
+        onOutcome: (event) => events.push(event),
+        reportPersistence: {
+          rewrite: async (file, report) => {
+            if ((report as { state: string }).state === 'completed')
+              throw new Error('Final report unavailable');
+            await writeFile(file, JSON.stringify(report));
+          },
+        },
+      }),
+    );
+    expect(events.map(({ state }) => state)).to.deep.equal(['deleted', 'deleted']);
+    expect(error.result.report.state).to.equal('completed');
+    expect(error.result.persistenceError).to.include('Final report unavailable');
+    expect(f.deletes).to.deep.equal([variantId, translatedId]);
+  });
   it('deletes only the confirmed local copy and preserves directories and unrelated files', async () => {
     const f = fixture('sfdc_cms__email', false);
     const local = await localFixture();
@@ -285,6 +397,7 @@ describe('API-led native delete executor', () => {
     expect(f.deletes).to.deep.equal([variantId]);
   });
   it('retains exact partial local unlink evidence without replaying a completed remote target', async () => {
+    const events: MutationOutcome[] = [];
     const f = fixture('sfdc_cms__email', false);
     const local = await localFixture();
     const resolution = await f.resolve();
@@ -294,8 +407,13 @@ describe('API-led native delete executor', () => {
       await unlink(file);
     });
     const error = await stopped(() =>
-      applyNativeDelete(f.connection, { resolution, localSource: local.localSource }),
+      applyNativeDelete(f.connection, {
+        resolution,
+        localSource: local.localSource,
+        onOutcome: (event) => events.push(event),
+      }),
     );
+    expect(events.map(({ state }) => state)).to.deep.equal(['remote-completed-local-blocked']);
     expect(error.result.report.state).to.equal('completed');
     expect(error.result.report.operations[0].localSource).to.deep.equal({
       outcome: 'partial',

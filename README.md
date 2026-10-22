@@ -441,6 +441,8 @@ sf content delete --workspace-id 0Zu... -m emailTemplate:WelcomeTemplate --langu
 sf content delete --workspace-id 0Zu... -m image:Banner -m audio:Intro --language "*" --report --json
 ```
 
+Human delete output emits each settled item and language before the next dispatch, including uncertain and unattempted targets. Confirmed remote deletion with blocked local cleanup is reported separately, never as permission to repeat DELETE. Technical identities and diagnostics stay in invocation logs; JSON stdout retains the structured envelope. Prompts identify items by readable name or ordinal, with the same explicit language scope.
+
 Language choices come from actual item inventory, not workspace language configuration. A sole actual language is automatic. For multiple languages, repeat `--language` for a subset, use `--language "*"` for all actual languages of the explicitly selected items, or choose interactively from a multi-selection prompt with All first. JSON, CI and non-TTY ambiguity fails with an explicit-language instruction. Empty selection or cancellation performs no mutation. Unsupported/unknown native classifications or multiple native identities for the same locale block deletion rather than guessing that every native variant represents a language.
 
 No ownership report, public contract-version selector, permanent-delete acknowledgement or client Draft/unpublished-only admission is required. Salesforce may reject any requested target or state; a rejection is reported honestly. The single `sf-cms-content-delete@1` command result contains `mode`, `outcome`, `workspaceId`, exact native `targets` and optional `execution` evidence. It is an early-access shape, not a compatibility promise for the former delete output.

@@ -2,7 +2,7 @@ import { redactLogValue, redactSecrets } from './transport/redact-secrets.js';
 
 /** Detached diagnostic fields only; never an execution report or request payload. */
 export type MutationOutcome = Readonly<{
-  operation: 'publish' | 'unpublish' | 'upload' | 'deploy';
+  operation: 'publish' | 'unpublish' | 'upload' | 'deploy' | 'delete';
   state: string;
   ordinal: number;
   label?: string;

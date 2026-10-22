@@ -29,6 +29,7 @@ import {
 import { RETRIEVE_CONTENT_TYPES } from '../../../services/retrieve-selection.js';
 import { resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { sourcePathSegment } from '../../../contracts/source-definition.js';
+import { formatMutationOutcome } from '../../../mutation-outcome.js';
 
 /** Permanently delete explicitly identified remote items and selected actual languages. */
 export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteResult>> {
@@ -127,16 +128,23 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       };
       if (!this.jsonEnabled()) {
         this.log(`Mode: ${result.mode}; outcome: ${result.outcome}`);
-        for (const target of result.targets)
-          this.log(
-            `${target.contentType}:${target.apiName ?? target.contentId} ${target.language} ${target.variantId}`,
-          );
-        for (const operation of result.execution?.report.operations ?? [])
-          this.log(
-            `${operation.target.variantId}: ${operation.state}${operation.error ? `; ${operation.error}` : ''}`,
-          );
+        if (result.mode === 'preview')
+          for (const [index, target] of result.targets.entries())
+            this.log(
+              formatMutationOutcome({
+                operation: 'delete',
+                ordinal: index + 1,
+                label: target.apiName ?? undefined,
+                language: target.language,
+                state: 'ready',
+                target,
+              }),
+            );
         if (result.execution?.reportFile) this.log(`Run report: ${result.execution.reportFile}`);
-        if (message) this.log(message);
+        if (message)
+          this.log(
+            'Deletion stopped. Inspect the invocation log for details; reconcile uncertain remote outcomes before any further deletion. Select exact items and, when needed, --language <locale> (repeat for a subset) or --language "*" for all actual languages.',
+          );
       }
       return this.finishEnvelope(envelope, assertContentDeleteResult);
     };
@@ -195,7 +203,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
           throw new TypeError(
             'Multiple actual item languages: specify --language <locale> (repeat for a subset) or --language "*" in JSON/CI/noninteractive use.',
           );
-        const languages = await this.selectLanguages(item);
+        const languages = await this.selectLanguages(item, resolution.items.indexOf(item) + 1);
         if (languages.length === 0) {
           result = { ...result, outcome: 'cancelled' };
           return finish('success');
@@ -226,6 +234,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       );
       const execution = await applyNativeDelete(context.connection, {
         resolution,
+        onOutcome: this.mutationOutcomeObserver(),
         localSource: { projectRoot: flags['output-dir'] ?? process.cwd(), workspaceApiName },
         ...(directory
           ? { reportDirectory: directory, reportDirectoryAllocated: true as const }
@@ -252,14 +261,14 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
     }
   }
 
-  protected async selectLanguages(item: NativeDeleteItem): Promise<string[]> {
+  protected async selectLanguages(item: NativeDeleteItem, ordinal = 1): Promise<string[]> {
     const prompt = createInterface({ input: process.stdin, output: process.stdout });
     const cancellation = new AbortController();
     prompt.once('SIGINT', () => cancellation.abort());
     prompt.once('close', () => cancellation.abort());
     try {
       this.log(
-        `Languages for ${item.contentId}:\n0: All\n${item.available.map((target, index) => `${index + 1}: ${target.language}`).join('\n')}`,
+        `${formatMutationOutcome({ operation: 'delete', ordinal, label: item.available[0]?.apiName ?? undefined, state: 'select languages', target: { contentId: item.contentId } })}\n0: All\n${item.available.map((target, index) => `${index + 1}: ${target.language}`).join('\n')}`,
       );
       const input = await prompt.question('Select comma-separated numbers (empty cancels): ', {
         signal: cancellation.signal,
