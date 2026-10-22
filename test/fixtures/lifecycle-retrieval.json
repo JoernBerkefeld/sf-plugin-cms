@@ -1,0 +1,4013 @@
+{
+  "provenance": "Selected single-primary en_US observations captured 2026-10-21; synthetic IDs/URLs/names, metadata omitted, inventories deliberately reduced to selected fixture; not full-org qualification.",
+  "cells": [
+    {
+      "side": "source",
+      "family": "email",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_email",
+              "UrlName": "source-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_email",
+            "urlName": "source-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_email",
+            "urlName": "source-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_email",
+              "UrlName": "source-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_email",
+            "urlName": "source-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_email",
+            "urlName": "source-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_email",
+              "UrlName": "source-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_email",
+            "urlName": "source-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_email",
+            "urlName": "source-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_email",
+              "UrlName": "source-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_email",
+            "urlName": "source-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "source_email",
+              "sfdc_cms:urlName": "source-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--source_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_email",
+            "urlName": "source-email"
+          },
+          "headers": [],
+          "base64": null
+        }
+      }
+    },
+    {
+      "side": "source",
+      "family": "image",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_image",
+              "UrlName": "source-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_image",
+            "urlName": "source-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_image",
+            "urlName": "source-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_image",
+              "UrlName": "source-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_image",
+            "urlName": "source-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_image",
+            "urlName": "source-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_image",
+              "UrlName": "source-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_image",
+            "urlName": "source-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_image",
+            "urlName": "source-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_image",
+              "UrlName": "source-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_image",
+            "urlName": "source-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_image",
+            "urlName": "source-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=source_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        }
+      }
+    },
+    {
+      "side": "source",
+      "family": "document",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_document",
+              "UrlName": "source-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_document",
+            "urlName": "source-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_document",
+            "urlName": "source-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_document",
+              "UrlName": "source-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_document",
+            "urlName": "source-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_document",
+            "urlName": "source-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_document",
+              "UrlName": "source-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_document",
+            "urlName": "source-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_document",
+            "urlName": "source-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_document",
+              "UrlName": "source-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_document",
+            "urlName": "source-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_document",
+            "urlName": "source-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=source_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        }
+      }
+    },
+    {
+      "side": "source",
+      "family": "audio",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_audio",
+              "UrlName": "source-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_audio",
+              "UrlName": "source-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "source_audio",
+              "UrlName": "source-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "source_audio",
+              "UrlName": "source-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "source_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "source_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "source_audio",
+            "urlName": "source-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=source_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        }
+      }
+    },
+    {
+      "side": "target",
+      "family": "email",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_email",
+              "UrlName": "target-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_email",
+            "urlName": "target-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_email",
+            "urlName": "target-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_email",
+              "UrlName": "target-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_email",
+            "urlName": "target-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_email",
+            "urlName": "target-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_email",
+              "UrlName": "target-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_email",
+            "urlName": "target-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_email",
+            "urlName": "target-email"
+          },
+          "headers": [],
+          "base64": null
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__email",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_email",
+              "UrlName": "target-email",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_email"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email",
+              "name": "Email"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_email",
+            "urlName": "target-email",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_email",
+            "contentBody": {
+              "messagePurpose": "promotional",
+              "preheader": "No messages sent",
+              "rawHtml": "&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;p&gt;Synthetic local retrieval evidence only.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+              "sfdc_cms:description": "Fresh isolated static CMS qualification, no sending configuration.",
+              "sfdc_cms:title": "target_email",
+              "sfdc_cms:urlName": "target-email",
+              "subjectLine": "Synthetic qualification only",
+              "lightning:dataProviders": [],
+              "lightning:expressions": [],
+              "lightning:backgroundImage": {
+                "repeat": "no-repeat",
+                "position": "center center",
+                "size": "cover"
+              },
+              "sfdc_cms:attachments": [],
+              "sfdc_cms:variants": [],
+              "lightning:brandSource": {
+                "defaultBrandOption": "sfdcBrand"
+              }
+            },
+            "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--target_email",
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__email"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_email",
+            "urlName": "target-email"
+          },
+          "headers": [],
+          "base64": null
+        }
+      }
+    },
+    {
+      "side": "target",
+      "family": "image",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_image",
+              "UrlName": "target-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_image",
+            "urlName": "target-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_image",
+            "urlName": "target-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_image",
+              "UrlName": "target-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_image",
+            "urlName": "target-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_image",
+            "urlName": "target-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_image",
+              "UrlName": "target-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_image",
+            "urlName": "target-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_image",
+            "urlName": "target-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__image",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_image",
+              "UrlName": "target-image",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_image"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image",
+              "name": "Image"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_image",
+            "urlName": "target-image",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_image",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 70,
+                  "mimeType": "image/png"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__image"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_image",
+            "urlName": "target-image"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=f1dd98d2c2879942a65eb46dccd0a8ba&fileName=target_image.png",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "image/png",
+              "contentLength": "70",
+              "location": null
+            }
+          ],
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQSFjwHwAD5AIge4YO3AAAAABJRU5ErkJggg=="
+        }
+      }
+    },
+    {
+      "side": "target",
+      "family": "document",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_document",
+              "UrlName": "target-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_document",
+            "urlName": "target-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_document",
+            "urlName": "target-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_document",
+              "UrlName": "target-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_document",
+            "urlName": "target-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_document",
+            "urlName": "target-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_document",
+              "UrlName": "target-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_document",
+            "urlName": "target-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_document",
+            "urlName": "target-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__document",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_document",
+              "UrlName": "target-document",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_document"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document",
+              "name": "Document"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_document",
+            "urlName": "target-document",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_document",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 126,
+                  "mimeType": "text/plain"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__document"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_document",
+            "urlName": "target-document"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=fd6987317d30e4be36b01b1f6c3aea15&fileName=target_document.txt",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "text/plain",
+              "contentLength": "126",
+              "location": null
+            }
+          ],
+          "base64": "Q01TIG5hdGl2ZSBEb2N1bWVudCBxdWFsaWZpY2F0aW9uIGZpeHR1cmUuClN0YXRpYyBwbGFpbiB0ZXh0IG9ubHk7IG5vIGxpbmtzLCBkZXBlbmRlbmNpZXMsIHJlY2lwaWVudHMsIG9yIGV4ZWN1dGFibGUgY29udGVudC4K"
+        }
+      }
+    },
+    {
+      "side": "target",
+      "family": "audio",
+      "phases": {
+        "publish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_audio",
+              "UrlName": "target-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "publish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_audio",
+              "UrlName": "target-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "unpublish-baseline": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": true,
+              "ManagedContentVariantStatus": "Published",
+              "IsPrimary": true,
+              "Name": "target_audio",
+              "UrlName": "target-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": true,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Published",
+              "status": "Published"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        },
+        "unpublish-readback-0": {
+          "workspace": {
+            "id": "0Zu000000000001AAA",
+            "apiName": "Default_Content_Workspace",
+            "rootFolderId": "9Pu000000000001AAA",
+            "defaultLanguage": "en_US"
+          },
+          "rows": [
+            {
+              "Id": "9Ps000000000001AAA",
+              "ManagedContentId": "20Y000000000001AAA",
+              "ContentTypeFullyQualifiedName": "sfdc_cms__audio",
+              "Language": "en_US",
+              "VariantType": "Content",
+              "IsPublished": false,
+              "ManagedContentVariantStatus": "Draft",
+              "IsPrimary": true,
+              "Name": "target_audio",
+              "UrlName": "target-audio",
+              "ManagedContentKey": "MCREPLAYKEY",
+              "ManagedContent": {
+                "AuthoredManagedContentSpaceId": "0Zu000000000001AAA",
+                "ApiName": "target_audio"
+              }
+            }
+          ],
+          "parent": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio",
+              "name": "Audio"
+            },
+            "contentVersion": 1,
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio",
+            "variantVersion": "1.1"
+          },
+          "variant": {
+            "apiName": "target_audio",
+            "contentBody": {
+              "sfdc_cms:media": {
+                "source": {
+                  "type": "file",
+                  "ref": "0sN000000000001",
+                  "size": 844,
+                  "mimeType": "audio/x-wav"
+                },
+                "url": "/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+              }
+            },
+            "contentFqn": null,
+            "contentKey": "MCREPLAYKEY",
+            "contentSpace": {
+              "id": "0Zu000000000001AAA"
+            },
+            "contentType": {
+              "fullyQualifiedName": "sfdc_cms__audio"
+            },
+            "externalId": null,
+            "folder": {
+              "id": "9Pu000000000001AAA"
+            },
+            "isPublished": false,
+            "language": "en_US",
+            "managedContentId": "20Y000000000001AAA",
+            "managedContentVariantId": "9Ps000000000001AAA",
+            "managedContentVersionId": "5OU000000000001AAA",
+            "status": {
+              "label": "Draft",
+              "status": "Draft"
+            },
+            "title": "target_audio",
+            "urlName": "target-audio"
+          },
+          "headers": [
+            {
+              "url": "https://replay.my.salesforce.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 301,
+              "stage": "headers",
+              "contentType": "text/html; charset=UTF-8",
+              "contentLength": "0",
+              "location": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav"
+            },
+            {
+              "url": "https://replay.file.force.com/cms/media/MCREPLAYKEY?version=1.1&fileHash=0c9900dd3aa1c0fe96730584c2c1e3ba&fileName=target_audio.wav",
+              "status": 200,
+              "stage": "headers",
+              "contentType": "audio/x-wav",
+              "contentLength": "844",
+              "location": null
+            }
+          ],
+          "base64": "UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="
+        }
+      }
+    }
+  ]
+}

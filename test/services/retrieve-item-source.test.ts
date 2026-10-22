@@ -247,6 +247,46 @@ async function acquisitionRejects(action: () => Promise<unknown>, message: strin
 }
 
 describe('guarded native selection acquisition', () => {
+  for (const published of [true, false])
+    it(`preserves every portable Template byte across ${published ? 'publish' : 'unpublish'}`, async () => {
+      const current = recordedReadEnvelopes(true);
+      const input: ResolveNativeRetrieveInput = {
+        workspaceId: selection.workspaceId,
+        language: 'en_US',
+        selection: {
+          mode: 'api-name',
+          groups: [
+            {
+              contentType: 'sfdc_cms__emailTemplate',
+              all: false,
+              apiNames: ['Welcome'],
+              contentKeysOrIds: [],
+            },
+          ],
+        },
+      };
+      const acquire = async () => {
+        const prepared = await prepareEditableSourceSelection(current.connection, input);
+        return prepared.acquire(current.variants[0].managedContentVariantId as string);
+      };
+      const phase = (value: boolean) => {
+        for (const detail of [current.parent, current.variants[0]]) {
+          detail.isPublished = value;
+          detail.status = {
+            label: value ? 'Published' : 'Draft',
+            status: value ? 'Published' : 'Draft',
+          };
+        }
+      };
+      phase(!published);
+      const before = await acquire();
+      phase(published);
+      const after = await acquire();
+      expect(after).to.deep.equal(before);
+      expect(after.projection.definitionBytes).to.deep.equal(before.projection.definitionBytes);
+      expect(after.projection.companions).to.deep.equal(before.projection.companions);
+    });
+
   it('resolves once for multiple parents and independently proves each sibling scope', async () => {
     const current = fixture();
     current.variants.push({

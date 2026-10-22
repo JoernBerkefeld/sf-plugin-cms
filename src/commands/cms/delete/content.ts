@@ -27,13 +27,15 @@ import {
   validateMutationReportDirectory,
 } from '../../../services/mutation-report-directory.js';
 import { RETRIEVE_CONTENT_TYPES } from '../../../services/retrieve-selection.js';
+import { resolveWorkspace } from '../../../services/resolve-workspace.js';
+import { sourcePathSegment } from '../../../contracts/source-definition.js';
 
 /** Permanently delete explicitly identified remote items and selected actual languages. */
 export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteResult>> {
   public static readonly aliases = ['content:delete'];
   public static readonly summary = 'Delete exact CMS items and selected languages, or preview.';
   public static readonly description =
-    'Executes by default for email, emailTemplate, image, document and audio. Repeat -m Type:ApiName; type-only and wildcard item selectors are forbidden, including in preview. Alternatively use an exact --api-name with --content-type, or --content-key-or-id with --content-type. A sole actual language is automatic; multiple languages require an explicit --language subset or "*", or interactive multi-selection with All first. JSON, CI and non-TTY use require explicit language selection when ambiguous. Cancel or empty selection performs no mutations. No ownership report, Draft-only restriction or acknowledgement is required; the API may reject a target. Deletes exact native Content/Translation variants sequentially without retry, unpublish, parent-delete fallback or rollback. Local files remain untouched. Historical revision/reference preservation and other collateral effects are not proven; last-language parent disappearance is observed, not an explicit parent delete. --preview is read-only and rejects reporting flags before org access. Reports are opt-in: --report uses a unique cwd logs/cms/reports run directory; --report-dir implies reporting. No hidden journal or crash-recovery guarantee. Diagnostic invocation logs remain enabled.';
+    'Executes by default for email, emailTemplate, image, document and audio. Repeat -m Type:ApiName; type-only and wildcard item selectors are forbidden, including in preview. Alternatively use an exact --api-name with --content-type, or --content-key-or-id with --content-type. A sole actual language is automatic; multiple languages require an explicit --language subset or "*", or interactive multi-selection with All first. JSON, CI and non-TTY use require explicit language selection when ambiguous. Cancel or empty selection performs no mutations. No ownership report, Draft-only restriction or acknowledgement is required; the API may reject a target. Deletes exact native Content/Translation variants sequentially without retry, unpublish, parent-delete fallback or rollback. After independently confirmed remote deletion, removes only the matching pre-inspected local source and declared companions under cwd or --output-dir. Missing copies are no-ops; preview never deletes local files. Local cleanup failure returns partial/nonzero with completed remote evidence: never replay DELETE to retry local cleanup. Historical revision/reference preservation and other collateral effects are not proven; last-language parent disappearance is observed, not an explicit parent delete. --preview is read-only and rejects reporting flags before org access. Reports are opt-in: --report uses a unique cwd logs/cms/reports run directory; --report-dir implies reporting. No hidden journal or crash-recovery guarantee. Diagnostic invocation logs remain enabled.';
   public static readonly examples = [
     '<%= config.bin %> cms delete content --workspace-id 0Zu... -m email:Welcome --preview --json',
     '<%= config.bin %> content delete --workspace-id 0Zu... -m image:Banner -m audio:Intro --language "*" --report --json',
@@ -68,6 +70,12 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
     preview: Flags.boolean({
       default: false,
       summary: 'Read-only preflight; no mutation or report allocation.',
+    }),
+    'output-dir': Flags.directory({
+      char: 'd',
+      exists: false,
+      summary:
+        'Project root for matching local JSON and companions; defaults to the current directory.',
     }),
     report: Flags.boolean({
       default: false,
@@ -202,6 +210,15 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
         result = { ...result, outcome: 'ready' };
         return finish('success');
       }
+      const workspace = await resolveWorkspace(context.connection, {
+        workspaceId: flags['workspace-id'],
+      });
+      const workspaceApiName = workspace.workspace.apiName;
+      if (typeof workspaceApiName !== 'string' || !workspaceApiName.trim())
+        throw new TypeError(
+          'Workspace API name unavailable; local source identity cannot be proven.',
+        );
+      sourcePathSegment(workspaceApiName);
       const directory = await allocateMutationReportDirectory(
         flags.report,
         flags['report-dir'],
@@ -209,6 +226,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       );
       const execution = await applyNativeDelete(context.connection, {
         resolution,
+        localSource: { projectRoot: flags['output-dir'] ?? process.cwd(), workspaceApiName },
         ...(directory
           ? { reportDirectory: directory, reportDirectoryAllocated: true as const }
           : {}),
@@ -217,7 +235,11 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       return finish('success');
     } catch (error) {
       if (error instanceof NativeDeleteApplyError) {
-        const state = error.result.report.state;
+        const localFailure = error.result.report.operations.some(
+          ({ localSource }) =>
+            localSource?.outcome === 'blocked' || localSource?.outcome === 'partial',
+        );
+        const state = localFailure ? 'partial' : error.result.report.state;
         if (state === 'applying') throw error;
         result = { ...result, outcome: state, execution: error.result };
         let status: CmsStatus = 'failed';

@@ -58,6 +58,35 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('documents exact lifecycle metadata versions, reporting and evidence gates', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    const lifecycle = readme
+      .split('### `sf content publish`')[1]
+      .split('### `sf content delete`')[0];
+    for (const claim of [
+      '-m/--metadata Type:ApiName',
+      'sf-cms-content-publish@2',
+      'sf-cms-content-unpublish@2',
+      'sf-cms-content-publish@1',
+      'sf-cms-content-unpublish@1',
+      'before org context/transport access',
+      'type-only',
+      'Native lifecycle admission is currently Email-only',
+      'unqualified and blocked',
+      'Whole-selection preflight',
+      'per-item durable pending intent',
+      'dry-run creates no operation report',
+      '`unattempted`',
+      '`partial`',
+      'no automatic rollback, retry or resume',
+      'Exit is 0 only for success',
+      'partial results exit 1',
+      "host's exit code 2",
+      'JSON stdout contains only the envelope',
+    ])
+      expect(lifecycle, claim).to.include(claim);
+  });
+
   it('documents neutral resolved org notices and suppression boundaries', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [

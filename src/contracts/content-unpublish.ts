@@ -1,4 +1,8 @@
 import { assertExactKeys, assertNonemptyString, assertSha256, type CmsStatus } from './shared.js';
+import {
+  assertNativePublishEvidence,
+  type ContentPublishNativeEvidence,
+} from './content-publish.js';
 
 export const CONTENT_UNPUBLISH_CONTRACT = 'sf-cms-content-unpublish' as const;
 export type ContentUnpublishTarget = {
@@ -25,6 +29,16 @@ export type ContentUnpublishSibling = {
 };
 export type ContentUnpublishResult =
   | {
+      mode: 'apply';
+      outcome: 'remote-completed-local-blocked';
+      target: ContentUnpublishTarget;
+      evidence: Extract<ContentUnpublishResult, { outcome: 'completed' }>['evidence'];
+      blockers: readonly [{ code: 'EMAIL_UNPUBLISH_LOCAL_BLOCKED'; message: string }];
+      reportFile: string;
+      localSource: { outcome: 'blocked'; message: string };
+      localReportFile?: string;
+    }
+  | {
       mode: 'dry-run';
       outcome: 'ready';
       target: ContentUnpublishTarget;
@@ -33,6 +47,7 @@ export type ContentUnpublishResult =
         includeContentReferencesOmitted: true;
         activeUseStopsAcknowledgementRequired: true;
         baselineHash: string;
+        nativeEvidence?: ContentPublishNativeEvidence;
         inventory: readonly ContentUnpublishInventoryEntry[];
         siblingInventory: readonly ContentUnpublishSibling[];
       };
@@ -48,6 +63,7 @@ export type ContentUnpublishResult =
         activeUseStopsAcknowledged: true;
         baselineHash: string;
         postUnpublishHash: string;
+        nativeEvidence?: ContentPublishNativeEvidence;
         deploymentId: string;
         unpublishDate?: string;
         inventory: readonly ContentUnpublishInventoryEntry[];
@@ -105,6 +121,46 @@ export function assertContentUnpublishResult(
   status?: CmsStatus,
 ): asserts value is ContentUnpublishResult {
   if (!record(value)) throw new TypeError('result must be an object');
+  if (value.outcome === 'remote-completed-local-blocked') {
+    assertExactKeys(
+      value,
+      [
+        'mode',
+        'outcome',
+        'target',
+        'evidence',
+        'blockers',
+        'reportFile',
+        'localSource',
+        ...(Object.hasOwn(value, 'localReportFile') ? ['localReportFile'] : []),
+      ],
+      'result',
+    );
+    if (status !== undefined && status !== 'partial')
+      throw new TypeError('Local blocked unpublish requires partial status');
+    assertExactKeys(value.localSource, ['outcome', 'message'], 'result.localSource');
+    const local = value.localSource as Record<string, unknown>;
+    if (local.outcome !== 'blocked') throw new TypeError('Local unpublish outcome must be blocked');
+    assertNonemptyString(local.message, 'result.localSource.message');
+    assertBlockers(value.blockers, 'EMAIL_UNPUBLISH_LOCAL_BLOCKED');
+    if ((value.blockers as Array<{ message: string }>)[0].message !== local.message)
+      throw new TypeError('Local unpublish blocker must match outcome');
+    if (Object.hasOwn(value, 'localReportFile'))
+      assertNonemptyString(value.localReportFile, 'result.localReportFile');
+    assertContentUnpublishResult(
+      {
+        mode: value.mode,
+        outcome: 'completed',
+        target: value.target,
+        evidence: value.evidence,
+        blockers: [],
+        reportFile: value.reportFile,
+      },
+      undefined,
+      'success',
+    );
+    return;
+  }
   let extra: string[] = [];
   if (value.outcome === 'completed') extra = ['reportFile'];
   if (value.outcome === 'ownership-uncertain' || value.outcome === 'rejected-before-mutation')
@@ -131,6 +187,7 @@ export function assertContentUnpublishResult(
         'includeContentReferencesOmitted',
         'activeUseStopsAcknowledgementRequired',
         'baselineHash',
+        ...(record(value.evidence) && 'nativeEvidence' in value.evidence ? ['nativeEvidence'] : []),
         'inventory',
         'siblingInventory',
       ],
@@ -140,6 +197,13 @@ export function assertContentUnpublishResult(
     if (value.evidence.activeUseStopsAcknowledgementRequired !== true)
       throw new TypeError('unpublish acknowledgement requirement is invalid');
     assertSha256(value.evidence.baselineHash, 'result.evidence.baselineHash');
+    if ('nativeEvidence' in value.evidence)
+      assertNativePublishEvidence(
+        value.evidence.nativeEvidence,
+        value.target,
+        value.evidence.baselineHash,
+        true,
+      );
     assertInventory(value.evidence.inventory, value.target, true);
     assertSiblings(value.evidence.siblingInventory);
     assertProjection(value.evidence.inventory, value.evidence.siblingInventory, value.target);
@@ -164,6 +228,7 @@ export function assertContentUnpublishResult(
         'activeUseStopsAcknowledged',
         'baselineHash',
         'postUnpublishHash',
+        ...('nativeEvidence' in value.evidence ? ['nativeEvidence'] : []),
         'deploymentId',
         ...(value.evidence.unpublishDate === undefined ? [] : ['unpublishDate']),
         'inventory',
@@ -190,6 +255,23 @@ export function assertContentUnpublishResult(
       value.evidence.postUnpublishHash,
       false,
     );
+    if ('nativeEvidence' in value.evidence) {
+      // Unpublish completes in Draft, not the Published phase used by publish completion.
+      assertNativePublishEvidence(
+        value.evidence.nativeEvidence,
+        value.target,
+        value.evidence.baselineHash,
+        false,
+      );
+      const selectedContentId = value.target.contentId;
+      if (
+        (value.evidence.inventory as ContentUnpublishInventoryEntry[]).filter(
+          (entry) => entry.contentId === selectedContentId,
+        ).length !== 1 ||
+        (value.evidence.siblingInventory as ContentUnpublishSibling[]).length !== 1
+      )
+        throw new TypeError('Native unpublish requires exactly one selected-parent variant');
+    }
     assertNonemptyString(value.reportFile, 'result.reportFile');
     assertEmpty(value.blockers);
     return;

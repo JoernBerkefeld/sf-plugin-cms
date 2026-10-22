@@ -42,6 +42,37 @@ describe('native delete result contract', () => {
       persistenceError: 'Disk unavailable',
     });
   });
+  it('accepts exact local outcomes only on independently completed remote operations', () => {
+    for (const localSource of [
+      { outcome: 'noop', removed: [], remaining: [] },
+      { outcome: 'deleted', removed: ['file'], remaining: [] },
+      { outcome: 'blocked', removed: [], remaining: ['file'], message: 'Changed' },
+      { outcome: 'partial', removed: ['html'], remaining: ['definition'], message: 'Locked' },
+    ] as const) {
+      const value = result();
+      value.report.operations[0].localSource = structuredClone(localSource) as never;
+      assertNativeDeleteResult(value);
+    }
+    for (const localSource of [
+      { outcome: 'deleted', removed: [], remaining: [] },
+      { outcome: 'noop', removed: ['file'], remaining: [] },
+      { outcome: 'blocked', removed: [], remaining: [] },
+      { outcome: 'partial', removed: ['file'], remaining: ['file'], message: 'Locked' },
+      { outcome: 'deleted', removed: ['file'], remaining: [], extra: true },
+    ]) {
+      const value = result();
+      value.report.operations[0].localSource = localSource as never;
+      expect(() => assertNativeDeleteResult(value)).to.throw(TypeError);
+    }
+    const value = result();
+    value.report.operations[0] = {
+      target: value.report.operations[0].target,
+      state: 'uncertain',
+      localSource: { outcome: 'noop', removed: [], remaining: [] },
+    };
+    value.report.state = 'uncertain';
+    expect(() => assertNativeDeleteResult(value)).to.throw(TypeError);
+  });
   it('rejects malformed identity, state, classification, version and ownership-era evidence', () => {
     const changes: Array<(value: NativeDeleteResult) => void> = [
       (value) => {

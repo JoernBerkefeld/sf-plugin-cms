@@ -255,11 +255,27 @@ export function assertCmsEnvelope<T>(
     value.metadata.operation !== 'cms.info' &&
     value.metadata.operation !== 'workspace.import' &&
     value.metadata.operation !== 'content.delete' &&
-    value.metadata.operation !== 'content.update'
+    value.metadata.operation !== 'content.update' &&
+    value.metadata.operation !== 'content.publish' &&
+    value.metadata.operation !== 'content.unpublish'
   ) {
     throw new TypeError(
-      'envelope.contractVersion 2.0.0 is supported only for cms.info, workspace.import, content.delete, or content.update',
+      'envelope.contractVersion 2.0.0 is supported only for cms.info, workspace.import, content.delete, content.update, content.publish, or content.unpublish',
     );
+  }
+  if (
+    value.metadata.operation === 'content.publish' ||
+    value.metadata.operation === 'content.unpublish'
+  ) {
+    const metadataBatch = isRecord(value.result) && value.result.selection === 'metadata';
+    if (
+      (value.contractVersion === '2.0.0' &&
+        (!metadataBatch ||
+          !isRecord(value.result) ||
+          value.result.operation !== value.metadata.operation.slice('content.'.length))) ||
+      (value.contractVersion === '1.0.0' && metadataBatch)
+    )
+      throw new TypeError('Lifecycle version 2 requires matching metadata batch result');
   }
   const expectedContract = new Map<CmsOperation, string>([
     ['cms.info', 'sf-cms-info'],

@@ -1,7 +1,8 @@
 import type { Connection } from '@salesforce/core';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import { expect } from 'chai';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import fs, { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
@@ -159,8 +160,172 @@ async function stopped(action: () => Promise<unknown>): Promise<NativeDeleteAppl
   throw new Error('Expected stopped execution');
 }
 
+async function localFixture() {
+  const run = await createRunOwnedTemp('cms-delete-local-integration-');
+  const directory = path.join(run.root, 'cms', 'Marketing', 'email');
+  await mkdir(directory, { recursive: true });
+  const definition = path.join(directory, 'Existing.cms-email.json');
+  const companion = path.join(directory, 'Existing.cms-email.html');
+  await writeFile(
+    definition,
+    JSON.stringify({
+      contract: 'sf-cms-source-definition',
+      contractVersion: '1.0.0',
+      identity: {
+        family: 'cms',
+        type: 'Email',
+        apiName: 'Existing',
+        context: { workspaceApiName: 'Marketing' },
+      },
+      contentType: 'sfdc_cms__email',
+      language: 'en_US',
+      folderPath: [],
+      contentBody: {
+        'sfdc_cms:title': 'Existing',
+        messagePurpose: 'Transactional',
+        subjectLine: 'Edited',
+        textContent: 'Edited',
+      },
+      companions: { rawHtml: 'Existing.cms-email.html' },
+    }),
+  );
+  await writeFile(companion, '<p>Local authored edits</p>');
+  return {
+    directory,
+    definition,
+    companion,
+    localSource: { projectRoot: run.root, workspaceApiName: 'Marketing' },
+  };
+}
+
 describe('API-led native delete executor', () => {
   afterEach(() => sinon.restore());
+  it('deletes only the confirmed local copy and preserves directories and unrelated files', async () => {
+    const f = fixture('sfdc_cms__email', false);
+    const local = await localFixture();
+    await writeFile(path.join(local.directory, 'unrelated.txt'), 'keep');
+    const result = await applyNativeDelete(f.connection, {
+      resolution: await f.resolve(),
+      localSource: local.localSource,
+    });
+    assertNativeDeleteResult(result);
+    expect(result.report.operations[0].localSource).to.deep.equal({
+      outcome: 'deleted',
+      removed: [local.companion, local.definition],
+      remaining: [],
+    });
+    expect(await readdir(local.directory)).to.deep.equal(['unrelated.txt']);
+    expect(f.deletes).to.deep.equal([variantId]);
+  });
+  it('keeps the confirmed local cleanup prefix when a later remote deletion fails', async () => {
+    const f = fixture('sfdc_cms__email');
+    const local = await localFixture();
+    f.onDelete((id) => (id === translatedId ? new Error('Lost response') : undefined));
+    const resolution = await f.resolve();
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, { resolution, localSource: local.localSource }),
+    );
+    expect(error.result.report.state).to.equal('uncertain');
+    expect(error.result.report.operations[0].localSource?.outcome).to.equal('deleted');
+    expect(error.result.report.operations[1].localSource).to.equal(undefined);
+    expect(await readdir(local.directory)).to.deep.equal([]);
+  });
+  it('does not delete local files after rejection, uncertain response, or unsuccessful independent readback', async () => {
+    for (const mode of ['rejected', 'uncertain', 'readback']) {
+      const f = fixture('sfdc_cms__email', false);
+      const local = await localFixture();
+      const resolution = await f.resolve();
+      f.onDelete(() => {
+        if (mode === 'readback') {
+          f.failVariant(new Error('Readback unavailable'));
+          return;
+        }
+        return mode === 'uncertain'
+          ? new Error('Lost response')
+          : Object.assign(new Error('Denied'), {
+              statusCode: 403,
+              data: [{ errorCode: 'INSUFFICIENT_ACCESS', message: 'Denied' }],
+            });
+      });
+      const error = await stopped(() =>
+        applyNativeDelete(f.connection, { resolution, localSource: local.localSource }),
+      );
+      expect(error.result.report.operations[0].localSource).to.equal(undefined);
+      expect(await readFile(local.companion, 'utf8')).to.equal('<p>Local authored edits</p>');
+      expect(f.deletes).to.deep.equal([variantId]);
+      sinon.restore();
+    }
+  });
+  it('captures before dispatch, surfaces local drift and stops without remote replay', async () => {
+    const f = fixture('sfdc_cms__email');
+    const local = await localFixture();
+    const resolution = await f.resolve();
+    f.onDelete(() => {
+      writeFileSync(local.companion, 'Changed during remote dispatch');
+    });
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, {
+        resolution,
+        localSource: local.localSource,
+        reportDirectory: path.join(local.localSource.projectRoot, 'report'),
+      }),
+    );
+    expect(JSON.parse(await readFile(error.result.reportFile!, 'utf8'))).to.deep.equal(
+      error.result.report,
+    );
+    expect(error.message).to.include('local cleanup failed');
+    expect(error.result.report.state).to.equal('partial');
+    expect(error.result.persistenceError).to.equal(undefined);
+    expect(error.result.report.operations[0]).to.include({
+      state: 'completed',
+      exactVariantAbsent: true,
+    });
+    expect(error.result.report.operations[0].localSource?.outcome).to.equal('blocked');
+    expect(await readFile(local.companion, 'utf8')).to.equal('Changed during remote dispatch');
+    expect(f.deletes).to.deep.equal([variantId]);
+  });
+  it('retains exact partial local unlink evidence without replaying a completed remote target', async () => {
+    const f = fixture('sfdc_cms__email', false);
+    const local = await localFixture();
+    const resolution = await f.resolve();
+    const unlink = fs.unlink.bind(fs);
+    sinon.stub(fs, 'unlink').callsFake(async (file) => {
+      if (file === local.definition) throw new Error('Locked definition');
+      await unlink(file);
+    });
+    const error = await stopped(() =>
+      applyNativeDelete(f.connection, { resolution, localSource: local.localSource }),
+    );
+    expect(error.result.report.state).to.equal('completed');
+    expect(error.result.report.operations[0].localSource).to.deep.equal({
+      outcome: 'partial',
+      removed: [local.companion],
+      remaining: [local.definition],
+      message: 'Locked definition',
+    });
+    expect(error.result.persistenceError).to.equal(undefined);
+    expect(f.deletes).to.deep.equal([variantId]);
+  });
+  it('treats a pre-remote missing copy as noop even if a copy appears during remote dispatch', async () => {
+    const f = fixture('sfdc_cms__email', false);
+    const local = await localFixture();
+    const bytes = await readFile(local.definition);
+    await fs.unlink(local.definition);
+    f.onDelete(() => {
+      writeFileSync(local.definition, bytes);
+    });
+    const result = await applyNativeDelete(f.connection, {
+      resolution: await f.resolve(),
+      localSource: local.localSource,
+    });
+    assertNativeDeleteResult(result);
+    expect(result.report.operations[0].localSource).to.deep.equal({
+      outcome: 'noop',
+      removed: [],
+      remaining: [],
+    });
+    expect(await readFile(local.definition)).to.deep.equal(bytes);
+  });
   it('executes all five public families including published existing content without ownership or disk reports', async () => {
     for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio'] as const) {
       const f = fixture(`sfdc_cms__${type}`, false);

@@ -16,6 +16,8 @@ import {
   EmailUnpublishOutcomeUnknownError,
   EmailUnpublishPreflightBlockedError,
   previewPublishedEmailUnpublish,
+  preparePublishedEmailUnpublish,
+  executePreparedPublishedEmailUnpublish,
 } from '../../src/services/email-unpublish.js';
 import { rewriteAtomic } from '../../src/services/import-workspace.js';
 import { unpublishContent } from '../../src/services/lifecycle-foundation.js';
@@ -124,6 +126,248 @@ async function removeFixture(run: RunOwnedTemp, parent: string): Promise<void> {
   const rootMetadata = await stat(run.root);
   expect(rootMetadata.isDirectory()).to.equal(true);
 }
+
+async function setup() {
+  const current = fixture();
+  const prepared = await preparePublishedEmailUnpublish(current.connection, {
+    selector: { workspaceId: 'space', apiName: 'pilot_email', useDefaultLanguage: true },
+  });
+  const binding = Object.fromEntries(
+    Object.entries(prepared.evidence).filter(
+      ([key]) => !['inventory', 'siblingInventory', 'lifecycle'].includes(key),
+    ),
+  ) as import('../../src/contracts/content-lifecycle-batch.js').LifecycleBinding;
+  const run = await createRunOwnedTemp('sf-plugin-cms-prepared-unpublish');
+  const parent = await createRunOwnedDirectory(run, 'fixture');
+  return {
+    current,
+    prepared,
+    run,
+    parent,
+    context: {
+      binding,
+      expectedInventory: prepared.inventoryBaseline,
+      reportFile: path.join(parent, 'target-000001.json'),
+    },
+  };
+}
+
+describe('Email unpublish prepared seams', () => {
+  it('persists pending before fresh reads, omits references and executes only once', async () => {
+    const test = await setup();
+    expect(test.current.request.calledWithMatch({ method: 'POST' })).to.equal(false);
+    const searches = test.current.searches;
+    const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake((request) => {
+      const pending = JSON.parse(readFileSync(test.context.reportFile, 'utf8'));
+      expect(pending.state).to.equal('pending');
+      expect(pending.expectedInventory).to.deep.equal(test.context.expectedInventory);
+      expect(test.current.searches).to.equal(searches + 2);
+      expect(JSON.parse((request as { body: string }).body)).to.deep.equal({
+        contentIds: ['parent-email'],
+      });
+      test.current.variants['variant-en'].isPublished = false;
+      test.current.variants['variant-en'].status = { status: 'Draft' };
+      return fakeRequest({ deploymentId: 'deployment' });
+    });
+    try {
+      const result = await executePreparedPublishedEmailUnpublish(
+        test.current.connection,
+        test.prepared,
+        {
+          ...test.context,
+          rewriteReport: async (file, report) => {
+            if ((report as { state: string }).state === 'pending')
+              expect(test.current.searches).to.equal(searches);
+            await rewriteAtomic(file, report);
+          },
+        },
+      );
+      expect(result.postUnpublishHash).to.equal(test.prepared.evidence.baselineHash);
+      expect(JSON.parse(await readFile(test.context.reportFile, 'utf8')).state).to.equal(
+        'completed',
+      );
+      expect(
+        await captureFailure(
+          executePreparedPublishedEmailUnpublish(
+            test.current.connection,
+            test.prepared,
+            test.context,
+          ),
+        ),
+      ).to.be.instanceOf(EmailUnpublishPreflightBlockedError);
+      expect(mutation.calledOnce).to.equal(true);
+    } finally {
+      mutation.restore();
+      await removeFixture(test.run, test.parent);
+    }
+  });
+
+  for (const drift of [
+    'body',
+    'parent',
+    'variant',
+    'default-language',
+    'inventory',
+    'org',
+    'api-version',
+    'family',
+    'workspace',
+    'api-name',
+    'parent-scope',
+    'lifecycle',
+  ] as const) {
+    it(`blocks fresh ${drift} substitution before dispatch`, async () => {
+      const test = await setup();
+      const mutation = sinon.stub(JsforceConnection.prototype, 'request');
+      const selected = test.current.variants['variant-en'];
+      if (drift === 'body') selected.contentBody = { rawHtml: 'changed' };
+      if (drift === 'parent') {
+        selected.managedContentId = 'replacement';
+        test.current.request
+          .withArgs(sinon.match({ url: '/connect/cms/contents/replacement' }))
+          .returns(
+            fakeRequest({
+              managedContentId: 'replacement',
+              contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+              contentSpace: { id: 'space' },
+            }),
+          );
+      }
+      if (drift === 'variant') selected.managedContentVariantId = 'replacement';
+      if (drift === 'default-language')
+        test.current.request
+          .withArgs(sinon.match({ url: '/connect/cms/spaces/space' }))
+          .returns(fakeRequest({ id: 'space', defaultLanguage: 'de_DE' }));
+      if (drift === 'inventory') test.current.variants['variant-unrelated'].title = 'changed';
+      if (drift === 'org') test.current.connection.instanceUrl = 'https://other.invalid';
+      if (drift === 'api-version') test.current.connection.version = '66.0';
+      if (drift === 'family') selected.contentType = { fullyQualifiedName: 'sfdc_cms__image' };
+      if (drift === 'workspace') selected.contentSpace = { id: 'other' };
+      if (drift === 'api-name') selected.apiName = 'replacement';
+      if (drift === 'parent-scope')
+        test.current.variants['variant-de'].managedContentId = 'parent-email';
+      if (drift === 'lifecycle') selected.status = { status: 'Draft' };
+      try {
+        expect(
+          await captureFailure(
+            executePreparedPublishedEmailUnpublish(
+              test.current.connection,
+              test.prepared,
+              test.context,
+            ),
+          ),
+        ).to.be.instanceOf(EmailUnpublishPreflightBlockedError);
+        expect(mutation.notCalled).to.equal(true);
+      } finally {
+        mutation.restore();
+        await removeFixture(test.run, test.parent);
+      }
+    });
+  }
+
+  for (const accounted of [true, false]) {
+    it(`${accounted ? 'accepts' : 'blocks'} caller-${accounted ? 'accounted' : 'unaccounted'} preceding transition`, async () => {
+      const test = await setup();
+      test.current.variants['variant-de'].isPublished = false;
+      test.current.variants['variant-de'].status = { status: 'Draft' };
+      if (accounted)
+        test.context.expectedInventory = test.context.expectedInventory.map((entry) =>
+          entry.variantId === 'variant-de'
+            ? { ...entry, isPublished: false, status: 'Draft' }
+            : entry,
+        );
+      const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
+        test.current.variants['variant-en'].isPublished = false;
+        test.current.variants['variant-en'].status = { status: 'Draft' };
+        return fakeRequest({ deploymentId: 'deployment' });
+      });
+      try {
+        const action = executePreparedPublishedEmailUnpublish(
+          test.current.connection,
+          test.prepared,
+          test.context,
+        );
+        if (accounted) {
+          const result = await action;
+          expect(result.deploymentId).to.equal('deployment');
+        } else
+          expect(await captureFailure(action)).to.be.instanceOf(
+            EmailUnpublishPreflightBlockedError,
+          );
+        expect(mutation.callCount).to.equal(accounted ? 1 : 0);
+      } finally {
+        mutation.restore();
+        await removeFixture(test.run, test.parent);
+      }
+    });
+  }
+
+  for (const invalid of [
+    'relative-report',
+    'existing-report',
+    'binding',
+    'pending',
+    'completed',
+  ] as const) {
+    it(`stops on ${invalid} without redispatch or caller-directory cleanup`, async () => {
+      const test = await setup();
+      if (invalid === 'relative-report') test.context.reportFile = 'target.json';
+      if (invalid === 'existing-report')
+        await rewriteAtomic(test.context.reportFile, { preserve: true });
+      if (invalid === 'binding') test.context.binding.workspaceId = 'other';
+      const mutation = sinon.stub(JsforceConnection.prototype, 'request').callsFake(() => {
+        test.current.variants['variant-en'].isPublished = false;
+        test.current.variants['variant-en'].status = { status: 'Draft' };
+        return fakeRequest({ deploymentId: 'deployment' });
+      });
+      try {
+        const failure = await captureFailure(
+          executePreparedPublishedEmailUnpublish(test.current.connection, test.prepared, {
+            ...test.context,
+            rewriteReport: async (file, report) => {
+              if ((report as { state: string }).state === invalid)
+                throw new Error('disk unavailable');
+              await rewriteAtomic(file, report);
+            },
+          }),
+        );
+        expect(failure).to.be.instanceOf(
+          invalid === 'completed'
+            ? EmailUnpublishOutcomeUnknownError
+            : EmailUnpublishPreflightBlockedError,
+        );
+        expect(mutation.callCount).to.equal(invalid === 'completed' ? 1 : 0);
+        const parentMetadata = await stat(test.parent);
+        expect(parentMetadata.isDirectory()).to.equal(true);
+        if (invalid === 'existing-report')
+          expect(JSON.parse(await readFile(test.context.reportFile, 'utf8'))).to.deep.equal({
+            preserve: true,
+          });
+        if (invalid === 'completed') {
+          expect((failure as EmailUnpublishOutcomeUnknownError).deploymentId).to.equal(
+            'deployment',
+          );
+          expect(JSON.parse(await readFile(test.context.reportFile, 'utf8')).state).to.equal(
+            'ownership-uncertain',
+          );
+          expect(
+            await captureFailure(
+              executePreparedPublishedEmailUnpublish(
+                test.current.connection,
+                test.prepared,
+                test.context,
+              ),
+            ),
+          ).to.be.instanceOf(EmailUnpublishPreflightBlockedError);
+          expect(mutation.calledOnce).to.equal(true);
+        }
+      } finally {
+        mutation.restore();
+        await removeFixture(test.run, test.parent);
+      }
+    });
+  }
+});
 
 describe('Email unpublish service', () => {
   it('previews one exact Published variant without mutation', async () => {

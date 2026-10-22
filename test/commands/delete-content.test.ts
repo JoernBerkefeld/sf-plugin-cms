@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { PassThrough } from 'node:stream';
 import path from 'node:path';
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createRunOwnedTemp } from '../../src/filesystem/runOwnedTemp.js';
 import { Parser } from '@oclif/core';
 import { Org } from '@salesforce/core';
@@ -14,7 +14,7 @@ const workspaceId = '0Zuaj000007dgL8CAI';
 const parentId = '20Yaj00000FaO1aEAF';
 const response = (value?: unknown) =>
   Object.assign(Promise.resolve(value), { stream: () => new PassThrough() });
-function fixture(languages = ['en_US'], type = 'audio') {
+function fixture(languages = ['en_US'], type = 'audio', workspace?: unknown) {
   const rows = languages.map((language, index) => ({
     Id: `9Psaj00000J5ox${String.fromCodePoint(74 + index)}CAR`,
     ManagedContentId: parentId,
@@ -38,6 +38,8 @@ function fixture(languages = ['en_US'], type = 'audio') {
     getApiVersion: () => '67.0',
     request: ({ url }: { url: string }) => {
       requests.push(url);
+      if (url.endsWith(`/spaces/${workspaceId}`))
+        return response(workspace ?? { id: workspaceId, apiName: 'Marketing' });
       if (url.includes('/query?')) {
         const query = decodeURIComponent(url);
         let records: unknown[];
@@ -148,6 +150,98 @@ describe('cms delete exact-item CLI', () => {
       expect(output.result?.targets[0]).to.include({ language: 'en_US', isPublished: true });
       expect(f.deletes.notCalled).to.equal(true);
     });
+  for (const explicitRoot of [false, true])
+    for (const preview of [false, true])
+      it(`handles malformed local source honestly explicitRoot=${explicitRoot} preview=${preview}`, async () => {
+        const run = await createRunOwnedTemp('cms-delete-cli-local-');
+        const directory = path.join(run.root, 'cms', 'Marketing', 'audio');
+        await mkdir(directory, { recursive: true });
+        const definition = path.join(directory, 'Existing.cms-audio.json');
+        await writeFile(definition, '{}');
+        const f = fixture();
+        const originalCwd = process.cwd();
+        if (!explicitRoot) process.chdir(run.root);
+        try {
+          const output = await subject(
+            { preview, ...(explicitRoot ? { 'output-dir': run.root } : {}) },
+            f.connection,
+          ).command.run();
+          expect(output.status, JSON.stringify(output)).to.equal(preview ? 'success' : 'partial');
+          expect(await readFile(definition, 'utf8')).to.equal('{}');
+          expect(f.deletes.callCount).to.equal(preview ? 0 : 1);
+          if (!preview) {
+            expect(process.exitCode).to.equal(2);
+            expect(output.result?.outcome).to.equal('partial');
+            const execution = output.result!.execution!;
+            expect(execution.report.state).to.equal('completed');
+            expect(execution.report.operations[0]).to.include({
+              state: 'completed',
+              exactVariantAbsent: true,
+            });
+            expect(execution.report.operations[0].localSource?.outcome).to.equal('blocked');
+            expect(() =>
+              assertContentDeleteResult(output.result, undefined, 'partial'),
+            ).not.to.throw();
+            expect(() => assertContentDeleteResult(output.result, undefined, 'success')).to.throw();
+            expect(() =>
+              assertContentDeleteResult(
+                { ...output.result, outcome: 'completed' },
+                undefined,
+                'success',
+              ),
+            ).to.throw();
+          }
+        } finally {
+          process.chdir(originalCwd);
+        }
+      });
+  for (const workspace of [
+    { id: 'wrong', apiName: 'Marketing' },
+    { id: workspaceId },
+    { id: workspaceId, apiName: '../escape' },
+  ])
+    it(`blocks unproven local workspace identity ${JSON.stringify(workspace)} before DELETE`, async () => {
+      const f = fixture(['en_US'], 'audio', workspace);
+      const output = await subject({}, f.connection).command.run();
+      expect(output.status).to.equal('blocked');
+      expect(f.deletes.notCalled).to.equal(true);
+    });
+  it('validates every defined local outcome and rejects inconsistent public status', async () => {
+    const f = fixture();
+    const output = await subject({}, f.connection).command.run();
+    for (const localSource of [
+      { outcome: 'noop', removed: [], remaining: [] },
+      { outcome: 'deleted', removed: ['definition'], remaining: [] },
+      { outcome: 'blocked', removed: [], remaining: ['definition'], message: 'Blocked' },
+      { outcome: 'partial', removed: ['companion'], remaining: ['definition'], message: 'Stopped' },
+    ]) {
+      const result = structuredClone(output.result!);
+      result.execution!.report.operations[0].localSource = localSource as never;
+      const failed = ['blocked', 'partial'].includes(localSource.outcome);
+      result.outcome = failed ? 'partial' : 'completed';
+      expect(() =>
+        assertContentDeleteResult(result, undefined, failed ? 'partial' : 'success'),
+      ).not.to.throw();
+      expect(() =>
+        assertContentDeleteResult(result, undefined, failed ? 'success' : 'partial'),
+      ).to.throw();
+    }
+  });
+  it('keeps an absent explicit local root absent and records noop', async () => {
+    const run = await createRunOwnedTemp('cms-delete-cli-absent-');
+    const f = fixture();
+    const output = await subject(
+      { 'output-dir': path.join(run.root, 'absent') },
+      f.connection,
+    ).command.run();
+    expect(output.status).to.equal('success');
+    expect(output.result?.execution?.report.operations[0].localSource).to.deep.equal({
+      outcome: 'noop',
+      removed: [],
+      remaining: [],
+    });
+    expect(await readdir(run.root)).to.deep.equal(['.sf-cms-run-owner']);
+  });
   it('executes by default without reporting, ownership or Draft restriction', async () => {
     const f = fixture(['en_US', 'de']);
     const s = subject({ language: ['de'] }, f.connection);

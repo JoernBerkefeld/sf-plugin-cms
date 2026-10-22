@@ -1,8 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {
+  completeEmailLifecycleLocalSource,
+  inspectEmailLifecycleLocalSource,
+  type EmailLifecycleLocalCompletion,
+} from './email-lifecycle-local-source.js';
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
+import type {
+  LifecycleBinding,
+  LifecycleInventoryEntry,
+} from '../contracts/content-lifecycle-batch.js';
+import type {
+  ContentPublishNativeEvidence,
+  QualifiedNativePublishType,
+} from '../contracts/content-publish.js';
+import { assertContentPublishResult } from '../contracts/content-publish.js';
+import { acquireLifecycleNativeSnapshot } from './lifecycle-native-snapshot.js';
+import type { NativeInventoryOptions, NativeInventoryRow } from './retrieve-native-inventory.js';
 import { rewriteAtomic } from './import-workspace.js';
 import { publishContent } from './lifecycle-foundation.js';
 import { getContent, getVariant, getWorkspace, type CmsRecord } from './read.js';
@@ -14,19 +30,24 @@ import {
 } from '../transport/json-request.js';
 
 const EMAIL_TYPE = 'sfdc_cms__email';
+// Native execution requires the caller-owned ledger entry point; standalone apply stays closed.
+export type PublishContentType =
+  typeof EMAIL_TYPE | import('../contracts/content-publish.js').QualifiedNativePublishType;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 100;
 const MAX_READBACK_ATTEMPTS = 5;
 
 type RequestConnection = Pick<Connection, 'request'> &
-  Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version'>>;
+  Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version' | 'getApiVersion'>>;
 export type EmailPublishSelector = {
   readonly apiName: string;
+  readonly contentType?: PublishContentType;
   readonly language?: string;
   readonly useDefaultLanguage?: true;
   readonly workspaceId: string;
 };
 export type EmailPublishInput = {
+  readonly projectRoot?: string;
   readonly requestOptions?: JsonRequestOptions;
   readonly selector: EmailPublishSelector;
 };
@@ -46,7 +67,8 @@ export type EmailPublishEvidence = {
   readonly apiVersion: string;
   readonly baselineHash: string;
   readonly contentId: string;
-  readonly contentType: typeof EMAIL_TYPE;
+  readonly contentType: PublishContentType;
+  readonly nativeEvidence?: ContentPublishNativeEvidence;
   readonly language: string;
   readonly lifecycle: Lifecycle;
   readonly org: string;
@@ -79,7 +101,8 @@ export type EmailPublishCompletedEvidence = EmailPublishEvidence & {
   readonly postPublishHash: string;
   readonly publishDate?: string;
 };
-type Prepared = {
+export type PreparedEmailPublish = {
+  readonly requestOptions?: JsonRequestOptions;
   readonly evidence: EmailPublishEvidence;
   readonly inventoryBaseline: readonly InventoryEntry[];
   readonly selector: ResolvedSelector;
@@ -93,6 +116,80 @@ type InventoryEntry = {
   readonly status: string;
   readonly variantId: string;
 };
+
+/**
+ * Acquire read-only native publish evidence without admitting execution or owning an inventory ledger.
+ * @param {Parameters<typeof acquireLifecycleNativeSnapshot>[0]} connection - Native read connection.
+ * @param {object} selector - Exact qualified native family and locale.
+ * @param {string} selector.workspaceId - Selected native workspace.
+ * @param {QualifiedNativePublishType} selector.contentType - Qualified admitted family.
+ * @param {string} selector.apiName - Exact API name.
+ * @param {string} selector.language - Exact locale.
+ * @param {'Draft' | 'Published'} phase - Required parent and variant lifecycle phase.
+ * @param {ContentPublishNativeEvidence} [baseline] - Prior integrity receipt to preserve across phases.
+ * @param {NativeInventoryOptions} [options] - Bounded native read options.
+ * @returns {Promise<ContentPublishNativeEvidence>} Detached JSON-only checkpoint evidence.
+ */
+export async function acquireNativePublishCheckpoint(
+  connection: Parameters<typeof acquireLifecycleNativeSnapshot>[0],
+  selector: {
+    workspaceId: string;
+    contentType: QualifiedNativePublishType;
+    apiName: string;
+    language: string;
+  },
+  phase: 'Draft' | 'Published',
+  baseline?: ContentPublishNativeEvidence,
+  options: NativeInventoryOptions = {},
+): Promise<ContentPublishNativeEvidence> {
+  // Capture caller-owned expectations before any asynchronous reads.
+  const expected = baseline === undefined ? undefined : structuredClone(baseline);
+  const selected = structuredClone(selector);
+  if (
+    ![
+      'sfdc_cms__emailTemplate',
+      'sfdc_cms__image',
+      'sfdc_cms__document',
+      'sfdc_cms__audio',
+    ].includes(selected.contentType) ||
+    !['Draft', 'Published'].includes(phase)
+  )
+    throw new TypeError('Unsupported native publish checkpoint family or phase');
+  const observed = await acquireLifecycleNativeSnapshot(connection, selected, options);
+  return nativeCheckpointEvidence(observed, selected.contentType, phase, expected);
+}
+
+function nativeCheckpointEvidence(
+  observed: Awaited<ReturnType<typeof acquireLifecycleNativeSnapshot>>,
+  family: QualifiedNativePublishType,
+  phase: 'Draft' | 'Published',
+  expected?: ContentPublishNativeEvidence,
+): ContentPublishNativeEvidence {
+  for (const lifecycle of [observed.parentLifecycle, observed.variantLifecycle]) {
+    if (lifecycle.isPublished !== (phase === 'Published') || lifecycle.status.status !== phase)
+      throw new TypeError('Native publish checkpoint parent or variant lifecycle disagrees');
+  }
+  const evidence: ContentPublishNativeEvidence = {
+    contentType: family,
+    identity: { ...observed.identity, contentType: family },
+    canonicalAuthoringHash: observed.canonicalAuthoringHash,
+    parentLifecycle: observed.parentLifecycle,
+    variantLifecycle: observed.variantLifecycle,
+    references: observed.references,
+    ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+  };
+  // Only the intended lifecycle phase may change; authoring, identities and byte receipts may not.
+  if (
+    expected !== undefined &&
+    (expected.contentType !== evidence.contentType ||
+      !isDeepStrictEqual(expected.identity, evidence.identity) ||
+      expected.canonicalAuthoringHash !== evidence.canonicalAuthoringHash ||
+      !isDeepStrictEqual(expected.references, evidence.references) ||
+      !isDeepStrictEqual(expected.mediaReceipt, evidence.mediaReceipt))
+  )
+    throw new TypeError('Native publish checkpoint integrity drifted');
+  return structuredClone(evidence);
+}
 
 export class EmailPublishOutcomeUnknownError extends Error {
   public constructor(
@@ -178,6 +275,17 @@ async function resolveSelector(
   selector: EmailPublishSelector,
   options: JsonRequestOptions,
 ): Promise<ResolvedSelector> {
+  if (
+    selector.contentType !== undefined &&
+    ![
+      EMAIL_TYPE,
+      'sfdc_cms__emailTemplate',
+      'sfdc_cms__image',
+      'sfdc_cms__document',
+      'sfdc_cms__audio',
+    ].includes(selector.contentType)
+  )
+    throw new TypeError('Unsupported publish content family');
   nonempty(selector.workspaceId, 'workspaceId');
   nonempty(selector.apiName, 'apiName');
   if ((selector.language === undefined) === (selector.useDefaultLanguage !== true))
@@ -320,9 +428,123 @@ function parentIdentity(parent: CmsRecord, expectedId: string, selector: Resolve
   )
     throw new TypeError('Email parent readback scope changed');
 }
-async function prepare(connection: RequestConnection, input: EmailPublishInput): Promise<Prepared> {
+async function nativeLedger(
+  connection: RequestConnection,
+  rows: readonly NativeInventoryRow[],
+  options: JsonRequestOptions,
+): Promise<readonly InventoryEntry[]> {
+  const entries: InventoryEntry[] = [];
+  for (const row of rows) {
+    const detail = await getVariant(connection, row.Id, options);
+    const life = lifecycle(detail);
+    if (
+      requiredContentIdentifier(detail) !== row.ManagedContentId ||
+      requiredVariantIdentifier(detail) !== row.Id ||
+      contentType(detail) !== row.ContentTypeFullyQualifiedName ||
+      workspaceId(detail) !== row.ManagedContent.AuthoredManagedContentSpaceId ||
+      detail.apiName !== row.ManagedContent.ApiName ||
+      detail.language !== row.Language ||
+      detail.contentKey !== row.ManagedContentKey ||
+      !record(detail.contentBody) ||
+      life.isPublished !== row.IsPublished ||
+      life.status !== row.ManagedContentVariantStatus
+    )
+      throw new TypeError('Native publish family detail disagrees with inventory');
+    entries.push({
+      contentId: row.ManagedContentId,
+      variantId: row.Id,
+      language: row.Language,
+      isPublished: life.isPublished,
+      status: life.status,
+      hash: hash({
+        apiName: detail.apiName,
+        contentBody: detail.contentBody,
+        title: detail.title,
+        urlName: detail.urlName,
+      }),
+    });
+  }
+  return entries.toSorted((left, right) => left.variantId.localeCompare(right.variantId));
+}
+async function prepareNative(
+  connection: RequestConnection,
+  selector: ResolvedSelector,
+  options: JsonRequestOptions,
+): Promise<PreparedEmailPublish> {
+  if (typeof connection.getApiVersion !== 'function')
+    throw new TypeError('Native publish requires the selected API connection');
+  const nativeConnection = connection as Parameters<typeof acquireLifecycleNativeSnapshot>[0];
+  const selected = {
+    workspaceId: selector.workspaceId,
+    contentType: selector.contentType as QualifiedNativePublishType,
+    apiName: selector.apiName,
+    language: selector.selectedLanguage,
+  };
+  const observe = async () => {
+    const observed = await acquireLifecycleNativeSnapshot(nativeConnection, selected, options);
+    const evidence = nativeCheckpointEvidence(observed, selected.contentType, 'Draft');
+    const ledger = await nativeLedger(connection, observed.family.records, options);
+    const selectedEntry = ledger.find((entry) => entry.variantId === evidence.identity.variantId);
+    if (selectedEntry?.hash !== evidence.canonicalAuthoringHash)
+      throw new TypeError('Native publish selected detail changed during preparation');
+    return { observed, evidence, ledger };
+  };
+  const initial = await observe();
+  const fresh = await observe();
+  if (
+    !isDeepStrictEqual(initial.evidence, fresh.evidence) ||
+    !isDeepStrictEqual(initial.ledger, fresh.ledger) ||
+    !isDeepStrictEqual(initial.observed.family.records, fresh.observed.family.records) ||
+    !isDeepStrictEqual(initial.observed.siblings.records, fresh.observed.siblings.records)
+  )
+    throw new TypeError('Native publish family drifted during preparation');
+  const native = fresh.evidence;
+  const snapshot: Snapshot = {
+    ...native.identity,
+    hash: native.canonicalAuthoringHash,
+    lifecycle: {
+      isPublished: native.variantLifecycle.isPublished,
+      status: native.variantLifecycle.status.status,
+    },
+  };
+  return {
+    requestOptions: options,
+    selector,
+    snapshot,
+    inventoryBaseline: fresh.ledger,
+    evidence: {
+      apiName: snapshot.apiName,
+      contentId: snapshot.contentId,
+      language: snapshot.language,
+      lifecycle: snapshot.lifecycle,
+      variantId: snapshot.variantId,
+      workspaceId: snapshot.workspaceId,
+      apiVersion: fresh.observed.family.apiVersion,
+      baselineHash: snapshot.hash,
+      contentType: selected.contentType,
+      nativeEvidence: native,
+      org: nonempty(connection.instanceUrl, 'Connection instanceUrl'),
+      inventory: fresh.ledger,
+      siblingInventory: fresh.ledger
+        .filter((entry) => entry.contentId === snapshot.contentId)
+        .map(({ hash, language, isPublished, status, variantId }) => ({
+          hash,
+          language,
+          isPublished,
+          status,
+          variantId,
+        })),
+    },
+  };
+}
+async function prepare(
+  connection: RequestConnection,
+  input: EmailPublishInput,
+): Promise<PreparedEmailPublish> {
   const options = input.requestOptions ?? {};
-  const selector = await resolveSelector(connection, input.selector, options);
+  const selector = await resolveSelector(connection, structuredClone(input.selector), options);
+  if (selector.contentType !== undefined && selector.contentType !== EMAIL_TYPE)
+    return prepareNative(connection, selector, options);
   const initial = await resolve(connection, selector, options);
   if (initial.snapshot.lifecycle.isPublished || initial.snapshot.lifecycle.status !== 'Draft')
     throw new TypeError('Email publish requires an unpublished Draft variant');
@@ -347,6 +569,7 @@ async function prepare(connection: RequestConnection, input: EmailPublishInput):
   )
     throw new TypeError('Email destination drifted before publish');
   return {
+    requestOptions: input.requestOptions,
     inventoryBaseline: baselineInventory,
     selector,
     snapshot: prewrite.snapshot,
@@ -373,12 +596,137 @@ function blocker(
     ? { code: 'EMAIL_PUBLISH_PREFLIGHT_BLOCKED', message: error.message }
     : undefined;
 }
+function binding(evidence: EmailPublishEvidence): LifecycleBinding {
+  return {
+    apiName: evidence.apiName,
+    apiVersion: evidence.apiVersion,
+    baselineHash: evidence.baselineHash,
+    contentId: evidence.contentId,
+    contentType: evidence.contentType,
+    language: evidence.language,
+    org: evidence.org,
+    variantId: evidence.variantId,
+    workspaceId: evidence.workspaceId,
+  };
+}
+
+export async function prepareDraftEmailPublish(
+  connection: RequestConnection,
+  input: EmailPublishInput,
+): Promise<PreparedEmailPublish> {
+  try {
+    return await prepare(connection, input);
+  } catch (error) {
+    const found = blocker(error);
+    if (!found) throw error;
+    throw new EmailPublishPreflightBlockedError(found.message, error);
+  }
+}
+
+/**
+ * Reacquire a read-only checkpoint against detached caller-owned dispatch expectations.
+ * @param {RequestConnection} connection - Selected API connection.
+ * @param {PreparedEmailPublish} original - Original preparation and native integrity receipt.
+ * @param {object} context - Caller-owned binding and accounted inventory ledger.
+ * @param {LifecycleBinding} context.binding - Expected selected identity and authoring binding.
+ * @param {readonly LifecycleInventoryEntry[]} context.expectedInventory - Full-family expected ledger.
+ * @returns {Promise<PreparedEmailPublish>} Fresh preparation, without mutation admission.
+ */
+export async function refreshPreparedDraftEmailPublish(
+  connection: RequestConnection,
+  original: PreparedEmailPublish,
+  context: { binding: LifecycleBinding; expectedInventory: readonly LifecycleInventoryEntry[] },
+): Promise<PreparedEmailPublish> {
+  // Detach every comparison input before acquisition can yield to caller code.
+  const selector = structuredClone(original.selector);
+  const baseline = structuredClone(original.evidence.nativeEvidence);
+  const expectedBinding = structuredClone(context.binding);
+  const expectedInventory = structuredClone(context.expectedInventory);
+  const requestOptions =
+    original.requestOptions === undefined ? undefined : { ...original.requestOptions };
+  const fresh = await prepareDraftEmailPublish(connection, { selector, requestOptions });
+  const native = fresh.evidence.nativeEvidence;
+  if (
+    !isDeepStrictEqual(binding(fresh.evidence), expectedBinding) ||
+    !isDeepStrictEqual(fresh.inventoryBaseline, expectedInventory) ||
+    (baseline === undefined) !== (native === undefined) ||
+    (baseline !== undefined &&
+      native !== undefined &&
+      (baseline.contentType !== native.contentType ||
+        !isDeepStrictEqual(baseline.identity, native.identity) ||
+        baseline.canonicalAuthoringHash !== native.canonicalAuthoringHash ||
+        !isDeepStrictEqual(baseline.references, native.references) ||
+        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt)))
+  )
+    throw new EmailPublishPreflightBlockedError('Email destination drifted since preparation');
+  return fresh;
+}
+
+const consumedPublishPreparations = new WeakSet<PreparedEmailPublish>();
+
+export async function executePreparedDraftEmailPublish(
+  connection: RequestConnection,
+  original: PreparedEmailPublish,
+  context: {
+    binding: LifecycleBinding;
+    expectedInventory: readonly LifecycleInventoryEntry[];
+    reportFile: string;
+    rewriteReport?: typeof rewriteAtomic;
+  },
+): Promise<EmailPublishCompletedEvidence> {
+  if (consumedPublishPreparations.has(original))
+    throw new EmailPublishPreflightBlockedError('Prepared publish has already been attempted');
+  const prepared: PreparedEmailPublish = {
+    ...structuredClone({ ...original, requestOptions: undefined }),
+    requestOptions:
+      original.requestOptions === undefined ? undefined : { ...original.requestOptions },
+  };
+  if (!path.isAbsolute(context.reportFile))
+    throw new EmailPublishPreflightBlockedError('Content publish reportFile must be absolute');
+  if (!isDeepStrictEqual(binding(prepared.evidence), context.binding))
+    throw new EmailPublishPreflightBlockedError('Prepared publish binding does not match');
+  // Capture caller-owned expectations before asynchronous persistence or fresh reads.
+  const expectedBinding = { ...context.binding };
+  const expectedInventory = context.expectedInventory.map((entry) => ({ ...entry }));
+  consumedPublishPreparations.add(original);
+  try {
+    await stat(context.reportFile);
+    throw new EmailPublishPreflightBlockedError('Content publish target report already exists');
+  } catch (error) {
+    if (error instanceof EmailPublishPreflightBlockedError) throw error;
+    if (!record(error) || error.code !== 'ENOENT')
+      throw new EmailPublishPreflightBlockedError(
+        'Content publish target report cannot be claimed',
+        error,
+      );
+  }
+  const result = await executeWithReport(
+    connection,
+    prepared,
+    context.reportFile,
+    { rewriteReport: context.rewriteReport, expectedInventory },
+    async () =>
+      refreshPreparedDraftEmailPublish(connection, prepared, {
+        binding: expectedBinding,
+        expectedInventory,
+      }),
+  );
+  return result.evidence;
+}
+
 export async function previewDraftEmailPublish(
   connection: RequestConnection,
   input: EmailPublishInput,
 ): Promise<EmailPublishPreviewResult> {
+  const projectRoot = input.projectRoot === undefined ? undefined : path.resolve(input.projectRoot);
   try {
     const prepared = await prepare(connection, input);
+    await inspectEmailLifecycleLocalSource(
+      connection,
+      projectRoot,
+      prepared.snapshot,
+      prepared.requestOptions,
+    );
     return { blockers: [], evidence: prepared.evidence, status: 'ready' };
   } catch (error) {
     const found = blocker(error);
@@ -388,7 +736,7 @@ export async function previewDraftEmailPublish(
 }
 async function execute(
   connection: RequestConnection,
-  prepared: Prepared,
+  prepared: PreparedEmailPublish,
   options: JsonRequestOptions,
 ): Promise<EmailPublishCompletedEvidence> {
   let deploymentId: string | undefined;
@@ -424,6 +772,59 @@ async function execute(
         : sibling,
     );
     for (let attempt = 0; attempt < MAX_READBACK_ATTEMPTS; attempt += 1) {
+      if (prepared.evidence.nativeEvidence !== undefined) {
+        const observed = await acquireLifecycleNativeSnapshot(
+          connection as Parameters<typeof acquireLifecycleNativeSnapshot>[0],
+          {
+            workspaceId: prepared.selector.workspaceId,
+            apiName: prepared.selector.apiName,
+            contentType: prepared.evidence.nativeEvidence.contentType,
+            language: prepared.selector.selectedLanguage,
+          },
+          options,
+        );
+        const postInventory = await nativeLedger(connection, observed.family.records, options);
+        if (
+          observed.family.apiVersion !== prepared.evidence.apiVersion ||
+          connection.instanceUrl !== prepared.evidence.org
+        )
+          throw new TypeError('Native publish readback binding drifted');
+        // A coherent still-Draft observation may settle within this fixed readback budget.
+        if (
+          !observed.parentLifecycle.isPublished &&
+          observed.parentLifecycle.status.status === 'Draft' &&
+          !observed.variantLifecycle.isPublished &&
+          observed.variantLifecycle.status.status === 'Draft'
+        ) {
+          nativeCheckpointEvidence(
+            observed,
+            prepared.evidence.nativeEvidence.contentType,
+            'Draft',
+            prepared.evidence.nativeEvidence,
+          );
+          if (!isDeepStrictEqual(postInventory, prepared.inventoryBaseline))
+            throw new TypeError('Native publish readback inventory drifted');
+          continue;
+        }
+        const nativeEvidence = nativeCheckpointEvidence(
+          observed,
+          prepared.evidence.nativeEvidence.contentType,
+          'Published',
+          prepared.evidence.nativeEvidence,
+        );
+        if (!isDeepStrictEqual(postInventory, expectedInventory))
+          throw new TypeError('Native publish readback inventory drifted');
+        return {
+          ...prepared.evidence,
+          deploymentId,
+          ...(publishDate === undefined ? {} : { publishDate }),
+          nativeEvidence,
+          lifecycle: { isPublished: true, status: 'Published' },
+          inventory: postInventory,
+          siblingInventory: expectedSiblings,
+          postPublishHash: nativeEvidence.canonicalAuthoringHash,
+        };
+      }
       const post = await resolve(connection, prepared.selector, options);
       parentIdentity(
         await getContent(connection, prepared.snapshot.contentId, {}, options),
@@ -464,7 +865,14 @@ export async function applyDraftEmailPublishWithReport(
   input: EmailPublishInput,
   reportDirectory: string,
   options: { rewriteReport?: typeof rewriteAtomic } = {},
-): Promise<{ evidence: EmailPublishCompletedEvidence; reportFile: string }> {
+): Promise<
+  { evidence: EmailPublishCompletedEvidence; reportFile: string } & EmailLifecycleLocalCompletion
+> {
+  const projectRoot = input.projectRoot === undefined ? undefined : path.resolve(input.projectRoot);
+  if (input.selector.contentType !== undefined && input.selector.contentType !== EMAIL_TYPE)
+    throw new EmailPublishPreflightBlockedError(
+      'Native publish execution admission is not enabled',
+    );
   const directory = path.resolve(reportDirectory);
   try {
     await stat(directory);
@@ -477,9 +885,16 @@ export async function applyDraftEmailPublishWithReport(
         error,
       );
   }
-  let prepared: Prepared;
+  let prepared: PreparedEmailPublish;
+  let inspection: Awaited<ReturnType<typeof inspectEmailLifecycleLocalSource>>;
   try {
     prepared = await prepare(connection, input);
+    inspection = await inspectEmailLifecycleLocalSource(
+      connection,
+      projectRoot,
+      prepared.snapshot,
+      prepared.requestOptions,
+    );
   } catch (error) {
     const found = blocker(error);
     if (!found) throw error;
@@ -494,6 +909,36 @@ export async function applyDraftEmailPublishWithReport(
     );
   }
   const reportFile = path.join(directory, 'content-publish-run.json');
+  const completed = await executeWithReport(
+    connection,
+    prepared,
+    reportFile,
+    options,
+    undefined,
+    directory,
+  );
+  const local = await completeEmailLifecycleLocalSource(
+    'publish',
+    projectRoot,
+    inspection,
+    prepared.snapshot,
+    reportFile,
+    options.rewriteReport,
+  );
+  return { ...completed, ...local };
+}
+
+async function executeWithReport(
+  connection: RequestConnection,
+  prepared: PreparedEmailPublish,
+  reportFile: string,
+  options: {
+    rewriteReport?: typeof rewriteAtomic;
+    expectedInventory?: readonly LifecycleInventoryEntry[];
+  },
+  beforeDispatch?: () => Promise<PreparedEmailPublish>,
+  cleanupDirectory?: string,
+): Promise<{ evidence: EmailPublishCompletedEvidence; reportFile: string }> {
   const rewrite = options.rewriteReport ?? rewriteAtomic;
   const pending = {
     contract: 'sf-cms-email-publish-run',
@@ -509,6 +954,9 @@ export async function applyDraftEmailPublishWithReport(
     },
     intent: { includeContentReferences: false, selectorScope: 'variant' },
     evidence: prepared.evidence,
+    ...(options.expectedInventory === undefined
+      ? {}
+      : { expectedInventory: options.expectedInventory }),
     reconciliation: {
       contentId: prepared.snapshot.contentId,
       variantId: prepared.snapshot.variantId,
@@ -519,7 +967,7 @@ export async function applyDraftEmailPublishWithReport(
     await rewrite(reportFile, pending);
   } catch (error) {
     try {
-      await rmdir(directory);
+      if (cleanupDirectory !== undefined) await rmdir(cleanupDirectory);
     } catch {
       /* Best effort only. */
     }
@@ -529,8 +977,29 @@ export async function applyDraftEmailPublishWithReport(
     );
   }
   try {
-    const evidence = await execute(connection, prepared, input.requestOptions ?? {});
+    const current = beforeDispatch === undefined ? prepared : await beforeDispatch();
+    const evidence = await execute(connection, current, current.requestOptions ?? {});
     try {
+      if (evidence.nativeEvidence !== undefined)
+        assertContentPublishResult({
+          mode: 'apply',
+          outcome: 'completed',
+          target: pending.target,
+          evidence: {
+            selectorScope: 'variant',
+            includeContentReferences: false,
+            noSendAcknowledged: true,
+            baselineHash: evidence.baselineHash,
+            postPublishHash: evidence.postPublishHash,
+            deploymentId: evidence.deploymentId,
+            ...(evidence.publishDate === undefined ? {} : { publishDate: evidence.publishDate }),
+            nativeEvidence: evidence.nativeEvidence,
+            inventory: evidence.inventory,
+            siblingInventory: evidence.siblingInventory,
+          },
+          blockers: [],
+          reportFile,
+        });
       await rewrite(reportFile, { ...pending, evidence, state: 'completed' });
     } catch (error) {
       throw new EmailPublishOutcomeUnknownError(

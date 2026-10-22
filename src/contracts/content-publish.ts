@@ -1,4 +1,27 @@
-import { assertExactKeys, assertNonemptyString, assertSha256, type CmsStatus } from './shared.js';
+import {
+  assertExactKeys,
+  assertNonemptyString,
+  assertOpaqueCmsReference,
+  assertSha256,
+  type CmsStatus,
+  type OpaqueCmsReference,
+} from './shared.js';
+
+export type QualifiedNativePublishType =
+  'sfdc_cms__emailTemplate' | 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
+type NativePublishObservation = {
+  isPublished: boolean;
+  status: { label: string; status: string };
+};
+export type ContentPublishNativeEvidence = {
+  contentType: QualifiedNativePublishType;
+  identity: ContentPublishTarget & { contentType: QualifiedNativePublishType; contentKey: string };
+  canonicalAuthoringHash: string;
+  parentLifecycle: NativePublishObservation;
+  variantLifecycle: NativePublishObservation;
+  references: readonly OpaqueCmsReference[];
+  mediaReceipt?: { sha256: string; size: number; mimeType: string };
+};
 
 export const CONTENT_PUBLISH_CONTRACT = 'sf-cms-content-publish' as const;
 
@@ -27,7 +50,21 @@ export type ContentPublishSibling = {
   variantId: string;
 };
 
+export type ContentLifecycleLocalOutcome =
+  | { outcome: 'noop'; reason: 'missing-copy' | 'retrieval-equivalent' }
+  | { outcome: 'blocked'; message: string };
+
 export type ContentPublishResult =
+  | {
+      mode: 'apply';
+      outcome: 'remote-completed-local-blocked';
+      target: ContentPublishTarget;
+      evidence: Extract<ContentPublishResult, { outcome: 'completed' }>['evidence'];
+      blockers: readonly [{ code: 'EMAIL_PUBLISH_LOCAL_BLOCKED'; message: string }];
+      reportFile: string;
+      localSource: Extract<ContentLifecycleLocalOutcome, { outcome: 'blocked' }>;
+      localReportFile?: string;
+    }
   | {
       mode: 'dry-run';
       outcome: 'ready';
@@ -37,6 +74,7 @@ export type ContentPublishResult =
         includeContentReferences: false;
         noSendAcknowledgementRequired: true;
         baselineHash: string;
+        nativeEvidence?: ContentPublishNativeEvidence;
         inventory: readonly ContentPublishInventoryEntry[];
         siblingInventory: readonly ContentPublishSibling[];
       };
@@ -51,6 +89,7 @@ export type ContentPublishResult =
         includeContentReferences: false;
         noSendAcknowledged: true;
         baselineHash: string;
+        nativeEvidence?: ContentPublishNativeEvidence;
         postPublishHash: string;
         deploymentId: string;
         publishDate?: string;
@@ -95,6 +134,46 @@ export function assertContentPublishResult(
   status?: CmsStatus,
 ): asserts value is ContentPublishResult {
   if (!record(value)) throw new TypeError('result must be an object');
+  if (value.outcome === 'remote-completed-local-blocked') {
+    assertExactKeys(
+      value,
+      [
+        'mode',
+        'outcome',
+        'target',
+        'evidence',
+        'blockers',
+        'reportFile',
+        'localSource',
+        ...(Object.hasOwn(value, 'localReportFile') ? ['localReportFile'] : []),
+      ],
+      'result',
+    );
+    if (status !== undefined && status !== 'partial')
+      throw new TypeError('Local blocked publish requires partial status');
+    assertExactKeys(value.localSource, ['outcome', 'message'], 'result.localSource');
+    const local = value.localSource as Record<string, unknown>;
+    if (local.outcome !== 'blocked') throw new TypeError('Local publish outcome must be blocked');
+    assertNonemptyString(local.message, 'result.localSource.message');
+    assertBlockers(value.blockers, 'EMAIL_PUBLISH_LOCAL_BLOCKED');
+    if ((value.blockers as Array<{ message: string }>)[0].message !== local.message)
+      throw new TypeError('Local publish blocker must match outcome');
+    if (Object.hasOwn(value, 'localReportFile'))
+      assertNonemptyString(value.localReportFile, 'result.localReportFile');
+    assertContentPublishResult(
+      {
+        mode: value.mode,
+        outcome: 'completed',
+        target: value.target,
+        evidence: value.evidence,
+        blockers: [],
+        reportFile: value.reportFile,
+      },
+      undefined,
+      'success',
+    );
+    return;
+  }
   let extra: string[] = [];
   if (value.outcome === 'completed') extra = ['reportFile'];
   if (value.outcome === 'ownership-uncertain') extra = ['reportFile', 'reconciliation'];
@@ -120,6 +199,7 @@ export function assertContentPublishResult(
         'includeContentReferences',
         'noSendAcknowledgementRequired',
         'baselineHash',
+        ...(record(value.evidence) && 'nativeEvidence' in value.evidence ? ['nativeEvidence'] : []),
         'inventory',
         'siblingInventory',
       ],
@@ -129,6 +209,13 @@ export function assertContentPublishResult(
     if (value.evidence.noSendAcknowledgementRequired !== true)
       throw new TypeError('publish acknowledgement requirement is invalid');
     assertSha256(value.evidence.baselineHash, 'result.evidence.baselineHash');
+    if ('nativeEvidence' in value.evidence)
+      assertNativePublishEvidence(
+        value.evidence.nativeEvidence,
+        value.target,
+        value.evidence.baselineHash,
+        false,
+      );
     assertInventory(value.evidence.inventory, value.target, false);
     assertSiblings(value.evidence.siblingInventory);
     assertSiblingProjection(
@@ -156,6 +243,7 @@ export function assertContentPublishResult(
         'includeContentReferences',
         'noSendAcknowledged',
         'baselineHash',
+        ...(record(value.evidence) && 'nativeEvidence' in value.evidence ? ['nativeEvidence'] : []),
         'postPublishHash',
         'deploymentId',
         ...(value.evidence.publishDate === undefined ? [] : ['publishDate']),
@@ -168,7 +256,19 @@ export function assertContentPublishResult(
     if (value.evidence.noSendAcknowledged !== true)
       throw new TypeError('publish acknowledgement is invalid');
     assertSha256(value.evidence.baselineHash, 'result.evidence.baselineHash');
+    if ('nativeEvidence' in value.evidence)
+      assertNativePublishEvidence(
+        value.evidence.nativeEvidence,
+        value.target,
+        value.evidence.baselineHash,
+        value.outcome === 'completed',
+      );
     assertSha256(value.evidence.postPublishHash, 'result.evidence.postPublishHash');
+    if (
+      'nativeEvidence' in value.evidence &&
+      value.evidence.postPublishHash !== value.evidence.baselineHash
+    )
+      throw new TypeError('Native publish must preserve the authoring hash');
     assertNonemptyString(value.evidence.deploymentId, 'result.evidence.deploymentId');
     if (value.evidence.publishDate !== undefined)
       assertNonemptyString(value.evidence.publishDate, 'result.evidence.publishDate');
@@ -233,6 +333,91 @@ export function assertContentPublishResult(
   }
   if (value.reconciliation.deploymentId !== undefined)
     assertNonemptyString(value.reconciliation.deploymentId, 'result.reconciliation.deploymentId');
+}
+
+export function assertNativePublishEvidence(
+  value: unknown,
+  target: Record<string, unknown>,
+  baselineHash: unknown,
+  published: boolean,
+): void {
+  if (!record(value)) throw new TypeError('Native publish evidence must be an object');
+  const media = value.contentType !== 'sfdc_cms__emailTemplate';
+  if (
+    ![
+      'sfdc_cms__emailTemplate',
+      'sfdc_cms__image',
+      'sfdc_cms__document',
+      'sfdc_cms__audio',
+    ].includes(value.contentType as string)
+  )
+    throw new TypeError('Native publish family is not qualified');
+  assertExactKeys(
+    value,
+    [
+      'contentType',
+      'identity',
+      'canonicalAuthoringHash',
+      'parentLifecycle',
+      'variantLifecycle',
+      'references',
+      ...(media ? ['mediaReceipt'] : []),
+    ],
+    'nativeEvidence',
+  );
+  assertExactKeys(
+    value.identity,
+    ['workspaceId', 'apiName', 'language', 'contentId', 'variantId', 'contentType', 'contentKey'],
+    'nativeEvidence.identity',
+  );
+  const identity = value.identity as Record<string, unknown>;
+  for (const key of Object.keys(target)) {
+    if (identity[key] !== target[key])
+      throw new TypeError('Native publish identity must match target');
+  }
+  assertNonemptyString(identity.contentKey, 'nativeEvidence.identity.contentKey');
+  if (identity.contentType !== value.contentType || identity.contentId === identity.variantId)
+    throw new TypeError('Native publish identity family or variant is inconsistent');
+  assertSha256(value.canonicalAuthoringHash, 'nativeEvidence.canonicalAuthoringHash');
+  if (value.canonicalAuthoringHash !== baselineHash)
+    throw new TypeError('Native publish authoring hash must match baseline');
+  for (const key of ['parentLifecycle', 'variantLifecycle']) {
+    const observation = value[key];
+    assertExactKeys(observation, ['isPublished', 'status'], `nativeEvidence.${key}`);
+    const life = observation as Record<string, unknown>;
+    assertExactKeys(life.status, ['label', 'status'], `nativeEvidence.${key}.status`);
+    const status = life.status as Record<string, unknown>;
+    assertNonemptyString(status.label, `nativeEvidence.${key}.status.label`);
+    if (life.isPublished !== published || status.status !== (published ? 'Published' : 'Draft'))
+      throw new TypeError('Native publish lifecycle is inconsistent');
+  }
+  if (!Array.isArray(value.references) || value.references.length !== 1)
+    throw new TypeError('Native publish requires one included identity reference');
+  const reference: unknown = value.references[0];
+  assertOpaqueCmsReference(reference, 'nativeEvidence.references[0]');
+  if (
+    reference.kind !== 'cms.content' ||
+    reference.owner !== 'cms' ||
+    reference.resolution !== 'included' ||
+    reference.required !== true ||
+    reference.source.workspaceId !== target.workspaceId ||
+    reference.source.sourceId !== target.contentId ||
+    reference.portableKey.scheme !== 'cms-opaque-v1' ||
+    reference.portableKey.value !== identity.contentKey
+  )
+    throw new TypeError('Native publish reference must bind selected identity');
+  if (media) {
+    assertExactKeys(
+      value.mediaReceipt,
+      ['sha256', 'size', 'mimeType'],
+      'nativeEvidence.mediaReceipt',
+    );
+    const receipt = value.mediaReceipt as Record<string, unknown>;
+    assertSha256(receipt.sha256, 'nativeEvidence.mediaReceipt.sha256');
+    assertNonemptyString(receipt.mimeType, 'nativeEvidence.mediaReceipt.mimeType');
+    if (!Number.isSafeInteger(receipt.size) || (receipt.size as number) <= 0)
+      throw new TypeError('Native publish media size is invalid');
+  }
 }
 
 function record(value: unknown): value is Record<string, unknown> {

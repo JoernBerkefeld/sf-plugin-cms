@@ -14,6 +14,10 @@ import {
   type NativeDeleteResolution,
 } from './delete-native-resolution.js';
 import { rewriteAtomic } from './import-workspace.js';
+import {
+  deleteLifecycleLocalSource,
+  inspectLifecycleLocalSource,
+} from './lifecycle-local-source.js';
 import { deleteVariantOneShot } from './lifecycle-foundation.js';
 import { getContent, getVariant } from './read.js';
 import { requiredContentIdentifier } from './variant-identity.js';
@@ -23,6 +27,7 @@ import { redactSecrets } from '../transport/redact-secrets.js';
 
 export type NativeDeleteApplyOptions = {
   resolution: NativeDeleteResolution;
+  localSource?: { projectRoot: string; workspaceApiName: string };
   reportDirectory?: string;
   reportDirectoryAllocated?: true;
   requestOptions?: JsonRequestOptions;
@@ -33,9 +38,14 @@ export class NativeDeleteApplyError extends Error {
     public readonly result: NativeDeleteResult,
     cause: unknown,
   ) {
-    super('Native delete stopped; retain exact identities and reconcile read-only, never replay', {
-      cause,
-    });
+    super(
+      result.report.operations.some((operation) =>
+        ['blocked', 'partial'].includes(operation.localSource?.outcome ?? ''),
+      )
+        ? 'Remote deletion completed for a target but local cleanup failed; never replay remote deletion'
+        : 'Native delete stopped; retain exact identities and reconcile read-only, never replay',
+      { cause },
+    );
     this.name = 'NativeDeleteApplyError';
   }
 }
@@ -82,6 +92,23 @@ export async function applyNativeDelete(
   const result: NativeDeleteResult = { report, reportFile: null };
   assertNativeDeleteResult(result);
   const requestOptions = options.requestOptions ?? {};
+  const localSource = options.localSource
+    ? { ...options.localSource, projectRoot: path.resolve(options.localSource.projectRoot) }
+    : undefined;
+  // Capture every portable identity before the first remote dispatch, never after a DELETE.
+  const inspections = localSource
+    ? await Promise.all(
+        report.operations.map(({ target }) => {
+          const identity = {
+            workspaceApiName: localSource.workspaceApiName,
+            contentType: target.contentType,
+            apiName: target.apiName ?? '',
+            language: target.language,
+          };
+          return inspectLifecycleLocalSource(localSource.projectRoot, identity);
+        }),
+      )
+    : [];
   let active = report.operations[0];
   let dispatched = false;
   const persist = async (): Promise<void> => {
@@ -184,6 +211,18 @@ export async function applyNativeDelete(
       operation.state = 'completed';
       operation.exactVariantAbsent = true;
       dispatched = false;
+      if (localSource) {
+        const inspection = inspections[report.operations.indexOf(operation)];
+        operation.localSource = await deleteLifecycleLocalSource(
+          localSource.projectRoot,
+          inspection,
+          { outcome: 'deleted', identity: inspection.identity },
+        );
+        if (['blocked', 'partial'].includes(operation.localSource.outcome))
+          throw new TypeError(
+            `Remote deletion completed; local source ${operation.localSource.outcome}: ${operation.localSource.message ?? 'local cleanup failed'}. Never replay remote deletion.`,
+          );
+      }
       await persist();
     }
     report.state = 'completed';
@@ -191,7 +230,8 @@ export async function applyNativeDelete(
     return result;
   } catch (error) {
     if (active.state === 'completed') {
-      result.persistenceError = message(error);
+      if (!active.localSource || !['blocked', 'partial'].includes(active.localSource.outcome))
+        result.persistenceError = message(error);
       active = report.operations.find((operation) => operation.state === 'unattempted') ?? active;
     }
     if (active.state === 'pending' || active.state === 'unattempted')

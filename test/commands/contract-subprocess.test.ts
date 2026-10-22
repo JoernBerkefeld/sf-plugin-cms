@@ -305,22 +305,47 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         // The host renders --help before constructing the CMS command.
         // List page guards use an access sentinel; other routes retain invalid-enum coverage.
         const list = canonical.startsWith('list ');
-        const invalidArgv = list
-          ? [
-              ...route,
-              '--page',
-              '0',
-              '--target-org',
-              'unused',
-              ...(canonical === 'list channel' ? ['--workspace-id', 'space'] : []),
-              '--json',
-            ]
-          : [...route, '--api', 'cli', '--json'];
-        const invalid = await runSf(invalidArgv, list ? 'logging-pagination-invalid' : undefined);
-        expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(list ? 2 : 1);
-        expect(JSON.parse(invalid.stdout).message).to.match(
-          list ? /--page.*(?:0|1)/su : /--api.*(?:log|cli)/su,
-        );
+        const lifecycle = ['publish content', 'unpublish content'].includes(canonical);
+        let invalidArgv = [...route, '--api', 'cli', '--json'];
+        if (list)
+          invalidArgv = [
+            ...route,
+            '--page',
+            '0',
+            '--target-org',
+            'unused',
+            ...(canonical === 'list channel' ? ['--workspace-id', 'space'] : []),
+            '--json',
+          ];
+        else if (lifecycle)
+          invalidArgv = [
+            ...route,
+            '--target-org',
+            'unused',
+            '--workspace-id',
+            'space',
+            '-m',
+            'email',
+            ...(route[0] === 'cms' ? ['--api-name', 'pilot_email'] : []),
+            '--json',
+          ];
+        let invalidCase = lifecycle ? 'logging-guards' : undefined;
+        if (list) invalidCase = 'logging-pagination-invalid';
+        const invalid = await runSf(invalidArgv, invalidCase);
+        const parseFailure = list || (lifecycle && route[0] === 'cms');
+        expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(parseFailure ? 2 : 1);
+        if (lifecycle) {
+          if (route[0] === 'cms')
+            expect(JSON.parse(invalid.stdout).message).to.match(/metadata|api-name/su);
+          else
+            expect(JSON.stringify(parseEnvelope(invalid).diagnostics)).to.include('Type:ApiName');
+          expect(
+            JSON.parse(await readFile(file('logging-guards-transport.json'), 'utf8')),
+          ).to.deep.equal([]);
+        } else
+          expect(JSON.parse(invalid.stdout).message).to.match(
+            list ? /--page.*(?:0|1)/su : /--api.*(?:log|cli)/su,
+          );
         if (list) {
           expect(
             JSON.parse(await readFile(file('logging-pagination-invalid-transport.json'), 'utf8')),
@@ -329,7 +354,13 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           expect(invalid.stderr).not.to.include('Using org ');
         }
         const records = await invocationRecords(invalid, invalidArgv);
-        expect(records.some(({ message }) => message === 'command failure')).to.equal(true);
+        expect(
+          records.some(
+            ({ message }) =>
+              message ===
+              (lifecycle && route[0] === 'content' ? 'command diagnostics' : 'command failure'),
+          ),
+        ).to.equal(true);
       }
     });
   }
@@ -434,7 +465,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       [['cms', 'retrieve', 'content'], [], 'RETRIEVE_'],
       [['content', 'deploy'], [], 'DEPLOY_'],
       [['cms', 'upload'], ['--workspace-id', 'space', '--file', 'missing-logging.png'], 'IMAGE_'],
-      [['content', 'publish'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
+      [
+        ['content', 'publish'],
+        ['--workspace-id', 'space', '-m', 'email:pilot_email', '--contract-version', '1'],
+        'UNSUPPORTED_CONTRACT_VERSION',
+      ],
       [['cms', 'unpublish', 'content'], lifecycle, 'UNSUPPORTED_CONTRACT_VERSION'],
       [
         ['content', 'delete'],
@@ -454,6 +489,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         'not entered; no CMS org HTTP or mutation dispatched',
       );
       expect(result.stdout + result.stderr).not.to.include('Unexpected logging fixture org access');
+      expect(
+        JSON.parse(await readFile(file('logging-guards-transport.json'), 'utf8')),
+      ).to.deep.equal([]);
     }
     for (const route of [
       ['list', 'workspace'],
@@ -943,7 +981,314 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     });
   }
 
-  it('previews one installed packed Email publish with exact selectors', async function () {
+  for (const operation of ['publish', 'unpublish'] as const) {
+    for (const scenario of ['missing', 'cwd', 'short', 'long', 'blocked', 'drift'] as const) {
+      it(`synchronizes installed metadata ${operation} local root: ${scenario}`, async function () {
+        this.timeout(300_000);
+        const explicit = scenario === 'short' || scenario === 'long';
+        const root = explicit ? file(`local-${operation}-${scenario}`) : isolatedDataDirectory;
+        const directory = path.join(root, 'cms', 'Controlled', 'email');
+        const definitionFile = path.join(directory, 'pilot_email.cms-email.json');
+        const htmlFile = path.join(directory, 'pilot_email.cms-email.html');
+        const report = `local-${operation}-${scenario}-report`;
+        const authored = '<p>Authored local content</p>';
+        if (scenario !== 'missing') {
+          await mkdir(directory, { recursive: true });
+          await writeFile(
+            definitionFile,
+            JSON.stringify({
+              contract: 'sf-cms-source-definition',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: 'Email',
+                apiName: 'pilot_email',
+                context: { workspaceApiName: 'Controlled' },
+              },
+              contentType: 'sfdc_cms__email',
+              language: scenario === 'blocked' ? 'de_DE' : 'en_US',
+              folderPath: [],
+              contentBody: {
+                'sfdc_cms:title': 'Authored',
+                messagePurpose: 'Transactional',
+                subjectLine: 'Authored',
+                textContent: 'Authored',
+              },
+              companions: { rawHtml: 'pilot_email.cms-email.html' },
+            }),
+          );
+          await writeFile(htmlFile, authored);
+        }
+        const definitionBefore =
+          scenario === 'missing' ? undefined : await readFile(definitionFile);
+        const result = await runSf(
+          [
+            'cms',
+            operation,
+            'content',
+            '--target-org',
+            'unused',
+            '--workspace-id',
+            'space',
+            '-m',
+            'email:pilot_email',
+            '-m',
+            'email:second_email',
+            '--language',
+            'en_US',
+            ...(explicit ? [scenario === 'short' ? '-d' : '--output-dir', root] : []),
+            '--apply',
+            operation === 'publish' ? '--acknowledge-no-send' : '--acknowledge-active-use-stops',
+            '--report-dir',
+            report,
+            '--json',
+          ],
+          `email-${operation}-apply`,
+          {
+            SF_PLUGIN_CMS_LOCAL_SYNC: scenario,
+            SF_PLUGIN_CMS_LOCAL_REPORT: report,
+            SF_PLUGIN_CMS_LOCAL_HTML: htmlFile,
+          },
+        );
+        const expectedExit = { missing: 0, cwd: 0, short: 0, long: 0, blocked: 1, drift: 2 };
+        expect(result.exitCode, result.stdout + result.stderr).to.equal(expectedExit[scenario]);
+        const envelope = parseEnvelope(result);
+        expect(envelope.contractVersion).to.equal('2.0.0');
+        const batch = envelope.result as {
+          outcome: string;
+          stop?: { index: number; outcome: string };
+          items: Array<{ outcome: string; localSource?: { outcome: string; reason?: string } }>;
+        };
+        const events = JSON.parse(
+          await readFile(file(`email-${operation}-apply-transport.json`), 'utf8'),
+        ) as Array<{ method?: string }>;
+        const expectedPosts = { missing: 2, cwd: 2, short: 2, long: 2, blocked: 0, drift: 1 };
+        expect(events.filter(({ method }) => method === 'POST')).to.have.length(
+          expectedPosts[scenario],
+        );
+        if (scenario === 'blocked') {
+          expect(envelope.status).to.equal('blocked');
+          expect(await readdir(isolatedDataDirectory)).not.to.include(report);
+        } else {
+          const aggregate = JSON.parse(
+            await readFile(file(`${report}/content-${operation}-batch-run.json`), 'utf8'),
+          );
+          if (scenario === 'drift') expect(aggregate.result).to.deep.equal(batch);
+          else {
+            expect(aggregate.state).to.equal('completed');
+            expect(aggregate.completedPrefix).to.equal(2);
+            expect(aggregate.items).to.deep.equal(batch.items);
+          }
+          const native = JSON.parse(await readFile(file(`${report}/target-000001.json`), 'utf8'));
+          expect(native.state).to.equal('completed');
+          if (scenario === 'drift') {
+            expect(envelope.status).to.equal('partial');
+            expect(batch.stop).to.deep.equal({
+              index: 0,
+              outcome: 'remote-completed-local-blocked',
+            });
+            expect(batch.items.map(({ outcome }) => outcome)).to.deep.equal([
+              'completed',
+              'unattempted',
+            ]);
+            expect(batch.items[0].localSource?.outcome).to.equal('blocked');
+          } else {
+            expect(envelope.status).to.equal('success');
+            expect(batch.items[0].localSource).to.deep.equal({
+              outcome: 'noop',
+              reason: scenario === 'missing' ? 'missing-copy' : 'retrieval-equivalent',
+            });
+          }
+        }
+        if (scenario !== 'missing') {
+          expect(await readFile(definitionFile)).to.deep.equal(definitionBefore);
+          expect(await readFile(htmlFile, 'utf8')).to.equal(
+            scenario === 'drift' ? '<p>Changed during dispatch</p>' : authored,
+          );
+          if (!explicit)
+            await rename(path.join(root, 'cms'), file(`preserved-${operation}-${scenario}`));
+        }
+      });
+    }
+  }
+
+  for (const operation of ['publish', 'unpublish'] as const) {
+    for (const scenario of [
+      'missing',
+      'cwd',
+      'short',
+      'long',
+      'blocked',
+      'drift',
+      'sidecar',
+      'human',
+    ] as const) {
+      it(`synchronizes installed legacy ${operation} local root: ${scenario}`, async function () {
+        this.timeout(300_000);
+        const explicit = scenario === 'short' || scenario === 'long';
+        const root = explicit ? file(`legacy-${operation}-${scenario}`) : isolatedDataDirectory;
+        const directory = path.join(root, 'cms', 'Controlled', 'email');
+        const definitionFile = path.join(directory, 'pilot_email.cms-email.json');
+        const htmlFile = path.join(directory, 'pilot_email.cms-email.html');
+        const report = `legacy-${operation}-${scenario}-report`;
+        const authored = '<p>Legacy authored content</p>';
+        if (scenario !== 'missing') {
+          await mkdir(directory, { recursive: true });
+          await writeFile(
+            definitionFile,
+            JSON.stringify({
+              contract: 'sf-cms-source-definition',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: 'Email',
+                apiName: 'pilot_email',
+                context: { workspaceApiName: 'Controlled' },
+              },
+              contentType: 'sfdc_cms__email',
+              language: scenario === 'blocked' ? 'de_DE' : 'en_US',
+              folderPath: [],
+              contentBody: {
+                'sfdc_cms:title': 'Authored',
+                messagePurpose: 'Transactional',
+                subjectLine: 'Authored',
+                textContent: 'Authored',
+              },
+              companions: { rawHtml: 'pilot_email.cms-email.html' },
+            }),
+          );
+          await writeFile(htmlFile, authored);
+        }
+        const definitionBefore =
+          scenario === 'missing' ? undefined : await readFile(definitionFile);
+        const common = [
+          'cms',
+          operation,
+          'content',
+          '--target-org',
+          'unused',
+          '--workspace-id',
+          'space',
+          '--api-name',
+          'pilot_email',
+          '--language',
+          'en_US',
+          ...(explicit ? [scenario === 'short' ? '-d' : '--output-dir', root] : []),
+        ];
+        const environment = {
+          SF_PLUGIN_CMS_LOCAL_SYNC: scenario === 'human' ? 'drift' : scenario,
+          SF_PLUGIN_CMS_LOCAL_LEGACY: '1',
+          SF_PLUGIN_CMS_LOCAL_REPORT: report,
+          SF_PLUGIN_CMS_LOCAL_HTML: htmlFile,
+        };
+        const preview = await runSf(
+          [...common, '--json'],
+          `email-${operation}-preview`,
+          environment,
+        );
+        expect(preview.exitCode, preview.stdout + preview.stderr).to.equal(
+          scenario === 'blocked' ? 1 : 0,
+        );
+        expect(parseEnvelope(preview).status).to.equal(
+          scenario === 'blocked' ? 'blocked' : 'success',
+        );
+        expect(await readdir(isolatedDataDirectory)).not.to.include(report);
+        const result = await runSf(
+          [
+            ...common,
+            '--apply',
+            operation === 'publish' ? '--acknowledge-no-send' : '--acknowledge-active-use-stops',
+            '--report-dir',
+            report,
+            ...(scenario === 'human' ? [] : ['--json']),
+          ],
+          `email-${operation}-apply`,
+          environment,
+        );
+        const partial = ['drift', 'sidecar', 'human'].includes(scenario);
+        const completionExit = partial ? 2 : 0;
+        expect(result.exitCode, result.stdout + result.stderr).to.equal(
+          scenario === 'blocked' ? 1 : completionExit,
+        );
+        const events = JSON.parse(
+          await readFile(file(`email-${operation}-apply-transport.json`), 'utf8'),
+        ) as Array<{ method?: string }>;
+        expect(events.filter(({ method }) => method === 'POST')).to.have.length(
+          scenario === 'blocked' ? 0 : 1,
+        );
+        if (scenario === 'blocked') {
+          expect(parseEnvelope(result).status).to.equal('blocked');
+          expect(await readdir(isolatedDataDirectory)).not.to.include(report);
+        } else {
+          const remoteReport = file(`${report}/content-${operation}-run.json`);
+          expect(JSON.parse(await readFile(remoteReport, 'utf8')).state).to.equal('completed');
+          if (scenario === 'human') {
+            expect(result.stdout).to.include('Status: partial');
+            expect(result.stdout).to.include('Outcome: remote-completed-local-blocked');
+            expect(result.stdout).to.include(
+              `Blocker EMAIL_${operation.toUpperCase()}_LOCAL_BLOCKED:`,
+            );
+          } else {
+            const envelope = parseEnvelope(result);
+            expect(envelope.contractVersion).to.equal('1.0.0');
+            expect(envelope.status).to.equal(partial ? 'partial' : 'success');
+            const completion = envelope.result as {
+              outcome: string;
+              reportFile: string;
+              evidence: { deploymentId: string };
+              blockers: unknown[];
+              localSource?: { outcome: string };
+              localReportFile?: string;
+            };
+            expect(completion.outcome).to.equal(
+              partial ? 'remote-completed-local-blocked' : 'completed',
+            );
+            expect(path.resolve(isolatedDataDirectory, completion.reportFile)).to.equal(
+              remoteReport,
+            );
+            expect(completion.evidence.deploymentId).to.equal('deployment-controlled');
+            if (partial) {
+              expect(completion.localSource?.outcome).to.equal('blocked');
+              expect(completion.blockers).to.have.length(1);
+              if (scenario === 'sidecar')
+                expect(completion).not.to.have.property('localReportFile');
+              else
+                expect(
+                  JSON.parse(
+                    await readFile(
+                      path.resolve(isolatedDataDirectory, completion.localReportFile!),
+                      'utf8',
+                    ),
+                  ).remoteOutcome,
+                ).to.equal('completed');
+            } else {
+              expect(completion).not.to.have.property('localSource');
+              expect(completion).not.to.have.property('localReportFile');
+              const local = JSON.parse(
+                await readFile(file(`${report}/content-${operation}-local.json`), 'utf8'),
+              );
+              expect(local.localSource).to.deep.equal({
+                outcome: 'noop',
+                reason: scenario === 'missing' ? 'missing-copy' : 'retrieval-equivalent',
+              });
+            }
+          }
+        }
+        if (scenario === 'missing') {
+          expect(await readdir(root)).not.to.include('cms');
+        } else {
+          expect(await readFile(definitionFile)).to.deep.equal(definitionBefore);
+          expect(await readFile(htmlFile, 'utf8')).to.equal(
+            ['drift', 'human'].includes(scenario) ? '<p>Changed during dispatch</p>' : authored,
+          );
+          if (!explicit)
+            await rename(path.join(root, 'cms'), file(`preserved-legacy-${operation}-${scenario}`));
+        }
+      });
+    }
+  }
+
+  it('previews ordered packed Email publish metadata v2 with exact selectors', async function () {
     this.timeout(300_000);
     const help = await runSf(['cms', 'publish', 'content', '--help']);
     expect(help.exitCode, help.stderr).to.equal(0);
@@ -954,6 +1299,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(normalizedHelp).to.include('--language');
     expect(normalizedHelp).to.include('--acknowledge-no-send');
     expect(normalizedHelp).to.include('Dry-run is the default');
+    expect(normalizedHelp).to.include('--metadata');
+    expect(normalizedHelp).to.include('Email-only');
 
     const preview = await runSf(
       [
@@ -964,8 +1311,10 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         'unused',
         '--workspace-id',
         'space',
-        '--api-name',
-        'pilot_email',
+        '-m',
+        'email:second_email',
+        '--metadata',
+        'sfdc_cms__email:pilot_email',
         '--language',
         'en_US',
         '--json',
@@ -976,28 +1325,40 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     const envelope = parseEnvelope(preview);
     expect(envelope).to.deep.include({
       contract: 'sf-cms-content-publish',
-      contractVersion: '1.0.0',
+      contractVersion: '2.0.0',
       status: 'success',
     });
     expectPluginVersion(envelope, installedPackageVersion);
     expect((envelope.provenance as { command: string }).command).to.equal('sf cms publish content');
     expect(envelope.result).to.deep.include({
+      selection: 'metadata',
+      operation: 'publish',
       mode: 'dry-run',
       outcome: 'ready',
-      target: {
-        workspaceId: 'space',
-        apiName: 'pilot_email',
-        language: 'en_US',
-        contentId: 'parent-email',
-        variantId: 'variant-en',
+    });
+    const batch = envelope.result as {
+      items: Array<{
+        index: number;
+        selector: { contentType: string; apiName: string };
+        outcome: string;
+      }>;
+    };
+    expect(
+      batch.items.map(({ index, selector, outcome }) => ({ index, selector, outcome })),
+    ).to.deep.equal([
+      {
+        index: 0,
+        selector: { contentType: 'sfdc_cms__email', apiName: 'second_email' },
+        outcome: 'ready',
       },
-      blockers: [],
-    });
-    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.deep.include({
-      selectorScope: 'variant',
-      includeContentReferences: false,
-      noSendAcknowledgementRequired: true,
-    });
+      {
+        index: 1,
+        selector: { contentType: 'sfdc_cms__email', apiName: 'pilot_email' },
+        outcome: 'ready',
+      },
+    ]);
+    expect(preview.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
+    expect(preview.stderr).not.to.include('Using org ');
     const events = JSON.parse(
       await readFile(file('email-publish-preview-transport.json'), 'utf8'),
     ) as Array<{ method?: string }>;
@@ -1031,7 +1392,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     );
     expect(result.exitCode, result.stdout + result.stderr).to.equal(0);
     const envelope = parseEnvelope(result);
-    expect(envelope).to.deep.include({ contract: 'sf-cms-content-publish', status: 'success' });
+    expect(envelope).to.deep.include({
+      contract: 'sf-cms-content-publish',
+      contractVersion: '1.0.0',
+      status: 'success',
+    });
     expect(envelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
     const events = JSON.parse(
       await readFile(file('email-publish-apply-transport.json'), 'utf8'),
@@ -1056,15 +1421,18 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(normalizedHelp).to.include('Dry-run is the default');
     const preview = await runSf(
       [
-        'cms',
-        'unpublish',
         'content',
+        'unpublish',
         '--target-org',
         'unused',
         '--workspace-id',
         'space',
-        '--api-name',
-        'pilot_email',
+        '-m',
+        'email:second_email',
+        '--metadata',
+        'sfdc_cms__email:pilot_email',
+        '--contract-version',
+        '2',
         '--language',
         'en_US',
         '--json',
@@ -1075,29 +1443,52 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     const envelope = parseEnvelope(preview);
     expect(envelope).to.deep.include({
       contract: 'sf-cms-content-unpublish',
-      contractVersion: '1.0.0',
+      contractVersion: '2.0.0',
       status: 'success',
     });
     expect((envelope.provenance as { command: string }).command).to.equal(
       'sf cms unpublish content',
     );
-    expect(envelope.result).to.deep.include({
-      mode: 'dry-run',
-      outcome: 'ready',
-      target: {
-        workspaceId: 'space',
-        apiName: 'pilot_email',
-        language: 'en_US',
-        contentId: 'parent-email',
-        variantId: 'variant-en',
-      },
-      blockers: [],
-    });
-    expect((envelope.result as { evidence: Record<string, unknown> }).evidence).to.deep.include({
-      selectorScope: 'parent',
-      includeContentReferencesOmitted: true,
-      activeUseStopsAcknowledgementRequired: true,
-    });
+    const batch = envelope.result as {
+      items: Array<{
+        selector: { apiName: string };
+        outcome: string;
+        result: { evidence: { selectorScope: string } };
+      }>;
+    };
+    expect(batch.items.map(({ selector, outcome }) => [selector.apiName, outcome])).to.deep.equal([
+      ['second_email', 'ready'],
+      ['pilot_email', 'ready'],
+    ]);
+    expect(batch.items.every(({ result }) => result.evidence.selectorScope === 'parent')).to.equal(
+      true,
+    );
+    expect(preview.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
+    expect(preview.stderr).not.to.include('Using org ');
+    const human = await runSf(
+      [
+        'content',
+        'unpublish',
+        '--target-org',
+        'unused',
+        '--workspace-id',
+        'space',
+        '-m',
+        'email:second_email',
+        '-m',
+        'email:pilot_email',
+        '--language',
+        'en_US',
+      ],
+      'email-unpublish-preview',
+    );
+    expect(human.exitCode, human.stdout + human.stderr).to.equal(0);
+    expect(human.stdout).to.include('Status: success; mode: dry-run; outcome: ready');
+    expect(human.stdout.indexOf('sfdc_cms__email:second_email: ready')).to.be.lessThan(
+      human.stdout.indexOf('sfdc_cms__email:pilot_email: ready'),
+    );
+    expect(human.stderr.match(/^Using org unused$/gmu)).to.have.length(1);
+    expect(human.stdout).not.to.include('Using org ');
     const applied = await runSf(
       [
         'cms',
@@ -1123,6 +1514,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     const appliedEnvelope = parseEnvelope(applied);
     expect(appliedEnvelope).to.deep.include({
       contract: 'sf-cms-content-unpublish',
+      contractVersion: '1.0.0',
       status: 'success',
     });
     expect(appliedEnvelope.result).to.deep.include({ mode: 'apply', outcome: 'completed' });
@@ -1207,12 +1599,23 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         ) as Array<{ method?: string }>;
         expect(previewEvents.every(({ method }) => method === 'GET')).to.equal(true);
         const applied = await runSf(
-          [...common, '--report-dir', `${caseName}-${alias}-report`],
+          [
+            ...common,
+            ...(family === 'emailTemplate' ? ['-d', `${caseName}-${alias}-absent`] : []),
+            '--report-dir',
+            `${caseName}-${alias}-report`,
+          ],
           `${caseName}-execute`,
         );
-        expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(0);
+        const localFailure = family === 'email';
+        expect(applied.exitCode, applied.stdout + applied.stderr).to.equal(localFailure ? 2 : 0);
         const output = parseEnvelope(applied);
-        expect(output.result).to.deep.include({ mode: 'execute', outcome: 'completed' });
+        expect(applied.stdout).to.equal(`${JSON.stringify(output, null, 2)}\n`);
+        expect(output.status).to.equal(localFailure ? 'partial' : 'success');
+        expect(output.result).to.deep.include({
+          mode: 'execute',
+          outcome: localFailure ? 'partial' : 'completed',
+        });
         const report = JSON.parse(
           await readFile(file(`${caseName}-${alias}-report/content-delete-run.json`), 'utf8'),
         );
@@ -1222,6 +1625,18 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           exactVariantAbsent: true,
           parentBehavior: 'present',
         });
+        expect(report.operations[0].localSource.outcome).to.equal(
+          localFailure ? 'blocked' : 'noop',
+        );
+        if (localFailure)
+          expect(
+            await readFile(file('cms/Marketing/email/Existing.cms-email.json'), 'utf8'),
+          ).to.equal('{}');
+        else
+          await lstat(file(`${caseName}-${alias}-absent`)).then(
+            () => expect.fail('Absent local root must not be created'),
+            (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+          );
         const events = JSON.parse(
           await readFile(file(`${caseName}-execute-transport.json`), 'utf8'),
         ) as Array<{ method?: string }>;

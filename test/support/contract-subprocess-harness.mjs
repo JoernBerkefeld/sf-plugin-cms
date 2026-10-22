@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -27,7 +27,12 @@ if (contractCase?.startsWith('logging-') && isMainThread) {
     });
   }
   const { CmsCommand } = await import(pathToFileURL(path.join(pluginRoot, 'lib/command-base.js')));
+  if (contractCase === 'logging-guards') writeFileSync(paginationEvidence, '[]');
   CmsCommand.prototype.getOrgContext = async () => {
+    if (contractCase === 'logging-guards') {
+      paginationEvents.push({ phase: 'org' });
+      writeFileSync(paginationEvidence, JSON.stringify(paginationEvents));
+    }
     throw new Error('Unexpected logging fixture org access');
   };
   if (contractCase === 'logging-pagination-invalid') {
@@ -379,6 +384,11 @@ if (
     const workspaceId = '0Zuaj000007dgL8CAI';
     const parentId = '20Yaj00000FaO1aEAF';
     const type = contractCase.includes('template') ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
+    if (contractCase === 'native-delete-email-execute') {
+      const directory = path.resolve('cms', 'Marketing', 'email');
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'Existing.cms-email.json'), '{}');
+    }
     let present = true;
     let page = 0;
     const row = {
@@ -415,6 +425,8 @@ if (
           events.push({ method, url });
           writeFileSync(evidenceFile, JSON.stringify(events));
           if (method !== 'GET') throw new Error('Unexpected fixture mutation');
+          if (url.endsWith(`/spaces/${workspaceId}`))
+            return response({ id: workspaceId, apiName: 'Marketing' });
           if (url.includes('/query?')) {
             let records;
             if (decodeURIComponent(url).includes('COUNT(Id)'))
@@ -604,6 +616,18 @@ if (
             },
             'variant-en': emailVariant('variant-en', 'en_US', isUnpublish),
           };
+      const localSync = process.env.SF_PLUGIN_CMS_LOCAL_SYNC;
+      if (
+        localSync ||
+        ['email-publish-preview', 'email-unpublish-preview'].includes(contractCase)
+      ) {
+        variants['variant-other'] = {
+          ...emailVariant('variant-other', 'en_US', isUnpublish),
+          apiName: 'second_email',
+          managedContentId: 'parent-other-en',
+          contentKey: 'other-email-key',
+        };
+      }
       if (isTemplateDelete) {
         const { createHash } = await import('node:crypto');
         const { exportWorkspace } = await import(
@@ -749,6 +773,19 @@ if (
             reportFile = isTemplateDelete
               ? 'email-template-delete-apply-report/content-delete-run.json'
               : 'email-delete-apply-report/content-delete-run.json';
+          const localPayload = localSync ? JSON.parse(request.body) : undefined;
+          const localSecond =
+            localSync &&
+            (localPayload.variantIds ?? localPayload.contentIds)[0] !==
+              (isUnpublishApply ? 'parent-email' : 'variant-en');
+          const batchReportFile = localSecond ? 'target-000002.json' : 'target-000001.json';
+          if (localSync)
+            reportFile = path.join(
+              process.env.SF_PLUGIN_CMS_LOCAL_REPORT,
+              process.env.SF_PLUGIN_CMS_LOCAL_LEGACY
+                ? `content-${isUnpublishApply ? 'unpublish' : 'publish'}-run.json`
+                : batchReportFile,
+            );
           const pending = JSON.parse(readFileSync(path.resolve(reportFile)));
           if (pending.state !== 'pending') throw new Error('Lifecycle intent was not pending');
           if (isDeleteApply) {
@@ -765,8 +802,18 @@ if (
             };
             return Object.assign(Promise.resolve({}), { stream: () => new PassThrough() });
           }
-          variants['variant-en'] = {
-            ...variants['variant-en'],
+          if (localSync === 'drift')
+            writeFileSync(process.env.SF_PLUGIN_CMS_LOCAL_HTML, '<p>Changed during dispatch</p>');
+          if (localSync === 'sidecar')
+            mkdirSync(
+              path.join(
+                process.env.SF_PLUGIN_CMS_LOCAL_REPORT,
+                `content-${isUnpublishApply ? 'unpublish' : 'publish'}-local.json`,
+              ),
+            );
+          const mutatedVariant = localSecond ? 'variant-other' : 'variant-en';
+          variants[mutatedVariant] = {
+            ...variants[mutatedVariant],
             isPublished: !isUnpublishApply,
             status: { status: isUnpublishApply ? 'Draft' : 'Published' },
           };
@@ -808,11 +855,16 @@ if (
             writeFileSync(evidenceFile, JSON.stringify(events));
             if (method !== 'GET') throw new Error(`Unexpected mutation request: ${method} ${url}`);
             if (url === '/connect/cms/spaces/space') {
-              return { id: 'space', name: 'Controlled', defaultLanguage: 'en_US' };
+              return {
+                id: 'space',
+                apiName: 'Controlled',
+                name: 'Controlled',
+                defaultLanguage: 'en_US',
+              };
             }
             if (url.startsWith('/connect/cms/items/search?')) {
               let ids = ['variant-de', 'variant-en'];
-              if (isTemplate || isDelete) ids = Object.keys(variants);
+              if (isTemplate || isDelete || variants['variant-other']) ids = Object.keys(variants);
               return {
                 count: ids.length,
                 items: ids.map((id) => ({
@@ -853,6 +905,12 @@ if (
                 { stream: () => new PassThrough() },
               );
             }
+            if (url === '/connect/cms/contents/parent-other-en')
+              return {
+                managedContentId: 'parent-other-en',
+                contentType: { fullyQualifiedName: 'sfdc_cms__email' },
+                contentSpace: { id: 'space' },
+              };
             if (
               url ===
               (isTemplate

@@ -386,7 +386,17 @@ Without either flag, the command aggregates all pages in first-seen order, dedup
 
 ### `sf content publish`
 
-Previews or publishes one exact unpublished Draft `sfdc_cms__email` variant. Selection requires exact `--workspace-id` and `--api-name` values plus exactly one of `--language` or `--default-language`. Dry-run is the default:
+Previews or publishes exact unpublished Draft `sfdc_cms__email` variants. Select exactly one mode: repeated `-m/--metadata Type:ApiName` in caller order, or legacy `--api-name` for one Email. Both modes require exact `--workspace-id` plus exactly one of `--language` or `--default-language`. Dry-run is the default:
+
+```sh
+sf content publish --workspace-id 0Zu... -m email:WelcomeEmail -m sfdc_cms__email:Reminder --language en_US --json
+```
+
+Metadata mode automatically selects `sf-cms-content-publish@2`; legacy `--api-name` automatically retains `sf-cms-content-publish@1`. Omitted `--contract-version` selects the mode's version; explicit `2` requires metadata and explicit `1` requires API-name. A mismatch blocks before org context/transport access. Selector modes are mutually exclusive; missing selectors and type-only values (for example `-m email`) are rejected without expansion.
+
+The selector vocabulary recognizes `email`, `emailTemplate`, `image`, `document`, `audio` and their exact `sfdc_cms__` names. **Native lifecycle admission is currently Email-only**: recognizing a family is not evidence of native support; other families remain unqualified and blocked pending operation-specific evidence.
+
+Legacy single-Email usage remains available:
 
 ```sh
 sf content publish --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --json
@@ -402,9 +412,17 @@ The command writes `content-publish-run.json` with pending intent before one non
 
 ### `sf content unpublish`
 
-`sf content unpublish` mirrors the exact Email selector used by publish: `--workspace-id`, `--api-name`, and exactly one of `--language` or `--default-language`. Dry-run is the default. Apply requires a new `--report-dir`, `--apply`, and `--acknowledge-active-use-stops`; the acknowledgement is checked before org access because unpublish removes the content from active use but does not delete it.
+`sf content unpublish` mirrors publish selection: exact `--workspace-id`, repeated `-m/--metadata Type:ApiName` or exclusive legacy `--api-name`, and exactly one of `--language` or `--default-language`. Metadata automatically selects `sf-cms-content-unpublish@2`; legacy API-name retains `sf-cms-content-unpublish@1`, with the same explicit-version checks, exact-only rejection and Email-only evidence gate.
+
+```sh
+sf content unpublish --workspace-id 0Zu... -m email:WelcomeEmail -m email:Reminder --default-language --json
+```
+
+Dry-run is the default. Apply requires a new `--report-dir`, `--apply`, and `--acknowledge-active-use-stops`; the acknowledgement is checked before org access because unpublish removes the content from active use but does not delete it.
 
 The command accepts only an exact `isPublished=true,status=Published` Email and freshly proves that its parent has exactly one variant. Preview explicitly reports `selectorScope: parent`. Apply writes `content-unpublish-run.json` with durable pending intent before one non-retried parent-scoped request containing only `contentIds`; it sends neither `variantIds`, `contextContentSpaceId`, nor the PUBLISH-only `includeContentReferences` field. Up to five readback attempts independently reconcile the parent, exact variant, single-variant sibling scope, and complete Email inventory. Success requires the sole child to transition to `isPublished=false,status=Draft` while preserving body hash, identity, API name, language, parent, and every unrelated inventory row. A definite HTTP 400 `JSON_PARSER_ERROR` rejection is retained separately from ownership-uncertain transport/readback outcomes, with sanitized status, Salesforce error code/message/request ID when available, request selector, and request-body hash.
+
+For both metadata lifecycle commands, the v2 result contains ordered `items` with canonical selectors and per-item outcomes. Whole-selection preflight must pass before mutation. Apply is sequential and persists a batch report plus per-item durable pending intent in the required new report directory; dry-run creates no operation report. At the first blocked, rejected-before-mutation or ownership-uncertain stop, later items are `unattempted`. Earlier completed writes remain completed, yielding `partial` when applicable: there is no automatic rollback, retry or resume. Human output shows aggregate mode/outcome and each selector's outcome. JSON stdout contains only the envelope; diagnostic logs use stderr and the human `Using org` notice is suppressed in JSON mode. Exit is 0 only for success; blocked, failed and partial results exit 1. Native CLI parsing errors (including mutually exclusive selectors) retain the host's exit code 2.
 
 An ambiguous unpublish result is not authorization to retry: preserve its journal and reconcile the exact recorded identities read-only before any further mutation.
 

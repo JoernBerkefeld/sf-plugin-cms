@@ -1,6 +1,14 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import path from 'node:path';
 import {
+  assertContentLifecycleBatchResult,
+  type ContentLifecycleBatchResult,
+  type ExactLifecycleSelector,
+} from '../../../contracts/content-lifecycle-batch.js';
+import { runLifecycleMetadataBatch } from '../../../services/lifecycle-batch.js';
+import { normalizeLifecycleMetadata } from '../../../services/lifecycle-selection.js';
+
+import {
   assertContentPublishResult,
   CONTENT_PUBLISH_CONTRACT,
   type ContentPublishResult,
@@ -21,12 +29,14 @@ import {
 import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 
-/** Publishes one exact unpublished Draft Email variant without sending it. */
-export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublishResult>> {
+type PublishOutput = CmsEnvelope<ContentPublishResult | ContentLifecycleBatchResult>;
+
+/** Publishes exact unpublished Draft Email variants without sending them. */
+export default class PublishContent extends CmsCommand<PublishOutput> {
   public static readonly aliases = ['content:publish'];
-  public static readonly summary = 'Preview or publish one bounded Draft Email variant.';
+  public static readonly summary = 'Preview or publish exact bounded Draft Email variants.';
   public static readonly description =
-    'Selects exactly one unpublished Draft sfdc_cms__email variant by workspace ID, API name, and explicit language or workspace default language. Dry-run is the default. --apply requires a new --report-dir and --acknowledge-no-send, writes durable pending intent, then performs one non-retried variant-scoped publish with content references excluded. Publishing CMS content does not send the Email; this command never starts a Flow, transactional send, journey, or campaign.';
+    'Repeat -m/--metadata Type:ApiName for ordered exact selections (v2), or use --api-name for one legacy Email result (v1). Exactly one selector mode is required; type-only selectors do not expand. Vocabulary recognizes email, emailTemplate, image, document and audio (or their sfdc_cms__ names), but native admission is currently Email-only; other families remain unqualified and blocked. Selects each unpublished Draft sfdc_cms__email variant by workspace ID, API name, and explicit language or workspace default language. Dry-run is the default. --apply requires a new --report-dir and --acknowledge-no-send, writes durable pending intent, then performs one non-retried variant-scoped publish with content references excluded. Publishing CMS content does not send the Email; this command never starts a Flow, transactional send, journey, or campaign.';
   public static readonly examples = [
     '<%= config.bin %> cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --json',
     '<%= config.bin %> cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --apply --acknowledge-no-send --report-dir ./cms-publish-report --json',
@@ -35,12 +45,26 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
     'target-org': targetOrgFlag,
     'api-version': apiVersionFlag,
     'contract-version': Flags.integer({
-      default: 1,
       min: 1,
-      summary: 'Machine contract major version (supported: 1).',
+      summary:
+        'Machine contract major: 1 for --api-name, 2 for --metadata; selected automatically when omitted.',
     }),
     'workspace-id': Flags.string({ required: true, summary: 'Exact CMS workspace ID.' }),
-    'api-name': Flags.string({ required: true, summary: 'Exact Email API name.' }),
+    'api-name': Flags.string({
+      exclusive: ['metadata'],
+      summary: 'Exact Email API name (legacy single-result v1).',
+    }),
+    metadata: Flags.string({
+      char: 'm',
+      multiple: true,
+      multipleNonGreedy: true,
+      exclusive: ['api-name'],
+      summary: 'Exact Type:ApiName; repeat in execution order (batch v2). No implicit expansion.',
+    }),
+    'output-dir': Flags.directory({
+      char: 'd',
+      summary: 'Local source root for inspection and synchronization (default: current directory).',
+    }),
     language: Flags.string({ exclusive: ['default-language'], summary: 'Exact Email language.' }),
     'default-language': Flags.boolean({
       default: false,
@@ -60,48 +84,122 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
     }),
   };
 
-  public async run(): Promise<CmsEnvelope<ContentPublishResult>> {
+  public async run(): Promise<PublishOutput> {
     const { flags } = await this.parse(PublishContent);
+    const projectRoot = path.resolve(flags['output-dir'] ?? process.cwd());
+    let selectors: readonly ExactLifecycleSelector[] | undefined;
+    const reject = (diagnostic: CmsDiagnostic): PublishOutput => {
+      const output: PublishOutput = blocked(
+        this.pluginVersion,
+        flags['api-version'],
+        'unresolved-org',
+        diagnostic,
+      );
+      if (selectors !== undefined) {
+        output.contractVersion = '2.0.0';
+        output.result = {
+          selection: 'metadata',
+          operation: 'publish',
+          mode: flags.apply ? 'apply' : 'dry-run',
+          outcome: 'blocked',
+          stop: { index: 0, outcome: 'blocked' },
+          items: selectors.map((selector, index) => ({
+            index,
+            selector,
+            outcome: index === 0 ? 'blocked' : 'unattempted',
+            blockers: index === 0 ? [{ code: diagnostic.code, message: diagnostic.message }] : [],
+          })),
+        };
+      }
+      return this.finish(output);
+    };
+    try {
+      if ((flags.metadata === undefined) === (flags['api-name'] === undefined))
+        throw new TypeError('Specify exactly one of --metadata or --api-name.');
+      if (flags.metadata !== undefined) selectors = normalizeLifecycleMetadata(flags.metadata);
+    } catch (error) {
+      return reject({
+        code: 'LIFECYCLE_SELECTOR_REQUIRED',
+        message: (error as Error).message,
+        retryable: false,
+      });
+    }
     const targetOrg = flags['target-org'].getUsername()!;
-    if ((flags['contract-version'] ?? 1) !== 1)
-      return this.finish(
-        blocked(this.pluginVersion, flags['api-version'], 'unresolved-org', {
-          code: 'UNSUPPORTED_CONTRACT_VERSION',
-          message: 'Only contract major 1 is supported.',
-          retryable: false,
-        }),
-      );
+    if (
+      (flags['contract-version'] ?? (selectors === undefined ? 1 : 2)) !==
+      (selectors === undefined ? 1 : 2)
+    )
+      return reject({
+        code: 'UNSUPPORTED_CONTRACT_VERSION',
+        message: 'Use contract major 1 with --api-name or major 2 with --metadata.',
+        retryable: false,
+      });
     if ((flags.language === undefined) === !flags['default-language'])
-      return this.finish(
-        blocked(this.pluginVersion, flags['api-version'], 'unresolved-org', {
-          code: 'LANGUAGE_SELECTOR_REQUIRED',
-          message: 'Specify exactly one of --language or --default-language.',
-          retryable: false,
-        }),
-      );
+      return reject({
+        code: 'LANGUAGE_SELECTOR_REQUIRED',
+        message: 'Specify exactly one of --language or --default-language.',
+        retryable: false,
+      });
     if (flags.apply && flags['report-dir'] === undefined)
-      return this.finish(
-        blocked(this.pluginVersion, flags['api-version'], 'unresolved-org', {
-          code: 'REPORT_DIRECTORY_REQUIRED',
-          message: '--report-dir is required when --apply is set.',
-          retryable: false,
-        }),
-      );
+      return reject({
+        code: 'REPORT_DIRECTORY_REQUIRED',
+        message: '--report-dir is required when --apply is set.',
+        retryable: false,
+      });
     if (flags.apply && !flags['acknowledge-no-send'])
-      return this.finish(
-        blocked(this.pluginVersion, flags['api-version'], 'unresolved-org', {
-          code: 'NO_SEND_ACKNOWLEDGEMENT_REQUIRED',
-          message: '--acknowledge-no-send is required when --apply is set.',
-          retryable: false,
-        }),
-      );
+      return reject({
+        code: 'NO_SEND_ACKNOWLEDGEMENT_REQUIRED',
+        message: '--acknowledge-no-send is required when --apply is set.',
+        retryable: false,
+      });
     const { connection, orgId } = await this.getOrgContext(targetOrg, flags['api-version']);
     if (flags['api-version'] === 'latest')
       flags['api-version'] = getCmsApiSelection(connection).effectiveApiVersion;
+    if (selectors !== undefined) {
+      const batch = await runLifecycleMetadataBatch(
+        connection,
+        {
+          operation: 'publish',
+          selectors,
+          workspaceId: flags['workspace-id'],
+          ...(flags.language === undefined
+            ? { useDefaultLanguage: true as const }
+            : { language: flags.language }),
+        },
+        {
+          mode: flags.apply ? 'apply' : 'dry-run',
+          reportDirectory: flags['report-dir'],
+          projectRoot,
+        },
+      );
+      const output: PublishOutput = {
+        ...envelope(
+          batch.status,
+          this.pluginVersion,
+          flags['api-version'],
+          orgId,
+          null,
+          batch.result.items.flatMap((item) => item.blockers),
+        ),
+        contractVersion: '2.0.0',
+        result: batch.result,
+      };
+      if (!this.jsonEnabled()) {
+        this.log(
+          `Status: ${output.status}; mode: ${batch.result.mode}; outcome: ${batch.result.outcome}`,
+        );
+        for (const item of batch.result.items)
+          this.log(`${item.selector.contentType}:${item.selector.apiName}: ${item.outcome}`);
+        if (batch.result.reportFile) this.log(`Run report: ${batch.result.reportFile}`);
+      }
+      return this.finish(output);
+    }
+    const legacyFlags = { ...flags, 'api-name': flags['api-name']! };
     const input = {
+      projectRoot,
       selector: {
         workspaceId: flags['workspace-id'],
-        apiName: flags['api-name'],
+        apiName: legacyFlags['api-name'],
         ...(flags.language === undefined
           ? { useDefaultLanguage: true as const }
           : { language: flags.language }),
@@ -128,7 +226,7 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
           : {
               mode: 'dry-run',
               outcome: 'blocked',
-              target: unresolvedTarget(flags),
+              target: unresolvedTarget(legacyFlags),
               evidence: { selectorScope: 'variant', includeContentReferences: false },
               blockers: preview.blockers,
             };
@@ -169,13 +267,27 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
         blockers: [],
         reportFile: applied.reportFile,
       };
+      const completion: ContentPublishResult =
+        applied.localSource?.outcome === 'blocked'
+          ? {
+              ...result,
+              outcome: 'remote-completed-local-blocked',
+              blockers: [
+                { code: 'EMAIL_PUBLISH_LOCAL_BLOCKED', message: applied.localSource.message },
+              ],
+              localSource: applied.localSource,
+              ...(applied.localReportFile === undefined
+                ? {}
+                : { localReportFile: applied.localReportFile }),
+            }
+          : result;
       const output = envelope(
-        'success',
+        completion.outcome === 'completed' ? 'success' : 'partial',
         this.pluginVersion,
         flags['api-version'],
         orgId,
-        result,
-        [],
+        completion,
+        completion.blockers,
       );
       if (!this.jsonEnabled()) this.showResult(output);
       return this.finish(output);
@@ -184,7 +296,7 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
         const result: ContentPublishResult = {
           mode: 'apply',
           outcome: 'blocked',
-          target: unresolvedTarget(flags),
+          target: unresolvedTarget(legacyFlags),
           evidence: { selectorScope: 'variant', includeContentReferences: false },
           blockers: [{ code: 'EMAIL_PUBLISH_PREFLIGHT_BLOCKED', message: error.message }],
         };
@@ -205,7 +317,7 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
         mode: 'apply',
         outcome: 'ownership-uncertain',
         target: {
-          ...unresolvedTarget(flags),
+          ...unresolvedTarget(legacyFlags),
           contentId: error.contentId,
           variantId: error.variantId,
         },
@@ -235,8 +347,16 @@ export default class PublishContent extends CmsCommand<CmsEnvelope<ContentPublis
       return this.finish(output);
     }
   }
-  private finish(result: CmsEnvelope<ContentPublishResult>): CmsEnvelope<ContentPublishResult> {
-    return this.finishEnvelope(result, assertContentPublishResult);
+  private finish(result: PublishOutput): PublishOutput {
+    if (result.contractVersion === '2.0.0')
+      return this.finishEnvelope(
+        result as CmsEnvelope<ContentLifecycleBatchResult>,
+        assertContentLifecycleBatchResult,
+      );
+    return this.finishEnvelope(
+      result as CmsEnvelope<ContentPublishResult>,
+      assertContentPublishResult,
+    );
   }
   private showResult(result: CmsEnvelope<ContentPublishResult>): void {
     this.log(`Status: ${result.status}`);

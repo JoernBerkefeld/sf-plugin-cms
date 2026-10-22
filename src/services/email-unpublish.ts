@@ -1,8 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {
+  completeEmailLifecycleLocalSource,
+  inspectEmailLifecycleLocalSource,
+  type EmailLifecycleLocalCompletion,
+} from './email-lifecycle-local-source.js';
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
+import type {
+  LifecycleBinding,
+  LifecycleInventoryEntry,
+} from '../contracts/content-lifecycle-batch.js';
+import type {
+  ContentPublishNativeEvidence,
+  QualifiedNativePublishType,
+} from '../contracts/content-publish.js';
+import { assertContentUnpublishResult } from '../contracts/content-unpublish.js';
+import { acquireLifecycleNativeSnapshot } from './lifecycle-native-snapshot.js';
+import type { NativeInventoryRow } from './retrieve-native-inventory.js';
 import { rewriteAtomic } from './import-workspace.js';
 import { unpublishContent } from './lifecycle-foundation.js';
 import { getContent, getVariant, getWorkspace, type CmsRecord } from './read.js';
@@ -20,14 +36,16 @@ const MAX_PAGES = 100;
 const MAX_READBACK_ATTEMPTS = 5;
 
 type RequestConnection = Pick<Connection, 'request'> &
-  Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version'>>;
+  Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version' | 'getApiVersion'>>;
 export type EmailUnpublishSelector = {
   readonly apiName: string;
+  readonly contentType?: typeof EMAIL_TYPE | QualifiedNativePublishType;
   readonly language?: string;
   readonly useDefaultLanguage?: true;
   readonly workspaceId: string;
 };
 export type EmailUnpublishInput = {
+  readonly projectRoot?: string;
   readonly requestOptions?: JsonRequestOptions;
   readonly selector: EmailUnpublishSelector;
 };
@@ -55,7 +73,8 @@ export type EmailUnpublishEvidence = {
   readonly apiVersion: string;
   readonly baselineHash: string;
   readonly contentId: string;
-  readonly contentType: typeof EMAIL_TYPE;
+  readonly contentType: typeof EMAIL_TYPE | QualifiedNativePublishType;
+  readonly nativeEvidence?: ContentPublishNativeEvidence;
   readonly language: string;
   readonly lifecycle: Lifecycle;
   readonly org: string;
@@ -88,7 +107,8 @@ export type EmailUnpublishCompletedEvidence = EmailUnpublishEvidence & {
   readonly postUnpublishHash: string;
   readonly unpublishDate?: string;
 };
-type Prepared = {
+export type PreparedEmailUnpublish = {
+  readonly requestOptions?: JsonRequestOptions;
   readonly evidence: EmailUnpublishEvidence;
   readonly inventoryBaseline: readonly InventoryEntry[];
   readonly selector: ResolvedSelector;
@@ -328,12 +348,141 @@ function parentIdentity(parent: CmsRecord, expectedId: string, selector: Resolve
   )
     throw new TypeError('Email parent readback scope changed');
 }
+async function prepareNative(
+  connection: RequestConnection,
+  selector: ResolvedSelector,
+  options: JsonRequestOptions,
+): Promise<PreparedEmailUnpublish> {
+  if (typeof connection.getApiVersion !== 'function')
+    throw new TypeError('Native unpublish requires the selected API connection');
+  const selected = {
+    workspaceId: selector.workspaceId,
+    contentType: selector.contentType as QualifiedNativePublishType,
+    apiName: selector.apiName,
+    language: selector.selectedLanguage,
+  };
+  const observe = async () => {
+    const observed = await acquireLifecycleNativeSnapshot(
+      connection as Parameters<typeof acquireLifecycleNativeSnapshot>[0],
+      selected,
+      options,
+    );
+    if (observed.siblings.records.length !== 1)
+      throw new TypeError('Native parent-scoped unpublish requires exactly one variant');
+    for (const life of [observed.parentLifecycle, observed.variantLifecycle]) {
+      if (!life.isPublished || life.status.status !== 'Published')
+        throw new TypeError('Native unpublish requires Published parent and variant');
+    }
+    const ledger = await nativeLedger(connection, observed.family.records, options);
+    if (
+      ledger.find((entry) => entry.variantId === observed.identity.variantId)?.hash !==
+      observed.canonicalAuthoringHash
+    )
+      throw new TypeError('Native unpublish selected detail changed during preparation');
+    const evidence: ContentPublishNativeEvidence = {
+      contentType: selected.contentType,
+      identity: { ...observed.identity, contentType: selected.contentType },
+      canonicalAuthoringHash: observed.canonicalAuthoringHash,
+      parentLifecycle: observed.parentLifecycle,
+      variantLifecycle: observed.variantLifecycle,
+      references: observed.references,
+      ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+    };
+    return { observed, evidence, ledger };
+  };
+  const initial = await observe();
+  const fresh = await observe();
+  if (
+    !isDeepStrictEqual(initial.evidence, fresh.evidence) ||
+    !isDeepStrictEqual(initial.ledger, fresh.ledger) ||
+    !isDeepStrictEqual(initial.observed.family.records, fresh.observed.family.records) ||
+    !isDeepStrictEqual(initial.observed.siblings.records, fresh.observed.siblings.records)
+  )
+    throw new TypeError('Native unpublish family drifted during preparation');
+  const native = fresh.evidence;
+  const snapshot: Snapshot = {
+    ...native.identity,
+    hash: native.canonicalAuthoringHash,
+    lifecycle: {
+      isPublished: native.variantLifecycle.isPublished,
+      status: native.variantLifecycle.status.status,
+    },
+  };
+  return {
+    requestOptions: options,
+    selector,
+    snapshot,
+    inventoryBaseline: fresh.ledger,
+    evidence: {
+      apiName: snapshot.apiName,
+      contentId: snapshot.contentId,
+      language: snapshot.language,
+      lifecycle: snapshot.lifecycle,
+      variantId: snapshot.variantId,
+      workspaceId: snapshot.workspaceId,
+      apiVersion: fresh.observed.family.apiVersion,
+      baselineHash: snapshot.hash,
+      contentType: selected.contentType,
+      nativeEvidence: native,
+      org: nonempty(connection.instanceUrl, 'Connection instanceUrl'),
+      inventory: fresh.ledger,
+      siblingInventory: fresh.ledger
+        .filter((entry) => entry.contentId === snapshot.contentId)
+        .map(({ hash, language, isPublished, status, variantId }) => ({
+          hash,
+          language,
+          isPublished,
+          status,
+          variantId,
+        })),
+    },
+  };
+}
+function assertNativeLedgerIdentity(detail: CmsRecord, row: NativeInventoryRow): void {
+  const life = lifecycle(detail);
+  if (
+    requiredContentIdentifier(detail) !== row.ManagedContentId ||
+    requiredVariantIdentifier(detail) !== row.Id ||
+    contentType(detail) !== row.ContentTypeFullyQualifiedName ||
+    workspaceId(detail) !== row.ManagedContent.AuthoredManagedContentSpaceId ||
+    detail.apiName !== row.ManagedContent.ApiName ||
+    detail.language !== row.Language ||
+    detail.contentKey !== row.ManagedContentKey ||
+    !record(detail.contentBody) ||
+    life.isPublished !== row.IsPublished ||
+    life.status !== row.ManagedContentVariantStatus
+  )
+    throw new TypeError('Native unpublish family detail disagrees with inventory');
+}
+async function nativeLedger(
+  connection: RequestConnection,
+  rows: readonly NativeInventoryRow[],
+  options: JsonRequestOptions,
+): Promise<readonly InventoryEntry[]> {
+  const entries: InventoryEntry[] = [];
+  for (const row of rows) {
+    const detail = await getVariant(connection, row.Id, options);
+    assertNativeLedgerIdentity(detail, row);
+    const life = lifecycle(detail);
+    entries.push({
+      contentId: row.ManagedContentId,
+      variantId: row.Id,
+      language: row.Language,
+      isPublished: life.isPublished,
+      status: life.status,
+      hash: bodyHash(detail),
+    });
+  }
+  return entries.toSorted((left, right) => left.variantId.localeCompare(right.variantId));
+}
 async function prepare(
   connection: RequestConnection,
   input: EmailUnpublishInput,
-): Promise<Prepared> {
+): Promise<PreparedEmailUnpublish> {
   const options = input.requestOptions ?? {};
-  const selector = await resolveSelector(connection, input.selector, options);
+  const selector = await resolveSelector(connection, structuredClone(input.selector), options);
+  if (selector.contentType !== undefined && selector.contentType !== EMAIL_TYPE)
+    return prepareNative(connection, selector, options);
   const initial = await resolve(connection, selector, options);
   if (!initial.snapshot.lifecycle.isPublished || initial.snapshot.lifecycle.status !== 'Published')
     throw new TypeError('Email unpublish requires exact isPublished=true,status=Published');
@@ -360,6 +509,7 @@ async function prepare(
   )
     throw new TypeError('Email destination drifted before unpublish');
   return {
+    requestOptions: input.requestOptions,
     inventoryBaseline: baselineInventory,
     selector,
     snapshot: prewrite.snapshot,
@@ -386,12 +536,135 @@ function blocker(
     ? { code: 'EMAIL_UNPUBLISH_PREFLIGHT_BLOCKED', message: error.message }
     : undefined;
 }
+function binding(evidence: EmailUnpublishEvidence): LifecycleBinding {
+  return {
+    apiName: evidence.apiName,
+    apiVersion: evidence.apiVersion,
+    baselineHash: evidence.baselineHash,
+    contentId: evidence.contentId,
+    contentType: evidence.contentType,
+    language: evidence.language,
+    org: evidence.org,
+    variantId: evidence.variantId,
+    workspaceId: evidence.workspaceId,
+  };
+}
+
+export async function preparePublishedEmailUnpublish(
+  connection: RequestConnection,
+  input: EmailUnpublishInput,
+): Promise<PreparedEmailUnpublish> {
+  try {
+    return await prepare(connection, input);
+  } catch (error) {
+    const found = blocker(error);
+    if (!found) throw error;
+    throw new EmailUnpublishPreflightBlockedError(found.message, error);
+  }
+}
+
+/**
+ * Refresh preparation against detached caller-owned identity and full-family ledger expectations.
+ * @param {RequestConnection} connection - Selected API connection.
+ * @param {PreparedEmailUnpublish} original - Prior preparation and integrity receipt.
+ * @param {object} context - Caller-owned dispatch expectations.
+ * @param {LifecycleBinding} context.binding - Expected identity and authoring binding.
+ * @param {readonly LifecycleInventoryEntry[]} context.expectedInventory - Accounted full-family ledger.
+ * @returns {Promise<PreparedEmailUnpublish>} Fresh read-only preparation bound to caller expectations.
+ */
+export async function refreshPreparedPublishedEmailUnpublish(
+  connection: RequestConnection,
+  original: PreparedEmailUnpublish,
+  context: { binding: LifecycleBinding; expectedInventory: readonly LifecycleInventoryEntry[] },
+): Promise<PreparedEmailUnpublish> {
+  const selector = structuredClone(original.selector);
+  const baseline = structuredClone(original.evidence.nativeEvidence);
+  const expectedBinding = structuredClone(context.binding);
+  const expectedInventory = structuredClone(context.expectedInventory);
+  const requestOptions =
+    original.requestOptions === undefined ? undefined : { ...original.requestOptions };
+  const fresh = await preparePublishedEmailUnpublish(connection, { selector, requestOptions });
+  const native = fresh.evidence.nativeEvidence;
+  if (
+    !isDeepStrictEqual(binding(fresh.evidence), expectedBinding) ||
+    !isDeepStrictEqual(fresh.inventoryBaseline, expectedInventory) ||
+    (baseline === undefined) !== (native === undefined) ||
+    (baseline !== undefined &&
+      native !== undefined &&
+      (baseline.contentType !== native.contentType ||
+        !isDeepStrictEqual(baseline.identity, native.identity) ||
+        baseline.canonicalAuthoringHash !== native.canonicalAuthoringHash ||
+        !isDeepStrictEqual(baseline.references, native.references) ||
+        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt)))
+  )
+    throw new EmailUnpublishPreflightBlockedError('Email destination drifted since preparation');
+  return fresh;
+}
+
+const consumedUnpublishPreparations = new WeakSet<PreparedEmailUnpublish>();
+
+export async function executePreparedPublishedEmailUnpublish(
+  connection: RequestConnection,
+  original: PreparedEmailUnpublish,
+  context: {
+    binding: LifecycleBinding;
+    expectedInventory: readonly LifecycleInventoryEntry[];
+    reportFile: string;
+    rewriteReport?: typeof rewriteAtomic;
+  },
+): Promise<EmailUnpublishCompletedEvidence> {
+  if (consumedUnpublishPreparations.has(original))
+    throw new EmailUnpublishPreflightBlockedError('Prepared unpublish has already been attempted');
+  const prepared: PreparedEmailUnpublish = {
+    ...structuredClone({ ...original, requestOptions: undefined }),
+    requestOptions:
+      original.requestOptions === undefined ? undefined : { ...original.requestOptions },
+  };
+  if (!path.isAbsolute(context.reportFile))
+    throw new EmailUnpublishPreflightBlockedError('Content unpublish reportFile must be absolute');
+  if (!isDeepStrictEqual(binding(prepared.evidence), context.binding))
+    throw new EmailUnpublishPreflightBlockedError('Prepared unpublish binding does not match');
+  const expectedBinding = { ...context.binding };
+  const expectedInventory = context.expectedInventory.map((entry) => ({ ...entry }));
+  consumedUnpublishPreparations.add(original);
+  try {
+    await stat(context.reportFile);
+    throw new EmailUnpublishPreflightBlockedError('Content unpublish target report already exists');
+  } catch (error) {
+    if (error instanceof EmailUnpublishPreflightBlockedError) throw error;
+    if (!record(error) || error.code !== 'ENOENT')
+      throw new EmailUnpublishPreflightBlockedError(
+        'Content unpublish target report cannot be claimed',
+        error,
+      );
+  }
+  const result = await executeWithReport(
+    connection,
+    prepared,
+    context.reportFile,
+    { rewriteReport: context.rewriteReport, expectedInventory },
+    () =>
+      refreshPreparedPublishedEmailUnpublish(connection, prepared, {
+        binding: expectedBinding,
+        expectedInventory,
+      }),
+  );
+  return result.evidence;
+}
+
 export async function previewPublishedEmailUnpublish(
   connection: RequestConnection,
   input: EmailUnpublishInput,
 ): Promise<EmailUnpublishPreviewResult> {
+  const projectRoot = input.projectRoot === undefined ? undefined : path.resolve(input.projectRoot);
   try {
     const prepared = await prepare(connection, input);
+    await inspectEmailLifecycleLocalSource(
+      connection,
+      projectRoot,
+      prepared.snapshot,
+      prepared.requestOptions,
+    );
     return { blockers: [], evidence: prepared.evidence, status: 'ready' };
   } catch (error) {
     const found = blocker(error);
@@ -429,7 +702,7 @@ function mutationErrorEvidence(error: unknown): EmailUnpublishMutationErrorEvide
 
 async function execute(
   connection: RequestConnection,
-  prepared: Prepared,
+  prepared: PreparedEmailUnpublish,
   reportFile: string,
   options: JsonRequestOptions,
 ): Promise<EmailUnpublishCompletedEvidence> {
@@ -468,6 +741,60 @@ async function execute(
         : item,
     );
     for (let attempt = 0; attempt < MAX_READBACK_ATTEMPTS; attempt += 1) {
+      const baseline = prepared.evidence.nativeEvidence;
+      if (baseline !== undefined) {
+        const observed = await acquireLifecycleNativeSnapshot(
+          connection as Parameters<typeof acquireLifecycleNativeSnapshot>[0],
+          {
+            workspaceId: prepared.selector.workspaceId,
+            apiName: prepared.selector.apiName,
+            contentType: baseline.contentType,
+            language: prepared.selector.selectedLanguage,
+          },
+          options,
+        );
+        const nativeEvidence: ContentPublishNativeEvidence = {
+          contentType: baseline.contentType,
+          identity: { ...observed.identity, contentType: baseline.contentType },
+          canonicalAuthoringHash: observed.canonicalAuthoringHash,
+          parentLifecycle: observed.parentLifecycle,
+          variantLifecycle: observed.variantLifecycle,
+          references: observed.references,
+          ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+        };
+        const postInventory = await nativeLedger(connection, observed.family.records, options);
+        if (
+          observed.siblings.records.length !== 1 ||
+          observed.family.apiVersion !== prepared.evidence.apiVersion ||
+          connection.instanceUrl !== prepared.evidence.org ||
+          !isDeepStrictEqual(nativeEvidence.identity, baseline.identity) ||
+          nativeEvidence.canonicalAuthoringHash !== baseline.canonicalAuthoringHash ||
+          !isDeepStrictEqual(nativeEvidence.references, baseline.references) ||
+          !isDeepStrictEqual(nativeEvidence.mediaReceipt, baseline.mediaReceipt)
+        )
+          throw new TypeError('Native unpublish readback integrity or binding drifted');
+        const phases = [observed.parentLifecycle, observed.variantLifecycle];
+        if (phases.every((life) => life.isPublished && life.status.status === 'Published')) {
+          if (!isDeepStrictEqual(postInventory, prepared.inventoryBaseline))
+            throw new TypeError('Native unpublish still-Published inventory drifted');
+          continue;
+        }
+        if (
+          !phases.every((life) => !life.isPublished && life.status.status === 'Draft') ||
+          !isDeepStrictEqual(postInventory, expectedInventory)
+        )
+          throw new TypeError('Native unpublish Draft readback inventory drifted');
+        return {
+          ...prepared.evidence,
+          deploymentId,
+          ...(unpublishDate === undefined ? {} : { unpublishDate }),
+          nativeEvidence,
+          lifecycle: { isPublished: false, status: 'Draft' },
+          inventory: postInventory,
+          siblingInventory: expectedSiblings,
+          postUnpublishHash: nativeEvidence.canonicalAuthoringHash,
+        };
+      }
       const post = await resolve(connection, prepared.selector, options);
       parentIdentity(
         await getContent(connection, prepared.snapshot.contentId, {}, options),
@@ -512,7 +839,14 @@ export async function applyPublishedEmailUnpublishWithReport(
   input: EmailUnpublishInput,
   reportDirectory: string,
   options: { rewriteReport?: typeof rewriteAtomic } = {},
-): Promise<{ evidence: EmailUnpublishCompletedEvidence; reportFile: string }> {
+): Promise<
+  { evidence: EmailUnpublishCompletedEvidence; reportFile: string } & EmailLifecycleLocalCompletion
+> {
+  const projectRoot = input.projectRoot === undefined ? undefined : path.resolve(input.projectRoot);
+  if (input.selector.contentType !== undefined && input.selector.contentType !== EMAIL_TYPE)
+    throw new EmailUnpublishPreflightBlockedError(
+      'Native content unpublish execution admission is not enabled',
+    );
   const directory = path.resolve(reportDirectory);
   try {
     await stat(directory);
@@ -527,9 +861,16 @@ export async function applyPublishedEmailUnpublishWithReport(
         error,
       );
   }
-  let prepared: Prepared;
+  let prepared: PreparedEmailUnpublish;
+  let inspection: Awaited<ReturnType<typeof inspectEmailLifecycleLocalSource>>;
   try {
     prepared = await prepare(connection, input);
+    inspection = await inspectEmailLifecycleLocalSource(
+      connection,
+      projectRoot,
+      prepared.snapshot,
+      prepared.requestOptions,
+    );
   } catch (error) {
     const found = blocker(error);
     if (!found) throw error;
@@ -544,6 +885,36 @@ export async function applyPublishedEmailUnpublishWithReport(
     );
   }
   const reportFile = path.join(directory, 'content-unpublish-run.json');
+  const completed = await executeWithReport(
+    connection,
+    prepared,
+    reportFile,
+    options,
+    undefined,
+    directory,
+  );
+  const local = await completeEmailLifecycleLocalSource(
+    'unpublish',
+    projectRoot,
+    inspection,
+    prepared.snapshot,
+    reportFile,
+    options.rewriteReport,
+  );
+  return { ...completed, ...local };
+}
+
+async function executeWithReport(
+  connection: RequestConnection,
+  prepared: PreparedEmailUnpublish,
+  reportFile: string,
+  options: {
+    rewriteReport?: typeof rewriteAtomic;
+    expectedInventory?: readonly LifecycleInventoryEntry[];
+  },
+  beforeDispatch?: () => Promise<PreparedEmailUnpublish>,
+  cleanupDirectory?: string,
+): Promise<{ evidence: EmailUnpublishCompletedEvidence; reportFile: string }> {
   const rewrite = options.rewriteReport ?? rewriteAtomic;
   const pending = {
     contract: 'sf-cms-email-unpublish-run',
@@ -559,6 +930,9 @@ export async function applyPublishedEmailUnpublishWithReport(
     },
     intent: { includeContentReferencesOmitted: true, selectorScope: 'parent' },
     evidence: prepared.evidence,
+    ...(options.expectedInventory === undefined
+      ? {}
+      : { expectedInventory: options.expectedInventory }),
     reconciliation: {
       contentId: prepared.snapshot.contentId,
       variantId: prepared.snapshot.variantId,
@@ -569,7 +943,7 @@ export async function applyPublishedEmailUnpublishWithReport(
     await rewrite(reportFile, pending);
   } catch (error) {
     try {
-      await rmdir(directory);
+      if (cleanupDirectory !== undefined) await rmdir(cleanupDirectory);
     } catch {
       /* Best effort only. */
     }
@@ -579,8 +953,31 @@ export async function applyPublishedEmailUnpublishWithReport(
     );
   }
   try {
-    const evidence = await execute(connection, prepared, reportFile, input.requestOptions ?? {});
+    const current = beforeDispatch === undefined ? prepared : await beforeDispatch();
+    const evidence = await execute(connection, current, reportFile, current.requestOptions ?? {});
     try {
+      if (evidence.nativeEvidence !== undefined)
+        assertContentUnpublishResult({
+          mode: 'apply',
+          outcome: 'completed',
+          target: pending.target,
+          evidence: {
+            selectorScope: 'parent',
+            includeContentReferencesOmitted: true,
+            activeUseStopsAcknowledged: true,
+            baselineHash: evidence.baselineHash,
+            postUnpublishHash: evidence.postUnpublishHash,
+            deploymentId: evidence.deploymentId,
+            ...(evidence.unpublishDate === undefined
+              ? {}
+              : { unpublishDate: evidence.unpublishDate }),
+            nativeEvidence: evidence.nativeEvidence,
+            inventory: evidence.inventory,
+            siblingInventory: evidence.siblingInventory,
+          },
+          blockers: [],
+          reportFile,
+        });
       await rewrite(reportFile, { ...pending, evidence, state: 'completed' });
     } catch (error) {
       throw new EmailUnpublishOutcomeUnknownError(

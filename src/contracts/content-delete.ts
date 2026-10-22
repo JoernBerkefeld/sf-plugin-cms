@@ -53,7 +53,13 @@ export function assertContentDeleteResult(
     if (
       value.mode !== 'execute' ||
       value.execution.report.state === 'applying' ||
-      value.outcome !== value.execution.report.state ||
+      value.outcome !==
+        (value.execution.report.operations.some(
+          ({ localSource }) =>
+            localSource?.outcome === 'blocked' || localSource?.outcome === 'partial',
+        )
+          ? 'partial'
+          : value.execution.report.state) ||
       value.execution.report.workspaceId !== value.workspaceId ||
       JSON.stringify(value.targets) !==
         JSON.stringify(value.execution.report.operations.map(({ target }) => target))

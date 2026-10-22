@@ -1,6 +1,7 @@
 import { assertExactKeys, assertNonemptyString } from './shared.js';
 import type { NativeDeleteTarget } from '../services/delete-native-resolution.js';
 import { RETRIEVE_CONTENT_TYPES } from '../services/retrieve-selection.js';
+import type { LifecycleLocalDeletionResult } from '../services/lifecycle-local-source.js';
 
 export type NativeDeleteOperation = {
   target: NativeDeleteTarget;
@@ -8,6 +9,7 @@ export type NativeDeleteOperation = {
   exactVariantAbsent?: true;
   parentBehavior?: 'present' | 'not-found';
   error?: string;
+  localSource?: LifecycleLocalDeletionResult;
 };
 export type NativeDeleteReport = {
   runId: string;
@@ -55,6 +57,7 @@ export function assertNativeDeleteResult(value: unknown): asserts value is Nativ
         ...(operation.exactVariantAbsent === undefined ? [] : ['exactVariantAbsent']),
         ...(operation.error === undefined ? [] : ['error']),
         ...(operation.parentBehavior === undefined ? [] : ['parentBehavior']),
+        ...(operation.localSource === undefined ? [] : ['localSource']),
       ],
       'operation',
     );
@@ -114,6 +117,42 @@ export function assertNativeDeleteResult(value: unknown): asserts value is Nativ
     )
       throw new TypeError('Invalid parent observation');
     if (operation.error !== undefined) assertNonemptyString(operation.error, 'error');
+    if (operation.localSource !== undefined) {
+      const local = operation.localSource;
+      assertExactKeys(
+        local,
+        [
+          'outcome',
+          'removed',
+          'remaining',
+          ...(record(local) && local.message !== undefined ? ['message'] : []),
+        ],
+        'localSource',
+      );
+      if (
+        operation.state !== 'completed' ||
+        !['noop', 'deleted', 'blocked', 'partial'].includes(String(local.outcome)) ||
+        !Array.isArray(local.removed) ||
+        !Array.isArray(local.remaining)
+      )
+        throw new TypeError('Invalid local delete evidence');
+      for (const file of [...local.removed, ...local.remaining])
+        assertNonemptyString(file, 'local source file');
+      if (
+        new Set([...local.removed, ...local.remaining]).size !==
+          local.removed.length + local.remaining.length ||
+        (local.outcome === 'noop' && (local.removed.length > 0 || local.remaining.length > 0)) ||
+        (local.outcome === 'deleted' &&
+          (local.removed.length === 0 || local.remaining.length > 0)) ||
+        (local.outcome === 'blocked' && local.removed.length > 0) ||
+        (local.outcome === 'partial' &&
+          (local.removed.length === 0 || local.remaining.length === 0))
+      )
+        throw new TypeError('Invalid local delete file outcomes');
+      if (local.message !== undefined) assertNonemptyString(local.message, 'localSource.message');
+      if (['blocked', 'partial'].includes(String(local.outcome)) && local.message === undefined)
+        throw new TypeError('Local delete failure requires a diagnostic');
+    }
   }
   const states = report.operations.map((operation: NativeDeleteOperation) => operation.state);
   const stop = states.findIndex((state: string) => state !== 'completed');
