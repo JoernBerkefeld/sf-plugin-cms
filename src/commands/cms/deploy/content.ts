@@ -215,6 +215,8 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         },
         result,
       };
+      if (result.blockedReasons.length > 0)
+        this.logDiagnosticError('Deployment stopped', result.blockedReasons);
       if (!this.jsonEnabled()) {
         this.log(
           result.mode === 'preview'
@@ -222,15 +224,11 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
             : `Deploy execution: ${status}; created ${result.summary.created}, updated ${result.summary.updated}, unchanged ${result.summary.unchanged}, failed ${result.summary.failed}, uncertain ${result.summary.uncertain}, unattempted ${result.summary.unattempted}. Capability unqualified.`,
         );
         if (result.reportFile) this.log(`Run report: ${result.reportFile}`);
-        for (const reason of result.blockedReasons) this.log(reason);
-        for (const item of result.items) {
-          this.log(`${item.source.definitionPath}: ${item.proposed} (unqualified)`);
-          if ('blockedReasons' in item) for (const reason of item.blockedReasons) this.log(reason);
-          if ('outcome' in item)
-            this.log(
-              `${item.outcome}${'reportFile' in item && item.reportFile ? `: ${item.reportFile}` : ''}`,
-            );
-        }
+        if (result.blockedReasons.length > 0)
+          this.log('Deployment stopped. See the invocation log for technical details.');
+        if (result.mode === 'preview')
+          for (const [index, item] of result.items.entries())
+            this.log(`Item ${index + 1}: ${item.proposed} (unqualified)`);
       }
       return this.finishEnvelope(envelope, assertDeployContentResult);
     };
@@ -313,6 +311,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
           workspaceId: workspace.id,
           language: language as string,
           destinationOrgId: context.orgId,
+          onOutcome: this.mutationOutcomeObserver(),
           ...(result.reportFile ? { reportFile: result.reportFile } : {}),
         });
         const report = structuredClone(applied.report);

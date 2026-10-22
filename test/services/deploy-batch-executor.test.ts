@@ -478,6 +478,146 @@ async function audioBoundaryFixture(
   return { ...f, companion, audioFile, definition };
 }
 
+describe('batch live outcomes', () => {
+  afterEach(() => sinon.restore());
+  for (const reporting of [false, true]) {
+    it(`emits a settled prefix before later dispatch and an untouched suffix, reporting ${reporting}`, async () => {
+      const f = await fixture(false, false, false, false, reporting);
+      f.fail('Beta');
+      const events: Array<{ state: string; ordinal: number }> = [];
+      f.onRead(async () => {
+        if (f.mutations.includes('Beta'))
+          expect(events[0]).to.include({ state: 'created', ordinal: 1 });
+      });
+      const result = await executeDeployBatch(f.connection, {
+        ...f.input,
+        reportFile: reporting ? f.input.reportFile : undefined,
+        onOutcome: (event) => {
+          events.push(event);
+          if (event.ordinal === 1) expect(f.mutations).to.deep.equal(['Alpha']);
+          throw new Error('Broken diagnostic sink');
+        },
+      });
+      expect(events.map(({ state }) => state)).to.deep.equal([
+        'created',
+        'uncertain',
+        'unattempted',
+      ]);
+      expect(events.map(({ ordinal }) => ordinal)).to.deep.equal([1, 2, 3]);
+      expect(result.report.items.map(({ outcome }) => outcome)).to.deep.equal([
+        'created',
+        'uncertain',
+        'unattempted',
+      ]);
+      expect(f.mutations).to.deep.equal(['Alpha', 'Beta']);
+    });
+  }
+  it('reports an untouched selection when the first durable batch write fails', async () => {
+    const f = await fixture();
+    const events: string[] = [];
+    await executeDeployBatch(
+      f.connection,
+      { ...f.input, onOutcome: (event) => events.push(event.state) },
+      {},
+      {
+        rewrite: async () => {
+          throw new Error('Initial batch persistence unavailable');
+        },
+      },
+    );
+    expect(events).to.deep.equal(['unattempted', 'unattempted', 'unattempted']);
+    expect(f.mutations).to.deep.equal([]);
+  });
+  it('retains verified remote success when final item persistence fails without changing JSON classification', async () => {
+    const f = await fixture();
+    const events: string[] = [];
+    const result = await executeDeployBatch(
+      f.connection,
+      {
+        ...f.input,
+        onOutcome: (event) => events.push(event.state),
+      },
+      {},
+      {
+        rewrite: rewriteAtomic,
+        item: {
+          rewrite: async (file, report) => {
+            if (report.state === 'completed') throw new Error('Completion persistence failed');
+            await rewriteAtomic(file, report);
+          },
+        },
+      },
+    );
+    expect(events).to.deep.equal(['remote-completed-report-blocked', 'unattempted', 'unattempted']);
+    expect(result.report.items[0].outcome).to.equal('uncertain');
+    expect(f.mutations).to.deep.equal(['Alpha']);
+  });
+  for (const family of ['rawHtml', 'Image', 'Document', 'Audio'] as const) {
+    for (const operation of ['create', 'update'] as const) {
+      it(`retains ${family} ${operation} verification across final persistence failure`, async () => {
+        const existing = operation === 'update';
+        const f =
+          family === 'Audio'
+            ? await audioBoundaryFixture(operation)
+            : await fixture(existing, family !== 'rawHtml', family === 'Document');
+        const index = { rawHtml: 1, Image: 2, Document: 3, Audio: 1 }[family];
+        if (existing && family === 'Image')
+          await writeFile(
+            path.join(f.directory, 'Gamma.cms-image.media.svg'),
+            '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>',
+          );
+        if (existing && family === 'Document') {
+          const definition = JSON.parse(await readFile(f.files[3], 'utf8')) as Row;
+          definition.urlName = 'zulu';
+          await writeFile(f.files[3], JSON.stringify(definition));
+          f.records[2].UrlName = 'zulu';
+          f.details.get('MCKEY4')!.urlName = 'zulu';
+          await writeFile(path.join(f.directory, 'Zulu.cms-document.media.txt'), 'Changed bytes');
+        }
+        const events: Array<{ ordinal: number; state: string }> = [];
+        const result = await executeDeployBatch(
+          f.connection,
+          { ...f.input, onOutcome: (event) => events.push(event) },
+          {},
+          {
+            rewrite: rewriteAtomic,
+            item: {
+              rewrite: async (file, report) => {
+                if (report.state === 'completed' && file.endsWith(`.${index + 1}.json`))
+                  throw new Error('Final completion persistence unavailable');
+                await rewriteAtomic(file, report);
+              },
+            },
+          },
+        );
+        expect(events[index], result.report.blockedReasons.join('; ')).to.include({
+          ordinal: index + 1,
+          state: 'remote-completed-report-blocked',
+        });
+        expect(result.report.items[index].outcome).to.equal('uncertain');
+        expect(events).to.have.length(result.report.items.length);
+      });
+    }
+  }
+  it('emits the completed item and untouched suffix when batch summary persistence fails', async () => {
+    const f = await fixture();
+    const events: string[] = [];
+    await executeDeployBatch(
+      f.connection,
+      { ...f.input, onOutcome: (event) => events.push(event.state) },
+      {},
+      {
+        rewrite: async (file, report) => {
+          if (report.summary.completed) throw new Error('Summary unavailable');
+          await rewriteAtomic(file, report);
+        },
+      },
+    );
+    expect(events).to.deep.equal(['remote-completed-report-blocked', 'unattempted', 'unattempted']);
+    expect(f.mutations).to.deep.equal(['Alpha']);
+  });
+});
+
 describe('batch live and disk evidence routing', () => {
   afterEach(() => sinon.restore());
   for (const reporting of [false, true]) {

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { JsonRequestOptions } from '../transport/json-request.js';
+import { notifyMutationOutcome, type MutationOutcomeObserver } from '../mutation-outcome.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
 import { executeDeployCreate } from './deploy-create-executor.js';
@@ -45,6 +46,7 @@ export type ExecuteDeployBatchInput = DeployBatchPreflightInput & {
   destinationOrgId: string;
   /** Optional exclusive new batch journal, in an existing caller-owned directory. Never resumed. */
   reportFile?: string;
+  onOutcome?: MutationOutcomeObserver;
 };
 export type DeployBatchReport = {
   qualification: 'unqualified';
@@ -517,7 +519,8 @@ export async function executeDeployBatch(
   options: JsonRequestOptions = {},
   persistence?: DeployBatchPersistence,
 ): Promise<{ qualification: 'unqualified'; reportFile?: string; report: DeployBatchReport }> {
-  const selected = structuredClone(input);
+  const { onOutcome, ...serializableInput } = input;
+  const selected = structuredClone(serializableInput);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Batch requires exact destination org ID');
@@ -601,15 +604,43 @@ export async function executeDeployBatch(
   };
   let active: DeployBatchReport['items'][number] | undefined;
   let activeReport: WorkspaceImportRunReport | undefined;
+  let verifiedReport: WorkspaceImportRunReport | undefined;
+  let emitted = 0;
+  const emit = (index: number, state: string, evidence?: WorkspaceImportRunReport): void => {
+    const item = report.items[index];
+    const created = evidence?.createdParents[0];
+    const returned = evidence?.operations[0]?.result ?? item.returned;
+    notifyMutationOutcome(onOutcome, {
+      operation: 'deploy',
+      ordinal: index + 1,
+      label: item.source.definition.title ?? item.source.targetIdentity.apiName,
+      language: selected.language,
+      state,
+      target: {
+        workspaceId: selected.workspaceId,
+        contentId: item.target?.contentId ?? created?.contentId ?? returned?.contentId,
+        variantId: item.target?.variantId ?? created?.primaryVariantId ?? returned?.variantId,
+      },
+      reportFile: item.reportFile,
+      diagnostics: report.blockedReasons.map((message) => ({ code: 'DEPLOY_STOPPED', message })),
+    });
+    emitted = index + 1;
+  };
   const onReport = (current: WorkspaceImportRunReport) => {
     activeReport = current;
+    if (current.state === 'completed' && current.operations.every((op) => op.state === 'succeeded'))
+      verifiedReport = structuredClone(current);
   };
   try {
-    if (!baseline.eligible) return { qualification: 'unqualified', reportFile, report };
+    if (!baseline.eligible) {
+      for (const [index] of report.items.entries()) emit(index, 'unattempted');
+      return { qualification: 'unqualified', reportFile, report };
+    }
     if (reportFile !== undefined) await rewrite(reportFile, report);
     for (const [index, item] of report.items.entries()) {
       active = undefined;
       activeReport = undefined;
+      verifiedReport = undefined;
       const scope = {
         definitionFile: item.source.definitionPath,
         workspaceId: selected.workspaceId,
@@ -917,6 +948,7 @@ export async function executeDeployBatch(
       active = undefined;
       recount();
       if (reportFile !== undefined) await rewrite(reportFile, report);
+      emit(index, item.outcome);
     }
     report.state = 'completed';
     if (reportFile !== undefined) await rewrite(reportFile, report);
@@ -965,6 +997,17 @@ export async function executeDeployBatch(
         'Batch summary persistence failed; inspect per-item journals before any new run',
       );
     }
+  }
+  for (let index = emitted; index < report.items.length; index += 1) {
+    const item = report.items[index];
+    const confirmed = item === active ? verifiedReport : undefined;
+    emit(
+      index,
+      confirmed || ['created', 'updated', 'unchanged'].includes(item.outcome)
+        ? 'remote-completed-report-blocked'
+        : item.outcome,
+      confirmed,
+    );
   }
   return { qualification: 'unqualified', reportFile, report };
 }

@@ -257,6 +257,7 @@ async function runDocumentUpdate(
         throw new TypeError('Document UPDATE destination drifted during readback');
       operation.state = 'succeeded';
       report.state = 'completed';
+      onReport?.(report);
       if (reportFile !== undefined) await rewrite(reportFile, report);
     }
     return { qualification: 'unqualified' as const, reportFile, report, preflight: fresh };

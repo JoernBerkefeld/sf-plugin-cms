@@ -492,6 +492,7 @@ describe('cms deploy content command', () => {
           workspaceId: 'resolved-destination',
           language: 'en_US',
           destinationOrgId: '00D000000000001EAA',
+          onOutcome: s.executeBatch.firstCall.args[1].onOutcome,
           reportFile,
         },
       ]);
@@ -619,6 +620,58 @@ describe('cms deploy content command', () => {
     expect(await readFile(path.join(directory, 'winner'), 'utf8')).to.equal('preserve');
   });
 
+  for (const json of [false, true]) {
+    it(`delivers live deploy progress without leaking technical failures, JSON ${json}`, async () => {
+      const s = command({ preview: false });
+      Object.assign(s.instance, { jsonEnabled: () => json });
+      s.executeBatch.callsFake(
+        async (_connection: unknown, input: { onOutcome: (event: unknown) => void }) => {
+          for (const [index, state] of ['created', 'uncertain', 'unattempted'].entries())
+            input.onOutcome({
+              operation: 'deploy',
+              state,
+              ordinal: index + 1,
+              label: ['Alpha', 'Beta', 'Charlie'][index],
+              language: 'en_US',
+              target: { contentId: '20Y000000000001AAA' },
+              diagnostics: [
+                { code: 'TECHNICAL', message: 'private remote failure password=secret-value' },
+              ],
+            });
+          return {
+            report: {
+              state: 'partial',
+              selection: { mode: 'source-dir', items: [source] },
+              blockedReasons: ['private remote failure password=secret-value'],
+              items: [{ source, proposed: 'create', outcome: 'uncertain' }],
+              summary: {
+                selected: 1,
+                created: 0,
+                updated: 0,
+                unchanged: 0,
+                completed: 0,
+                failed: 0,
+                uncertain: 1,
+                unattempted: 0,
+              },
+            },
+          };
+        },
+      );
+      const result = await s.instance.run();
+      expect(result.status).to.equal('partial');
+      const text = s.log.args.flat().join('\n');
+      expect(text).not.to.match(
+        /20Y000000000001AAA|private remote failure|secret-value|local.json/u,
+      );
+      if (json) expect(text).to.equal('');
+      else {
+        expect(text).to.include('deploy: Alpha (en_US) — created');
+        expect(text).to.include('deploy: Beta (en_US) — uncertain');
+        expect(text).to.include('deploy: Charlie (en_US) — unattempted');
+      }
+    });
+  }
   it('reports pre-journal executor exceptions as blocked without false completed writes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'cms-deploy-prejournal-'));
     const directory = path.join(root, 'reports');

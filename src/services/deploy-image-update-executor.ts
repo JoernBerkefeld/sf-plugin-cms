@@ -228,6 +228,7 @@ export async function executeDeployImageUpdate(
       throw new TypeError('Image UPDATE destination drifted during readback');
     operation.state = 'succeeded';
     report.state = 'completed';
+    onReport?.(report);
     if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {

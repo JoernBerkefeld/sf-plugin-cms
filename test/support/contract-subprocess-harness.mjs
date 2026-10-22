@@ -361,6 +361,7 @@ if (
   if (
     contractCase.startsWith('native-delete-') ||
     contractCase.startsWith('audio-deploy-') ||
+    contractCase === 'deploy-live-outcomes' ||
     contractCase.startsWith('image-upload-') ||
     contractCase.startsWith('email-publish-') ||
     contractCase.startsWith('email-unpublish-') ||
@@ -463,6 +464,74 @@ if (
         },
       },
     });
+  }
+  if (contractCase === 'deploy-live-outcomes') {
+    const { default: Command } = await import(
+      pathToFileURL(path.join(pluginRoot, 'lib/commands/cms/deploy/content.js'))
+    );
+    const sources = ['Alpha', 'Beta', 'Charlie'].map((title) => ({
+      definitionPath: `technical-private/${title}.json`,
+      companionPaths: [],
+      definition: { title },
+      targetIdentity: { apiName: title, language: 'en_US' },
+    }));
+    Command.prototype.getOrgContext = async () => ({ orgId: '00D000000000001AAA', connection: {} });
+    const resolveDestinationWorkspace = async () => ({
+      id: '0Zu000000000001AAA',
+      workspace: { defaultLanguage: 'en_US' },
+    });
+    const selectSources = async () => ({ mode: 'source-dir', items: sources });
+    const executeBatch = async (_connection, input) => {
+      const outcomes = ['created', 'uncertain', 'unattempted'];
+      const items = sources.map((source, index) => ({
+        source,
+        proposed: 'create',
+        outcome: outcomes[index],
+      }));
+      for (const [index, item] of items.entries())
+        input.onOutcome({
+          operation: 'deploy',
+          ordinal: index + 1,
+          label: item.source.definition.title,
+          language: input.language,
+          state: item.outcome,
+          target: { workspaceId: input.workspaceId, contentId: '20Y000000000001AAA' },
+          diagnostics: [
+            { code: 'CONTROLLED', message: 'technical failure password=packed-secret' },
+          ],
+        });
+      return {
+        qualification: 'unqualified',
+        report: {
+          qualification: 'unqualified',
+          runId: 'controlled',
+          destinationOrgId: input.destinationOrgId,
+          workspaceId: input.workspaceId,
+          language: input.language,
+          selection: { mode: 'source-dir', items: sources },
+          state: 'partial',
+          blockedReasons: ['technical failure; inspect invocation outcome diagnostics'],
+          items,
+          summary: {
+            selected: 3,
+            created: 1,
+            updated: 0,
+            unchanged: 0,
+            completed: 1,
+            failed: 0,
+            uncertain: 1,
+            unattempted: 1,
+          },
+        },
+      };
+    };
+    const originalRun = Command.prototype.run;
+    Command.prototype.run = async function () {
+      this.selectSources = selectSources;
+      this.resolveDestinationWorkspace = resolveDestinationWorkspace;
+      this.executeBatch = executeBatch;
+      return originalRun.call(this);
+    };
   }
   if (contractCase === 'audio-deploy-preview') {
     // Real installed parser, selector and CREATE preflight; controlled transport, no org calls.
@@ -1513,7 +1582,11 @@ if (
     });
     process.stdout.write(JSON.stringify(result));
   } else {
-    if (contractCase !== 'audio-deploy-preview' && !contractCase.startsWith('native-delete-'))
+    if (
+      contractCase !== 'audio-deploy-preview' &&
+      contractCase !== 'deploy-live-outcomes' &&
+      !contractCase.startsWith('native-delete-')
+    )
       throw new Error(`Unknown contract subprocess case: ${contractCase}`);
   }
 }

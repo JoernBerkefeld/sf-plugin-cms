@@ -265,6 +265,7 @@ export async function executeDeployAudioUpdate(
     checkCancellation();
     operation.state = 'succeeded';
     report.state = 'completed';
+    onReport?.(report);
     if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {

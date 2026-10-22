@@ -239,6 +239,7 @@ export async function executeDeployImageCreate(
     report.createdParents.push({ ...created, childVariantIds: [] });
     operation.state = 'succeeded';
     report.state = 'completed';
+    onReport?.(report);
     if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };
   } catch (error) {

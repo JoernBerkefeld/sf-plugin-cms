@@ -178,6 +178,7 @@ export async function executeDeployCreate(
     report.createdParents.push(created);
     operation.state = 'succeeded';
     report.state = 'completed';
+    onReport?.(report);
     // Captured identities, persisted when requested, must survive completion failure.
     if (reportFile !== undefined) await rewrite(reportFile, report);
     return { qualification: 'unqualified', reportFile, report };

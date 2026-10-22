@@ -276,6 +276,52 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     });
   }
 
+  it('keeps installed deploy live outcomes readable and JSON stdout pure', async function () {
+    this.timeout(300_000);
+    const argv = [
+      'cms',
+      'deploy',
+      'content',
+      '--api-version',
+      '67.0',
+      '-o',
+      'unused',
+      '-w',
+      '0Zu000000000001AAA',
+      '-l',
+      'en_US',
+      '-d',
+      'controlled.json',
+    ];
+    for (const json of [false, true]) {
+      const args = [...argv, ...(json ? ['--json'] : [])];
+      const result = await runSf(args, 'deploy-live-outcomes');
+      expect(result.exitCode, result.stdout + result.stderr).to.equal(2);
+      const records = await invocationRecords(result, args);
+      const outcomes = records.filter(({ message }) => message === 'mutation item outcome');
+      expect(outcomes.map(({ details }) => details?.state)).to.deep.equal([
+        'created',
+        'uncertain',
+        'unattempted',
+      ]);
+      expect(outcomes[0].details?.target).to.deep.include({ contentId: '20Y000000000001AAA' });
+      expect(JSON.stringify(records)).not.to.include('packed-secret');
+      if (json) {
+        const envelope = parseEnvelope(result);
+        expect(envelope.contract).to.equal('sf-cms-content-deploy');
+        expect(envelope.status).to.equal('partial');
+        expect(result.stdout).to.equal(`${JSON.stringify(envelope, null, 2)}\n`);
+      } else {
+        expect(result.stdout).to.include('deploy: Alpha (en_US) — created');
+        expect(result.stdout).to.include('deploy: Beta (en_US) — uncertain');
+        expect(result.stdout).to.include('deploy: Charlie (en_US) — unattempted');
+        expect(result.stdout).not.to.match(
+          /20Y000000000001AAA|technical-private|technical failure|packed-secret/u,
+        );
+      }
+    }
+  });
+
   for (const [alias, canonical, evidence] of [
     ['retrieve', 'retrieve content', '--metadata'],
     ['deploy', 'deploy content', '--source-dir'],
