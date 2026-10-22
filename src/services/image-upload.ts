@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { notifyMutationOutcome } from '../mutation-outcome.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
@@ -490,6 +491,24 @@ export async function applyImageUpload(
     }
   };
   let mutationUncertain = false;
+  let emitted = 0;
+  const emit = (index: number, state: string): void => {
+    const operation = report.operations[index];
+    notifyMutationOutcome(options.onOutcome, {
+      operation: 'upload',
+      ordinal: index + 1,
+      label: operation.file.title,
+      state,
+      target: {
+        workspaceId: report.root.workspaceId,
+        contentId: operation.binding?.managedContentId,
+        variantId: operation.binding?.managedContentVariantId,
+      },
+      reportFile: reportFile ?? undefined,
+      diagnostics: report.error ? [{ code: 'IMAGE_UPLOAD_STOPPED', message: report.error }] : [],
+    });
+    emitted = index + 1;
+  };
   try {
     await revalidateUpload(preparation, options.services);
     for (const [index, operation] of report.operations.entries()) {
@@ -550,6 +569,7 @@ export async function applyImageUpload(
       report.state = 'applying';
       await rewrite();
       mutationUncertain = false;
+      emit(index, 'created');
     }
     report.state = 'completed';
     await rewrite();
@@ -559,6 +579,16 @@ export async function applyImageUpload(
       0,
       1024,
     );
+    const activeIndex = emitted;
+    for (let index = activeIndex; index < report.operations.length; index += 1) {
+      const operation = report.operations[index];
+      let state = 'unattempted';
+      if (index === activeIndex) {
+        state = mutationUncertain ? 'ownership-uncertain' : 'failed';
+        if (operation.state === 'succeeded') state = 'remote-completed-report-blocked';
+      }
+      emit(index, state);
+    }
     try {
       await rewrite();
     } catch {

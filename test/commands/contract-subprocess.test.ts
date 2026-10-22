@@ -716,7 +716,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(events.slice(1).every(({ method }) => method === 'GET')).to.equal(true);
     const human = await runSf([...common, '--file', names[0], '--preview'], 'image-upload-preview');
     expect(human.exitCode, human.stdout + human.stderr).to.equal(0);
-    expect(human.stdout).to.include('Destination root folder: root');
+    expect(human.stdout).not.to.include('Destination root folder:');
+    expect(human.stdout).to.include('ready to create');
     expect(human.stdout).to.include('Banner with spaces.PNG: 9 bytes');
     const execution = await runSf(
       [

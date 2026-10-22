@@ -110,6 +110,17 @@ describe('Live lifecycle mutation outcomes', () => {
         expect(technical.firstCall.args[2].reportFile).to.equal('report-secret');
         expect(JSON.stringify(technical.firstCall.args)).not.to.include('SECRET');
       });
+  it('delivers already-redacted nested diagnostics without dropping the outcome', () => {
+    const observer = sinon.spy();
+    notifyMutationOutcome(observer, {
+      ...event,
+      operation: 'upload',
+      diagnostics: [{ code: 'STOP', message: 'timeout password=[REDACTED]' }],
+    });
+    expect(observer.calledOnce).to.equal(true);
+    expect(observer.firstCall.args[0].diagnostics[0].message).to.include('[REDACTED]');
+    expect(observer.firstCall.args[0].operation).to.equal('upload');
+  });
   it('does not let failed technical or terminal sinks alter outcomes', () => {
     const command = Object.create(OutcomeCommand.prototype) as OutcomeCommand;
     const log = sinon.stub().throws(new Error('terminal'));

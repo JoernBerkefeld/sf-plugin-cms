@@ -1,8 +1,8 @@
-import { redactSecrets } from './transport/redact-secrets.js';
+import { redactLogValue, redactSecrets } from './transport/redact-secrets.js';
 
 /** Detached diagnostic fields only; never an execution report or request payload. */
 export type MutationOutcome = Readonly<{
-  operation: 'publish' | 'unpublish';
+  operation: 'publish' | 'unpublish' | 'upload';
   state: string;
   ordinal: number;
   label?: string;
@@ -42,7 +42,7 @@ export function notifyMutationOutcome(
       reportFile: event.reportFile,
       diagnostics: event.diagnostics?.map(({ code, message }) => ({ code, message })),
     };
-    observer?.(JSON.parse(redactSecrets(JSON.stringify(detached))) as MutationOutcome);
+    observer?.(redactLogValue(detached) as MutationOutcome);
   } catch {
     // Diagnostics must not change outcomes or replay mutations.
   }

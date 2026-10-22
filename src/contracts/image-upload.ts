@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import type { MutationOutcomeObserver } from '../mutation-outcome.js';
 import { assertExactKeys, assertNonemptyString, assertSha256 } from './shared.js';
 import { assertMediaMimeType } from '../services/editable-media-source.js';
 
@@ -198,6 +199,7 @@ export type ImageUploadApplyOptions = {
   readonly connection: Pick<Connection, 'request'>;
   readonly reportDirectory?: string;
   readonly reportFile?: string;
+  readonly onOutcome?: MutationOutcomeObserver;
   readonly createOptions?: MultipartImageCreateOptions;
   readonly reportPersistence?: {
     readonly rewrite: (file: string, report: ImageUploadReport) => Promise<void>;

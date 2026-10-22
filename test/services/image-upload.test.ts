@@ -14,6 +14,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import type { ImageUploadReadServices } from '../../src/contracts/image-upload.js';
+import type { MutationOutcome } from '../../src/mutation-outcome.js';
 import {
   applyImageUpload,
   ImageUploadApplyError,
@@ -99,6 +100,125 @@ describe('no-JSON image upload preparation', () => {
     });
     return { preparation, services, connection: { request }, reportDirectory, request, detail };
   }
+
+  it('emits verified creation before the next dispatch and retains the uncertain suffix without reports', async () => {
+    const options = await execution();
+    const third = await prepareImageUpload(
+      { workspaceId: 'space', files: [await file('third.png')] },
+      options.services,
+    );
+    const preparation = {
+      ...options.preparation,
+      intents: [...options.preparation.intents, ...third.intents],
+    };
+    const outcomes: MutationOutcome[] = [];
+    options.request.callsFake(async () => {
+      if (options.request.callCount === 1)
+        return {
+          contentKey: 'key',
+          managedContentId: 'parent',
+          managedContentVariantId: 'variant',
+        };
+      expect(outcomes.map(({ state }) => state)).to.deep.equal(['created']);
+      throw new Error('timeout password=SECRET');
+    });
+    await rejected(
+      applyImageUpload({
+        preparation,
+        services: options.services,
+        connection: options.connection,
+        onOutcome: (event) => {
+          outcomes.push(event);
+        },
+      }),
+      'timeout',
+    );
+    expect(outcomes.map(({ state }) => state)).to.deep.equal([
+      'created',
+      'ownership-uncertain',
+      'unattempted',
+    ]);
+    expect(outcomes.map(({ ordinal }) => ordinal)).to.deep.equal([1, 2, 3]);
+    expect(outcomes[0].target?.contentId).to.equal('parent');
+    expect(JSON.stringify(outcomes)).not.to.include('SECRET');
+    expect(options.request.callCount).to.equal(2);
+    expect(await readdir(directory)).not.to.include('report');
+  });
+
+  it('isolates a throwing outcome sink after verified success without replay', async () => {
+    const options = await execution();
+    options.request.resolves({
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    });
+    const sink = sinon.stub().throws(new Error('sink failed'));
+    const result = await applyImageUpload({
+      preparation: { ...options.preparation, intents: options.preparation.intents.slice(0, 1) },
+      services: options.services,
+      connection: options.connection,
+      onOutcome: sink,
+    });
+    expect(result.report.state).to.equal('completed');
+    expect(sink.calledOnce).to.equal(true);
+    expect(options.request.calledOnce).to.equal(true);
+  });
+
+  it('distinguishes verified remote completion from report failure without changing public evidence', async () => {
+    const options = await execution();
+    options.request.resolves({
+      contentKey: 'key',
+      managedContentId: 'parent',
+      managedContentVariantId: 'variant',
+    });
+    const outcomes: MutationOutcome[] = [];
+    let failure: ImageUploadApplyError | undefined;
+    try {
+      await applyImageUpload({
+        ...options,
+        onOutcome: (event) => {
+          outcomes.push(event);
+        },
+        reportPersistence: {
+          rewrite: async (destination, report) => {
+            if (report.operations[0].state === 'succeeded') throw new Error('report unavailable');
+            await rewriteAtomic(destination, report);
+          },
+        },
+      });
+    } catch (error) {
+      failure = error as ImageUploadApplyError;
+    }
+    expect(failure).to.be.instanceOf(ImageUploadApplyError);
+    expect(failure!.report.state).to.equal('ownership-uncertain');
+    expect(failure!.report.operations[0].state).to.equal('succeeded');
+    expect(outcomes.map(({ state }) => state)).to.deep.equal([
+      'remote-completed-report-blocked',
+      'unattempted',
+    ]);
+    expect(options.request.calledOnce).to.equal(true);
+  });
+
+  it('reports pre-dispatch failure and an untouched suffix without claiming remote writes', async () => {
+    const options = await execution();
+    options.services.getWorkspace = sinon
+      .stub()
+      .resolves({ ...workspace, rootFolderId: 'changed' });
+    const outcomes: MutationOutcome[] = [];
+    await rejected(
+      applyImageUpload({
+        preparation: options.preparation,
+        services: options.services,
+        connection: options.connection,
+        onOutcome: (event) => {
+          outcomes.push(event);
+        },
+      }),
+      'root changed',
+    );
+    expect(outcomes.map(({ state }) => state)).to.deep.equal(['failed', 'unattempted']);
+    expect(options.request.notCalled).to.equal(true);
+  });
 
   for (const failure of [{ statusCode: 401 }, { statusCode: 429 }, new Error('timeout')]) {
     it(`never retries a failed POST ${JSON.stringify(failure)}`, async () => {

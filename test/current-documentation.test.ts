@@ -58,6 +58,21 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('describes implemented upload progress and current deployment bounds without historical future promises', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    const upload = readme.split('### `sf content upload`')[1].split('\n### ')[0];
+    for (const claim of [
+      'before the next CREATE',
+      'unattempted',
+      'report-persistence failure',
+      'JSON mode suppresses human progress',
+      'preview emits no mutation outcomes',
+    ])
+      expect(upload).to.include(claim);
+    expect(readme).not.to.include('The upcoming **0.19.0**');
+    expect(readme).not.to.include('0.20 qualification and local sync are deferred');
+    expect(readme).to.include('Deploy does not synchronize local lifecycle state');
+  });
   it('documents exact lifecycle metadata versions, reporting and evidence gates', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const lifecycle = readme
@@ -397,8 +412,9 @@ describe('current public documentation', () => {
       'Do not infer native qualification from capability discovery or command availability.',
       'tested 844-byte WAV profile',
       'zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks',
-      '**0.19.0**',
-      'Video deployment remains closed; 0.20 qualification and local sync are deferred.',
+      'Document retrieval, source loading, CREATE and bytes-only UPDATE use API-led format/size admission',
+      'Video deployment remains closed.',
+      'Deploy does not synchronize local lifecycle state',
     ])
       expect(readme, claim).to.include(claim);
     expect(readme).not.to.include(

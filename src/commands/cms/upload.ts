@@ -115,19 +115,10 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
       };
       if (!this.jsonEnabled()) {
         this.log(`Mode: ${result.mode}; outcome: ${result.outcome}`);
-        if (result.target !== null) {
-          this.log(`Destination workspace: ${result.target.workspaceId}`);
-          this.log(`Destination root folder: ${result.target.rootFolderId}`);
-        }
-        for (const intent of result.intents)
-          this.log(
-            `${intent.filename}: ${intent.size} bytes; title=${intent.title}; apiName=${intent.apiName}; urlName=${intent.urlName}`,
-          );
+        if (result.mode === 'preview')
+          for (const intent of result.intents)
+            this.log(`${intent.filename}: ${intent.size} bytes; ready to create`);
         if (result.reportFile !== null) this.log(`Run report: ${result.reportFile}`);
-        for (const operation of result.report?.operations ?? [])
-          this.log(
-            `${operation.file.filename}: ${operation.state}; identities=${JSON.stringify(operation.binding ?? {})}`,
-          );
         for (const error of envelope.diagnostics.errors) this.log(error.message);
       }
       return this.finishEnvelope(envelope, assertImageUploadCommandResult);
@@ -176,6 +167,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
         preparation,
         services: { ...services, getContent: async (id) => getContent(context.connection, id) },
         connection: context.connection,
+        onOutcome: this.mutationOutcomeObserver(),
         ...(directory ? { reportFile: path.join(directory, 'image-upload-run.json') } : {}),
       });
       result = {

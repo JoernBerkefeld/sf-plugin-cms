@@ -107,7 +107,8 @@ describe('cms upload command', () => {
     expect(Object.isFrozen(result.result!.intents)).to.equal(true);
     expect(Object.isFrozen(result.result!.intents[0])).to.equal(true);
     expect(subject.events.every(({ method }) => method === 'GET')).to.equal(true);
-    expect(subject.log.args.flat().join('\n')).to.include('Destination root folder: root');
+    expect(subject.log.args.flat().join('\n')).to.include('ready to create');
+    expect(subject.log.args.flat().join('\n')).not.to.include('Destination root folder:');
     assertImageUploadCommandResult(result.result);
   });
 
@@ -196,8 +197,10 @@ describe('cms upload command', () => {
     expect(await readdir(directory)).to.deep.equal(['Logo.png']);
   });
 
-  it('returns known response identities in human and JSON failures without reporting', async () => {
+  it('keeps known response identities in JSON and technical logs, not human failures', async () => {
     const subject = command([await image()]);
+    const technical = sinon.spy();
+    Object.assign(subject.instance, { invocationLogger: { log: technical } });
     (subject.instance as unknown as { jsonEnabled: sinon.SinonStub }).jsonEnabled.returns(false);
     subject.request.callsFake(async (input: Record<string, unknown>) => {
       subject.events.push(input);
@@ -210,9 +213,40 @@ describe('cms upload command', () => {
     expect(envelope.result!.report!.operations[0].binding).to.deep.equal({
       managedContentId: 'known-parent',
     });
-    expect(subject.log.args.flat().join('\n')).to.include('known-parent');
+    expect(subject.log.args.flat().join('\n')).not.to.include('known-parent');
+    expect(subject.log.args.flat().join('\n')).to.include('ownership-uncertain');
+    const outcome = technical.args.find((args) => args[1] === 'mutation item outcome')!;
+    expect(outcome[2].target.contentId).to.equal('known-parent');
     expect(envelope.result!.reportFile).to.equal(null);
   });
+
+  for (const json of [false, true])
+    it(`logs live upload outcomes without technical terminal dumps JSON=${String(json)}`, async () => {
+      const subject = command([await image(), await image('Second.png')]);
+      (subject.instance as unknown as { jsonEnabled: sinon.SinonStub }).jsonEnabled.returns(json);
+      const technical = sinon.spy();
+      Object.assign(subject.instance, { invocationLogger: { log: technical } });
+      const envelope = await subject.instance.run();
+      const outcomes = technical.args
+        .filter((args) => args[1] === 'mutation item outcome')
+        .map((args) => args[2]);
+      expect(outcomes.map(({ state }) => state)).to.deep.equal([
+        'ownership-uncertain',
+        'unattempted',
+      ]);
+      expect(envelope.result!.report!.operations.map(({ state }) => state)).to.deep.equal([
+        'pending',
+        'planned',
+      ]);
+      expect(JSON.stringify(outcomes)).not.to.include('SECRET');
+      if (json) expect(subject.log.notCalled).to.equal(true);
+      else {
+        expect(subject.log.args.flat().join('\n')).to.include('upload: Second.png — unattempted');
+        expect(subject.log.args.flat().join('\n')).not.to.match(
+          /identities=|Destination root folder|SECRET/,
+        );
+      }
+    });
 
   it('executes without report allocation by default and retains uncertain operation evidence', async () => {
     const subject = command([await image(), await image('Second.png')]);
