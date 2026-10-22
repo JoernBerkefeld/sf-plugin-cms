@@ -1,6 +1,6 @@
 {
   "name": "sf-plugin-cms",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Salesforce CLI plugin for bounded CMS retrieve, deploy, image upload, and Email lifecycle operations",
   "author": {
     "name": "Jörn Berkefeld",
