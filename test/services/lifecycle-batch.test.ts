@@ -14,6 +14,7 @@ import path from 'node:path';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createRunOwnedTemp, createRunOwnedDirectory } from '../../src/filesystem/runOwnedTemp.js';
 import { rewriteAtomic } from '../../src/services/import-workspace.js';
+import type { MutationOutcome } from '../../src/mutation-outcome.js';
 import { normalizeLifecycleMetadata } from '../../src/services/lifecycle-selection.js';
 
 function fixture(operation: LifecycleOperation) {
@@ -166,6 +167,18 @@ describe('Lifecycle sequential metadata executor', () => {
       ).to.equal(true);
       expect(await readdir(root)).to.deep.equal(['reports']);
     });
+    it(`${operation}: isolates observer failure without replay or changing completion`, async () => {
+      const failedSink = await setup();
+      const observer = sinon.stub().throws(new Error('diagnostic sink failure'));
+      const independent = await runLifecycleMetadataBatch(failedSink.current.connection, input(), {
+        mode: 'apply',
+        reportDirectory: failedSink.directory,
+        onOutcome: observer,
+      });
+      expect(independent.status).to.equal('success');
+      expect(failedSink.current.dispatches).to.deep.equal(['a', 'b', 'c']);
+      expect(observer.callCount).to.equal(3);
+    });
     for (const late of ['none', 'drift', 'local-report', 'aggregate-report'] as const)
       it(`${operation}: preserves confirmed remote truth with ${late} local outcome`, async () => {
         const test = await setup();
@@ -189,12 +202,25 @@ describe('Lifecycle sequential metadata executor', () => {
           }
           return rewriteAtomic(file, value);
         };
+        const events: MutationOutcome[] = [];
+        const observedDispatchCounts: number[] = [];
         const result = await runLifecycleMetadataBatch(test.current.connection, input(), {
           mode: 'apply',
           reportDirectory: test.directory,
           projectRoot: root,
           rewriteReport,
+          onOutcome: (event) => {
+            events.push(event);
+            observedDispatchCounts.push(test.current.dispatches.length);
+          },
         });
+        expect(events.map((event) => event.state)).to.deep.equal(
+          late === 'none'
+            ? ['completed', 'completed', 'completed']
+            : ['remote-completed-local-blocked', 'unattempted', 'unattempted'],
+        );
+        expect(observedDispatchCounts).to.deep.equal(late === 'none' ? [1, 2, 3] : [1, 1, 1]);
+        expect(events[0].target?.variantId).to.equal('variant-a');
         expect(result.status).to.equal(late === 'none' ? 'success' : 'partial');
         expect(test.current.dispatches).to.deep.equal(late === 'none' ? ['a', 'b', 'c'] : ['a']);
         expect(result.result.items[0].outcome).to.equal('completed');
@@ -245,10 +271,13 @@ describe('Lifecycle sequential metadata executor', () => {
     it(`${operation}: dry-run delegates preflight without allocating`, async () => {
       const current = fixture(operation);
       const rewriteReport = sinon.stub().rejects(new Error('must not write'));
+      const onOutcome = sinon.spy();
       const result = await runLifecycleMetadataBatch(current.connection, input(), {
         mode: 'dry-run',
         rewriteReport,
+        onOutcome,
       });
+      expect(onOutcome.called).to.equal(false);
       expect(result.status).to.equal('success');
       expect(rewriteReport.called).to.equal(false);
     });
@@ -293,11 +322,18 @@ describe('Lifecycle sequential metadata executor', () => {
             throw new Error('persistence failed');
           return rewriteAtomic(file, value);
         };
+        const events: MutationOutcome[] = [];
         const result = await runLifecycleMetadataBatch(test.current.connection, input(), {
           mode: 'apply',
           reportDirectory: failure === 'allocation' ? path.dirname(test.directory) : test.directory,
           rewriteReport,
+          onOutcome: (event) => {
+            events.push(event);
+          },
         });
+        expect(events.map((event) => event.state)).to.deep.equal(
+          result.result.items.map((item) => item.outcome),
+        );
         const dispatched = failure === 'completion' || failure === 'progress';
         expect(result.status).to.equal(dispatched ? 'failed' : 'blocked');
         expect(test.mutation.callCount).to.equal(dispatched ? 1 : 0);

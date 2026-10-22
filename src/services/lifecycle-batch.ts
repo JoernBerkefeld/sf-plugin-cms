@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { notifyMutationOutcome, type MutationOutcomeObserver } from '../mutation-outcome.js';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveWorkspace } from './resolve-workspace.js';
 import {
@@ -248,6 +249,7 @@ export async function prepareLifecycleMetadataBatch(
  * @param {string} [options.projectRoot] - Explicit portable-source root enabling local admission and sync.
  * @param {string} [options.reportDirectory] - Fresh apply report directory.
  * @param {typeof rewriteAtomic} [options.rewriteReport] - Atomic persistence seam.
+ * @param {MutationOutcomeObserver} [options.onOutcome] - Best-effort settled item diagnostics.
  * @returns {Promise<object>} Validated batch result and envelope status.
  */
 export async function runLifecycleMetadataBatch(
@@ -258,9 +260,42 @@ export async function runLifecycleMetadataBatch(
     projectRoot?: string;
     reportDirectory?: string;
     rewriteReport?: typeof rewriteAtomic;
+    onOutcome?: MutationOutcomeObserver;
   },
 ): Promise<{ status: CmsStatus; result: ContentLifecycleBatchResult }> {
   const { mode, reportDirectory, rewriteReport = rewriteAtomic } = options;
+  const observed = new Set<number>();
+  const observe = (items: readonly ContentLifecycleBatchItem[]): void => {
+    if (mode !== 'apply') return;
+    for (const item of items) {
+      if (observed.has(item.index)) continue;
+      observed.add(item.index);
+      const evidence = item.result?.evidence;
+      const remoteState = item.outcome === 'ready' ? 'unattempted' : item.outcome;
+      notifyMutationOutcome(options.onOutcome, {
+        operation: input.operation,
+        ordinal: item.index + 1,
+        label: item.selector.apiName,
+        language: item.target?.language,
+        state:
+          item.localSource?.outcome === 'blocked' ? 'remote-completed-local-blocked' : remoteState,
+        target:
+          item.target === undefined
+            ? undefined
+            : {
+                workspaceId: item.target.workspaceId,
+                contentId: item.target.contentId,
+                variantId: item.target.variantId,
+              },
+        deploymentId: evidence && 'deploymentId' in evidence ? evidence.deploymentId : undefined,
+        reportFile: item.reportFile,
+        diagnostics:
+          item.localSource?.outcome === 'blocked'
+            ? [...item.blockers, { code: 'LOCAL_BLOCKED', message: item.localSource.message }]
+            : item.blockers,
+      });
+    }
+  };
   if (mode !== 'dry-run' && mode !== 'apply') throw new TypeError('Invalid lifecycle batch mode');
   const projectRoot =
     options.projectRoot === undefined ? undefined : path.resolve(options.projectRoot);
@@ -315,6 +350,7 @@ export async function runLifecycleMetadataBatch(
         stop: { index, outcome: 'blocked' },
       };
       assertContentLifecycleBatchResult(result, undefined, 'blocked');
+      observe(result.items);
       return { status: 'blocked', result };
     }
   }
@@ -322,6 +358,7 @@ export async function runLifecycleMetadataBatch(
   if (batch.status !== 'success') {
     const result = { ...batch.result, mode };
     assertContentLifecycleBatchResult(result, undefined, batch.status);
+    observe(result.items);
     return { status: batch.status, result };
   }
   const items: ContentLifecycleBatchItem[] = batch.result.items.map(
@@ -347,6 +384,7 @@ export async function runLifecycleMetadataBatch(
       stop: { index: 0, outcome: 'blocked' },
     };
     assertContentLifecycleBatchResult(result, undefined, 'blocked');
+    observe(result.items);
     return { status: 'blocked', result };
   }
   const ledgers = batch.inventories.map((entry) => ({
@@ -458,6 +496,7 @@ export async function runLifecycleMetadataBatch(
       } catch {
         // Preserve the earlier durable manifest and target evidence; never redispatch.
       }
+      observe(stopped.result.items);
       return stopped;
     }
     if (projectRoot !== undefined) {
@@ -501,7 +540,10 @@ export async function runLifecycleMetadataBatch(
                 items: structuredClone(items),
               },
         );
-        if (current) return current;
+        if (current) {
+          observe(current.result.items);
+          return current;
+        }
       } catch (error) {
         localSource = {
           outcome: 'blocked',
@@ -514,9 +556,11 @@ export async function runLifecycleMetadataBatch(
         } catch {
           // Earlier executor completion remains durable; do not claim the failed local write succeeded.
         }
+        observe(stopped.result.items);
         return stopped;
       }
     }
+    observe([items[item.index]]);
   }
   return finish();
 }

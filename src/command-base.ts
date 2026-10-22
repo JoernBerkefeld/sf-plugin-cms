@@ -11,6 +11,7 @@ import {
   type InvocationLogger,
 } from './logging.js';
 import { redactSecrets } from './transport/redact-secrets.js';
+import { formatMutationOutcome, type MutationOutcomeObserver } from './mutation-outcome.js';
 import type { CmsPage, CmsRecord } from './services/read.js';
 import { getPluginVersion } from './runtime-version.js';
 import {
@@ -249,6 +250,25 @@ export abstract class CmsCommand<T> extends SfCommand<T> {
     } catch {
       // Diagnostic output cannot replace the invocation outcome.
     }
+  }
+
+  /**
+   * Emits independent best-effort technical and human observations.
+   * @returns {MutationOutcomeObserver} Invocation-local sink, silent on JSON stdout.
+   */
+  protected mutationOutcomeObserver(): MutationOutcomeObserver {
+    return (event) => {
+      try {
+        this.invocationLogger?.log('info', 'mutation item outcome', event);
+      } catch {
+        // A failed log sink must not prevent human progress.
+      }
+      try {
+        if (!this.jsonEnabled()) this.log(formatMutationOutcome(event));
+      } catch {
+        // Terminal failure cannot change a settled mutation outcome.
+      }
+    };
   }
 
   protected logDiagnosticError(message: string, error: unknown): void {

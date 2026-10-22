@@ -1050,6 +1050,20 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
             SF_PLUGIN_CMS_LOCAL_HTML: htmlFile,
           },
         );
+        const logPath = [...result.stderr.matchAll(/^CMS log: (.+)\r?$/gmu)][0][1].trim();
+        const logBytes = await readFile(logPath, 'utf8');
+        const outcomeLogs = logBytes
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as LogRecord)
+          .filter(({ message }) => message === 'mutation item outcome');
+        const expectedStates =
+          scenario === 'drift'
+            ? ['remote-completed-local-blocked', 'unattempted']
+            : ['completed', 'completed'];
+        expect(outcomeLogs.map(({ details }) => details?.state)).to.deep.equal(
+          scenario === 'blocked' ? ['blocked', 'unattempted'] : expectedStates,
+        );
         const expectedExit = { missing: 0, cwd: 0, short: 0, long: 0, blocked: 1, drift: 2 };
         expect(result.exitCode, result.stdout + result.stderr).to.equal(expectedExit[scenario]);
         const envelope = parseEnvelope(result);
@@ -1205,7 +1219,23 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           `email-${operation}-apply`,
           environment,
         );
+        const logPath = [...result.stderr.matchAll(/^CMS log: (.+)\r?$/gmu)][0][1].trim();
+        const logBytes = await readFile(logPath, 'utf8');
+        const outcomeLogs = logBytes
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as LogRecord)
+          .filter(({ message }) => message === 'mutation item outcome');
+        expect(outcomeLogs).to.have.length(1);
         const partial = ['drift', 'sidecar', 'human'].includes(scenario);
+        const expectedState = partial ? 'remote-completed-local-blocked' : 'completed';
+        expect(outcomeLogs[0].details?.state).to.equal(
+          scenario === 'blocked' ? 'blocked' : expectedState,
+        );
+        if (scenario !== 'blocked') {
+          expect(outcomeLogs[0].details?.deploymentId).to.equal('deployment-controlled');
+          expect(outcomeLogs[0].details?.reportFile).to.be.a('string');
+        }
         const completionExit = partial ? 2 : 0;
         expect(result.exitCode, result.stdout + result.stderr).to.equal(
           scenario === 'blocked' ? 1 : completionExit,
@@ -1223,10 +1253,11 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           const remoteReport = file(`${report}/content-${operation}-run.json`);
           expect(JSON.parse(await readFile(remoteReport, 'utf8')).state).to.equal('completed');
           if (scenario === 'human') {
-            expect(result.stdout).to.include('Status: partial');
-            expect(result.stdout).to.include('Outcome: remote-completed-local-blocked');
-            expect(result.stdout).to.include(
-              `Blocker EMAIL_${operation.toUpperCase()}_LOCAL_BLOCKED:`,
+            expect(result.stdout.trim()).to.equal(
+              `${operation}: pilot_email (en_US) — remote-completed-local-blocked`,
+            );
+            expect(result.stdout).not.to.match(
+              /Variant:|Run report:|Blocker |deployment-controlled/u,
             );
           } else {
             const envelope = parseEnvelope(result);

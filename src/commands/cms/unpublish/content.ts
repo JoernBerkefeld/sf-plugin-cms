@@ -1,5 +1,6 @@
 import { Flags } from '@salesforce/sf-plugins-core';
 import path from 'node:path';
+import { notifyMutationOutcome } from '../../../mutation-outcome.js';
 import {
   assertContentLifecycleBatchResult,
   type ContentLifecycleBatchResult,
@@ -34,9 +35,10 @@ type UnpublishOutput = CmsEnvelope<ContentUnpublishResult | ContentLifecycleBatc
 /** Unpublishes exact published Email variants without deleting them. */
 export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
   public static readonly aliases = ['content:unpublish'];
-  public static readonly summary = 'Preview or parent-unpublish exact bounded published Emails.';
+  public static readonly summary =
+    'Preview or parent-unpublish exact bounded published CMS content.';
   public static readonly description =
-    'Repeat -m/--metadata Type:ApiName for ordered exact selections (v2), or use --api-name for one legacy Email result (v1). Exactly one selector mode is required; type-only selectors do not expand. Vocabulary recognizes email, emailTemplate, image, document and audio (or their sfdc_cms__ names), but native admission is currently Email-only; other families remain unqualified and blocked. Selects each Published sfdc_cms__email by workspace ID, API name, and explicit language or workspace default language, and requires fresh proof that its parent has exactly one variant. Dry-run is the default and shows parent scope. --apply requires a new --report-dir and --acknowledge-active-use-stops before org access. Unpublish removes the Email from active use but does not delete it.';
+    'Repeat -m/--metadata Type:ApiName for ordered exact selections (v2), or use --api-name for one legacy Email result (v1). Exactly one selector mode is required; type-only selectors do not expand. Metadata admits bounded email, emailTemplate, image, document and audio profiles (or their sfdc_cms__ names); legacy --api-name is Email-only. Selects each Published item by workspace ID, API name, and explicit language or workspace default language, and requires fresh proof that its parent has exactly one variant. Unsupported shapes remain blocked. Local source inspection uses cwd or -d/--output-dir; missing copies are no-ops, authored edits are preserved and only proven retrieval-equivalent profiles are admitted. Human apply outcomes appear per item before the next dispatch; technical identities and diagnostic details stay in the invocation log. Remote completion with blocked local work is partial (exit 2), never a retry instruction. Dry-run is the default and shows parent scope. --apply requires a new --report-dir and --acknowledge-active-use-stops before org access. Unpublish removes the Email from active use but does not delete it.';
   public static readonly examples = [
     '<%= config.bin %> cms unpublish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --json',
     '<%= config.bin %> cms unpublish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --apply --acknowledge-active-use-stops --report-dir ./cms-unpublish-report --json',
@@ -174,6 +176,7 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
           mode: flags.apply ? 'apply' : 'dry-run',
           reportDirectory: flags['report-dir'],
           projectRoot,
+          onOutcome: this.mutationOutcomeObserver(),
         },
       );
       const output: UnpublishOutput = {
@@ -192,9 +195,9 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
         this.log(
           `Status: ${output.status}; mode: ${batch.result.mode}; outcome: ${batch.result.outcome}`,
         );
-        for (const item of batch.result.items)
-          this.log(`${item.selector.contentType}:${item.selector.apiName}: ${item.outcome}`);
-        if (batch.result.reportFile) this.log(`Run report: ${batch.result.reportFile}`);
+        if (!flags.apply)
+          for (const item of batch.result.items)
+            this.log(`${item.selector.contentType}:${item.selector.apiName}: ${item.outcome}`);
       }
       return this.finish(output);
     }
@@ -242,7 +245,7 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
         result,
         preview.status === 'ready' ? [] : preview.blockers,
       );
-      if (!this.jsonEnabled()) this.showResult(output);
+      this.showResult(output);
       return this.finish(output);
     }
     try {
@@ -293,7 +296,7 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
         completion,
         completion.blockers,
       );
-      if (!this.jsonEnabled()) this.showResult(output);
+      this.showResult(output);
       return this.finish(output);
     } catch (error) {
       if (error instanceof EmailUnpublishPreflightBlockedError) {
@@ -312,7 +315,7 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
           result,
           result.blockers,
         );
-        if (!this.jsonEnabled()) this.showResult(output);
+        this.showResult(output);
         return this.finish(output);
       }
       if (!(error instanceof EmailUnpublishOutcomeUnknownError)) throw error;
@@ -359,7 +362,7 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
         result,
         result.blockers,
       );
-      if (!this.jsonEnabled()) this.showResult(output);
+      this.showResult(output);
       return this.finish(output);
     }
   }
@@ -375,6 +378,27 @@ export default class UnpublishContent extends CmsCommand<UnpublishOutput> {
     );
   }
   private showResult(result: CmsEnvelope<ContentUnpublishResult>): void {
+    const item = result.result;
+    if (item?.mode === 'apply') {
+      notifyMutationOutcome(this.mutationOutcomeObserver(), {
+        operation: 'unpublish',
+        ordinal: 1,
+        state: item.outcome,
+        label: item.target.apiName,
+        language: item.target.language,
+        target: {
+          workspaceId: item.target.workspaceId,
+          ...('contentId' in item.target
+            ? { contentId: item.target.contentId, variantId: item.target.variantId }
+            : {}),
+        },
+        ...('deploymentId' in item.evidence ? { deploymentId: item.evidence.deploymentId } : {}),
+        ...('reportFile' in item ? { reportFile: item.reportFile } : {}),
+        diagnostics: item.blockers,
+      });
+      return;
+    }
+    if (this.jsonEnabled()) return;
     this.log(`Status: ${result.status}`);
     this.log(`Mode: ${result.result?.mode ?? 'unknown'}`);
     this.log(`Outcome: ${result.result?.outcome ?? 'unknown'}`);
