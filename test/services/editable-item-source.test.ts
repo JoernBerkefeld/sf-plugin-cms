@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -7,6 +7,7 @@ import {
   type SourceDefinition,
 } from '../../src/contracts/source-definition.js';
 import {
+  loadEditableBrandSource,
   loadEditableItemSource,
   reassembleEditableItemSource,
 } from '../../src/services/editable-item-source.js';
@@ -57,6 +58,113 @@ async function failure(operation: Promise<unknown>, pattern: RegExp) {
   }
   throw new Error('Expected rejection');
 }
+
+function brandDefinition(): SourceDefinition {
+  const title = 'Edited Café Brand';
+  return {
+    ...definition(),
+    identity: { ...definition().identity, type: 'Brand' },
+    contentType: 'sfdc_cms__brand',
+    title,
+    contentBody: brandBody(title) as SourceDefinition['contentBody'],
+    companions: {},
+  };
+}
+
+async function brandFixture() {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-editable-brand-'));
+  const json = path.join(directory, 'Welcome.cms-brand.json');
+  const candidate = brandDefinition();
+  await writeFile(json, serializeSourceDefinition(candidate));
+  return { directory, json, candidate };
+}
+
+describe('standalone editable Brand source', () => {
+  it('loads edited inline JSON without a baseline or companions and detaches nested bodies', async () => {
+    const { directory, json, candidate } = await brandFixture();
+    candidate.contentBody.colorScheme = {
+      ...(candidate.contentBody.colorScheme as Record<string, string>),
+      primaryAccent: '#FF0000',
+    };
+    await writeFile(json, serializeSourceDefinition(candidate));
+    await writeFile(path.join(directory, 'unrelated.json'), '{}');
+    const loaded = await loadEditableBrandSource(json);
+    expect(loaded.definitionPath).to.equal(json);
+    expect(loaded.definition).to.deep.equal(candidate);
+    expect(loaded.contentBody).to.deep.equal(candidate.contentBody);
+    (loaded.contentBody.colorScheme as Record<string, string>).primaryAccent = '#000000';
+    expect(loaded.definition.contentBody).to.deep.equal(candidate.contentBody);
+    const again = await loadEditableBrandSource(json);
+    expect(again.definition).to.deep.equal(candidate);
+    expect(again.contentBody).to.deep.equal(candidate.contentBody);
+  });
+
+  it('requires exact Brand identity, same-stem filename and no companion or extra fields', async () => {
+    const { directory, json, candidate } = await brandFixture();
+    for (const invalid of [
+      definition(),
+      { ...candidate, identity: { ...candidate.identity, type: 'Email' } },
+      { ...candidate, companions: { rawHtml: 'Welcome.cms-brand.html' } },
+      { ...candidate, sourceManifestSha256: 'old-baseline' },
+      { ...candidate, contentBody: { ...candidate.contentBody, unsupported: true } },
+    ]) {
+      await writeFile(json, JSON.stringify(invalid));
+      await failure(loadEditableBrandSource(json), /Brand|fields|body|disagreement/u);
+    }
+    await writeFile(
+      path.join(directory, 'Other.cms-brand.json'),
+      serializeSourceDefinition(candidate),
+    );
+    await failure(
+      loadEditableBrandSource(path.join(directory, 'Other.cms-brand.json')),
+      /same-stem/u,
+    );
+    await writeFile(json, serializeSourceDefinition(candidate));
+    await failure(
+      loadEditableBrandSource(path.join(directory, 'welcome.cms-brand.json')),
+      /case-aliased/u,
+    );
+  });
+
+  it('rejects malformed JSON, invalid UTF-8, BOM and duplicate keys', async () => {
+    const { json } = await brandFixture();
+    for (const bytes of [
+      Buffer.from([195, 0x28]),
+      Buffer.from('\uFEFF{}'),
+      Buffer.from('{"contract":1,"contract":2}'),
+      Buffer.from('{'),
+    ]) {
+      await writeFile(json, bytes);
+      await failure(loadEditableBrandSource(json), /UTF-8|BOM|duplicate|JSON/u);
+    }
+  });
+
+  it('rejects missing, nonregular and linked file or directory routes without writing', async () => {
+    const { directory, json, candidate } = await brandFixture();
+    await failure(loadEditableBrandSource(''), /nonempty/u);
+    await failure(
+      loadEditableBrandSource(path.join(directory, 'Missing.cms-brand.json')),
+      /missing/u,
+    );
+    const folder = path.join(directory, 'Folder.cms-brand.json');
+    await mkdir(folder);
+    await failure(loadEditableBrandSource(folder), /regular/u);
+    const target = path.join(directory, 'target');
+    await mkdir(target);
+    await writeFile(
+      path.join(target, 'Welcome.cms-brand.json'),
+      serializeSourceDefinition(candidate),
+    );
+    const linked = path.join(directory, 'linked');
+    await symlink(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    await failure(
+      loadEditableBrandSource(path.join(linked, 'Welcome.cms-brand.json')),
+      /symlinks|reparse/u,
+    );
+    const original = await loadEditableBrandSource(json);
+    expect(original.definition).to.deep.equal(candidate);
+  });
+});
 
 describe('standalone editable item source', () => {
   for (const template of [false, true]) {

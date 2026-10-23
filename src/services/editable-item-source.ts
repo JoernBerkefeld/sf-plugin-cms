@@ -36,6 +36,45 @@ export function reassembleEditableItemSource(
   return { ...structuredClone(value.contentBody), rawHtml: literalHtml };
 }
 
+/**
+ * Load editable inline Brand JSON without immutable export or destination evidence.
+ * This validates the local format only, not native retrieval or mutation eligibility.
+ * @param {string} definitionFile - Exact same-stem Brand item JSON path.
+ * @returns {Promise<object>} Stable definition path and independently detached metadata/body.
+ */
+export async function loadEditableBrandSource(definitionFile: string): Promise<{
+  definitionPath: string;
+  definition: SourceDefinition;
+  contentBody: Record<string, JsonValue>;
+}> {
+  if (!definitionFile.trim())
+    throw new TypeError('Editable Brand definition path must be nonempty');
+  await assertEditableDirectoryPath(path.dirname(definitionFile), false);
+  const directory = path.resolve(path.dirname(definitionFile));
+  const definitionPath = await exactFile(
+    directory,
+    path.basename(definitionFile),
+    'Editable Brand definition',
+  );
+  const bytes = await readStableRegularFile(definitionPath, 'Editable Brand definition');
+  const candidate = strictSourceJson(bytes, 'Editable Brand definition JSON');
+  assertSourceDefinition(candidate);
+  if (candidate.contentType !== 'sfdc_cms__brand')
+    throw new TypeError('Editable Brand source requires Brand content');
+  if (path.basename(definitionPath) !== `${candidate.identity.apiName}.cms-brand.json`)
+    throw new TypeError('Editable Brand definition must use the exact same-stem JSON filename');
+  await assertEditableDirectoryPath(directory, false);
+  await exactFile(directory, path.basename(definitionPath), 'Editable Brand definition');
+  const current = await readStableRegularFile(definitionPath, 'Editable Brand revalidation');
+  if (!current.equals(bytes))
+    throw new TypeError('Editable Brand definition changed during loading');
+  return {
+    definitionPath,
+    definition: structuredClone(candidate),
+    contentBody: structuredClone(candidate.contentBody),
+  };
+}
+
 async function exactFile(directory: string, name: string, label: string): Promise<string> {
   const names = await readdir(directory);
   const matches = names.filter((candidate) => candidate.toLowerCase() === name.toLowerCase());
