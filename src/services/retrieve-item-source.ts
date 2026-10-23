@@ -13,6 +13,10 @@ import {
 } from './editable-item-source-v2.js';
 import { getContent, getVariant, getWorkspace } from './read.js';
 import {
+  extractEditableBrandSource,
+  type EditableBrandProjection,
+} from './editable-item-source.js';
+import {
   acquireEditableMediaSource,
   type AcquiredEditableMediaSource,
 } from './retrieve-media-source.js';
@@ -183,12 +187,47 @@ export async function acquireEditableEmailSource(
   return acquireEditableSource(connection, input, 'sfdc_cms__email', requestOptions);
 }
 
-async function acquireEditableSource(
+export type AcquiredEditableBrandSource = {
+  readonly directory: string;
+  readonly projection: EditableBrandProjection;
+  readonly evidence: { readonly variantId: string; readonly contentId: string };
+};
+
+/**
+ * Acquire a dependency-free root Brand in the workspace default language without writes.
+ * @param {RequestConnection} connection - Explicit source connection.
+ * @param {AcquireEditableEmailSourceInput} input - Exact workspace, API name and language choice.
+ * @param {JsonRequestOptions} requestOptions - Request metadata and cancellation signal.
+ * @returns {Promise<AcquiredEditableBrandSource>} Detached strict inline Brand projection.
+ */
+export async function acquireEditableBrandSource(
+  connection: RequestConnection,
+  input: AcquireEditableEmailSourceInput,
+  requestOptions: JsonRequestOptions = {},
+): Promise<AcquiredEditableBrandSource> {
+  return acquireEditableSource(connection, structuredClone(input), 'sfdc_cms__brand', {
+    ...requestOptions,
+  });
+}
+
+function acquireEditableSource(
+  connection: RequestConnection,
+  input: AcquireEditableEmailSourceInput,
+  contentType: 'sfdc_cms__brand',
+  requestOptions: JsonRequestOptions,
+): Promise<AcquiredEditableBrandSource>;
+function acquireEditableSource(
   connection: RequestConnection,
   input: AcquireEditableEmailSourceInput,
   contentType: 'sfdc_cms__email' | 'sfdc_cms__emailTemplate',
   requestOptions: JsonRequestOptions,
-): Promise<AcquiredEditableEmailSource> {
+): Promise<AcquiredEditableEmailSource>;
+async function acquireEditableSource(
+  connection: RequestConnection,
+  input: AcquireEditableEmailSourceInput,
+  contentType: 'sfdc_cms__email' | 'sfdc_cms__emailTemplate' | 'sfdc_cms__brand',
+  requestOptions: JsonRequestOptions,
+): Promise<AcquiredEditableEmailSource | AcquiredEditableBrandSource> {
   const workspaceId = nonempty(input.workspaceId, 'workspaceId');
   const apiName = nonempty(input.apiName, 'apiName');
   sourcePathSegment(apiName);
@@ -204,6 +243,11 @@ async function acquireEditableSource(
   sourcePathSegment(workspaceApiName);
   const language =
     input.language ?? nonempty(workspace.defaultLanguage, 'Workspace defaultLanguage');
+  if (
+    contentType === 'sfdc_cms__brand' &&
+    language !== nonempty(workspace.defaultLanguage, 'Workspace defaultLanguage')
+  )
+    throw new TypeError('Brand requires the workspace default language');
   // Preserve the public connection shape while requiring explicit API-version evidence.
   const nativeConnection = nativeRequestConnection(connection);
   const family = await enumerateNativeFamily(
@@ -311,8 +355,20 @@ export async function prepareEditableSourceSelection(
           throw new TypeError('Resolved media identity/workspace changed during acquisition');
         return source;
       }
+      if (
+        row.ContentTypeFullyQualifiedName !== 'sfdc_cms__email' &&
+        row.ContentTypeFullyQualifiedName !== 'sfdc_cms__emailTemplate'
+      )
+        throw new TypeError('Unsupported prepared editable source content type');
       const raw = await bindNativeDetail(connection, row, options);
-      return acquireBoundSource(connection, nativeConnection, workspace, row, raw, options);
+      return acquireBoundSource(
+        connection,
+        nativeConnection,
+        workspace,
+        row,
+        raw,
+        options,
+      ) as Promise<AcquiredEditableEmailSource>;
     },
   };
 }
@@ -324,14 +380,23 @@ async function acquireBoundSource(
   selectedRow: NativeInventoryRow,
   raw: JsonRecord,
   requestOptions: JsonRequestOptions,
-): Promise<AcquiredEditableEmailSource> {
+): Promise<AcquiredEditableEmailSource | AcquiredEditableBrandSource> {
   const workspaceId = nonempty(workspace.id, 'workspaceId');
   const workspaceApiName = nonempty(workspace.apiName, 'Workspace API name');
   const apiName = nonempty(selectedRow.ManagedContent.ApiName, 'apiName');
   sourcePathSegment(apiName);
   const contentType = selectedRow.ContentTypeFullyQualifiedName;
-  if (contentType !== 'sfdc_cms__email' && contentType !== 'sfdc_cms__emailTemplate')
+  const brand = contentType === 'sfdc_cms__brand';
+  if (!brand && contentType !== 'sfdc_cms__email' && contentType !== 'sfdc_cms__emailTemplate')
     throw new TypeError('Unsupported editable source content type');
+  if (
+    brand &&
+    (selectedRow.IsPrimary !== true ||
+      raw.title !== selectedRow.Name ||
+      raw.urlName !== selectedRow.UrlName ||
+      raw.language !== nonempty(workspace.defaultLanguage, 'Workspace defaultLanguage'))
+  )
+    throw new TypeError('Brand native title/URL/primary/default-language disagreement');
   const variantId = requiredVariantIdentifier(raw);
   const contentId = requiredContentIdentifier(raw);
   const parent = await getContent(connection, contentId, {}, requestOptions);
@@ -363,7 +428,8 @@ async function acquireBoundSource(
     !isDeepStrictEqual(siblings[0], raw)
   )
     throw new TypeError('Complete single exact native sibling evidence is required');
-  const normalized = normalizeReadEnvelopes(raw, parent);
+  // Brand normalization requires the complete original envelopes; never strip its evidence.
+  const normalized = brand ? { raw, parent } : normalizeReadEnvelopes(raw, parent);
   const source = projectSourceDefinitions([
     {
       workspaceApiName,
@@ -380,6 +446,12 @@ async function acquireBoundSource(
       },
     },
   ]).items[0];
+  if (brand)
+    return {
+      directory: `cms/${workspaceApiName}/brand`,
+      projection: extractEditableBrandSource(source.definition),
+      evidence: { variantId, contentId },
+    };
   return {
     directory: `cms/${workspaceApiName}/${contentType === 'sfdc_cms__email' ? 'email' : 'emailTemplate'}`,
     projection: extractEditableItemSourceV2(source.definition, source.htmlBytes!.toString('utf8')),

@@ -1,10 +1,12 @@
 import { expect } from 'chai';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
+import { brandDetail } from '../fixtures/brand.js';
 import { reassembleEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
 import { NativeInventoryRequestError } from '../../src/services/retrieve-native-inventory.js';
 import type { ResolveNativeRetrieveInput } from '../../src/services/retrieve-native-resolution.js';
 import {
+  acquireEditableBrandSource,
   acquireEditableEmailSource,
   acquireEditableTemplateSource,
   prepareEditableSourceSelection,
@@ -41,8 +43,9 @@ function email(id = '9Ps000000000001AAA', language = 'en_US', apiName = 'Welcome
 function unchangedRows(rows: RecordValue[]): RecordValue[] {
   return rows;
 }
-function fixture(template = false) {
-  const contentType = template ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
+function fixture(template = false, brand = false) {
+  let contentType = template ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
+  if (brand) contentType = 'sfdc_cms__brand';
   const workspace: RecordValue = {
     id: '0Zu000000000001AAA',
     name: 'Content Workspace for Marketing Cloud',
@@ -61,6 +64,20 @@ function fixture(template = false) {
   if (template) {
     variants[0].contentType = { fullyQualifiedName: contentType };
     delete (variants[0].contentBody as RecordValue).subjectLine;
+  }
+  if (brand) {
+    Object.assign(
+      variants[0],
+      brandDetail('9Ps000000000001AAA', 'Welcome', selection.workspaceId),
+      {
+        managedContentId: '20Y000000000001AAA',
+        folder: null,
+      },
+    );
+    Object.assign(parent, structuredClone(variants[0]), {
+      contentVersion: 1,
+      variantVersion: '1.1',
+    });
   }
   let nativePatch: (rows: RecordValue[], siblingScope: boolean) => RecordValue[] = unchangedRows;
   const nativeRows = () =>
@@ -245,6 +262,133 @@ async function acquisitionRejects(action: () => Promise<unknown>, message: strin
     expect((error as Error).message).to.include(message);
   }
 }
+
+describe('internal native Brand acquisition', () => {
+  it('projects strict original inline Brand bytes without mutating or retaining source evidence', async () => {
+    const current = fixture(false, true);
+    const before = JSON.stringify([current.workspace, current.parent, current.variants]);
+    const input: AcquireEditableEmailSourceInput = { ...selection };
+    const pending = acquireEditableBrandSource(current.connection, input);
+    Object.assign(input, { apiName: 'Changed', workspaceId: 'wrong' });
+    const result = await pending;
+    expect(result.directory).to.equal('cms/Default_Content_Workspace/brand');
+    expect(result.projection.definitionName).to.equal('Welcome.cms-brand.json');
+    expect(result.projection.definition.contractVersion).to.equal('1.0.0');
+    expect(result.projection.definition.contentBody).to.deep.equal(current.variants[0].contentBody);
+    expect(result.projection.companions).to.deep.equal([]);
+    expect(result.projection.definitionBytes.toString()).not.to.match(
+      /20Y000|9Ps000|0Zu000|content-key|managedContent|createdDate/u,
+    );
+    expect(JSON.stringify([current.workspace, current.parent, current.variants])).to.equal(before);
+    const repeated = await acquireEditableBrandSource(current.connection, selection);
+    expect(repeated).to.deep.equal(result);
+    result.projection.definition.contentBody['sfdc_cms:title'] = 'Edited';
+    result.projection.definitionBytes.fill(0);
+    expect(await acquireEditableBrandSource(current.connection, selection)).to.deep.equal(repeated);
+    expect(
+      current.connection.request.args.every(
+        ([request]) => request.method === 'GET' && !request.url.includes('/search'),
+      ),
+    ).to.equal(true);
+  });
+
+  it('requires default language and exact case while retaining complete hidden siblings', async () => {
+    for (const kind of ['language', 'case', 'missing-default', 'sibling', 'different-type']) {
+      const current = fixture(false, true);
+      if (kind === 'missing-default') delete current.workspace.defaultLanguage;
+      if (kind === 'case') current.variants[0].apiName = 'welcome';
+      if (kind === 'sibling' || kind === 'different-type') {
+        const sibling = {
+          ...structuredClone(current.variants[0]),
+          managedContentVariantId: '9Ps000000000002AAA',
+          language: 'de_DE',
+        };
+        if (kind === 'different-type')
+          sibling.contentType = { fullyQualifiedName: 'sfdc_cms__email' };
+        current.variants.push(sibling);
+      }
+      await acquisitionRejects(
+        () =>
+          acquireEditableBrandSource(
+            current.connection,
+            kind === 'language'
+              ? { workspaceId: selection.workspaceId, apiName: 'Welcome', language: 'de_DE' }
+              : selection,
+          ),
+        '',
+      );
+    }
+  });
+
+  it('binds native identity, status, title, URL and primary evidence before projection', async () => {
+    for (const patch of [
+      { Name: 'Drift' },
+      { UrlName: 'drift' },
+      { IsPrimary: false },
+      { ManagedContentKey: 'drift' },
+      { ManagedContentVariantStatus: 'Published' },
+      { IsPublished: true },
+      { ManagedContentId: '20Y000000000002AAA' },
+      {
+        ManagedContent: { AuthoredManagedContentSpaceId: selection.workspaceId, ApiName: 'Other' },
+      },
+    ]) {
+      const current = fixture(false, true);
+      current.patchNative((rows) => rows.map((row) => ({ ...row, ...patch })));
+      await acquisitionRejects(() => acquireEditableBrandSource(current.connection, selection), '');
+    }
+    const current = fixture(false, true);
+    current.patchNative((rows, siblings) => rows.map((row) => ({ ...row, IsPrimary: !siblings })));
+    await acquisitionRejects(
+      () => acquireEditableBrandSource(current.connection, selection),
+      'single exact native sibling',
+    );
+  });
+
+  it('fails closed on original parent/body/provider/reference or placement drift', async () => {
+    for (const side of ['parent', 'variant', 'both'])
+      for (const kind of [
+        'unknown',
+        'body',
+        'provider',
+        'reference',
+        'external',
+        'folder',
+        'published',
+        'version',
+      ]) {
+        const current = fixture(false, true);
+        for (const target of side === 'both'
+          ? [current.parent, current.variants[0]]
+          : [side === 'parent' ? current.parent : current.variants[0]]) {
+          const body = target.contentBody as RecordValue;
+          if (kind === 'unknown') target.source = 'External';
+          if (kind === 'body') body.unknown = {};
+          if (kind === 'provider') body['lightning:dataProviders'] = [{ id: 'provider' }];
+          if (kind === 'reference') body['sfdc_cms:variants'] = [{ contentKey: 'reference' }];
+          if (kind === 'external') target.externalId = 'external';
+          if (kind === 'folder') target.folder = { id: 'nested' };
+          if (kind === 'published') target.isPublished = true;
+          if (kind === 'version') current.parent.managedContentVariantId = '9Ps000000000003AAA';
+        }
+        await acquisitionRejects(
+          () => acquireEditableBrandSource(current.connection, selection),
+          '',
+        );
+      }
+  });
+
+  it('keeps prepared public acquisition runtime-closed even for a forged Brand selector', async () => {
+    const current = fixture(false, true);
+    const input = nativeSelection();
+    Object.assign(input.selection.groups[0], { contentType: 'sfdc_cms__brand' });
+    const prepared = await prepareEditableSourceSelection(current.connection, input);
+    await acquisitionRejects(
+      () => prepared.acquire(prepared.resolution.variants[0].Id),
+      'Unsupported prepared',
+    );
+  });
+});
 
 describe('guarded native selection acquisition', () => {
   for (const published of [true, false])
