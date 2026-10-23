@@ -82,6 +82,9 @@ describe('native delete result contract', () => {
         value.report.operations[0].target.contentType = 'sfdc_cms__video' as never;
       },
       (value) => {
+        value.report.operations[0].target.contentType = 'sfdc_cms__brand' as never;
+      },
+      (value) => {
         value.report.operations[0].target.variantId = 'parent';
       },
       (value) => {

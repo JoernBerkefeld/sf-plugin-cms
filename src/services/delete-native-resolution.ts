@@ -6,7 +6,14 @@ import {
   type NativeInventoryOptions,
   type NativeInventoryRow,
 } from './retrieve-native-inventory.js';
-import { RETRIEVE_CONTENT_TYPES, type RetrieveContentType } from './retrieve-selection.js';
+export const DELETE_CONTENT_TYPES = [
+  'sfdc_cms__email',
+  'sfdc_cms__emailTemplate',
+  'sfdc_cms__image',
+  'sfdc_cms__document',
+  'sfdc_cms__audio',
+] as const;
+export type DeleteContentType = (typeof DELETE_CONTENT_TYPES)[number];
 import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-identity.js';
 
 export type DeleteSelectionFlags = {
@@ -15,14 +22,14 @@ export type DeleteSelectionFlags = {
   'content-key-or-id'?: readonly string[];
 };
 export type ExactDeleteSelector = {
-  contentType: RetrieveContentType;
+  contentType: DeleteContentType;
   kind: 'api-name' | 'content-key-or-id';
   value: string;
 };
 export type NativeDeleteTarget = {
   contentId: string;
   variantId: string;
-  contentType: RetrieveContentType;
+  contentType: DeleteContentType;
   apiName: string | null;
   language: string;
   variantType: 'Content' | 'Translation';
@@ -38,7 +45,7 @@ export type NativeDeleteTarget = {
 };
 export type NativeDeleteItem = {
   contentId: string;
-  contentType: RetrieveContentType;
+  contentType: DeleteContentType;
   available: NativeDeleteTarget[];
   selected: NativeDeleteTarget[];
   requiresLanguageSelection: boolean;
@@ -55,8 +62,8 @@ function exact(value: string): string {
     throw new TypeError('Delete requires a nonempty exact item selector; wildcards are forbidden');
   return value;
 }
-function family(value: string): RetrieveContentType {
-  const type = normalizeContentTypeAlias(value, RETRIEVE_CONTENT_TYPES);
+function family(value: string): DeleteContentType {
+  const type = normalizeContentTypeAlias(value, DELETE_CONTENT_TYPES);
   if (!type) throw new TypeError('Delete requires email, emailTemplate, image, document or audio');
   return type;
 }
@@ -137,7 +144,7 @@ export async function resolveNativeDeleteSelection(
   )
     throw new TypeError('Delete language requires an explicit subset or sole *');
   const inventory = await enumerateNativeWorkspace(connection, input.workspaceId, options);
-  const parents = new Map<string, RetrieveContentType>();
+  const parents = new Map<string, DeleteContentType>();
   for (const selector of selectors) {
     const matches = inventory.records.filter(
       (row) =>

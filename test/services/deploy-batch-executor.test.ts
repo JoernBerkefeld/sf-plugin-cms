@@ -35,6 +35,8 @@ import {
   type WorkspaceImportRunReport,
 } from '../../src/services/import-workspace.js';
 
+import { brandBody, brandDetail } from '../fixtures/brand.js';
+
 const workspaceId = '0Zu000000000001AAA';
 type Row = Record<string, unknown>;
 async function fixture(
@@ -43,6 +45,7 @@ async function fixture(
   document = false,
   audio = false,
   reporting = true,
+  brandIndex?: number,
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-batch-executor-'));
   const reportFile = path.join(directory, 'batch.json');
@@ -132,6 +135,18 @@ async function fixture(
     );
     await writeFile(path.join(directory, documentName), documentBytes);
   }
+  if (brandIndex !== undefined) {
+    const definition = definitions[brandIndex];
+    Object.assign(definition, {
+      identity: { ...definition.identity, type: 'Brand' },
+      contentType: 'sfdc_cms__brand',
+      contentBody: brandBody(definition.title),
+      urlName: definition.title.toLowerCase(),
+      companions: {},
+    });
+    files[brandIndex] = path.join(directory, `${definition.title}.cms-brand.json`);
+    await writeFile(files[brandIndex], JSON.stringify(definition));
+  }
   const mediaBody = (index: number) => {
     const bytes = index === 3 ? currentDocumentBytes : imageBytes;
     const mimeType = index === 3 ? documentMime : 'image/svg+xml';
@@ -172,6 +187,15 @@ async function fixture(
       contentBody: body,
       managedContentVersionId: 'before',
     };
+    if (definition.contentType === 'sfdc_cms__brand')
+      Object.assign(detail, brandDetail(variantId, definition.identity.apiName, workspaceId), {
+        title: definition.title,
+        urlName: definition.title.toLowerCase(),
+        managedContentId: contentId,
+        contentKey: `MCKEY${number}`,
+        folder: { id: 'root' },
+        contentBody: body,
+      });
     details.set(contentId, detail);
     details.set(variantId, detail);
     details.set(detail.contentKey, detail);
@@ -185,7 +209,7 @@ async function fixture(
       ManagedContentVariantStatus: 'Draft',
       IsPrimary: true,
       Name: definition.title,
-      UrlName: null,
+      UrlName: definition.contentType === 'sfdc_cms__brand' ? definition.title.toLowerCase() : null,
       ManagedContent: {
         AuthoredManagedContentSpaceId: workspaceId,
         ApiName: definition.identity.apiName,
@@ -397,6 +421,7 @@ async function fixture(
   return {
     input,
     connection,
+    add,
     preflight: () => preflightDeployBatch(connection, input),
     files,
     definitions,
@@ -477,6 +502,184 @@ async function audioBoundaryFixture(
   f.definitions[3].identity.type = 'Audio';
   return { ...f, companion, audioFile, definition };
 }
+
+describe('public strict whole-batch Brand integration', () => {
+  afterEach(() => sinon.restore());
+  for (const brandIndex of [0, 1]) {
+    it(`reconciles mixed Email/Brand CREATE and exact unchanged, Brand index ${brandIndex}`, async () => {
+      const f = await fixture(false, false, false, false, true, brandIndex);
+      f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+      const result = await executeDeployBatch(f.connection, f.input);
+      expect(result.report.state).to.equal('completed');
+      expect(result.report.summary.created).to.equal(2);
+      expect(f.mutations).to.deep.equal(['Alpha', 'Beta']);
+      const again = await executeDeployBatch(f.connection, {
+        ...f.input,
+        reportFile: undefined,
+      });
+      expect(again.report.state).to.equal('completed');
+      expect(again.report.summary.unchanged).to.equal(2);
+      expect(f.mutations).to.have.length(2);
+    });
+  }
+  for (const audio of [false, true]) {
+    for (const brandFirst of [false, true]) {
+      it(`handles Brand and ${audio ? 'Audio' : 'Document'} with Brand first ${brandFirst}`, async () => {
+        const f = await fixture(false, true, true, audio, true, brandFirst ? 0 : 1);
+        let mediaFile = f.files[3];
+        if (audio) {
+          const definition = JSON.parse(await readFile(mediaFile, 'utf8')) as Row;
+          definition.contentType = 'sfdc_cms__audio';
+          (definition.identity as Row).type = 'Audio';
+          const media = definition.media as Row;
+          media.mimeType = 'application/x-future-audio';
+          (media.companion as Row).path = 'Zulu.cms-audio.media.bin';
+          mediaFile = path.join(f.directory, 'Zulu.cms-audio.json');
+          await writeFile(mediaFile, JSON.stringify(definition));
+          f.definitions[3].contentType = 'sfdc_cms__audio';
+          f.definitions[3].identity.type = 'Audio';
+        }
+        const brandFile = f.files[brandFirst ? 0 : 1];
+        // Selector order does not define execution order; stable file ordering does.
+        if (!brandFirst) {
+          const definition = JSON.parse(await readFile(brandFile, 'utf8')) as Row;
+          const identity = definition.identity as Row;
+          identity.apiName = 'Zzz';
+          definition.title = 'Zzz';
+          definition.urlName = 'zzz';
+          definition.contentBody = brandBody('Zzz');
+          Object.assign(f.definitions[1], definition);
+          f.files[1] = path.join(f.directory, 'Zzz.cms-brand.json');
+          await writeFile(f.files[1], JSON.stringify(definition));
+        }
+        f.input.sources = { 'source-dir': [f.files[brandFirst ? 0 : 1], mediaFile] };
+        const result = await executeDeployBatch(f.connection, f.input);
+        expect(result.report.state, result.report.blockedReasons.join('; ')).to.equal('completed');
+        expect(result.report.summary.created).to.equal(2);
+        expect(f.mutations).to.deep.equal(brandFirst ? ['Alpha', 'Zulu'] : ['Zulu', 'Zzz']);
+      });
+    }
+  }
+  it('admits ordinary Brand preview and apply without a caller admission switch', async () => {
+    const f = await fixture(false, false, false, false, true, 1);
+    f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+    const preview = await preflightDeployBatch(f.connection, f.input);
+    expect(preview.eligible).to.equal(true);
+    expect(f.mutations).to.deep.equal([]);
+    const applied = await executeDeployBatch(f.connection, f.input);
+    expect(applied.qualification).to.equal('unqualified');
+    expect(applied.report.summary.created).to.equal(2);
+    expect(applied.report.state).to.equal('completed');
+  });
+  it('blocks an earlier Email write when a pending Brand drifts after durable intent', async () => {
+    const f = await fixture(false, false, false, false, true, 1);
+    f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+    const result = await executeDeployBatch(
+      f.connection,
+      f.input,
+      {},
+      {
+        rewrite: async (file, report) => {
+          await rewriteAtomic(file, report);
+          f.workspace.defaultLanguage = 'de_DE';
+        },
+      },
+    );
+    expect(result.report.state).to.equal('blocked');
+    expect(f.mutations).to.deep.equal([]);
+  });
+  it('retains uncertain Brand outcome and stops the suffix on lost response without disk journals', async () => {
+    const f = await fixture(false, false, false, false, false, 0);
+    f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+    f.fail('Alpha');
+    const result = await executeDeployBatch(f.connection, {
+      ...f.input,
+      reportFile: undefined,
+    });
+    expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+      'uncertain',
+      'unattempted',
+    ]);
+    expect(f.mutations).to.deep.equal(['Alpha']);
+  });
+  it('retains returned Brand IDs after strict readback rejection and emits live uncertainty', async () => {
+    const f = await fixture(false, false, false, false, false, 0);
+    f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+    f.onRead(async () => {
+      if (f.mutations.length > 0) f.details.get('MCKEY1')!.unknownBrandField = true;
+    });
+    const events: string[] = [];
+    const result = await executeDeployBatch(f.connection, {
+      ...f.input,
+      reportFile: undefined,
+      onOutcome: (event) => {
+        events.push(event.state);
+      },
+    });
+    expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+      'uncertain',
+      'unattempted',
+    ]);
+    expect(result.report.items[0].returned).to.include({
+      contentId: '20Y000000000001AAA',
+      primaryVariantId: '9Ps000000000001AAA',
+    });
+    expect(events).to.deep.equal(['uncertain', 'unattempted']);
+    expect(f.mutations).to.deep.equal(['Alpha']);
+  });
+  it('preserves verified Brand completion in live outcomes if final journal persistence fails', async () => {
+    const f = await fixture(false, false, false, false, false, 0);
+    f.input.sources = { 'source-dir': f.files.slice(0, 2) };
+    const events: string[] = [];
+    // Enable item journals while keeping the batch report in memory.
+    const result = await executeDeployBatch(
+      f.connection,
+      {
+        ...f.input,
+        onOutcome: (event) => {
+          events.push(event.state);
+        },
+      },
+      {},
+      {
+        rewrite: rewriteAtomic,
+        item: {
+          rewrite: async (file, report) => {
+            if (report.state === 'completed') throw new Error('Final Brand journal failed');
+            await rewriteAtomic(file, report);
+          },
+        },
+      },
+    );
+    expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+      'uncertain',
+      'unattempted',
+    ]);
+    expect(events).to.deep.equal(['remote-completed-report-blocked', 'unattempted']);
+    expect(f.mutations).to.deep.equal(['Alpha']);
+  });
+  it('cancels after Brand pending intent before any POST', async () => {
+    const f = await fixture(false, false, false, false, true, 0);
+    f.input.sources = { 'source-dir': [f.files[0]] };
+    const controller = new AbortController();
+    const result = await executeDeployBatch(
+      f.connection,
+      f.input,
+      { signal: controller.signal },
+      {
+        rewrite: rewriteAtomic,
+        item: {
+          rewrite: async (file, report) => {
+            await rewriteAtomic(file, report);
+            controller.abort();
+          },
+        },
+      },
+    );
+    expect(f.mutations).to.deep.equal([]);
+    expect(result.report.summary.completed).to.equal(0);
+  });
+});
 
 describe('batch live outcomes', () => {
   afterEach(() => sinon.restore());

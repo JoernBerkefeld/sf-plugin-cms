@@ -23,6 +23,7 @@ import {
 import { enumerateNativeWorkspace } from './retrieve-native-inventory.js';
 import { getContent, getVariant } from './read.js';
 import { createContent } from './write.js';
+import { acquireEditableBrandSource } from './retrieve-item-source.js';
 
 type CreateConnection = Pick<Connection, 'request' | 'getApiVersion'>;
 export type ExecuteDeployCreateInput = DeployCreatePreflightInput & {
@@ -61,7 +62,11 @@ export async function executeDeployCreate(
   const reportFile =
     selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const preflight = await preflightDeployCreate(connection, selected, requestOptions);
-  const load = async () => selectDeploySources({ 'source-dir': [preflight.definitionFile] });
+  const load = async () =>
+    selectDeploySources(
+      { 'source-dir': [preflight.definitionFile] },
+      { includeUnqualifiedBrands: selected.includeUnqualifiedBrands === true },
+    );
   const source = await load();
   const report: WorkspaceImportRunReport = {
     createdParents: [],
@@ -175,6 +180,26 @@ export async function executeDeployCreate(
     }
     if ((detail.managedContentVariantId ?? detail.id) !== created.primaryVariantId)
       throw new TypeError('CREATE variant readback identity mismatch');
+    if (fresh.payload.contentType === 'sfdc_cms__brand') {
+      const acquired = await acquireEditableBrandSource(
+        connection,
+        {
+          workspaceId: selected.workspaceId,
+          language: selected.language,
+          apiName: fresh.payload.apiName!,
+        },
+        requestOptions,
+      );
+      const definition = acquired.projection.definition;
+      if (
+        acquired.evidence.contentId !== created.contentId ||
+        acquired.evidence.variantId !== created.primaryVariantId ||
+        definition.title !== fresh.payload.title ||
+        definition.urlName !== fresh.payload.urlName ||
+        !isDeepStrictEqual(definition.contentBody, fresh.payload.contentBody)
+      )
+        throw new TypeError('CREATE Brand native readback mismatch');
+    }
     report.createdParents.push(created);
     operation.state = 'succeeded';
     report.state = 'completed';

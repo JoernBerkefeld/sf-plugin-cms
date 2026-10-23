@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { executeDeployCreate } from '../../src/services/deploy-create-executor.js';
+import { executeDeployBatchBrandItem } from '../../src/services/deploy-batch-executor.js';
+import { brandBody, brandDetail } from '../fixtures/brand.js';
 import {
   rewriteAtomic,
   type WorkspaceImportRunReport,
@@ -14,46 +16,51 @@ const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 type Row = Record<string, unknown>;
-async function fixture(reporting = true) {
+async function fixture(reporting = true, brand = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-create-executor-'));
-  const definitionFile = path.join(directory, 'Welcome.cms-email.json');
+  const definitionFile = path.join(
+    directory,
+    brand ? 'Welcome.cms-brand.json' : 'Welcome.cms-email.json',
+  );
   const reportFile = path.join(directory, 'run.json');
   let evidence: WorkspaceImportRunReport | undefined;
   const currentReport = async () =>
     reporting
       ? (JSON.parse(await readFile(reportFile, 'utf8')) as WorkspaceImportRunReport)
       : evidence!;
-  const body = {
-    'sfdc_cms:title': 'Welcome',
-    'sfdc_cms:urlName': 'welcome',
-    subjectLine: 'Hello',
-    messagePurpose: 'Transactional',
-    textContent: 'Résumé 世界\n',
-    'lightning:dataProviders': [],
-  };
+  const body = brand
+    ? brandBody('Welcome')
+    : {
+        'sfdc_cms:title': 'Welcome',
+        'sfdc_cms:urlName': 'welcome',
+        subjectLine: 'Hello',
+        messagePurpose: 'Transactional',
+        textContent: 'Résumé 世界\n',
+        'lightning:dataProviders': [],
+      };
   const definition = {
     contract: 'sf-cms-source-definition',
     contractVersion: '1.0.0',
     identity: {
       family: 'cms',
-      type: 'Email',
+      type: brand ? 'Brand' : 'Email',
       apiName: 'Welcome',
       context: { workspaceApiName: 'Source' },
     },
-    contentType: 'sfdc_cms__email',
+    contentType: brand ? 'sfdc_cms__brand' : 'sfdc_cms__email',
     language: 'en_US',
     title: 'Welcome',
     urlName: 'welcome',
     folderPath: [],
     contentBody: body,
-    companions: { rawHtml: 'Welcome.cms-email.html' },
+    companions: brand ? {} : { rawHtml: 'Welcome.cms-email.html' },
   };
   await writeFile(definitionFile, JSON.stringify(definition));
   await writeFile(path.join(directory, 'Welcome.cms-email.html'), '<p>Literal &amp; 世界</p>\n');
   const row: Row = {
     Id: variantId,
     ManagedContentId: contentId,
-    ContentTypeFullyQualifiedName: 'sfdc_cms__email',
+    ContentTypeFullyQualifiedName: brand ? 'sfdc_cms__brand' : 'sfdc_cms__email',
     Language: 'en_US',
     IsPublished: false,
     ManagedContentVariantStatus: 'Draft',
@@ -71,13 +78,22 @@ async function fixture(reporting = true) {
     urlName: 'welcome',
     language: 'en_US',
     title: 'Welcome',
-    contentType: 'sfdc_cms__email',
+    contentType: brand ? 'sfdc_cms__brand' : 'sfdc_cms__email',
     contentSpace: { id: workspaceId },
     folder: { id: 'root' },
     isPublished: false,
     status: { status: 'Draft' },
     contentBody: { ...body, rawHtml: '<p>Literal &amp; 世界</p>\n' },
   };
+  if (brand)
+    Object.assign(detail, brandDetail(variantId, 'Welcome', workspaceId), {
+      title: 'Welcome',
+      urlName: 'welcome',
+      contentKey: 'MCGENERATED',
+      managedContentId: contentId,
+      folder: { id: 'root' },
+      contentBody: body,
+    });
   const response: Row = { id: contentId, contentKey: 'MCGENERATED', primaryVariantId: variantId };
   let posts = 0;
   let collision = false;
@@ -127,6 +143,7 @@ async function fixture(reporting = true) {
             }));
           return { records: structuredClone(records), done: true, totalSize: records.length };
         }
+        if (brand && posts === 0) return structuredClone(detail);
         const journal = await currentReport();
         expect(journal.operations[0].result?.contentId).to.equal(contentId);
         expect(journal.state).to.equal('ownership-uncertain');
@@ -144,6 +161,7 @@ async function fixture(reporting = true) {
   };
   return {
     input,
+    connection,
     row,
     detail,
     response,
@@ -185,6 +203,81 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 }
 
 describe('internal journaled portable CREATE executor', () => {
+  it('creates an internal Brand once and reacquires strict native evidence before completion', async () => {
+    const f = await fixture(true, true);
+    const result = await executeDeployBatchBrandItem(f.connection, f.input);
+    expect(result.outcome).to.equal('created');
+    expect(f.posts()).to.equal(1);
+    const report = await f.journal();
+    expect(report.state).to.equal('completed');
+    expect(report.operations[0].state).to.equal('succeeded');
+  });
+  it('returns exact Brand unchanged without mutation or journal allocation', async () => {
+    const f = await fixture(true, true);
+    f.collide();
+    const files = await f.files();
+    const result = await executeDeployBatchBrandItem(f.connection, f.input);
+    expect(result.outcome).to.equal('unchanged');
+    expect(f.posts()).to.equal(0);
+    expect(await f.files()).to.deep.equal(files);
+  });
+  it('keeps public CREATE closed and rejects Brand differences and lifecycle changes without writes', async () => {
+    const publicSource = await fixture(true, true);
+    await failure(
+      executeDeployCreate(publicSource.connection, publicSource.input),
+      /Unsupported|supported|not publicly/u,
+    );
+    expect(publicSource.requests).to.have.length(0);
+    for (const change of ['body', 'lifecycle'] as const) {
+      const f = await fixture(true, true);
+      f.collide();
+      if (change === 'body') f.detail.contentBody = brandBody('Changed');
+      else f.row.IsPublished = true;
+      await failure(executeDeployBatchBrandItem(f.connection, f.input), /blocked/u);
+      expect(f.posts()).to.equal(0);
+    }
+  });
+  it('rejects Brand source drift after durable intent before any POST', async () => {
+    const f = await fixture(true, true);
+    const rewrite: typeof rewriteAtomic = async (file, report) => {
+      await rewriteAtomic(file, report);
+      f.definition.title = 'Changed';
+      await f.save();
+    };
+    await failure(
+      executeDeployBatchBrandItem(f.connection, f.input, {}, { rewrite }),
+      /title|binding|Brand|drift/u,
+    );
+    expect(f.posts()).to.equal(0);
+    expect(await readFile(f.input.reportFile, 'utf8')).to.include('failed');
+  });
+  it('rejects Brand unknown parent absence and retains uncertain lost-response evidence', async () => {
+    const collision = await fixture(true, true);
+    collision.collide();
+    collision.row.ManagedContent = { AuthoredManagedContentSpaceId: workspaceId, ApiName: null };
+    await failure(executeDeployBatchBrandItem(collision.connection, collision.input), /blocked/u);
+    expect(collision.posts()).to.equal(0);
+    const lost = await fixture(true, true);
+    lost.failPost();
+    await failure(executeDeployBatchBrandItem(lost.connection, lost.input), /Lost response/u);
+    expect(lost.posts()).to.equal(1);
+    const report = await lost.journal();
+    expect(report.state).to.equal('ownership-uncertain');
+    expect(report.operations[0].state).to.equal('pending');
+  });
+  it('retains uncertain Brand CREATE identity when fresh acquisition rejects unsupported envelopes', async () => {
+    const f = await fixture(true, true);
+    f.detail.unexpected = true;
+    await failure(
+      executeDeployBatchBrandItem(f.connection, f.input),
+      /Brand|unsupported|envelope/u,
+    );
+    expect(f.posts()).to.equal(1);
+    const report = await f.journal();
+    expect(report.state).to.equal('ownership-uncertain');
+    expect(report.operations[0].result?.contentId).to.equal(contentId);
+    expect(report.createdParents).to.have.length(0);
+  });
   for (const scenario of ['success', 'boundary', 'lost-response', 'readback'] as const)
     it(`keeps journal-free CREATE ${scenario} evidence without persistence or replacement files`, async () => {
       const f = await fixture(false);

@@ -26,7 +26,7 @@ import {
   allocateMutationReportDirectory,
   validateMutationReportDirectory,
 } from '../../../services/mutation-report-directory.js';
-import { RETRIEVE_CONTENT_TYPES } from '../../../services/retrieve-selection.js';
+import { DELETE_CONTENT_TYPES } from '../../../services/delete-native-resolution.js';
 import { resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { sourcePathSegment } from '../../../contracts/source-definition.js';
 import { formatMutationOutcome } from '../../../mutation-outcome.js';
@@ -52,7 +52,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       summary: 'Exact Type:ApiName; repeat for each item. No type-only or wildcards.',
     }),
     'content-type': Flags.string({
-      options: RETRIEVE_CONTENT_TYPES.flatMap((type) => [type.slice('sfdc_cms__'.length), type]),
+      options: DELETE_CONTENT_TYPES.flatMap((type) => [type.slice('sfdc_cms__'.length), type]),
       summary: 'Family for an exact API name or parent/key selector; no implicit default.',
     }),
     'api-name': Flags.string({

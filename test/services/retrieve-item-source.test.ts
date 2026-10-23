@@ -1,7 +1,13 @@
 import { expect } from 'chai';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { writeEditableItemSource } from '../../src/services/write-item-source.js';
+import { loadEditableBrandSource } from '../../src/services/editable-item-source.js';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { brandDetail } from '../fixtures/brand.js';
+import { normalizeRetrieveSelection } from '../../src/services/retrieve-selection.js';
 import { reassembleEditableItemSourceV2 } from '../../src/services/editable-item-source-v2.js';
 import { NativeInventoryRequestError } from '../../src/services/retrieve-native-inventory.js';
 import type { ResolveNativeRetrieveInput } from '../../src/services/retrieve-native-resolution.js';
@@ -263,7 +269,42 @@ async function acquisitionRejects(action: () => Promise<unknown>, message: strin
   }
 }
 
-describe('internal native Brand acquisition', () => {
+describe('native Brand retrieval acquisition', () => {
+  it('writes, reloads, repeats and overwrites acquired portable Brand JSON without companions', async () => {
+    const current = fixture(false, true);
+    const prepared = await prepareEditableSourceSelection(current.connection, {
+      workspaceId: selection.workspaceId,
+      language: 'en_US',
+      selection: normalizeRetrieveSelection({ metadata: ['brand:Welcome'] }),
+    });
+    const source = await prepared.acquire(prepared.resolution.variants[0].Id);
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-brand-retrieve-'));
+    const written = await writeEditableItemSource(root, source.directory, source.projection);
+    expect(written.created).to.deep.equal([written.definitionPath]);
+    const loaded = await loadEditableBrandSource(written.definitionPath);
+    expect(loaded.definition).to.deep.equal(source.projection.definition);
+    const repeated = await writeEditableItemSource(root, source.directory, source.projection);
+    expect(repeated.unchanged).to.deep.equal([written.definitionPath]);
+    current.variants[0].title = 'Edited';
+    (current.variants[0].contentBody as RecordValue)['sfdc_cms:title'] = 'Edited';
+    current.parent.title = 'Edited';
+    (current.parent.contentBody as RecordValue)['sfdc_cms:title'] = 'Edited';
+    const changed = await acquireEditableBrandSource(current.connection, selection);
+    await acquisitionRejects(
+      () => writeEditableItemSource(root, changed.directory, changed.projection),
+      '',
+    );
+    const updated = await writeEditableItemSource(
+      root,
+      changed.directory,
+      changed.projection,
+      true,
+    );
+    expect(updated.updated).to.deep.equal([written.definitionPath]);
+    expect(await readFile(written.definitionPath)).to.deep.equal(
+      changed.projection.definitionBytes,
+    );
+  });
   it('projects strict original inline Brand bytes without mutating or retaining source evidence', async () => {
     const current = fixture(false, true);
     const before = JSON.stringify([current.workspace, current.parent, current.variants]);
@@ -378,15 +419,32 @@ describe('internal native Brand acquisition', () => {
       }
   });
 
-  it('keeps prepared public acquisition runtime-closed even for a forged Brand selector', async () => {
-    const current = fixture(false, true);
-    const input = nativeSelection();
-    Object.assign(input.selection.groups[0], { contentType: 'sfdc_cms__brand' });
-    const prepared = await prepareEditableSourceSelection(current.connection, input);
-    await acquisitionRejects(
-      () => prepared.acquire(prepared.resolution.variants[0].Id),
-      'Unsupported prepared',
-    );
+  it('acquires public Brand selections through the existing privately bound projection', async () => {
+    for (const flags of [
+      {},
+      { metadata: ['brand'] },
+      { metadata: ['brand:Welcome', 'brand:Welcome', 'brand:Missing', 'email:Missing'] },
+      { 'content-type': ['brand'], 'api-name': ['Welcome'] },
+      { 'content-type': ['brand'], 'content-key-or-id': ['20Y000000000001AAA'] },
+    ]) {
+      const current = fixture(false, true);
+      const prepared = await prepareEditableSourceSelection(current.connection, {
+        workspaceId: selection.workspaceId,
+        language: 'en_US',
+        selection: normalizeRetrieveSelection(flags),
+      });
+      expect(prepared.resolution.variants).to.have.length(1);
+      const expected = await acquireEditableBrandSource(current.connection, selection);
+      const id = prepared.resolution.variants[0].Id;
+      prepared.resolution.variants[0].ManagedContent.ApiName = 'Changed';
+      expect(await prepared.acquire(id)).to.deep.equal(expected);
+      await acquisitionRejects(() => prepared.acquire('unselected'), 'not in the resolved');
+      if ('metadata' in flags && flags.metadata?.includes('brand:Missing'))
+        expect(prepared.resolution.unresolved.map(({ selector }) => selector)).to.deep.equal([
+          'Missing',
+          'Missing',
+        ]);
+    }
   });
 });
 

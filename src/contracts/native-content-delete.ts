@@ -1,6 +1,6 @@
 import { assertExactKeys, assertNonemptyString } from './shared.js';
 import type { NativeDeleteTarget } from '../services/delete-native-resolution.js';
-import { RETRIEVE_CONTENT_TYPES } from '../services/retrieve-selection.js';
+import { DELETE_CONTENT_TYPES } from '../services/delete-native-resolution.js';
 import type { LifecycleLocalDeletionResult } from '../services/lifecycle-local-source.js';
 
 export type NativeDeleteOperation = {
@@ -82,7 +82,7 @@ export function assertNativeDeleteResult(value: unknown): asserts value is Nativ
       assertNonemptyString(target[field], field);
     if (target.apiName !== null) assertNonemptyString(target.apiName, 'apiName');
     if (
-      !(RETRIEVE_CONTENT_TYPES as readonly unknown[]).includes(target.contentType) ||
+      !(DELETE_CONTENT_TYPES as readonly unknown[]).includes(target.contentType) ||
       !['Content', 'Translation'].includes(String(target.variantType)) ||
       typeof target.isPrimary !== 'boolean' ||
       typeof target.isPublished !== 'boolean' ||

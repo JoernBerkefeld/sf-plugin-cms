@@ -12,7 +12,10 @@ import { loadEditableMediaSource } from './editable-media-source.js';
 import { preflightDeployDocumentUpdate } from './deploy-document-update-preflight.js';
 import { admitDeployImageUnchanged } from './deploy-image-unchanged.js';
 import { preflightDeployImageUpdate } from './deploy-image-update-preflight.js';
-import { sourcePathSegment } from '../contracts/source-definition.js';
+import { assertSourceDefinition, sourcePathSegment } from '../contracts/source-definition.js';
+import { loadEditableBrandSource } from './editable-item-source.js';
+import { brandCreatePayload } from './brand.js';
+import type { WorkspaceImportItem } from './import-workspace.js';
 import type { JsonValue } from '../contracts/capability-registry.js';
 import { getCmsApiSelection } from '../api-policy.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
@@ -23,6 +26,7 @@ import { reassembleEditableItemSourceV2 } from './editable-item-source-v2.js';
 import {
   acquireEditableEmailSource,
   acquireEditableTemplateSource,
+  acquireEditableBrandSource,
 } from './retrieve-item-source.js';
 import { enumerateNativeWorkspace, type NativeInventory } from './retrieve-native-inventory.js';
 import { getVariant, getWorkspace } from './read.js';
@@ -101,6 +105,20 @@ async function bindMediaItem(item: DeployLocalItem): Promise<void> {
   };
   if (!item.mediaSha256 || !isDeepStrictEqual(fresh, item))
     throw new TypeError('Audio planning local snapshot changed');
+}
+
+async function bindBrandItem(item: DeployLocalItem): Promise<void> {
+  const loaded = await loadEditableBrandSource(item.definitionPath);
+  const fresh: DeployLocalItem = {
+    ...loaded,
+    companionPaths: [],
+    targetIdentity: {
+      contentType: loaded.definition.contentType,
+      apiName: loaded.definition.identity.apiName,
+      language: loaded.definition.language,
+    },
+  };
+  if (!isDeepStrictEqual(fresh, item)) throw new TypeError('Brand planning local snapshot changed');
 }
 
 function localBody(item: DeployLocalItem): Record<string, JsonValue> {
@@ -353,6 +371,87 @@ async function prepareItem(
       await bind();
       return prepared;
     }
+    if (item.definition.contentType === 'sfdc_cms__brand') {
+      await bindBrandItem(item);
+      assertSourceDefinition(item.definition);
+      if (
+        item.definition.language !== input.language ||
+        item.definition.folderPath.length > 0 ||
+        typeof item.definition.urlName !== 'string' ||
+        !/^[a-z0-9-]+$/u.test(item.definition.urlName) ||
+        !input.expectedRootFolderId
+      )
+        throw new TypeError('Brand requires root/default language and explicit native URL name');
+      brandCreatePayload(
+        {
+          apiName: item.definition.identity.apiName,
+          contentType: item.definition.contentType,
+          title: item.definition.title,
+          urlName: item.definition.urlName,
+          contentBody: structuredClone(item.contentBody),
+        } as WorkspaceImportItem,
+        input.expectedRootFolderId,
+      );
+      const collisions = inventory.records.filter(
+        (row) =>
+          row.ManagedContent.ApiName === item.targetIdentity.apiName ||
+          row.Name === item.definition.title ||
+          row.UrlName === item.definition.urlName,
+      );
+      if (collisions.length === 0) {
+        if (inventory.records.some((row) => !row.ManagedContent.ApiName))
+          throw new TypeError('Brand CREATE absence unproven: unknown parent API name');
+        prepared.proposed = 'create';
+      } else {
+        const row = collisions[0];
+        if (
+          collisions.length !== 1 ||
+          row.ManagedContent.ApiName !== item.targetIdentity.apiName ||
+          row.ContentTypeFullyQualifiedName !== 'sfdc_cms__brand' ||
+          row.Language !== input.language ||
+          row.IsPrimary !== true ||
+          row.IsPublished !== false ||
+          row.ManagedContentVariantStatus !== 'Draft'
+        )
+          throw new TypeError('Brand destination identity, collision or lifecycle is unsupported');
+        const existing = await acquireEditableBrandSource(
+          connection,
+          {
+            workspaceId: input.workspaceId,
+            language: input.language,
+            apiName: item.targetIdentity.apiName,
+          },
+          options,
+        );
+        const definition = existing.projection.definition;
+        const baseline = {
+          contentBody: definition.contentBody,
+          title: definition.title,
+          urlName: definition.urlName,
+        };
+        if (
+          existing.evidence.variantId !== row.Id ||
+          existing.evidence.contentId !== row.ManagedContentId ||
+          row.Name !== definition.title ||
+          row.UrlName !== definition.urlName
+        )
+          throw new TypeError('Brand destination native snapshot disagreement');
+        prepared.existing = { ...existing.evidence, ...structuredClone(baseline) };
+        prepared.changedFields = changes(prepared.desired, baseline);
+        if (prepared.changedFields.length > 0)
+          throw new TypeError('Brand UPDATE is unsupported: ' + prepared.changedFields.join(', '));
+        prepared.proposed = 'unchanged';
+      }
+      if (
+        !isDeepStrictEqual(
+          await enumerateNativeWorkspace(connection, input.workspaceId, options),
+          inventory,
+        )
+      )
+        throw new TypeError('Brand destination inventory changed during preparation');
+      await bindBrandItem(item);
+      return prepared;
+    }
     localBody(item);
     const identity = item.targetIdentity;
     if (!['sfdc_cms__email', 'sfdc_cms__emailTemplate'].includes(identity.contentType))
@@ -448,7 +547,10 @@ async function prepareItem(
       prepared.proposed = 'update';
     else throw new TypeError('Unsupported update fields: ' + prepared.changedFields.join(', '));
   } catch (error) {
-    if (item.definition.contract === 'sf-cms-media-source') {
+    if (
+      item.definition.contract === 'sf-cms-media-source' ||
+      item.definition.contentType === 'sfdc_cms__brand'
+    ) {
       prepared.proposed = 'blocked';
     }
     prepared.blockedReasons.push(
@@ -496,7 +598,8 @@ export async function prepareDeployDestination(
         )
           throw new TypeError('Unsupported deploy media content type');
         await bindMediaItem(item);
-      } else localBody(item);
+      } else if (item.definition.contentType === 'sfdc_cms__brand') await bindBrandItem(item);
+      else localBody(item);
       const key = item.targetIdentity.apiName;
       if (identities.has(key))
         throw new TypeError('Selected sources collide at destination parent API name');
@@ -512,7 +615,9 @@ export async function prepareDeployDestination(
       throw new TypeError('Destination workspace identity or root mismatch');
     if (
       selected.selection.items.some((item) =>
-        ['sfdc_cms__document', 'sfdc_cms__audio'].includes(item.definition.contentType),
+        ['sfdc_cms__document', 'sfdc_cms__audio', 'sfdc_cms__brand'].includes(
+          item.definition.contentType,
+        ),
       )
     ) {
       if (
@@ -542,6 +647,14 @@ export async function prepareDeployDestination(
     };
     for (const item of selected.selection.items)
       result.items.push(await prepareItem(connection, item, selected, inventory, requestOptions));
+    if (
+      selected.selection.items.some((item) => item.definition.contentType === 'sfdc_cms__brand') &&
+      !isDeepStrictEqual(
+        await getWorkspace(connection, selected.workspaceId, requestOptions),
+        workspace,
+      )
+    )
+      throw new TypeError('Brand destination workspace changed during preparation');
   } catch (error) {
     result.blockedReasons.push(
       redactSecrets(error instanceof Error ? error.message : 'Destination preparation failed'),

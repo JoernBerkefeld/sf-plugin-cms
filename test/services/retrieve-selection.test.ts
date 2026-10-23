@@ -44,7 +44,12 @@ describe('pure retrieve selector normalization', () => {
     });
   });
 
-  for (const image of ['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio']) {
+  for (const image of [
+    'sfdc_cms__image',
+    'sfdc_cms__document',
+    'sfdc_cms__audio',
+    'sfdc_cms__brand',
+  ]) {
     it(`admits ${image} exact, native, all and mixed metadata selectors`, () => {
       expect(
         normalizeRetrieveSelection({ 'content-type': [image], 'api-name': ['Hero'] }).groups,

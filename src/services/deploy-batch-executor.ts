@@ -7,7 +7,9 @@ import type { JsonRequestOptions } from '../transport/json-request.js';
 import { notifyMutationOutcome, type MutationOutcomeObserver } from '../mutation-outcome.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
-import { executeDeployCreate } from './deploy-create-executor.js';
+import { executeDeployCreate, type ExecuteDeployCreateInput } from './deploy-create-executor.js';
+import { prepareDeployDestination } from './deploy-destination-preparation.js';
+import { acquireEditableBrandSource } from './retrieve-item-source.js';
 import { executeDeployAudioCreate } from './deploy-audio-create-executor.js';
 import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
 import { executeDeployAudioUpdate } from './deploy-audio-update-executor.js';
@@ -77,6 +79,112 @@ export type DeployBatchReport = {
     unattempted: number;
   };
 };
+/**
+ * Execute one strict Brand CREATE or exact zero-write unchanged observation.
+ * Caller proposals and payloads are never accepted; fresh native proof is required.
+ * @param {Connection} connection - Explicit destination connection.
+ * @param {ExecuteDeployCreateInput} input - Strict source path and exact destination scope.
+ * @param {JsonRequestOptions} options - Read and mutation cancellation options.
+ * @param {WorkspaceImportReportPersistence} persistence - Existing journal persistence seam.
+ * @param {Function} beforeExecute - Awaited whole-selection boundary, additional to item proof.
+ * @param {Function} onReport - Synchronous live journal evidence handoff.
+ * @returns {Promise<object>} Unqualified result; unchanged allocates no journal.
+ */
+export async function executeDeployBatchBrandItem(
+  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  input: ExecuteDeployCreateInput,
+  options: JsonRequestOptions = {},
+  persistence?: WorkspaceImportReportPersistence,
+  beforeExecute?: () => Promise<void>,
+  onReport?: (report: WorkspaceImportRunReport) => void,
+) {
+  const selected = structuredClone(input);
+  const requestOptions = { ...options };
+  if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
+    throw new TypeError('Brand execution requires exact destination org ID');
+  const load = async () =>
+    selectDeploySources(
+      { 'source-dir': [selected.definitionFile] },
+      { includeUnqualifiedBrands: true },
+    );
+  const source = await load();
+  const item = source.items[0];
+  if (source.items.length !== 1 || item.definition.contentType !== 'sfdc_cms__brand')
+    throw new TypeError('Brand execution requires one strict Brand definition');
+  const prepare = async () => {
+    const preparation = await prepareDeployDestination(
+      connection,
+      { selection: await load(), workspaceId: selected.workspaceId, language: selected.language },
+      requestOptions,
+    );
+    const candidate = preparation.items[0];
+    if (
+      preparation.blockedReasons.length > 0 ||
+      !candidate ||
+      candidate.blockedReasons.length > 0 ||
+      !['create', 'unchanged'].includes(candidate.proposed) ||
+      !isDeepStrictEqual(candidate.source, item) ||
+      !isDeepStrictEqual(await load(), source)
+    )
+      throw new TypeError('Brand execution source or destination is blocked');
+    return preparation;
+  };
+  const inventory = await enumerateNativeWorkspace(
+    connection,
+    selected.workspaceId,
+    requestOptions,
+  );
+  const baseline = await prepare();
+  const revalidate = async () => {
+    await beforeExecute?.();
+    if (requestOptions.signal?.aborted) throw new TypeError('Brand execution cancelled');
+    if (
+      !isDeepStrictEqual(await prepare(), baseline) ||
+      !isDeepStrictEqual(
+        await enumerateNativeWorkspace(connection, selected.workspaceId, requestOptions),
+        inventory,
+      )
+    )
+      throw new TypeError('Brand execution destination changed');
+  };
+  if (baseline.items[0].proposed === 'create') {
+    const result = await executeDeployCreate(
+      connection,
+      { ...selected, includeUnqualifiedBrands: true },
+      requestOptions,
+      persistence,
+      revalidate,
+      onReport,
+    );
+    return { outcome: 'created' as const, ...result };
+  }
+  const acquired = await acquireEditableBrandSource(
+    connection,
+    {
+      workspaceId: selected.workspaceId,
+      language: selected.language,
+      apiName: item.targetIdentity.apiName,
+    },
+    requestOptions,
+  );
+  if (
+    !isDeepStrictEqual(acquired.evidence, {
+      variantId: baseline.items[0].existing!.variantId,
+      contentId: baseline.items[0].existing!.contentId,
+    }) ||
+    !isDeepStrictEqual(acquired.projection.definition.contentBody, item.contentBody) ||
+    acquired.projection.definition.title !== item.definition.title ||
+    acquired.projection.definition.urlName !== item.definition.urlName
+  )
+    throw new TypeError('Brand unchanged native readback mismatch');
+  await revalidate();
+  return {
+    qualification: 'unqualified' as const,
+    outcome: 'unchanged' as const,
+    target: acquired.evidence,
+  };
+}
+
 export type DeployBatchVerifiedUpdateRow = {
   before: NativeInventoryRow;
   after: NativeInventoryRow;
@@ -150,6 +258,8 @@ export function reconcileDeployBatchInventory(
  * @param {NativeInventoryRow[]} verifiedCreatedRows - Independently verified prior CREATE rows.
  * @param {JsonRequestOptions} options - Read/cancellation options only.
  * @param {DeployBatchVerifiedUpdateRow[]} verifiedUpdatedRows - Independently verified earlier UPDATE observations.
+ * @param {object} internal - Default-closed internal selection admission.
+ * @param {boolean} internal.admitBrands - Admit Brand only for the separate internal batch path.
  * @returns {Promise<void>} Resolves only while local, identity and complete inventory agree.
  */
 export async function revalidateDeployBatchDocumentBoundary(
@@ -160,6 +270,7 @@ export async function revalidateDeployBatchDocumentBoundary(
   verifiedCreatedRows: readonly NativeInventoryRow[],
   options: JsonRequestOptions = {},
   verifiedUpdatedRows: readonly DeployBatchVerifiedUpdateRow[] = [],
+  internal: { admitBrands?: boolean } = {},
 ): Promise<void> {
   const selected = structuredClone(input);
   // Preserve native Buffer proof values; structuredClone would change them to Uint8Array.
@@ -189,7 +300,14 @@ export async function revalidateDeployBatchDocumentBoundary(
   };
   const checkLocal = async () => {
     if (requestOptions.signal?.aborted) throw new TypeError('Batch Document boundary cancelled');
-    if (!isDeepStrictEqual(await selectDeploySources(selected.sources), frozen.selection))
+    if (
+      !isDeepStrictEqual(
+        await selectDeploySources(selected.sources, {
+          includeUnqualifiedBrands: internal.admitBrands === true,
+        }),
+        frozen.selection,
+      )
+    )
       throw new TypeError('Batch Document local selection changed');
   };
   const checkInventory = async () => {
@@ -247,6 +365,8 @@ export async function revalidateDeployBatchDocumentBoundary(
  * @param {NativeInventoryRow[]} verifiedCreatedRows - Independently verified prior CREATE rows.
  * @param {JsonRequestOptions} options - Read/cancellation options only.
  * @param {DeployBatchVerifiedUpdateRow[]} verifiedUpdatedRows - Verified earlier UPDATE observations.
+ * @param {object} internal - Default-closed internal selection admission.
+ * @param {boolean} internal.admitBrands - Admit Brand only for the separate internal batch path.
  * @returns {Promise<void>} Resolves only while source, private proof and destination agree.
  */
 export async function revalidateDeployBatchAudioBoundary(
@@ -257,6 +377,7 @@ export async function revalidateDeployBatchAudioBoundary(
   verifiedCreatedRows: readonly NativeInventoryRow[],
   options: JsonRequestOptions = {},
   verifiedUpdatedRows: readonly DeployBatchVerifiedUpdateRow[] = [],
+  internal: { admitBrands?: boolean } = {},
 ): Promise<void> {
   const selected = structuredClone(input);
   // Retain native Buffers in private proof observations, as for Document.
@@ -291,7 +412,14 @@ export async function revalidateDeployBatchAudioBoundary(
   };
   const checkLocal = async () => {
     if (requestOptions.signal?.aborted) throw new TypeError('Batch Audio boundary cancelled');
-    if (!isDeepStrictEqual(await selectDeploySources(selected.sources), baseline.selection))
+    if (
+      !isDeepStrictEqual(
+        await selectDeploySources(selected.sources, {
+          includeUnqualifiedBrands: internal.admitBrands === true,
+        }),
+        baseline.selection,
+      )
+    )
       throw new TypeError('Batch Audio local selection changed');
   };
   const checkInventory = async () => {
@@ -519,13 +647,43 @@ export async function executeDeployBatch(
   options: JsonRequestOptions = {},
   persistence?: DeployBatchPersistence,
 ): Promise<{ qualification: 'unqualified'; reportFile?: string; report: DeployBatchReport }> {
+  return executeDeployBatchInternal(connection, input, options, persistence, true);
+}
+
+/**
+ * Retain the qualification harness entry point for strict, unqualified Brand batches.
+ * @param {Connection} connection - Explicit destination connection.
+ * @param {ExecuteDeployBatchInput} input - Local selectors and exact destination scope.
+ * @param {JsonRequestOptions} options - Cancellation and transport options.
+ * @param {DeployBatchPersistence} persistence - Existing journal persistence seam.
+ * @returns {Promise<object>} Unqualified internal batch result.
+ */
+export async function executeDeployBatchWithBrands(
+  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  input: ExecuteDeployBatchInput,
+  options: JsonRequestOptions = {},
+  persistence?: DeployBatchPersistence,
+): Promise<{ qualification: 'unqualified'; reportFile?: string; report: DeployBatchReport }> {
+  return executeDeployBatchInternal(connection, input, options, persistence, true);
+}
+
+async function executeDeployBatchInternal(
+  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  input: ExecuteDeployBatchInput,
+  options: JsonRequestOptions,
+  persistence: DeployBatchPersistence | undefined,
+  admitBrands: boolean,
+): Promise<{ qualification: 'unqualified'; reportFile?: string; report: DeployBatchReport }> {
+  const internal = { admitBrands };
   const { onOutcome, ...serializableInput } = input;
   const selected = structuredClone(serializableInput);
   const requestOptions = { ...options };
   if (!/^00D[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.destinationOrgId))
     throw new TypeError('Batch requires exact destination org ID');
   // Never accept a caller's eligibility, payload, or operation-specific proof.
-  const selection = await selectDeploySources(selected.sources);
+  const selection = await selectDeploySources(selected.sources, {
+    includeUnqualifiedBrands: internal.admitBrands === true,
+  });
   for (const source of selection.items) {
     if (
       source.definition.contract === 'sf-cms-media-source' &&
@@ -540,10 +698,11 @@ export async function executeDeployBatch(
     selected.workspaceId,
     requestOptions,
   );
-  const baseline = await preflightDeployBatch(connection, selected, requestOptions);
+  const baseline = await preflightDeployBatch(connection, selected, requestOptions, internal);
   const verifiedCreatedRows: NativeInventoryRow[] = [];
   const verifiedUpdatedRows: DeployBatchVerifiedUpdateRow[] = [];
-  const reselect = () => selectDeploySources(selected.sources);
+  const reselect = () =>
+    selectDeploySources(selected.sources, { includeUnqualifiedBrands: admitBrands });
   const reportFile =
     selected.reportFile === undefined ? undefined : path.resolve(selected.reportFile);
   const runId = randomUUID();
@@ -683,6 +842,43 @@ export async function executeDeployBatch(
         )
           throw new TypeError('Batch durable intent changed before execution');
         await checkInventory();
+        // Pending Brand intent must hold before every family mutation, not just its own turn.
+        if (
+          admitBrands &&
+          baseline.selection.items.some(
+            (source) => source.definition.contentType === 'sfdc_cms__brand',
+          )
+        ) {
+          const fresh = await prepareDeployDestination(
+            connection,
+            {
+              selection: await reselect(),
+              workspaceId: selected.workspaceId,
+              language: selected.language,
+              expectedRootFolderId: baseline.rootFolderId,
+            },
+            requestOptions,
+          );
+          if (
+            fresh.blockedReasons.length > 0 ||
+            !fresh.inventory ||
+            !baseline.preparation.inventory
+          )
+            throw new TypeError('Batch Brand destination changed');
+          // Complete inventory was independently reconciled above; normalize bookkeeping only.
+          fresh.inventory.recordCount -= verifiedCreatedRows.length;
+          fresh.inventory.pagesRequested = baseline.preparation.inventory.pagesRequested;
+          if (!isDeepStrictEqual(fresh.inventory, baseline.preparation.inventory))
+            throw new TypeError('Batch Brand inventory changed');
+          for (const [brandIndex, source] of baseline.selection.items.entries()) {
+            if (
+              source.definition.contentType === 'sfdc_cms__brand' &&
+              !(brandIndex < index && report.items[brandIndex].outcome === 'created') &&
+              !isDeepStrictEqual(fresh.items[brandIndex], baseline.preparation.items[brandIndex])
+            )
+              throw new TypeError('Batch Brand intent changed');
+          }
+        }
         // A late Audio drift must block even an earlier non-Audio mutation.
         for (const [audioIndex, source] of baseline.selection.items.entries()) {
           // Earlier completed mutations are now bound by verified inventory rows, not old proofs.
@@ -701,10 +897,17 @@ export async function executeDeployBatch(
               verifiedCreatedRows,
               requestOptions,
               verifiedUpdatedRows,
+              internal,
             );
         }
         const proof = baseline.items[index];
         switch (item.source.definition.contentType) {
+          case 'sfdc_cms__brand': {
+            if (!admitBrands || !['create', 'unchanged'].includes(item.proposed))
+              throw new TypeError('Batch Brand operation blocked');
+            // Strict preparation for every pending Brand was independently reacquired above.
+            break;
+          }
           case 'sfdc_cms__document': {
             await revalidateDeployBatchDocumentBoundary(
               connection,
@@ -714,6 +917,7 @@ export async function executeDeployBatch(
               verifiedCreatedRows,
               requestOptions,
               verifiedUpdatedRows,
+              internal,
             );
 
             break;
@@ -792,6 +996,27 @@ export async function executeDeployBatch(
         reportFile: item.reportFile,
       };
       switch (item.source.definition.contentType) {
+        case 'sfdc_cms__brand': {
+          if (!admitBrands || !['create', 'unchanged'].includes(item.proposed))
+            throw new TypeError('Batch Brand operation blocked');
+          const result = await executeDeployBatchBrandItem(
+            connection,
+            itemInput,
+            requestOptions,
+            persistence?.item,
+            boundary,
+            onReport,
+          );
+          if (result.outcome === 'unchanged') item.target = result.target;
+          else {
+            if (result.report.state !== 'completed' || result.report.createdParents.length !== 1)
+              throw new TypeError('Brand journal incomplete');
+            const created = result.report.createdParents[0];
+            item.target = { contentId: created.contentId, variantId: created.primaryVariantId };
+          }
+          item.outcome = result.outcome;
+          break;
+        }
         case 'sfdc_cms__document': {
           const result = await executeDeployBatchDocumentItem(
             connection,

@@ -4,6 +4,8 @@ import type { JsonRequestOptions } from '../transport/json-request.js';
 import { sourcePathSegment } from '../contracts/source-definition.js';
 import { assertNativeBody } from './import-identities.js';
 import { createPayload, type WorkspaceImportItem } from './import-workspace.js';
+import { brandCreatePayload } from './brand.js';
+import { assertSourceDefinition } from '../contracts/source-definition.js';
 import { selectDeploySources } from './deploy-source-selection.js';
 import { enumerateNativeWorkspace } from './retrieve-native-inventory.js';
 import { getWorkspace } from './read.js';
@@ -15,6 +17,8 @@ export type DeployCreatePreflightInput = {
   definitionFile: string;
   workspaceId: string;
   language: string;
+  /** Brand item executor admission; selection alone never authorizes CREATE. */
+  includeUnqualifiedBrands?: boolean;
 };
 export type DeployCreatePreflight = {
   /** Detached observation only: never a mutation capability or whole-selection approval. */
@@ -45,7 +49,11 @@ export async function preflightDeployCreate(
   sourcePathSegment(selected.language);
   if (!/^0Zu[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.workspaceId))
     throw new TypeError('CREATE requires exact destination workspace ID');
-  const load = async () => selectDeploySources({ 'source-dir': [selected.definitionFile] });
+  const load = async () =>
+    selectDeploySources(
+      { 'source-dir': [selected.definitionFile] },
+      { includeUnqualifiedBrands: selected.includeUnqualifiedBrands === true },
+    );
   const source = await load();
   const item = source.items[0];
   const definition = item.definition;
@@ -63,10 +71,13 @@ export async function preflightDeployCreate(
     throw new TypeError('CREATE requires matching explicit native URL name');
   // Portable admission is not CREATE admission: reuse the existing native CREATE profile.
   // Keep textContent and structured supported fields intact; never silently strip a field.
-  assertNativeBody({
-    contentType: definition.contentType,
-    contentBody: item.contentBody,
-  } as unknown as WorkspaceImportItem);
+  const brand = definition.contentType === 'sfdc_cms__brand';
+  if (brand) assertSourceDefinition(definition);
+  else
+    assertNativeBody({
+      contentType: definition.contentType,
+      contentBody: item.contentBody,
+    } as unknown as WorkspaceImportItem);
   const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
   if (
     workspace.id !== selected.workspaceId ||
@@ -80,18 +91,16 @@ export async function preflightDeployCreate(
     { id: selected.workspaceId, workspace },
     requestOptions,
   );
-  const payload = createPayload(
-    {
-      primary: {
-        apiName: definition.identity.apiName,
-        contentType: definition.contentType,
-        title: definition.title,
-        contentBody: structuredClone(item.contentBody),
-        ...(definition.urlName === undefined ? {} : { urlName: definition.urlName }),
-      },
-    },
-    workspace.rootFolderId,
-  );
+  const primary = {
+    apiName: definition.identity.apiName,
+    contentType: definition.contentType,
+    title: definition.title,
+    contentBody: structuredClone(item.contentBody),
+    ...(definition.urlName === undefined ? {} : { urlName: definition.urlName }),
+  } as WorkspaceImportItem;
+  const payload = brand
+    ? brandCreatePayload(primary, workspace.rootFolderId)
+    : createPayload({ primary }, workspace.rootFolderId);
   // No family, language, or status filter: API names belong to parents, not variants.
   const inventory = await enumerateNativeWorkspace(
     connection,

@@ -30,7 +30,8 @@ import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-
 
 type RequestConnection = Pick<Connection, 'request'> &
   Partial<Pick<Connection, 'version' | 'accessToken' | 'instanceUrl'>>;
-export type AcquiredEditableSource = AcquiredEditableEmailSource | AcquiredEditableMediaSource;
+export type AcquiredEditableSource =
+  AcquiredEditableEmailSource | AcquiredEditableMediaSource | AcquiredEditableBrandSource;
 export type AcquireEditableEmailSourceInput = {
   readonly workspaceId: string;
   readonly apiName: string;
@@ -260,10 +261,16 @@ async function acquireEditableSource(
   for (const row of family.records)
     inventory.push(await bindNativeDetail(connection, row, requestOptions));
   const matches = inventory.filter((raw) => raw.apiName === apiName && raw.language === language);
-  if (matches.length !== 1)
+  if (matches.length !== 1) {
+    const label = {
+      sfdc_cms__email: 'Email',
+      sfdc_cms__emailTemplate: 'Template',
+      sfdc_cms__brand: 'Brand',
+    }[contentType];
     throw new TypeError(
-      `${contentType === 'sfdc_cms__email' ? 'Email' : 'Template'} selection must match exactly one variant; found ${matches.length}`,
+      `${label} selection must match exactly one variant; found ${matches.length}`,
     );
+  }
   const raw = matches[0];
   const selectedRow = family.records.find((row) => row.Id === requiredVariantIdentifier(raw))!;
   return acquireBoundSource(
@@ -357,18 +364,12 @@ export async function prepareEditableSourceSelection(
       }
       if (
         row.ContentTypeFullyQualifiedName !== 'sfdc_cms__email' &&
-        row.ContentTypeFullyQualifiedName !== 'sfdc_cms__emailTemplate'
+        row.ContentTypeFullyQualifiedName !== 'sfdc_cms__emailTemplate' &&
+        row.ContentTypeFullyQualifiedName !== 'sfdc_cms__brand'
       )
         throw new TypeError('Unsupported prepared editable source content type');
       const raw = await bindNativeDetail(connection, row, options);
-      return acquireBoundSource(
-        connection,
-        nativeConnection,
-        workspace,
-        row,
-        raw,
-        options,
-      ) as Promise<AcquiredEditableEmailSource>;
+      return acquireBoundSource(connection, nativeConnection, workspace, row, raw, options);
     },
   };
 }

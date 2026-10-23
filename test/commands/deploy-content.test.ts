@@ -1,4 +1,5 @@
 import { Parser } from '@oclif/core';
+import { brandBody } from '../fixtures/brand.js';
 import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
@@ -140,6 +141,8 @@ describe('cms deploy content command', () => {
       ['-d', './a', '-t', 'email', '-t', 'emailTemplate'],
       ['-d', './a', '-t', 'audio'],
       ['-d', './a', '-t', 'sfdc_cms__audio'],
+      ['-m', 'brand:Brand'],
+      ['-d', './a', '-t', 'sfdc_cms__brand'],
       ['-m', 'audio:Chime'],
       ['-m', 'sfdc_cms__audio:Chime'],
     ]) {
@@ -386,6 +389,56 @@ describe('cms deploy content command', () => {
           expect(await readFile(companion)).to.deep.equal(bytes);
         }
       }
+    });
+  }
+
+  for (const proposed of ['create', 'unchanged'] as const) {
+    it(`routes strict ordinary Brand ${proposed} preview without mutation or qualification claims`, async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'cms-brand-command-'));
+      const file = path.join(root, 'Brand.cms-brand.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          contract: 'sf-cms-source-definition',
+          contractVersion: '1.0.0',
+          identity: {
+            family: 'cms',
+            type: 'Brand',
+            apiName: 'Brand',
+            context: { workspaceApiName: 'Source' },
+          },
+          contentType: 'sfdc_cms__brand',
+          language: 'en_US',
+          folderPath: [],
+          title: 'Brand',
+          urlName: 'brand',
+          contentBody: brandBody('Brand'),
+          companions: {},
+        }),
+      );
+      const s = command({ 'source-dir': [root], 'content-type': ['brand'] });
+      const selected = await selectDeploySources({
+        'source-dir': [root],
+        'content-type': ['brand'],
+      });
+      const item = preparedItem(proposed);
+      item.source = selected.items[0];
+      s.preparation.items = [item];
+      Object.assign(s.instance, { selectSources: selectDeploySources });
+      const envelope = await s.instance.run();
+      expect(envelope.status).to.equal('success');
+      expect(envelope.result!.qualification).to.equal('unqualified');
+      expect(envelope.result!.mutationEnabled).to.equal(false);
+      expect(envelope.result!.items[0].proposed).to.equal(proposed);
+      expect(s.preflightBatch.firstCall.args[1].expectedSelection).to.deep.equal(selected);
+      expect(s.preflightBatch.firstCall.args[1]).not.to.have.property('includeUnqualifiedBrands');
+      expect(s.executeBatch.notCalled && s.connection.request.notCalled).to.equal(true);
+      expect(DeployContent.description).to.include(
+        'Brand UPDATE, lifecycle operations, defaultBrand assignment and deletion remain unsupported',
+      );
+      expect(DeployContent.description).to.include(
+        'does not qualify the final public CLI artifact or live mixed-family batches',
+      );
     });
   }
 

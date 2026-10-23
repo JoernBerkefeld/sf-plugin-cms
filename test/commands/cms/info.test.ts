@@ -88,6 +88,21 @@ describe('cms info', () => {
       'content.retrieve.image',
       'content.retrieve.document',
       'content.retrieve.audio',
+      'content.retrieve.brand',
+    ]);
+    expect(result?.capabilities.filter(({ id }) => id.includes('.brand'))).to.deep.equal([
+      {
+        id: 'content.retrieve.brand',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
+      },
+      ...['create', 'unchanged'].map((operation) => ({
+        id: `content.deploy.brand.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
     ]);
     const deploy = result?.capabilities.filter(({ id }) => id.startsWith('content.deploy.')) ?? [];
     expect(deploy.map(({ id }) => id)).to.deep.equal([
@@ -106,6 +121,8 @@ describe('cms info', () => {
       'content.deploy.audio.create',
       'content.deploy.audio.update',
       'content.deploy.audio.unchanged',
+      'content.deploy.brand.create',
+      'content.deploy.brand.unchanged',
     ]);
     expect(deploy.every(({ contract }) => contract === 'sf-cms-content-deploy@1')).to.equal(true);
     expect(deploy.every(({ state }) => state === 'unqualified')).to.equal(true);

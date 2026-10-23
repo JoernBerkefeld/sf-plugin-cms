@@ -16,7 +16,7 @@ import {
 } from '../contracts/source-definition.js';
 import type { JsonValue } from '../contracts/capability-registry.js';
 import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
-import { loadEditableItemSource } from './editable-item-source.js';
+import { loadEditableBrandSource, loadEditableItemSource } from './editable-item-source.js';
 import {
   assertEditableItemDefinitionV2,
   loadEditableItemSourceV2,
@@ -30,6 +30,7 @@ export const DEPLOY_SOURCE_CONTENT_TYPES = [
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
+  'sfdc_cms__brand',
 ] as const;
 
 export interface DeploySourceSelectionFlags {
@@ -58,6 +59,11 @@ export interface DeployLocalSelection {
   items: DeployLocalItem[];
 }
 
+export type DeploySelectionOptions = {
+  /** Brand selection switch; selecting a source never grants execution authority. */
+  includeUnqualifiedBrands?: boolean;
+};
+
 type Selector = { contentType: string; apiName?: string };
 
 function values(input: readonly string[] | undefined): string[] | undefined {
@@ -71,8 +77,10 @@ function values(input: readonly string[] | undefined): string[] | undefined {
   return [...new Set(input)];
 }
 
-function contentType(value: string): string {
-  const canonical = normalizeContentTypeAlias(value, DEPLOY_SOURCE_CONTENT_TYPES);
+function contentType(value: string, brands: boolean): string {
+  const canonical = normalizeContentTypeAlias(value, [
+    ...DEPLOY_SOURCE_CONTENT_TYPES.filter((type) => brands || type !== 'sfdc_cms__brand'),
+  ]);
   if (canonical === undefined)
     throw new TypeError(
       'Deploy source selection requires a supported qualified content type or short name',
@@ -80,12 +88,12 @@ function contentType(value: string): string {
   return canonical;
 }
 
-function metadataSelector(value: string): Selector {
+function metadataSelector(value: string, brands: boolean): Selector {
   const colon = value.indexOf(':');
-  if (colon === -1) return { contentType: contentType(value) };
+  if (colon === -1) return { contentType: contentType(value, brands) };
   const apiName = value.slice(colon + 1);
   if (!apiName.trim()) throw new TypeError('Deploy metadata requires a nonempty exact API name');
-  return { contentType: contentType(value.slice(0, colon)), apiName };
+  return { contentType: contentType(value.slice(0, colon), brands), apiName };
 }
 
 function matches(definition: DeployLocalItem['definition'], selector: Selector): boolean {
@@ -128,13 +136,16 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
 }
 
 /**
- * Select local Email/Template/binary Image/Document/Audio sources without apply authority or org access.
+ * Select local Email/Template/binary media/strict Brand sources without apply authority or org access.
  * @param {DeploySourceSelectionFlags} flags - Explicit paths or conventional metadata and resolved workspace scope.
+ * @param {DeploySelectionOptions} options - Optional restriction for narrower item executors.
  * @returns {Promise<DeployLocalSelection>} Deterministic admitted sources and destination-relative identities.
  */
 export async function selectDeploySources(
   flags: DeploySourceSelectionFlags,
+  options: DeploySelectionOptions = {},
 ): Promise<DeployLocalSelection> {
+  const brands = options.includeUnqualifiedBrands !== false;
   const directories = values(flags['source-dir']);
   const types = values(flags['content-type']);
   const metadata = values(flags.metadata);
@@ -143,8 +154,8 @@ export async function selectDeploySources(
   if (types !== undefined && directories === undefined)
     throw new TypeError('Deploy content-type filters require source-dir mode');
   const normalizedSelectors: Selector[] | undefined = metadata
-    ? metadata.map((value) => metadataSelector(value))
-    : types?.map((value) => ({ contentType: contentType(value) }));
+    ? metadata.map((value) => metadataSelector(value, brands))
+    : types?.map((value) => ({ contentType: contentType(value, brands) }));
   const selectors = normalizedSelectors?.filter(
     (selector, index, all) =>
       all.findIndex(
@@ -188,7 +199,8 @@ export async function selectDeploySources(
     for (const relative of await enumeratePackageFiles(root, root)) {
       if (
         /\.cms-email(?:-template)?\.json$/u.test(relative) ||
-        /\.cms-(?:image|document|audio)\.json$/u.test(relative)
+        /\.cms-(?:image|document|audio)\.json$/u.test(relative) ||
+        (brands && /\.cms-brand\.json$/u.test(relative))
       )
         candidates.add(path.join(root, relative));
     }
@@ -197,6 +209,8 @@ export async function selectDeploySources(
   const identities = new Set<string>();
   for (const file of [...candidates].toSorted()) {
     const definition = await readDefinition(file);
+    if (definition.contentType === 'sfdc_cms__brand' && !brands)
+      throw new TypeError('Brand deploy selection is not publicly admitted');
     if (metadata !== undefined) {
       const typeRoot = path.join(
         flags.cwd ?? process.cwd(),
@@ -222,12 +236,16 @@ export async function selectDeploySources(
     let email:
       | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
       | Awaited<ReturnType<typeof loadEditableItemSource>>
+      | Awaited<ReturnType<typeof loadEditableBrandSource>>
       | undefined;
-    if (!media)
-      email =
-        definition.contractVersion === '2.0.0'
-          ? await loadEditableItemSourceV2(file)
-          : await loadEditableItemSource(file);
+    if (!media) {
+      if (definition.contentType === 'sfdc_cms__brand') email = await loadEditableBrandSource(file);
+      else
+        email =
+          definition.contractVersion === '2.0.0'
+            ? await loadEditableItemSourceV2(file)
+            : await loadEditableItemSource(file);
+    }
     const loaded = media
       ? {
           ...media,
@@ -246,6 +264,9 @@ export async function selectDeploySources(
     if (identities.has(key))
       throw new TypeError(`Distinct deploy definitions collide at destination identity: ${key}`);
     identities.add(key);
+    let companionPaths: string[] = [];
+    if ('companionPaths' in loaded) companionPaths = loaded.companionPaths;
+    else if ('htmlPath' in loaded) companionPaths = [loaded.htmlPath];
     items.push({
       definitionPath: loaded.definitionPath,
       definition: loaded.definition,
@@ -253,7 +274,7 @@ export async function selectDeploySources(
       ...(media?.source.representation === 'binary'
         ? { mediaSha256: createHash('sha256').update(media.source.binary.bytes).digest('hex') }
         : {}),
-      companionPaths: 'companionPaths' in loaded ? loaded.companionPaths : [loaded.htmlPath],
+      companionPaths,
       targetIdentity,
     });
   }

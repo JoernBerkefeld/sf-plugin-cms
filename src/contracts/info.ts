@@ -79,6 +79,12 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
     contract: 'sf-cms-content-retrieve@1',
   },
   {
+    id: 'content.retrieve.brand',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-retrieve@1',
+  },
+  {
     id: 'content.deploy.email.create',
     state: 'unqualified',
     transport: 'cli-json',
@@ -164,6 +170,18 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
   },
   {
     id: 'content.deploy.audio.unchanged',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.brand.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.brand.unchanged',
     state: 'unqualified',
     transport: 'cli-json',
     contract: 'sf-cms-content-deploy@1',

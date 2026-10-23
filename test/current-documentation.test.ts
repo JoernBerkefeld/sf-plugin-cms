@@ -301,6 +301,25 @@ describe('current public documentation', () => {
     expect(RetrieveContent.description).not.to.include('deployment is not supported');
   });
 
+  it('advertises bounded unqualified Brand CREATE and unchanged without lifecycle admission', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    expect(readme).to.include('all six currently admitted types');
+    expect(readme).to.include('Brand retrieval is **unqualified**');
+    expect(readme).to.include(
+      'Brand UPDATE, lifecycle operations, deletion and default-brand assignment remain blocked',
+    );
+    expect(readme).to.include('`content.retrieve.brand`');
+    expect(RetrieveContent.description).to.include('one unpublished primary Draft');
+    expect(RetrieveContent.description).to.include('portable v1 JSON without companions');
+    expect(RetrieveContent.description).to.include(
+      'Separate bounded Brand deploy supports unqualified strict CREATE-absent and exact zero-write unchanged',
+    );
+    expect(RetrieveContent.description).to.include(
+      'Brand UPDATE, lifecycle operations, deletion and default-brand assignment remain blocked',
+    );
+    expect(RetrieveContent.flags['content-type'].summary).to.include('brand');
+  });
+
   it('aligns README and command help on bounded unqualified Document support', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
@@ -402,7 +421,8 @@ describe('current public documentation', () => {
       'Org defaults do not supply or broaden workspace, language, source, mutation or ownership selectors.',
       'Offline `content info` needs no org.',
       'Case and whitespace are not normalized',
-      'retrieve, deploy and delete accept `email`, `emailTemplate`, `image`, `document`, `audio`',
+      'retrieve and deploy accept `email`, `emailTemplate`, `image`, `document`, `audio`, `brand`',
+      'delete retains only `email`, `emailTemplate`, `image`, `document`, `audio`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
       '`content.retrieve.audio`',
       '`content.deploy.audio.create`',

@@ -24,6 +24,8 @@ import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
 
 export type DeployBatchPreflightInput = {
   sources: DeploySourceSelectionFlags;
+  /** Legacy Brand observation option; never operation or mutation authority. */
+  includeUnqualifiedBrands?: boolean;
   /** Optional root binding for independent reacquisition of a previously observed destination. */
   expectedRootFolderId?: string;
   workspaceId: string;
@@ -62,17 +64,24 @@ export type DeployBatchPreflight = {
  * @param {Connection} connection - Explicit destination connection with central API selection.
  * @param {DeployBatchPreflightInput} input - Local selection flags and exact destination scope.
  * @param {JsonRequestOptions} options - Read timeout/cancellation options only.
+ * @param {object} internal - Optional narrower operation admission.
+ * @param {boolean} internal.admitBrands - Admit strict Brand CREATE/exact unchanged only.
  * @returns {Promise<DeployBatchPreflight>} Whole-selection eligibility without files or mutations.
  */
 export async function preflightDeployBatch(
   connection: Pick<Connection, 'request' | 'getApiVersion'>,
   input: DeployBatchPreflightInput,
   options: JsonRequestOptions = {},
+  internal: { admitBrands?: boolean } = {},
 ): Promise<DeployBatchPreflight> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
   // Complete local admission first; missing companions must prevent even destination reads.
-  const selection = await selectDeploySources(selected.sources);
+  const selectionOptions = {
+    includeUnqualifiedBrands:
+      internal.admitBrands !== false || selected.includeUnqualifiedBrands === true,
+  };
+  const selection = await selectDeploySources(selected.sources, selectionOptions);
   if (
     selected.expectedSelection !== undefined &&
     !isDeepStrictEqual(selection, selected.expectedSelection)
@@ -88,7 +97,13 @@ export async function preflightDeployBatch(
       throw new TypeError('Unsupported deploy media content type');
   }
   let rootFolderId = selected.expectedRootFolderId;
-  if (selection.items.some((item) => item.definition.contract === 'sf-cms-media-source')) {
+  if (
+    selection.items.some(
+      (item) =>
+        item.definition.contract === 'sf-cms-media-source' ||
+        item.definition.contentType === 'sfdc_cms__brand',
+    )
+  ) {
     const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
     if (
       workspace.id !== selected.workspaceId ||
@@ -143,6 +158,8 @@ export async function preflightDeployBatch(
       item.proposed = prepared.proposed;
       if (prepared.blockedReasons.length > 0 || prepared.proposed === 'blocked')
         throw new TypeError(prepared.blockedReasons.join('; ') || 'Blocked destination item');
+      if (source.definition.contentType === 'sfdc_cms__brand' && internal.admitBrands === false)
+        throw new TypeError('Brand deploy execution is not integrated; preview only');
       const scope = {
         definitionFile: source.definitionPath,
         workspaceId: selected.workspaceId,
@@ -150,6 +167,31 @@ export async function preflightDeployBatch(
         expectedRootFolderId: rootFolderId,
       };
       switch (source.definition.contentType) {
+        case 'sfdc_cms__brand': {
+          if (!['create', 'unchanged'].includes(prepared.proposed))
+            throw new TypeError('Brand operation unsupported');
+          if (prepared.proposed === 'create') {
+            const proof = await preflightDeployCreate(
+              connection,
+              { ...scope, includeUnqualifiedBrands: true },
+              requestOptions,
+            );
+            if (
+              proof.rootFolderId !== rootFolderId ||
+              !isDeepStrictEqual(proof.payload.contentBody, source.contentBody) ||
+              proof.payload.apiName !== source.targetIdentity.apiName ||
+              proof.payload.title !== source.definition.title ||
+              proof.payload.urlName !== source.definition.urlName
+            )
+              throw new TypeError('Batch Brand CREATE intent changed');
+            if (titles.has(proof.payload.title!) || urls.has(proof.payload.urlName!))
+              throw new TypeError('Selected CREATE title/URL collision');
+            titles.add(proof.payload.title!);
+            urls.add(proof.payload.urlName!);
+            item.create = proof;
+          }
+          break;
+        }
         case 'sfdc_cms__audio': {
           switch (prepared.proposed) {
             case 'create': {
@@ -346,7 +388,9 @@ export async function preflightDeployBatch(
   }
   // Reselect directories too: additions/removals and selector membership are part of intent.
   try {
-    if (!isDeepStrictEqual(await selectDeploySources(selected.sources), selection))
+    if (
+      !isDeepStrictEqual(await selectDeploySources(selected.sources, selectionOptions), selection)
+    )
       throw new TypeError('Batch local selection drifted during preflight');
   } catch (error) {
     result.blockedReasons.push(

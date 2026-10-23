@@ -1,4 +1,7 @@
 import { expect } from 'chai';
+import { brandBody, brandDetail } from '../fixtures/brand.js';
+import { selectDeploySources } from '../../src/services/deploy-source-selection.js';
+import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 import type { Connection } from '@salesforce/core';
 import { PassThrough } from 'node:stream';
 import { createHash } from 'node:crypto';
@@ -245,7 +248,229 @@ async function audioFixture(operation: 'create' | 'unchanged' | 'update' = 'unch
   return { ...f, companion, file, definition, download };
 }
 
+async function brandFixture(existing = true) {
+  const f = fixture();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-brand-destination-'));
+  const file = path.join(directory, 'Welcome.cms-brand.json');
+  const definition = {
+    contract: 'sf-cms-source-definition',
+    contractVersion: '1.0.0',
+    identity: {
+      family: 'cms',
+      type: 'Brand',
+      apiName: 'Welcome',
+      context: { workspaceApiName: 'Source' },
+    },
+    contentType: 'sfdc_cms__brand',
+    language: 'en_US',
+    folderPath: [],
+    title: 'Welcome',
+    urlName: 'welcome',
+    contentBody: brandBody('Welcome'),
+    companions: {},
+  };
+  await writeFile(file, JSON.stringify(definition));
+  const selected = await selectDeploySources(
+    { 'source-dir': [file] },
+    { includeUnqualifiedBrands: true },
+  );
+  Object.assign(f.source, selected.items[0]);
+  Object.assign(f.variants[0], brandDetail(variantId, 'Welcome', workspaceId), {
+    managedContentId: parentId,
+    folder: { id: 'root' },
+    title: 'Welcome',
+    urlName: 'welcome',
+    contentKey: 'MCWELCOME',
+    contentBody: brandBody('Welcome'),
+  });
+  Object.assign(f.parent, structuredClone(f.variants[0]));
+  if (!existing) f.variants.length = 0;
+  const batchInput = {
+    sources: { 'source-dir': [file] },
+    workspaceId,
+    language: 'en_US',
+    includeUnqualifiedBrands: true,
+  };
+  return { ...f, file, definition, batchInput };
+}
+
 describe('read-only deploy destination preparation', () => {
+  for (const existing of [false, true]) {
+    it(`preflights public strict Brand ${existing ? 'unchanged' : 'create'} without writes`, async () => {
+      const f = await brandFixture(existing);
+      const result = await f.run();
+      expect(result.blockedReasons).to.deep.equal([]);
+      expect(result.items[0].blockedReasons).to.deep.equal([]);
+      expect(result.items[0].proposed).to.equal(existing ? 'unchanged' : 'create');
+      const batch = await preflightDeployBatch(f.connection, f.batchInput);
+      expect(batch.eligible).to.equal(true);
+      expect(batch.items[0].proposed).to.equal(existing ? 'unchanged' : 'create');
+      expect(batch.items[0].blockedReasons).to.deep.equal([]);
+      expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
+    });
+  }
+  it('preflights a mixed Email/Brand selection with both CREATE proposals', async () => {
+    const f = await brandFixture(false);
+    const email = local();
+    if (email.definition.contract !== 'sf-cms-source-definition') throw new Error('Expected Email');
+    email.definition.identity.apiName = 'Alpha';
+    email.definition.title = 'Alpha';
+    email.definition.contentBody['sfdc_cms:title'] = 'Alpha';
+    email.definition.companions = { rawHtml: 'Alpha.cms-email.html' };
+    const file = path.join(path.dirname(f.file), 'Alpha.cms-email.json');
+    await writeFile(file, JSON.stringify(email.definition));
+    await writeFile(path.join(path.dirname(file), 'Alpha.cms-email.html'), '<p>Alpha</p>');
+    const result = await preflightDeployBatch(f.connection, {
+      ...f.batchInput,
+      sources: { 'source-dir': [file, f.file] },
+    });
+    expect(result.eligible).to.equal(true);
+    expect(result.items.map((item) => item.proposed)).to.deep.equal(['create', 'create']);
+    expect(result.items[0].blockedReasons).to.deep.equal([]);
+    expect(result.items[1].blockedReasons).to.deep.equal([]);
+    expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
+  });
+  it('blocks Brand existing body/title/URL differences without falling back to UPDATE', async () => {
+    for (const field of ['body', 'title', 'urlName']) {
+      const f = await brandFixture();
+      if (field === 'body') (f.definition.contentBody.colorScheme as RecordValue).root = '#123456';
+      else if (field === 'title') {
+        f.definition.title = 'Changed';
+        f.definition.contentBody['sfdc_cms:title'] = 'Changed';
+      } else f.definition.urlName = 'changed';
+      await writeFile(f.file, JSON.stringify(f.definition));
+      const selected = await selectDeploySources(f.batchInput.sources, {
+        includeUnqualifiedBrands: true,
+      });
+      Object.assign(f.source, selected.items[0]);
+      const result = await f.run();
+      expect(result.items[0].proposed).to.equal('blocked');
+      expect(result.items[0].blockedReasons.join(';')).to.include('Brand UPDATE is unsupported');
+      expect(result.items[0].changedFields).not.to.have.length(0);
+    }
+  });
+  it('rejects forged Brand local snapshots before destination requests', async () => {
+    for (const field of ['contentBody', 'companionPaths', 'targetIdentity']) {
+      const f = await brandFixture(false);
+      if (field === 'contentBody') f.source.contentBody.changed = true;
+      else if (field === 'companionPaths') f.source.companionPaths = ['unexpected'];
+      else f.source.targetIdentity.apiName = 'Different';
+      const result = await f.run();
+      expect(result.blockedReasons.join(';')).to.include('local snapshot changed');
+      expect(f.calls).to.have.length(0);
+    }
+  });
+  it('rejects Brand lifecycle/family/language/title collision and unknown parent absence', async () => {
+    for (const patch of [
+      { isPublished: true },
+      { language: 'de' },
+      { contentType: { fullyQualifiedName: 'sfdc_cms__email' } },
+      { apiName: 'Other' },
+      { apiName: null, title: 'Other', urlName: 'other' },
+    ]) {
+      const f = await brandFixture();
+      Object.assign(f.variants[0], patch);
+      const result = await f.run();
+      expect(result.items[0].proposed).to.equal('blocked');
+      expect(result.items[0].blockedReasons).not.to.have.length(0);
+    }
+  });
+  it('rejects Brand nondefault scope, missing URL and nonroot source', async () => {
+    for (const field of ['language', 'urlName', 'folderPath']) {
+      const f = await brandFixture(false);
+      if (field === 'language') f.workspace.defaultLanguage = 'de';
+      else {
+        if (field === 'urlName') delete (f.definition as Partial<typeof f.definition>).urlName;
+        else f.definition.folderPath.push('Nested' as never);
+        await writeFile(f.file, JSON.stringify(f.definition));
+        const selected = await selectDeploySources(f.batchInput.sources, {
+          includeUnqualifiedBrands: true,
+        });
+        Object.assign(f.source, selected.items[0]);
+      }
+      const result = await f.run();
+      expect(
+        result.blockedReasons.length + result.items.flatMap((item) => item.blockedReasons).length,
+      ).to.be.greaterThan(0);
+      expect(result.items.some((item) => item.proposed === 'create')).to.equal(false);
+    }
+  });
+  it('blocks Brand sibling/native detail disagreement and source drift during reads', async () => {
+    for (const field of ['sibling', 'detail', 'source', 'workspace']) {
+      const f = await brandFixture();
+      switch (field) {
+        case 'sibling': {
+          f.patch((rows, sibling) => (sibling ? [] : rows));
+          break;
+        }
+        case 'detail': {
+          f.variants[0].unknownField = true;
+          break;
+        }
+        case 'workspace': {
+          let calls = 0;
+          const request = f.connection.request.bind(f.connection);
+          Object.assign(f.connection, {
+            request(input: { method: string; url: string }) {
+              if (input.url.includes(`/spaces/${workspaceId}`) && ++calls === 3)
+                f.workspace.apiName = 'Changed';
+              return request(input);
+            },
+          });
+
+          break;
+        }
+        default: {
+          let changed = false;
+          const request = f.connection.request.bind(f.connection);
+          Object.assign(f.connection, {
+            request(input: { method: string; url: string }) {
+              if (!changed) {
+                changed = true;
+                const result = writeFile(
+                  f.file,
+                  JSON.stringify({ ...f.definition, urlName: 'changed' }),
+                ).then(() => request(input));
+                return Object.assign(result, { stream: () => new PassThrough() });
+              }
+              return request(input);
+            },
+          });
+        }
+      }
+      const result = await f.run();
+      expect(
+        result.blockedReasons.length + result.items.flatMap((item) => item.blockedReasons).length,
+        field,
+      ).to.be.greaterThan(0);
+      expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
+    }
+  });
+  it('rejects Brand destination inventory drift after a create proposal', async () => {
+    const f = await brandFixture(false);
+    let reads = 0;
+    f.patch((rows) => {
+      if (++reads <= 4) return rows;
+      return [
+        {
+          Id: variantId,
+          ManagedContentId: parentId,
+          ContentTypeFullyQualifiedName: 'sfdc_cms__brand',
+          Language: 'en_US',
+          IsPublished: false,
+          ManagedContentVariantStatus: 'Draft',
+          IsPrimary: true,
+          Name: 'Other',
+          UrlName: 'other',
+          ManagedContentKey: 'MCOTHER',
+          ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Other' },
+        },
+      ];
+    });
+    const result = await f.run();
+    expect(result.items[0].proposed).to.equal('blocked');
+    expect(result.items[0].blockedReasons.join(';')).to.include('inventory changed');
+  });
   afterEach(() => sinon.restore());
   for (const operation of ['create', 'unchanged', 'update'] as const) {
     it(`prepares unqualified Audio ${operation} using independent private proofs without public admission`, async () => {

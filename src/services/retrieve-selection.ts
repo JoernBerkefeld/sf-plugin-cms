@@ -6,6 +6,7 @@ export const RETRIEVE_CONTENT_TYPES = [
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
+  'sfdc_cms__brand',
 ] as const;
 export type RetrieveContentType = (typeof RETRIEVE_CONTENT_TYPES)[number];
 

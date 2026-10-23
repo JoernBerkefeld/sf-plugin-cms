@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { brandBody } from '../fixtures/brand.js';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -67,6 +68,75 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 }
 
 describe('local deploy source selection', () => {
+  it('admits public strict inline Brand sources and exact obligations', async () => {
+    const root = await temporary();
+    const directory = path.join(root, 'cms', 'Destination', 'brand');
+    await mkdir(directory, { recursive: true });
+    const file = path.join(directory, 'Exact.cms-brand.json');
+    const candidate = {
+      ...definition(false, 'Exact'),
+      identity: { ...definition(false, 'Exact').identity, type: 'Brand' },
+      contentType: 'sfdc_cms__brand',
+      title: 'Exact',
+      urlName: 'exact',
+      contentBody: brandBody('Exact'),
+      companions: {},
+    };
+    await writeFile(file, JSON.stringify(candidate));
+    const options = {};
+    const selected = await selectDeploySources({ 'source-dir': [file, file] }, options);
+    expect(selected.items).to.have.length(1);
+    expect(selected.items[0].companionPaths).to.deep.equal([]);
+    expect(selected.items[0].contentBody).to.deep.equal(candidate.contentBody);
+    expect(selected.items[0].targetIdentity.contentType).to.equal('sfdc_cms__brand');
+    expect(DEPLOY_SOURCE_CONTENT_TYPES).to.include('sfdc_cms__brand');
+    const explicit = await selectDeploySources({ 'source-dir': [file] });
+    const directorySelected = await selectDeploySources({ 'source-dir': [root] });
+    expect(explicit.items).to.deep.equal(selected.items);
+    expect(directorySelected.items).to.deep.equal(selected.items);
+    for (const spelling of ['brand', 'sfdc_cms__brand']) {
+      const ordinaryFiltered = await selectDeploySources({
+        'source-dir': [root],
+        'content-type': [spelling],
+      });
+      expect(ordinaryFiltered.items).to.deep.equal(selected.items);
+      const filtered = await selectDeploySources(
+        { 'source-dir': [root, directory], 'content-type': [spelling] },
+        options,
+      );
+      expect(filtered.items).to.deep.equal(selected.items);
+      const conventional = await selectDeploySources(
+        { cwd: root, workspaceApiName: 'Destination', metadata: [spelling, `${spelling}:Exact`] },
+        options,
+      );
+      expect(conventional.items).to.deep.equal(selected.items);
+      await failure(
+        selectDeploySources(
+          {
+            cwd: root,
+            workspaceApiName: 'Destination',
+            metadata: [spelling, `${spelling}:Missing`],
+          },
+          options,
+        ),
+        /missing/u,
+      );
+    }
+    await writeFile(
+      file,
+      JSON.stringify({ ...candidate, companions: { rawHtml: 'Exact.cms-brand.html' } }),
+    );
+    await failure(selectDeploySources({ 'source-dir': [root] }, options), /fields/u);
+    await writeFile(
+      file,
+      JSON.stringify({ ...candidate, identity: { ...candidate.identity, apiName: 'Other' } }),
+    );
+    await failure(selectDeploySources({ 'source-dir': [file] }, options), /same-stem/u);
+    await writeFile(file, JSON.stringify(candidate));
+    await mkdir(path.join(directory, 'nested'));
+    await writeFile(path.join(directory, 'nested', path.basename(file)), JSON.stringify(candidate));
+    await failure(selectDeploySources({ 'source-dir': [root] }, options), /collide/u);
+  });
   for (const representation of ['binary', 'url-only'] as const) {
     it(`handles an explicit Audio ${representation} source through existing media contracts`, async () => {
       const root = await temporary();
@@ -121,7 +191,21 @@ describe('local deploy source selection', () => {
     it(`selects identical canonical sources for both ${short} spellings`, async () => {
       const root = await temporary();
       let file: string;
-      if (short === 'email' || short === 'emailTemplate') {
+      if (short === 'brand') {
+        file = path.join(root, 'Exact.cms-brand.json');
+        await writeFile(
+          file,
+          JSON.stringify({
+            ...definition(false, 'Exact'),
+            identity: { ...definition(false, 'Exact').identity, type: 'Brand' },
+            contentType: canonical,
+            title: 'Exact',
+            urlName: 'exact',
+            contentBody: brandBody('Exact'),
+            companions: {},
+          }),
+        );
+      } else if (short === 'email' || short === 'emailTemplate') {
         file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
       } else {
         const token = short;

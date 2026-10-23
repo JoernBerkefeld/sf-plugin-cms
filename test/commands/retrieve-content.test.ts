@@ -410,7 +410,12 @@ describe('cms retrieve content command', () => {
     });
   }
 
-  for (const contentType of ['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'] as const) {
+  for (const contentType of [
+    'sfdc_cms__image',
+    'sfdc_cms__document',
+    'sfdc_cms__audio',
+    'sfdc_cms__brand',
+  ] as const) {
     it(`admits a standalone ${contentType} selector through preparation and local writing`, async () => {
       const subject = command({
         'content-type': [contentType],

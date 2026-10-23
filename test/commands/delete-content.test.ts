@@ -141,6 +141,17 @@ describe('cms delete exact-item CLI', () => {
       expect(output.status).to.equal('blocked');
       expect(f.getOrgContext.notCalled).to.equal(true);
     });
+  it('keeps Brand outside delete flags and rejects metadata before org access', async () => {
+    for (const type of ['brand', 'sfdc_cms__brand']) {
+      expect(DeleteContent.flags['content-type'].options).not.to.include(type);
+      for (const preview of [false, true]) {
+        const f = subject({ metadata: [`${type}:Existing`], preview });
+        const output = await f.command.run();
+        expect(output.status).to.equal('blocked');
+        expect(f.getOrgContext.notCalled).to.equal(true);
+      }
+    }
+  });
   for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio'])
     it(`previews existing Published ${type} with sole automatic locale`, async () => {
       const f = fixture(['en_US'], type);
