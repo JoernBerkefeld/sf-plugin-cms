@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   assertSourceDefinition,
   SOURCE_EMAIL_PROFILES,
+  serializeSourceDefinition,
   type SourceDefinition,
 } from '../contracts/source-definition.js';
 import type { JsonValue } from '../contracts/capability-registry.js';
@@ -10,6 +11,35 @@ import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { readStableRegularFile } from './import-workspace.js';
 import { strictSourceJson } from './source-definition-import.js';
 import { assertSourceNativeHtml } from './source-definition.js';
+
+export type EditableBrandProjection = {
+  readonly definition: SourceDefinition;
+  readonly definitionName: string;
+  readonly definitionBytes: Buffer;
+  readonly companions: readonly {
+    readonly role: string;
+    readonly path: string;
+    readonly bytes: Buffer;
+  }[];
+};
+
+/**
+ * Adapt strict inline Brand source to the incremental writer without native evidence.
+ * @param {unknown} value - Portable v1 Brand definition.
+ * @returns {EditableBrandProjection} Detached canonical JSON with no companion files.
+ */
+export function extractEditableBrandSource(value: unknown): EditableBrandProjection {
+  assertSourceDefinition(value);
+  if (value.contentType !== 'sfdc_cms__brand')
+    throw new TypeError('Editable Brand source requires Brand content');
+  const definition = structuredClone(value);
+  return {
+    definition,
+    definitionName: `${definition.identity.apiName}.cms-brand.json`,
+    definitionBytes: Buffer.from(serializeSourceDefinition(definition), 'utf8'),
+    companions: [],
+  };
+}
 
 export type EditableItemSource = {
   readonly definitionPath: string;

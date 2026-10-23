@@ -1,7 +1,11 @@
 import path from 'node:path';
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SOURCE_EMAIL_PROFILES } from '../contracts/source-definition.js';
+import { SOURCE_PROFILES } from '../contracts/source-definition.js';
+import {
+  extractEditableBrandSource,
+  type EditableBrandProjection,
+} from './editable-item-source.js';
 import {
   assertEditableItemDefinitionV2,
   reassembleEditableItemSourceV2,
@@ -21,10 +25,16 @@ function validate(value: unknown) {
     assertEditableMediaDefinition(value);
     return value;
   }
+  if (
+    (value as { contractVersion?: unknown })?.contractVersion === '1.0.0' &&
+    (value as { contract?: unknown })?.contract === 'sf-cms-source-definition'
+  )
+    return extractEditableBrandSource(value).definition;
   assertEditableItemDefinitionV2(value);
   return value;
 }
 function bindings(value: ReturnType<typeof validate>) {
+  if (value.contractVersion === '1.0.0' && value.contract === 'sf-cms-source-definition') return [];
   if (value.contract !== 'sf-cms-media-source') return value.companions;
   return value.media.representation === 'binary' ? [value.media.companion] : [];
 }
@@ -68,10 +78,11 @@ async function existing(directory: string, name: string): Promise<Buffer | undef
 export async function writeEditableItemSource(
   projectRoot: string,
   directory: string,
-  projection: EditableItemProjectionV2 | EditableMediaProjection,
+  projection: EditableItemProjectionV2 | EditableMediaProjection | EditableBrandProjection,
   overwrite: boolean,
 ): Promise<ItemSourceWriteReceipt> {
   // Detach inputs before the first asynchronous filesystem operation.
+  const definitionName = projection.definitionName;
   const parsed = strictSourceJson(projection.definitionBytes, 'Selected item JSON');
   const definition = validate(parsed);
   if (!isDeepStrictEqual(definition, projection.definition))
@@ -90,11 +101,11 @@ export async function writeEditableItemSource(
             sfdc_cms__audio: 'audio',
           }[definition.contentType],
         }
-      : SOURCE_EMAIL_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
+      : SOURCE_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
   const base = `${definition.identity.apiName}.cms-${profile.token}`;
   if (
     directory !== `cms/${definition.identity.context.workspaceApiName}/${profile.directory}` ||
-    projection.definitionName !== `${base}.json`
+    definitionName !== `${base}.json`
   )
     throw new TypeError('Selected item directory/filename conflicts with its identity/type');
   if (
@@ -105,19 +116,20 @@ export async function writeEditableItemSource(
   )
     throw new TypeError('Selected item projection companion bindings disagree');
   const files = new Map([
-    [projection.definitionName, Buffer.from(projection.definitionBytes)],
+    [definitionName, Buffer.from(projection.definitionBytes)],
     ...projection.companions.map(({ path: name, bytes }) => [name, Buffer.from(bytes)] as const),
   ]);
-  const companions = new Map([...files].filter(([name]) => name !== projection.definitionName));
+  const companions = new Map([...files].filter(([name]) => name !== definitionName));
   if (definition.contract === 'sf-cms-media-source')
     reassembleEditableMediaSource(definition, companions);
-  else reassembleEditableItemSourceV2(definition, companions);
+  else if (definition.contractVersion === '2.0.0')
+    reassembleEditableItemSourceV2(definition, companions);
   await assertEditableDirectoryPath(projectRoot, false);
   const destination = path.join(path.resolve(projectRoot), ...directory.split('/'));
   await assertEditableDirectoryPath(destination, false);
   const before = new Map<string, Buffer | undefined>();
   for (const name of files.keys()) before.set(name, await existing(destination, name));
-  const previousBytes = before.get(projection.definitionName);
+  const previousBytes = before.get(definitionName);
   let previous;
   if (previousBytes !== undefined) {
     previous = validate(
@@ -135,7 +147,7 @@ export async function writeEditableItemSource(
   // The only currently optional companion has one exact recognized filename.
   const textName = `${base}.txt`;
   const obsolete: string[] = [];
-  if (definition.contract !== 'sf-cms-media-source' && !files.has(textName)) {
+  if (definition.contractVersion === '2.0.0' && !files.has(textName)) {
     const bytes = await existing(destination, textName);
     if (bytes !== undefined) {
       if (!previous || !bindings(previous).some((entry) => entry.path === textName))
@@ -159,7 +171,7 @@ export async function writeEditableItemSource(
     const prior = before.get(name);
     if (
       definition.contract === 'sf-cms-media-source' &&
-      name !== projection.definitionName &&
+      name !== definitionName &&
       prior !== undefined &&
       !prior.equals(bytes) &&
       (!previous || !bindings(previous).some((entry) => entry.path === name))
@@ -182,7 +194,7 @@ export async function writeEditableItemSource(
       throw new TypeError(`Selected item changed during preflight: ${name}`);
   }
   const receipt: ItemSourceWriteReceipt = {
-    definitionPath: path.join(destination, projection.definitionName),
+    definitionPath: path.join(destination, definitionName),
     created: [],
     updated: [],
     unchanged: [],
@@ -192,8 +204,7 @@ export async function writeEditableItemSource(
   await assertEditableDirectoryPath(destination, false);
   // Publish the definition last so a failure never advertises unfinished companions as complete.
   const ordered = [...files].toSorted(
-    ([left], [right]) =>
-      Number(left === projection.definitionName) - Number(right === projection.definitionName),
+    ([left], [right]) => Number(left === definitionName) - Number(right === definitionName),
   );
   for (const [name, bytes] of ordered) {
     const target = path.join(destination, name);

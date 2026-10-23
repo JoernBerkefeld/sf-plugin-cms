@@ -7,6 +7,7 @@ import {
   type SourceDefinition,
 } from '../../src/contracts/source-definition.js';
 import {
+  extractEditableBrandSource,
   loadEditableBrandSource,
   loadEditableItemSource,
   reassembleEditableItemSource,
@@ -80,6 +81,33 @@ async function brandFixture() {
 }
 
 describe('standalone editable Brand source', () => {
+  it('projects canonical portable JSON with detached mutable copies and no companions', () => {
+    const candidate = brandDefinition();
+    const original = structuredClone(candidate);
+    const projected = extractEditableBrandSource(candidate);
+    expect(projected.definitionName).to.equal('Welcome.cms-brand.json');
+    expect(projected.definitionBytes.toString('utf8')).to.equal(
+      serializeSourceDefinition(original),
+    );
+    expect(projected.companions).to.deep.equal([]);
+    (candidate.contentBody.colorScheme as Record<string, string>).primaryAccent = '#FF0000';
+    expect(projected.definition).to.deep.equal(original);
+    (projected.definition.contentBody.colorScheme as Record<string, string>).primaryAccent =
+      '#000000';
+    expect(projected.definitionBytes.toString('utf8')).to.equal(
+      serializeSourceDefinition(original),
+    );
+    expect(projected.definitionBytes.toString('utf8')).not.to.match(
+      /Sha256|variantId|workspaceId/u,
+    );
+    for (const invalid of [
+      definition(),
+      { ...original, contractVersion: '2.0.0' },
+      { ...original, identity: { ...original.identity, apiName: '../escape' } },
+    ]) {
+      expect(() => extractEditableBrandSource(invalid)).to.throw(TypeError);
+    }
+  });
   it('loads edited inline JSON without a baseline or companions and detaches nested bodies', async () => {
     const { directory, json, candidate } = await brandFixture();
     candidate.contentBody.colorScheme = {

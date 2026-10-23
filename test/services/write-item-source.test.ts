@@ -16,6 +16,30 @@ import { extractEditableItemSourceV2 } from '../../src/services/editable-item-so
 import { writeEditableItemSource } from '../../src/services/write-item-source.js';
 import { extractEditableMediaSource } from '../../src/services/editable-media-source.js';
 import { createHash } from 'node:crypto';
+import {
+  extractEditableBrandSource,
+  loadEditableBrandSource,
+} from '../../src/services/editable-item-source.js';
+import { brandBody } from '../fixtures/brand.js';
+
+function brandProjection() {
+  return extractEditableBrandSource({
+    contract: 'sf-cms-source-definition',
+    contractVersion: '1.0.0',
+    identity: {
+      family: 'cms',
+      type: 'Brand',
+      apiName: 'Welcome',
+      context: { workspaceApiName: 'Marketing' },
+    },
+    contentType: 'sfdc_cms__brand',
+    language: 'en_US',
+    folderPath: [],
+    title: 'Brand',
+    contentBody: brandBody('Brand'),
+    companions: {},
+  });
+}
 
 const directory = 'cms/Marketing/email';
 function projection(text = true, html = '<p>Hello</p>') {
@@ -91,6 +115,110 @@ function mediaProjection(binary = true, jpeg = false) {
 }
 
 describe('item-local incremental source writer', () => {
+  it('roundtrips Brand inline JSON, preserves stable files and requires overwrite for edits', async () => {
+    const project = await root();
+    const route = 'cms/Marketing/brand';
+    const item = brandProjection();
+    const first = await writeEditableItemSource(project, route, item, false);
+    expect(first.created).to.have.length(1);
+    const loaded = await loadEditableBrandSource(first.definitionPath);
+    expect(loaded.definition).to.deep.equal(item.definition);
+    expect(loaded.contentBody).to.deep.equal(item.definition.contentBody);
+    const folder = path.join(project, route);
+    await writeFile(path.join(folder, 'Other.json'), 'keep');
+    const before = await snapshot(folder);
+    const repeated = await writeEditableItemSource(project, route, item, false);
+    expect(repeated.unchanged).to.have.length(1);
+    expect(await snapshot(folder)).to.deep.equal(before);
+    const edited = structuredClone(item.definition);
+    (edited.contentBody.colorScheme as Record<string, string>).primaryAccent = '#FF0000';
+    await writeFile(first.definitionPath, JSON.stringify(edited));
+    const local = await snapshot(folder);
+    await failure(writeEditableItemSource(project, route, item, false), /overwrite/u);
+    expect(await snapshot(folder)).to.deep.equal(local);
+    const overwritten = await writeEditableItemSource(project, route, item, true);
+    expect(overwritten.updated).to.deep.equal([first.definitionPath]);
+    const restored = await loadEditableBrandSource(first.definitionPath);
+    expect(restored.definition).to.deep.equal(item.definition);
+    expect(await readFile(path.join(folder, 'Other.json'), 'utf8')).to.equal('keep');
+  });
+
+  it('rejects Brand projection schema, identity, filename and companion conflicts before writing', async () => {
+    const project = await root();
+    const route = 'cms/Marketing/brand';
+    const item = brandProjection();
+    for (const wrong of ['../escape', 'cms/Other/brand', 'cms/Marketing/email'])
+      await failure(writeEditableItemSource(project, wrong, item, true), /directory/u);
+    for (const invalid of [
+      { ...item, definitionName: '../outside.json' },
+      { ...item, definitionBytes: Buffer.from('{}') },
+      {
+        ...item,
+        companions: [
+          { role: 'rawHtml', path: 'Welcome.cms-brand.html', bytes: Buffer.from('bad') },
+        ],
+      },
+      { ...item, definition: { ...item.definition, language: 'de_DE' } },
+    ])
+      await failure(
+        writeEditableItemSource(project, route, invalid, true),
+        /filename|definition|fields|bindings|version/u,
+      );
+    expect(await readdir(project)).to.deep.equal([]);
+    const first = await writeEditableItemSource(project, route, item, false);
+    const prior = structuredClone(item.definition);
+    prior.language = 'de_DE';
+    await writeFile(first.definitionPath, JSON.stringify(prior));
+    const before = await snapshot(path.join(project, route));
+    await failure(writeEditableItemSource(project, route, item, true), /conflict/u);
+    expect(await snapshot(path.join(project, route))).to.deep.equal(before);
+  });
+
+  it('detaches Brand projection bytes and filenames before asynchronous writes', async () => {
+    const project = await root();
+    const item = brandProjection();
+    const expected = Buffer.from(item.definitionBytes);
+    const pending = writeEditableItemSource(project, 'cms/Marketing/brand', item, false);
+    item.definitionBytes.fill(0);
+    (item as { definitionName: string }).definitionName = '../outside.json';
+    item.definition.identity.apiName = 'Changed';
+    const receipt = await pending;
+    expect(receipt.definitionPath).to.equal(
+      path.join(project, 'cms/Marketing/brand/Welcome.cms-brand.json'),
+    );
+    expect(await readFile(receipt.definitionPath)).to.deep.equal(expected);
+    expect(await readdir(project)).to.deep.equal(['cms']);
+  });
+
+  it('retains Brand file and route security checks', async () => {
+    for (const kind of ['alias', 'directory', 'hardlink', 'junction']) {
+      const project = await root();
+      const route = 'cms/Marketing/brand';
+      const item = brandProjection();
+      if (kind === 'junction') {
+        const outside = await root();
+        await symlink(outside, path.join(project, 'cms'), 'junction');
+        await failure(writeEditableItemSource(project, route, item, true), /symlink|reparse/u);
+        expect(await readdir(outside)).to.deep.equal([]);
+        continue;
+      }
+      const folder = path.join(project, route);
+      await mkdir(folder, { recursive: true });
+      const target = path.join(folder, item.definitionName);
+      if (kind === 'alias')
+        await writeFile(path.join(folder, item.definitionName.toLowerCase()), 'alias');
+      if (kind === 'directory') await mkdir(target);
+      if (kind === 'hardlink') {
+        await writeFile(path.join(project, 'outside.txt'), 'keep');
+        await link(path.join(project, 'outside.txt'), target);
+      }
+      await failure(
+        writeEditableItemSource(project, route, item, true),
+        /case-aliased|regular file|hard-linked/u,
+      );
+      expect(await readdir(folder)).to.have.length(1);
+    }
+  });
   it('writes Audio exact files, preserves unchanged mtimes and unrelated files, and guards overwrite and family mapping', async () => {
     const project = await root();
     const audioDirectory = 'cms/Marketing/audio';
