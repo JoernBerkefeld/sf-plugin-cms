@@ -9,6 +9,7 @@ import {
 import {
   extractEditableBrandSource,
   loadEditableBrandSource,
+  loadEditableEmailFragmentSource,
   loadEditableItemSource,
   reassembleEditableItemSource,
 } from '../../src/services/editable-item-source.js';
@@ -79,6 +80,44 @@ async function brandFixture() {
   await writeFile(json, serializeSourceDefinition(candidate));
   return { directory, json, candidate };
 }
+
+describe('standalone editable Fragment source', () => {
+  it('rejects malformed JSON/contracts, unsafe identities and wrong exact filename tokens', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-editable-fragment-'));
+    const json = path.join(directory, 'Welcome.cms-email-fragment.json');
+    for (const invalid of [
+      '{}',
+      '{"contract":1,"contract":2}',
+      JSON.stringify(definition()),
+      JSON.stringify({ contract: 'sf-cms-email-fragment-source', contractVersion: '2.0.0' }),
+    ]) {
+      await writeFile(json, invalid);
+      await failure(loadEditableEmailFragmentSource(json), /Fragment|duplicate/u);
+    }
+    await failure(loadEditableEmailFragmentSource(''), /nonempty/u);
+    await failure(
+      loadEditableEmailFragmentSource(path.join(directory, 'missing.json')),
+      /missing/u,
+    );
+    await failure(
+      loadEditableEmailFragmentSource(path.join(directory, 'welcome.cms-email-fragment.json')),
+      /case-aliased/u,
+    );
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'cms-fragment-outside-'));
+    await symlink(outside, path.join(directory, 'linked'), 'junction');
+    await failure(
+      loadEditableEmailFragmentSource(
+        path.join(directory, 'linked', 'Welcome.cms-email-fragment.json'),
+      ),
+      /symlink|reparse/u,
+    );
+    await mkdir(path.join(directory, 'directory.json'));
+    await failure(
+      loadEditableEmailFragmentSource(path.join(directory, 'directory.json')),
+      /regular file/u,
+    );
+  });
+});
 
 describe('standalone editable Brand source', () => {
   it('projects canonical portable JSON with detached mutable copies and no companions', () => {

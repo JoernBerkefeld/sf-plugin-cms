@@ -21,6 +21,52 @@ import {
   loadEditableBrandSource,
 } from '../../src/services/editable-item-source.js';
 import { brandBody } from '../fixtures/brand.js';
+import {
+  serializeEmailFragmentSourceDefinition,
+  type EmailFragmentSourceDefinition,
+} from '../../src/contracts/email-fragment-source.js';
+import { loadEditableEmailFragmentSource } from '../../src/services/editable-item-source.js';
+
+function fragmentProjection() {
+  const definition: EmailFragmentSourceDefinition = {
+    contract: 'sf-cms-email-fragment-source',
+    contractVersion: '1.0.0',
+    identity: {
+      family: 'cms',
+      type: 'Email Fragment',
+      apiName: 'Welcome',
+      context: { workspaceApiName: 'Marketing' },
+    },
+    contentType: 'sfdc_cms__emailFragment',
+    language: 'en_US',
+    title: 'Café 世界',
+    urlName: 'welcome',
+    folderPath: ['Nested', 'Blocks'],
+    contentBody: {
+      'sfdc_cms:title': 'Café 世界',
+      'sfdc_cms:urlName': 'welcome',
+      'sfdc_cms:block': {
+        type: 'block',
+        definition: 'sfdc_cms/rootContentBlock',
+        id: '10000000-0000-4000-8000-000000000001',
+        children: [
+          {
+            type: 'block',
+            definition: 'lightning/paragraph',
+            id: '10000000-0000-4000-8000-000000000002',
+            attributes: { text: '<p>Café\r\n世界</p>' },
+          },
+        ],
+      },
+    },
+  };
+  return {
+    definition,
+    definitionName: 'Welcome.cms-email-fragment.json',
+    definitionBytes: Buffer.from(serializeEmailFragmentSourceDefinition(definition)),
+    companions: [] as const,
+  };
+}
 
 function brandProjection() {
   return extractEditableBrandSource({
@@ -115,6 +161,122 @@ function mediaProjection(binary = true, jpeg = false) {
 }
 
 describe('item-local incremental source writer', () => {
+  it('roundtrips canonical Fragment content and protects existing edits and unrelated files', async () => {
+    const project = await root();
+    const route = 'cms/Marketing/emailFragment';
+    const item = fragmentProjection();
+    const first = await writeEditableItemSource(project, route, item, false);
+    expect(first.created).to.deep.equal([first.definitionPath]);
+    expect(await readFile(first.definitionPath)).to.deep.equal(item.definitionBytes);
+    const loaded = await loadEditableEmailFragmentSource(first.definitionPath);
+    for (const name of ['Other.cms-email-fragment.json', 'Welcome.cms-emailFragment.json']) {
+      const wrong = path.join(project, name);
+      await writeFile(wrong, item.definitionBytes);
+      await failure(loadEditableEmailFragmentSource(wrong), /same-stem/u);
+    }
+    for (const invalid of [
+      { ...item.definition, companions: [] },
+      { ...item.definition, identity: { ...item.definition.identity, apiName: '../escape' } },
+      {
+        ...item.definition,
+        contentBody: { ...item.definition.contentBody, 'sfdc_cms:variants': [{}] },
+      },
+    ]) {
+      const wrong = path.join(project, 'Welcome.cms-email-fragment.json');
+      await writeFile(wrong, JSON.stringify(invalid));
+      await failure(loadEditableEmailFragmentSource(wrong), /Fragment|unsafe|segment|variants/u);
+    }
+    expect(loaded.definition).to.deep.equal(item.definition);
+    expect(loaded.contentBody).to.deep.equal(item.definition.contentBody);
+    loaded.contentBody['sfdc_cms:title'] = 'Detached';
+    expect(loaded.definition).to.deep.equal(item.definition);
+    const folder = path.join(project, route);
+    await writeFile(path.join(folder, 'Other.cms-email-fragment.json'), 'keep');
+    const before = await snapshot(folder);
+    const repeated = await writeEditableItemSource(project, route, item, false);
+    expect(repeated.unchanged).to.deep.equal([first.definitionPath]);
+    expect(await snapshot(folder)).to.deep.equal(before);
+    const edited = structuredClone(item.definition);
+    edited.folderPath = ['Edited'];
+    await writeFile(first.definitionPath, JSON.stringify(edited));
+    const local = await snapshot(folder);
+    await failure(writeEditableItemSource(project, route, item, false), /overwrite/u);
+    expect(await snapshot(folder)).to.deep.equal(local);
+    const overwritten = await writeEditableItemSource(project, route, item, true);
+    expect(overwritten.updated).to.deep.equal([first.definitionPath]);
+    expect(await readFile(first.definitionPath)).to.deep.equal(item.definitionBytes);
+    expect(await readFile(path.join(folder, 'Other.cms-email-fragment.json'), 'utf8')).to.equal(
+      'keep',
+    );
+  });
+
+  it('rejects Fragment malformed projections and identity/path conflicts before writes', async () => {
+    const project = await root();
+    const route = 'cms/Marketing/emailFragment';
+    const item = fragmentProjection();
+    for (const wrong of [
+      '../escape',
+      'cms/Other/emailFragment',
+      'cms/Marketing/email',
+      'cms/Marketing/email-fragment',
+    ])
+      await failure(writeEditableItemSource(project, wrong, item, true), /directory/u);
+    for (const invalid of [
+      { ...item, definitionName: 'Welcome.cms-emailFragment.json' },
+      { ...item, definitionBytes: Buffer.from('{}') },
+      { ...item, definition: { ...item.definition, language: 'de' } },
+      {
+        ...item,
+        definitionBytes: Buffer.from(JSON.stringify({ ...item.definition, variants: [] })),
+      },
+    ])
+      await failure(
+        writeEditableItemSource(project, route, invalid, true),
+        /filename|definition|Fragment|contract/u,
+      );
+    expect(await readdir(project)).to.deep.equal([]);
+    const first = await writeEditableItemSource(project, route, item, false);
+    for (const key of ['language', 'apiName', 'workspace'] as const) {
+      const prior = structuredClone(item.definition);
+      if (key === 'language') prior.language = 'de';
+      if (key === 'apiName') prior.identity.apiName = 'Other';
+      if (key === 'workspace') prior.identity.context.workspaceApiName = 'Other';
+      await writeFile(first.definitionPath, JSON.stringify(prior));
+      const before = await snapshot(path.join(project, route));
+      await failure(writeEditableItemSource(project, route, item, true), /conflict/u);
+      expect(await snapshot(path.join(project, route))).to.deep.equal(before);
+    }
+  });
+
+  it('retains Fragment no-follow, exact-case and hardlink write protection', async () => {
+    for (const kind of ['alias', 'directory', 'hardlink', 'junction']) {
+      const project = await root();
+      const route = 'cms/Marketing/emailFragment';
+      const item = fragmentProjection();
+      if (kind === 'junction') {
+        const outside = await root();
+        await symlink(outside, path.join(project, 'cms'), 'junction');
+        await failure(writeEditableItemSource(project, route, item, true), /symlink|reparse/u);
+        expect(await readdir(outside)).to.deep.equal([]);
+        continue;
+      }
+      const folder = path.join(project, route);
+      await mkdir(folder, { recursive: true });
+      const target = path.join(folder, item.definitionName);
+      if (kind === 'alias')
+        await writeFile(path.join(folder, item.definitionName.toLowerCase()), 'keep');
+      if (kind === 'directory') await mkdir(target);
+      if (kind === 'hardlink') {
+        await writeFile(path.join(project, 'outside.txt'), 'keep');
+        await link(path.join(project, 'outside.txt'), target);
+      }
+      await failure(
+        writeEditableItemSource(project, route, item, true),
+        /case-aliased|regular file|hard-linked/u,
+      );
+      expect(await readdir(folder)).to.have.length(1);
+    }
+  });
   it('roundtrips Brand inline JSON, preserves stable files and requires overwrite for edits', async () => {
     const project = await root();
     const route = 'cms/Marketing/brand';

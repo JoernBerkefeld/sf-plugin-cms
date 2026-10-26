@@ -11,6 +11,43 @@ import { assertEditableDirectoryPath } from './editable-raw-html-export.js';
 import { readStableRegularFile } from './import-workspace.js';
 import { strictSourceJson } from './source-definition-import.js';
 import { assertSourceNativeHtml } from './source-definition.js';
+import {
+  assertEmailFragmentSourceDefinition,
+  type EmailFragmentSourceDefinition,
+} from '../contracts/email-fragment-source.js';
+
+/**
+ * Load strict inline single-default Fragment JSON without destination or apply authority.
+ * @param {string} definitionFile - Exact same-stem Fragment JSON path.
+ * @returns {Promise<object>} Stable source path and independently detached definition/body.
+ */
+export async function loadEditableEmailFragmentSource(definitionFile: string): Promise<{
+  definitionPath: string;
+  definition: EmailFragmentSourceDefinition;
+  contentBody: Record<string, JsonValue>;
+}> {
+  if (!definitionFile.trim())
+    throw new TypeError('Editable Fragment definition path must be nonempty');
+  await assertEditableDirectoryPath(path.dirname(definitionFile), false);
+  const directory = path.resolve(path.dirname(definitionFile));
+  const name = path.basename(definitionFile);
+  const definitionPath = await exactFile(directory, name, 'Editable Fragment definition');
+  const bytes = await readStableRegularFile(definitionPath, 'Editable Fragment definition');
+  const candidate = strictSourceJson(bytes, 'Editable Fragment definition JSON');
+  assertEmailFragmentSourceDefinition(candidate);
+  if (name !== `${candidate.identity.apiName}.cms-email-fragment.json`)
+    throw new TypeError('Editable Fragment definition must use the exact same-stem JSON filename');
+  await assertEditableDirectoryPath(directory, false);
+  await exactFile(directory, name, 'Editable Fragment definition');
+  const current = await readStableRegularFile(definitionPath, 'Editable Fragment revalidation');
+  if (!current.equals(bytes))
+    throw new TypeError('Editable Fragment definition changed during loading');
+  return {
+    definitionPath,
+    definition: structuredClone(candidate),
+    contentBody: structuredClone(candidate.contentBody),
+  };
+}
 
 export type EditableBrandProjection = {
   readonly definition: SourceDefinition;

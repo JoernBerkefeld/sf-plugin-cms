@@ -19,8 +19,14 @@ import {
   reassembleEditableMediaSource,
 } from './editable-media-source.js';
 import type { EditableMediaProjection } from './retrieve-media-source.js';
+import { assertEmailFragmentSourceDefinition } from '../contracts/email-fragment-source.js';
+import type { AcquiredEditableEmailFragmentSource } from './retrieve-item-source.js';
 
 function validate(value: unknown) {
+  if ((value as { contract?: unknown })?.contract === 'sf-cms-email-fragment-source') {
+    assertEmailFragmentSourceDefinition(value);
+    return value;
+  }
   if ((value as { contract?: unknown })?.contract === 'sf-cms-media-source') {
     assertEditableMediaDefinition(value);
     return value;
@@ -34,6 +40,7 @@ function validate(value: unknown) {
   return value;
 }
 function bindings(value: ReturnType<typeof validate>) {
+  if (value.contract === 'sf-cms-email-fragment-source') return [];
   if (value.contractVersion === '1.0.0' && value.contract === 'sf-cms-source-definition') return [];
   if (value.contract !== 'sf-cms-media-source') return value.companions;
   return value.media.representation === 'binary' ? [value.media.companion] : [];
@@ -78,7 +85,11 @@ async function existing(directory: string, name: string): Promise<Buffer | undef
 export async function writeEditableItemSource(
   projectRoot: string,
   directory: string,
-  projection: EditableItemProjectionV2 | EditableMediaProjection | EditableBrandProjection,
+  projection:
+    | EditableItemProjectionV2
+    | EditableMediaProjection
+    | EditableBrandProjection
+    | AcquiredEditableEmailFragmentSource['projection'],
   overwrite: boolean,
 ): Promise<ItemSourceWriteReceipt> {
   // Detach inputs before the first asynchronous filesystem operation.
@@ -87,21 +98,25 @@ export async function writeEditableItemSource(
   const definition = validate(parsed);
   if (!isDeepStrictEqual(definition, projection.definition))
     throw new TypeError('Selected item projection definition/bytes disagree');
-  const profile =
-    definition.contract === 'sf-cms-media-source'
-      ? {
-          token: {
-            sfdc_cms__image: 'image',
-            sfdc_cms__document: 'document',
-            sfdc_cms__audio: 'audio',
-          }[definition.contentType],
-          directory: {
-            sfdc_cms__image: 'image',
-            sfdc_cms__document: 'document',
-            sfdc_cms__audio: 'audio',
-          }[definition.contentType],
-        }
-      : SOURCE_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
+  let profile;
+  if (definition.contract === 'sf-cms-email-fragment-source')
+    profile = { token: 'email-fragment', directory: 'emailFragment' };
+  else
+    profile =
+      definition.contract === 'sf-cms-media-source'
+        ? {
+            token: {
+              sfdc_cms__image: 'image',
+              sfdc_cms__document: 'document',
+              sfdc_cms__audio: 'audio',
+            }[definition.contentType],
+            directory: {
+              sfdc_cms__image: 'image',
+              sfdc_cms__document: 'document',
+              sfdc_cms__audio: 'audio',
+            }[definition.contentType],
+          }
+        : SOURCE_PROFILES.find((entry) => entry.contentType === definition.contentType)!;
   const base = `${definition.identity.apiName}.cms-${profile.token}`;
   if (
     directory !== `cms/${definition.identity.context.workspaceApiName}/${profile.directory}` ||
