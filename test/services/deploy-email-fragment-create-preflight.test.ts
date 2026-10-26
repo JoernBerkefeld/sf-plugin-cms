@@ -217,7 +217,8 @@ describe('internal Fragment CREATE preparation', () => {
   it('requires a missing target and exact connection identity', async () => {
     const current = await fixture();
     current.rows.push(row());
-    await failure(current.prepare(), /requires proven missing/u);
+    const existing = await current.prepare();
+    expect(existing.proposed).to.equal('unchanged');
     const invalid = await fixture();
     invalid.org('bad');
     await failure(invalid.prepare(), /exact destination org/u);

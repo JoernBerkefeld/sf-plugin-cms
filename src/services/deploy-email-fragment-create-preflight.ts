@@ -13,7 +13,7 @@ import {
 type CreateConnection = Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>;
 export type EmailFragmentCreatePreparation = {
   qualification: 'unqualified';
-  proposed: 'create';
+  proposed: 'create' | 'unchanged';
   orgId: string;
   apiVersion: string;
   destination: Awaited<ReturnType<typeof resolveEmailFragmentDeployDestination>>;
@@ -117,8 +117,28 @@ export async function prepareEmailFragmentCreate(
     selected,
     requestOptions,
   );
-  if (destination.existing)
-    throw new TypeError('Fragment CREATE requires proven missing destination');
+  if (
+    destination.existing &&
+    destination.inventory.records.some(
+      (row) =>
+        !row.ManagedContent.ApiName ||
+        (row.ManagedContentId !== destination.existing!.evidence.contentId &&
+          (row.Name === destination.source.definition.title ||
+            row.UrlName === destination.source.definition.urlName)),
+    )
+  )
+    throw new TypeError('Fragment destination title/URL collision or unknown parent identity');
+  if (
+    destination.existing &&
+    !isDeepStrictEqual(destination.existing.projection.definition, {
+      ...destination.source.definition,
+      identity: {
+        ...destination.source.definition.identity,
+        context: { workspaceApiName: destination.workspace.apiName },
+      },
+    })
+  )
+    throw new TypeError('Fragment destination differs; UPDATE required (not implemented)');
   if (destination.source.definition.folderPath.length > 0)
     throw new TypeError(
       'Fragment nonroot folder destination resolution is not yet qualified; CREATE blocked',
@@ -155,7 +175,7 @@ export async function prepareEmailFragmentCreate(
   );
   return {
     qualification: 'unqualified',
-    proposed: 'create',
+    proposed: destination.existing ? 'unchanged' : 'create',
     orgId,
     apiVersion,
     destination,
