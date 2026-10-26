@@ -3,7 +3,10 @@ import { Flags } from '@salesforce/sf-plugins-core';
 import { getCmsApiSelection } from '../../../api-policy.js';
 import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../../command-base.js';
 import { type CmsEnvelope, type CmsStatus } from '../../../contracts/shared.js';
-import { prepareEditableSourceSelection } from '../../../services/retrieve-item-source.js';
+import {
+  prepareEditableSourceSelection,
+  UnsupportedEmailFragmentFamilyError,
+} from '../../../services/retrieve-item-source.js';
 import type { NativeRetrieveResolution } from '../../../services/retrieve-native-resolution.js';
 import {
   normalizeRetrieveSelection,
@@ -55,9 +58,9 @@ export type RetrieveContentResult = {
 export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveContentResult>> {
   public static readonly aliases = ['content:retrieve'];
   public static readonly summary =
-    'Retrieve editable Emails, Email Templates, Images, Documents, Audio and Brands into a local project.';
+    'Retrieve editable Emails, Email Templates, Email Fragments, Images, Documents, Audio and Brands into a local project.';
   public static readonly description =
-    'Specify a workspace ID or name. Uses your configured default org unless -o overrides it, the workspace default language unless -l selects another, and the current directory as project root unless -d overrides it. With no selection flags, retrieves all currently supported types into ./cms/<workspaceAPI>/... . Types accept exact short names (email, emailTemplate, image, document, audio, brand) or their sfdc_cms__ names. Select Email, Email Template, Image, Document, Audio or Brand types by exact API names, native content keys/parent IDs, all-of-type, or repeatable metadata Type[:ApiName]. Metadata is exclusive of separate selectors. Resolves complete native inventory before local writes; each supported root-level, single-variant item is acquired independently. Brands require the workspace default language, proven root placement and one unpublished primary Draft with dependency-free inline JSON. Brand retrieval writes portable v1 JSON without companions and remains unqualified. Separate bounded Brand deploy supports unqualified strict CREATE-absent and exact zero-write unchanged; Brand UPDATE, lifecycle operations, deletion and default-brand assignment remain blocked. Writes portable Email JSON and HTML/text companions or media JSON with downloaded Image, Audio or opaque Document bytes with safe native MIME and integrity evidence. Audio retrieval preserves exact bytes. Audio deployment implements unqualified CREATE, bytes-only UPDATE and exact unchanged; bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile, including zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks. This is not general-format or released-package qualification. Bounded Document deployment supports unqualified CREATE, bytes-only UPDATE and exact unchanged, with bounded two-org development-artifact acceptance for the tested text/plain profile. Document UPDATE requires unchanged metadata, native filename, MIME, language and type. External media remains explicitly URL-only. Differing local files require --overwrite. Retrieval never mutates the org. Portable Image deployment admits binary Image sources with safe MIME and paths; Salesforce determines format and size acceptance, with live qualification pending. URL-only sources are not deployable. Document deploy requires root/default-language opaque nonempty runtime-representable bytes, safe native MIME and a safe native filename, with no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Explicit caller download budgets still bind; Salesforce determines format and size acceptance. Retrieval alone does not prove deploy eligibility or installed qualification.';
+    'Specify a workspace ID or name. Uses your configured default org unless -o overrides it, the workspace default language unless -l selects another, and the current directory as project root unless -d overrides it. With no selection flags, retrieves all currently supported types into ./cms/<workspaceAPI>/... . Types accept exact short names (email, emailTemplate, emailFragment, image, document, audio, brand) or their sfdc_cms__ names. Select Email, Email Template, Image, Document, Audio or Brand types by exact API names, native content keys/parent IDs, all-of-type, or repeatable metadata Type[:ApiName]. Metadata is exclusive of separate selectors. Resolves complete native inventory before local writes; each supported item is acquired independently. Email Fragments support retrieve only: one actual default Content variant, full authored inline JSON and ordered logical folder paths, without companions. Unused workspace-enabled languages are allowed; additional actual variants are explicitly blocked, including in whole-type runs, which are not complete backups. Fragment deploy and lifecycle are not qualified. Other types retain their root-level, single-variant bounds. Brands require the workspace default language, proven root placement and one unpublished primary Draft with dependency-free inline JSON. Brand retrieval writes portable v1 JSON without companions and remains unqualified. Separate bounded Brand deploy supports unqualified strict CREATE-absent and exact zero-write unchanged; Brand UPDATE, lifecycle operations, deletion and default-brand assignment remain blocked. Writes portable Email JSON and HTML/text companions or media JSON with downloaded Image, Audio or opaque Document bytes with safe native MIME and integrity evidence. Audio retrieval preserves exact bytes. Audio deployment implements unqualified CREATE, bytes-only UPDATE and exact unchanged; bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile, including zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks. This is not general-format or released-package qualification. Bounded Document deployment supports unqualified CREATE, bytes-only UPDATE and exact unchanged, with bounded two-org development-artifact acceptance for the tested text/plain profile. Document UPDATE requires unchanged metadata, native filename, MIME, language and type. External media remains explicitly URL-only. Differing local files require --overwrite. Retrieval never mutates the org. Portable Image deployment admits binary Image sources with safe MIME and paths; Salesforce determines format and size acceptance, with live qualification pending. URL-only sources are not deployable. Document deploy requires root/default-language opaque nonempty runtime-representable bytes, safe native MIME and a safe native filename, with no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Explicit caller download budgets still bind; Salesforce determines format and size acceptance. Retrieval alone does not prove deploy eligibility or installed qualification.';
   public static readonly examples = [
     '<%= config.bin %> cms retrieve content -W "Content Workspace for Marketing Cloud"',
     '<%= config.bin %> cms retrieve content -W Marketing -m email -m emailTemplate:Welcome_Template',
@@ -81,7 +84,7 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'email, emailTemplate, image, document, audio or brand (or sfdc_cms__ names); repeat for --all.',
+        'email, emailTemplate, emailFragment, image, document, audio or brand (or sfdc_cms__ names); repeat for --all.',
     }),
     'api-name': Flags.string({
       char: 'n',
@@ -182,8 +185,13 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
         this.log(
           `Retrieve: ${status}; retrieved ${result.summary.retrieved}, unchanged ${result.summary.unchanged}, blocked ${result.summary.blocked}, unattempted ${result.summary.unattempted}.`,
         );
-        for (const item of result.items)
+        for (const item of result.items) {
           if (item.paths) this.log(`Definition: ${item.paths.definitionPath}`);
+          if (item.diagnostics.includes('RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY'))
+            this.log(
+              `Blocked Email Fragment ${item.identity.apiName}: unsupported variant family.`,
+            );
+        }
         if (message) this.log(message);
       }
       return this.finishEnvelope(envelope, assertRetrieveContentResult);
@@ -209,7 +217,7 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
       return finish(
         'blocked',
         'RETRIEVE_SELECTION_INVALID',
-        'Specify one workspace ID/name, a nonempty output path and at most one language/default-language choice. Omit selection flags for all supported types, or use supported Email/Email Template/Image/Document/Audio/Brand types with exactly one selection mode; metadata is exclusive of separate selectors.',
+        'Specify one workspace ID/name, a nonempty output path and at most one language/default-language choice. Omit selection flags for all supported types, or use supported Email/Email Template/Email Fragment/Image/Document/Audio/Brand types with exactly one selection mode; metadata is exclusive of separate selectors.',
       );
     }
     result.selection = {
@@ -357,7 +365,10 @@ export default class RetrieveContent extends CmsCommand<CmsEnvelope<RetrieveCont
         item.outcome = changed ? 'retrieved' : 'unchanged';
         result.summary[item.outcome] += 1;
       } catch (error) {
-        item.diagnostics.push(writing ? 'RETRIEVE_WRITE_BLOCKED' : 'RETRIEVE_SOURCE_BLOCKED');
+        let diagnostic = writing ? 'RETRIEVE_WRITE_BLOCKED' : 'RETRIEVE_SOURCE_BLOCKED';
+        if (error instanceof UnsupportedEmailFragmentFamilyError)
+          diagnostic = 'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY';
+        item.diagnostics.push(diagnostic);
         result.summary.blocked += 1;
         if (!writing && fatalReadFailure(error)) {
           fatal = true;

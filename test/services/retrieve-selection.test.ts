@@ -49,6 +49,7 @@ describe('pure retrieve selector normalization', () => {
     'sfdc_cms__document',
     'sfdc_cms__audio',
     'sfdc_cms__brand',
+    'sfdc_cms__emailFragment',
   ]) {
     it(`admits ${image} exact, native, all and mixed metadata selectors`, () => {
       expect(

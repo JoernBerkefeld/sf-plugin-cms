@@ -40,7 +40,10 @@ import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-
 type RequestConnection = Pick<Connection, 'request'> &
   Partial<Pick<Connection, 'version' | 'accessToken' | 'instanceUrl'>>;
 export type AcquiredEditableSource =
-  AcquiredEditableEmailSource | AcquiredEditableMediaSource | AcquiredEditableBrandSource;
+  | AcquiredEditableEmailSource
+  | AcquiredEditableMediaSource
+  | AcquiredEditableBrandSource
+  | AcquiredEditableEmailFragmentSource;
 export type AcquireEditableEmailSourceInput = {
   readonly workspaceId: string;
   readonly apiName: string;
@@ -197,6 +200,12 @@ export async function acquireEditableEmailSource(
   return acquireEditableSource(connection, input, 'sfdc_cms__email', requestOptions);
 }
 
+export class UnsupportedEmailFragmentFamilyError extends TypeError {
+  public constructor() {
+    super('Unsupported Email Fragment family: requires exactly one default Content variant');
+  }
+}
+
 export type AcquiredEditableEmailFragmentSource = {
   readonly directory: string;
   readonly projection: {
@@ -245,6 +254,7 @@ export async function acquireEditableEmailFragmentSource(
     options,
   );
   const matches = family.records.filter((row) => row.ManagedContent.ApiName === apiName);
+  if (matches.length > 1) throw new UnsupportedEmailFragmentFamilyError();
   if (matches.length !== 1)
     throw new TypeError('Email Fragment selection must match exactly one variant');
   const row = matches[0];
@@ -252,10 +262,14 @@ export async function acquireEditableEmailFragmentSource(
   const contentId = requiredContentIdentifier(raw);
   const variantId = requiredVariantIdentifier(raw);
   const siblings = await enumerateNativeSiblings(nativeConnection, workspaceId, contentId, options);
-  assertSingleDefaultEmailFragmentVariant(
-    siblings.records.map((sibling) => ({ ...sibling, VariantType: sibling.VariantType ?? '' })),
-    defaultLanguage,
-  );
+  try {
+    assertSingleDefaultEmailFragmentVariant(
+      siblings.records.map((sibling) => ({ ...sibling, VariantType: sibling.VariantType ?? '' })),
+      defaultLanguage,
+    );
+  } catch {
+    throw new UnsupportedEmailFragmentFamilyError();
+  }
   if (
     !isDeepStrictEqual(siblings.records[0], row) ||
     !isDeepStrictEqual(await bindNativeDetail(connection, siblings.records[0], options), raw)
@@ -492,12 +506,31 @@ export async function prepareEditableSourceSelection(
       if (!row) throw new TypeError('Variant is not in the resolved native selection');
       if (
         row.ManagedContent.AuthoredManagedContentSpaceId !== workspaceId ||
-        row.Language !== selected.language ||
+        (row.Language !== selected.language &&
+          row.ContentTypeFullyQualifiedName !== 'sfdc_cms__emailFragment') ||
         !selected.selection.groups.some(
           (group) => group.contentType === row.ContentTypeFullyQualifiedName,
         )
       )
         throw new TypeError('Native selection scope disagreement');
+      if (row.ContentTypeFullyQualifiedName === 'sfdc_cms__emailFragment') {
+        const source = await acquireEditableEmailFragmentSource(
+          connection,
+          {
+            workspaceId,
+            language: selected.language,
+            apiName: nonempty(row.ManagedContent.ApiName, 'Email Fragment API name'),
+          },
+          options,
+        );
+        if (
+          source.evidence.variantId !== row.Id ||
+          source.evidence.contentId !== row.ManagedContentId ||
+          source.projection.definition.identity.context.workspaceApiName !== workspace.apiName
+        )
+          throw new TypeError('Resolved Fragment identity/workspace changed during acquisition');
+        return source;
+      }
       if (
         row.ContentTypeFullyQualifiedName === 'sfdc_cms__image' ||
         row.ContentTypeFullyQualifiedName === 'sfdc_cms__document' ||

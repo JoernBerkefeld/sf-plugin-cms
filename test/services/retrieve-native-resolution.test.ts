@@ -82,6 +82,22 @@ async function failure(action: () => Promise<unknown>): Promise<Error> {
   throw new Error('Expected rejection');
 }
 describe('native retrieve resolution', () => {
+  it('represents each whole-type Fragment parent including nondefault-only unsupported families', async () => {
+    const fragment = 'sfdc_cms__emailFragment';
+    const rows = [
+      row(0, { ContentTypeFullyQualifiedName: fragment }),
+      row(1, { ContentTypeFullyQualifiedName: fragment, Language: 'de' }),
+      row(2, {
+        ContentTypeFullyQualifiedName: fragment,
+        ManagedContentId: otherParent,
+        Language: 'de',
+      }),
+    ];
+    const result = await setup(rows).resolve([fragment]);
+    expect(result.variants).to.deep.equal([rows[0], rows[2]]);
+    expect(result.inventory.recordCount).to.equal(3);
+    expect(result.unresolved).to.deep.equal([]);
+  });
   it('uses exhaustive all-language inventory, selects explicit language and deduplicates in native order', async () => {
     const rows = [
       row(),

@@ -85,6 +85,7 @@ describe('cms info', () => {
     ).to.deep.equal([
       'content.retrieve.email',
       'content.retrieve.email-template',
+      'content.retrieve.email-fragment',
       'content.retrieve.image',
       'content.retrieve.document',
       'content.retrieve.audio',
@@ -144,6 +145,14 @@ describe('cms info', () => {
         state: 'unqualified',
         transport: 'cli-json',
         contract: 'sf-cms-content-delete@1',
+      },
+    ]);
+    expect(result?.capabilities.filter(({ id }) => id.includes('.email-fragment'))).to.deep.equal([
+      {
+        id: 'content.retrieve.email-fragment',
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-retrieve@1',
       },
     ]);
     expect(result?.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([

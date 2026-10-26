@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import RetrieveContent from '../../src/commands/cms/retrieve/content.js';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -412,7 +413,7 @@ describe('single-default Fragment retrieval projection', () => {
           ...selection,
           apiName: 'CMSF_1015_contentblock_email',
         }),
-      'exactly one variant',
+      'Unsupported Email Fragment family',
     );
   });
   it('requires exact API default locale, primary Content classification and complete stable sibling proof', async () => {
@@ -1271,19 +1272,119 @@ describe('read-only editable Email acquisition', () => {
     }
   });
 
-  it('keeps unsupported Email Fragment outside prepared public source acquisition', async () => {
+  for (const metadata of [['emailFragment:Welcome'], ['emailFragment']]) {
+    it(`routes public Fragment ${metadata[0]} acquisition through protected source writing`, async () => {
+      const current = fixture(false, false, true);
+      const prepared = await prepareEditableSourceSelection(current.connection, {
+        workspaceId: selection.workspaceId,
+        language: 'en_US',
+        selection: normalizeRetrieveSelection({ metadata }),
+      });
+      expect(prepared.resolution.variants).to.have.length(1);
+      const source = await prepared.acquire(prepared.resolution.variants[0].Id);
+      expect(source).to.deep.equal(await acquire(current));
+      const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-public-'));
+      const receipt = await writeEditableItemSource(
+        root,
+        source.directory,
+        source.projection,
+        false,
+      );
+      expect(receipt.definitionPath).to.equal(
+        path.join(
+          root,
+          'cms/Default_Content_Workspace/emailFragment/Welcome.cms-email-fragment.json',
+        ),
+      );
+      expect(JSON.parse(await readFile(receipt.definitionPath, 'utf8')).contentBody).to.deep.equal(
+        current.variants[0].contentBody,
+      );
+      const repeat = await writeEditableItemSource(
+        root,
+        source.directory,
+        source.projection,
+        false,
+      );
+      expect(repeat.unchanged).to.deep.equal([receipt.definitionPath]);
+    });
+  }
+
+  it('runs exact and mixed whole-type Fragment commands through real acquisition and protected writing', async () => {
     const current = fixture(false, false, true);
-    current.variants[0].contentType = { fullyQualifiedName: 'sfdc_cms__emailFragment' };
-    const selected = nativeSelection();
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-command-'));
+    const run = async (metadata: string[]) => {
+      const instance = Object.create(RetrieveContent.prototype) as RetrieveContent;
+      Object.assign(instance, {
+        parse: async () => ({
+          flags: {
+            'target-org': { getUsername: () => 'offline-fixture' },
+            'api-version': '67.0',
+            'workspace-id': selection.workspaceId,
+            metadata,
+            'output-dir': root,
+            overwrite: false,
+          },
+        }),
+        getOrgContext: async () => ({ connection: current.connection, orgId: 'fixture-org' }),
+        resolveSourceWorkspace: async () => ({
+          id: selection.workspaceId,
+          workspace: current.workspace,
+        }),
+        prepareSources: prepareEditableSourceSelection,
+        writeSource: writeEditableItemSource,
+        jsonEnabled: () => true,
+      });
+      try {
+        return await instance.run();
+      } finally {
+        process.exitCode = undefined;
+      }
+    };
+    const exact = await run(['emailFragment:Welcome']);
+    expect(exact.status).to.equal('success');
+    const file = exact.result!.items[0].paths!.definitionPath;
+    const before = await readFile(file, 'utf8');
+    expect(JSON.parse(before).contentBody).to.deep.equal(current.variants[0].contentBody);
+    const repeat = await run(['emailFragment:Welcome']);
+    expect(repeat.result!.items[0].outcome).to.equal('unchanged');
+    const originalBody = structuredClone(current.variants[0].contentBody);
+    (current.variants[0].contentBody as RecordValue).authoredEdit = true;
+    current.parent.contentBody = structuredClone(current.variants[0].contentBody);
+    const conflict = await run(['emailFragment:Welcome']);
+    expect(conflict.status).to.equal('blocked');
+    expect(conflict.result!.items[0].diagnostics).to.deep.equal(['RETRIEVE_WRITE_BLOCKED']);
+    expect(await readFile(file, 'utf8')).to.equal(before);
+    current.variants[0].contentBody = current.parent.contentBody = originalBody;
+    for (const [index, language] of [
+      [2, 'en_US'],
+      [3, 'de'],
+    ] as const) {
+      current.variants.push({
+        ...structuredClone(current.variants[0]),
+        managedContentVariantId: `9Ps00000000000${index}AAA`,
+        managedContentId: '20Y000000000002AAA',
+        apiName: 'Unsupported',
+        language,
+      });
+    }
     current.patchNative((rows) =>
-      rows.map((row) => ({ ...row, ContentTypeFullyQualifiedName: 'sfdc_cms__emailFragment' })),
+      rows.map((row) => ({ ...row, IsPrimary: row.Language === 'en_US' })),
     );
-    (selected.selection.groups[0] as { contentType: string }).contentType =
-      'sfdc_cms__emailFragment';
-    await acquisitionRejects(async () => {
-      const prepared = await prepareEditableSourceSelection(current.connection, selected);
-      return prepared.acquire(current.variants[0].managedContentVariantId as string);
-    }, 'Unsupported');
+    const mixed = await run(['emailFragment']);
+    expect(mixed.status).to.equal('partial');
+    expect(mixed.result!.summary).to.deep.equal({
+      selected: 2,
+      retrieved: 0,
+      unchanged: 1,
+      blocked: 1,
+      unattempted: 0,
+    });
+    expect(mixed.result!.items[1].identity.apiName).to.equal('Unsupported');
+    expect(mixed.result!.items[1].diagnostics).to.deep.equal([
+      'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY',
+    ]);
+    expect(mixed.result!.items[1].paths).to.equal(null);
+    expect(await readFile(file, 'utf8')).to.equal(before);
   });
 
   it('keeps public Email and Template single-variant guards closed for exact en_US/de siblings', async () => {

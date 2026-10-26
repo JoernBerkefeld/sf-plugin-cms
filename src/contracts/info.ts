@@ -61,6 +61,12 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
     contract: 'sf-cms-content-retrieve@1',
   },
   {
+    id: 'content.retrieve.email-fragment',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-retrieve@1',
+  },
+  {
     id: 'content.retrieve.image',
     state: 'experimental',
     transport: 'cli-json',

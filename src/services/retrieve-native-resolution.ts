@@ -63,8 +63,20 @@ export async function resolveNativeRetrieveSelection(
     const family = inventory.records.filter(
       (row) => row.ContentTypeFullyQualifiedName === group.contentType,
     );
-    if (group.all)
-      for (const row of family) if (row.Language === input.language) selected.add(row.Id);
+    if (group.all) {
+      if (group.contentType === 'sfdc_cms__emailFragment') {
+        // Represent every parent, including families without the requested language;
+        // acquisition must report unsupported families rather than silently omit them.
+        const parents = new Map<string, NativeInventoryRow>();
+        for (const row of family) {
+          const prior = parents.get(row.ManagedContentId);
+          if (!prior || row.Language === input.language) parents.set(row.ManagedContentId, row);
+        }
+        for (const row of parents.values()) selected.add(row.Id);
+      } else {
+        for (const row of family) if (row.Language === input.language) selected.add(row.Id);
+      }
+    }
     for (const kind of ['api-name', 'content-key-or-id'] as const) {
       const selectors = kind === 'api-name' ? group.apiNames : group.contentKeysOrIds;
       for (const selector of selectors) {

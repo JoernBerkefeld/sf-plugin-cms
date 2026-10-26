@@ -58,6 +58,21 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
+  it('limits public Fragment claims to unqualified single-default retrieval', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const claim of [
+      'content.retrieve.email-fragment',
+      'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY',
+      'no companions',
+      'the type is not complete',
+      'all seven currently admitted types',
+    ])
+      expect(readme).to.include(claim);
+    expect(RetrieveContent.description).to.include('Email Fragments support retrieve only');
+    expect(RetrieveContent.description).to.include(
+      'Unused workspace-enabled languages are allowed',
+    );
+  });
   it('describes implemented upload progress and current deployment bounds without historical future promises', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const upload = readme.split('### `sf content upload`')[1].split('\n### ')[0];
@@ -303,7 +318,7 @@ describe('current public documentation', () => {
 
   it('advertises bounded unqualified Brand CREATE and unchanged without lifecycle admission', async () => {
     const readme = await readFile(readmeFile, 'utf8');
-    expect(readme).to.include('all six currently admitted types');
+    expect(readme).to.include('all seven currently admitted types');
     expect(readme).to.include('Brand retrieval is **unqualified**');
     expect(readme).to.include(
       'Brand UPDATE, lifecycle operations, deletion and default-brand assignment remain blocked',

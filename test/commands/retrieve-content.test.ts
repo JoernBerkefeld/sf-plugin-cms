@@ -4,7 +4,10 @@ import { Org } from '@salesforce/core';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import RetrieveContent from '../../src/commands/cms/retrieve/content.js';
-import type { AcquiredEditableEmailSource } from '../../src/services/retrieve-item-source.js';
+import {
+  UnsupportedEmailFragmentFamilyError,
+  type AcquiredEditableEmailSource,
+} from '../../src/services/retrieve-item-source.js';
 import type { NativeInventoryRow } from '../../src/services/retrieve-native-inventory.js';
 import type { NativeRetrieveResolution } from '../../src/services/retrieve-native-resolution.js';
 import { CmsRequestError } from '../../src/transport/json-request.js';
@@ -415,6 +418,7 @@ describe('cms retrieve content command', () => {
     'sfdc_cms__document',
     'sfdc_cms__audio',
     'sfdc_cms__brand',
+    'sfdc_cms__emailFragment',
   ] as const) {
     it(`admits a standalone ${contentType} selector through preparation and local writing`, async () => {
       const subject = command({
@@ -439,6 +443,51 @@ describe('cms retrieve content command', () => {
       });
     });
   }
+
+  for (const wholeType of [false, true]) {
+    it(`reports Fragment unsupported families explicitly without writing them (whole type: ${wholeType})`, async () => {
+      const type = 'sfdc_cms__emailFragment';
+      const subject = command({
+        'content-type': undefined,
+        'api-name': undefined,
+        metadata: [wholeType ? 'emailFragment' : 'emailFragment:Unsupported'],
+      });
+      subject.resolution.variants = wholeType
+        ? [row('supported', 'Supported', type), row('unsupported', 'Unsupported', type)]
+        : [row('unsupported', 'Unsupported', type)];
+      subject.resolution.inventory.contentTypes = [type];
+      subject.acquire.withArgs('unsupported').rejects(new UnsupportedEmailFragmentFamilyError());
+      Object.assign(subject.instance, { jsonEnabled: () => false });
+      const result = await subject.instance.run();
+      expect(subject.log.args.flat().join('\n')).to.include(
+        'Blocked Email Fragment Unsupported: unsupported variant family.',
+      );
+      expect(result.status).to.equal(wholeType ? 'partial' : 'blocked');
+      expect(process.exitCode).to.equal(wholeType ? 2 : 1);
+      expect(result.result!.summary).to.deep.equal({
+        selected: wholeType ? 2 : 1,
+        retrieved: wholeType ? 1 : 0,
+        unchanged: 0,
+        blocked: 1,
+        unattempted: 0,
+      });
+      expect(result.result!.items.at(-1)!.diagnostics).to.deep.equal([
+        'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY',
+      ]);
+      expect(subject.writeSource.callCount).to.equal(wholeType ? 1 : 0);
+    });
+  }
+
+  it('reports Fragment write conflicts without claiming retrieval or retrying overwrite', async () => {
+    const subject = command({ 'content-type': ['emailFragment'] });
+    subject.resolution.variants = [row('fragment', 'Welcome', 'sfdc_cms__emailFragment')];
+    subject.writeSource.rejects(new TypeError('Differing local files require overwrite'));
+    const result = await subject.instance.run();
+    expect(result.status).to.equal('blocked');
+    expect(result.result!.items[0].diagnostics).to.deep.equal(['RETRIEVE_WRITE_BLOCKED']);
+    expect(subject.writeSource.calledOnce).to.equal(true);
+    expect(subject.writeSource.firstCall.args[3]).to.equal(false);
+  });
 
   it('normalizes duplicate names without cross products or repeated writes', async () => {
     const subject = command({

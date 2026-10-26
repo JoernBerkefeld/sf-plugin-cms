@@ -3,6 +3,7 @@ import { normalizeContentTypeAlias } from './content-type-alias.js';
 export const RETRIEVE_CONTENT_TYPES = [
   'sfdc_cms__email',
   'sfdc_cms__emailTemplate',
+  'sfdc_cms__emailFragment',
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
