@@ -79,6 +79,23 @@ describe('single-default Email Fragment source', () => {
     for (let index = 1; index <= 7; index++) expect(text).to.include(uuid(index));
     expect(text).to.include(String.raw`English\r\n<p>Café &amp; 世界</p>`);
   });
+  it('preserves optional authored metadata independently of required envelope metadata', () => {
+    for (const metadata of [
+      {},
+      { 'sfdc_cms:title': 'Synthetic title ' },
+      { 'sfdc_cms:title': '', 'sfdc_cms:urlName': 'independent-body-url ' },
+      { 'sfdc_cms:urlName': '' },
+    ]) {
+      const value = fixture();
+      delete value.contentBody['sfdc_cms:title'];
+      delete value.contentBody['sfdc_cms:urlName'];
+      Object.assign(value.contentBody, metadata);
+      const before = structuredClone(value);
+      assertEmailFragmentSourceDefinition(value);
+      expect(value).to.deep.equal(before);
+      expect(JSON.parse(serializeEmailFragmentSourceDefinition(value))).to.deep.equal(before);
+    }
+  });
   it('canonicalizes keys without reordering arrays and emits one terminal LF', () => {
     const value = fixture();
     const reversed = Object.fromEntries(
@@ -157,9 +174,23 @@ describe('single-default Email Fragment source', () => {
       },
     ],
     [
-      'metadata mismatch',
+      'missing envelope title',
       (value) => {
-        value.title = 'different';
+        Object.assign(value, { title: undefined });
+      },
+    ],
+    ['non-string envelope URL', (value) => Object.assign(value, { urlName: 1 })],
+    ['empty envelope title', (value) => Object.assign(value, { title: '' })],
+    [
+      'non-string authored title',
+      (value) => {
+        value.contentBody['sfdc_cms:title'] = null;
+      },
+    ],
+    [
+      'non-string authored URL',
+      (value) => {
+        value.contentBody['sfdc_cms:urlName'] = 1;
       },
     ],
     [

@@ -152,8 +152,10 @@ export function assertEmailFragmentSourceDefinition(
     invalid('contentBody');
   const body = value.contentBody as Record<string, unknown>;
   for (const key of ['title', 'urlName']) {
-    if (typeof value[key] !== 'string' || !value[key] || value[key] !== body[`sfdc_cms:${key}`])
-      invalid(`primary ${key}`);
+    if (typeof value[key] !== 'string' || !value[key]) invalid(`primary ${key}`);
+    const bodyKey = `sfdc_cms:${key}`;
+    if (Object.hasOwn(body, bodyKey) && typeof body[bodyKey] !== 'string')
+      invalid(`contentBody.${bodyKey}`);
   }
   if (
     Object.hasOwn(body, 'sfdc_cms:variants') &&

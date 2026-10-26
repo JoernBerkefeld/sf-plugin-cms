@@ -4,7 +4,11 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeEditableItemSource } from '../../src/services/write-item-source.js';
-import { loadEditableBrandSource } from '../../src/services/editable-item-source.js';
+import {
+  loadEditableBrandSource,
+  loadEditableEmailFragmentSource,
+} from '../../src/services/editable-item-source.js';
+import { serializeEmailFragmentSourceDefinition } from '../../src/contracts/email-fragment-source.js';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
 import { brandDetail } from '../fixtures/brand.js';
@@ -316,6 +320,84 @@ async function acquisitionRejects(action: () => Promise<unknown>, message: strin
 const acquire = (current: ReturnType<typeof fixture>) =>
   acquireEditableEmailFragmentSource(current.connection, selection);
 describe('single-default Fragment retrieval projection', () => {
+  it('acquires, serializes and loads the independently read persisted capture body losslessly', async () => {
+    const current = fixture(false, false, true);
+    const title = 'CMSF_1026_fragment_create_capture';
+    const backgroundImage = { repeat: 'no-repeat', position: 'center center', size: 'cover' };
+    const layout = {
+      'lightning:borderRadius': '{!$brand.borderRadius.square}',
+      'lightning:borderWidth': '{!$brand.borderWeight.none}',
+      'lightning:colorScheme': '{!$brand.colorScheme}',
+      'lightning:margin': '{!$brand.spacing.none}',
+      'lightning:padding': '{!$brand.spacing.xSmall}',
+      'lightning:backgroundImage': backgroundImage,
+    };
+    // R9 parent/variant GETs agree: body title has U+0020, URL exists only in the envelope.
+    const contentBody = {
+      backgroundColor: '#f3f3f3',
+      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+      'lightning:colorScheme': '{!$brand.colorScheme}',
+      'lightning:dataProviders': [
+        {
+          attributes: { dataGraphApiName: 'Marketing', dataspace: 'default' },
+          definition: 'sfdc_cms__dataGraphDataProvider',
+          sfdcExpressionKey: '$dataGraph',
+        },
+      ],
+      'lightning:padding': '{!$brand.spacing.none}',
+      'sfdc_cms:block': {
+        definition: 'sfdc_cms/rootContentBlock',
+        id: 'a9c309bb-a711-4609-9bce-914bf60d2964',
+        type: 'block',
+        children: [
+          {
+            attributes: { ...layout, stackOnMobile: true, reverseOrderOnMobile: false },
+            definition: 'lightning/section',
+            id: '0e92b60c-08f8-45f5-94f6-aae8744040e9',
+            type: 'block',
+            children: [
+              {
+                attributes: { ...layout, columnWidth: 12, 'lightning:verticalAlignment': 'top' },
+                definition: 'lightning/column',
+                id: '181e9258-d14e-43a8-8829-29d38f24248b',
+                type: 'block',
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+      'sfdc_cms:title': `${title} `,
+      'lightning:expressions': [],
+      'lightning:backgroundImage': backgroundImage,
+      'sfdc_cms:attachments': [],
+      'sfdc_cms:variants': [],
+    };
+    Object.assign(current.variants[0], {
+      title,
+      urlName: 'cmsf-1026-fragment-create-capture',
+      contentBody,
+    });
+    Object.assign(current.parent, structuredClone(current.variants[0]));
+    const before = structuredClone(contentBody);
+    const source = await acquire(current);
+    expect(source.projection.definition.title).to.equal(title);
+    expect(source.projection.definition.contentBody).to.deep.equal(before);
+    const serialized = serializeEmailFragmentSourceDefinition(source.projection.definition);
+    expect(serialized).to.equal(source.projection.definitionBytes.toString());
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-metadata-'));
+    const receipt = await writeEditableItemSource(root, source.directory, source.projection, false);
+    expect(await readFile(receipt.definitionPath, 'utf8')).to.equal(serialized);
+    const loaded = await loadEditableEmailFragmentSource(receipt.definitionPath);
+    expect(loaded.definition).to.deep.equal(source.projection.definition);
+    expect(loaded.contentBody).to.deep.equal(before);
+    expect(serializeEmailFragmentSourceDefinition(loaded.definition)).to.equal(serialized);
+    expect(loaded.contentBody).not.to.have.property('sfdc_cms:urlName');
+    expect(loaded.contentBody['sfdc_cms:title']).to.equal(`${title} `);
+    loaded.contentBody.changed = true;
+    expect(loaded.definition.contentBody).to.deep.equal(before);
+    expect(current.variants[0].contentBody).to.deep.equal(before);
+  });
   it('accepts unused enabled German and preserves full canonical authored content detached from evidence', async () => {
     const current = fixture(false, false, true);
     const before = structuredClone(current.variants[0].contentBody);
