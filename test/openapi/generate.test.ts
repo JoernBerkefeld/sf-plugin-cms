@@ -106,6 +106,22 @@ describe('selected OpenAPI generation', () => {
       .and.deep.include({ location: 'query', name: 'scope', required: false, type: 'string' });
   });
 
+  it('generates the bounded folder read from the bundled contract', async () => {
+    const { document } = await intakeOpenApi(canonicalPath);
+    const [operation] = buildSelectedOperationDescriptors(document as Record<string, unknown>, [
+      { localKey: 'folder.get', operationId: 'getManagedContentSpaceFolder' },
+    ]);
+    expect(operation).to.include({
+      method: 'GET',
+      path: '/connect/cms/folders/{folderId}',
+      requestBodyPresent: false,
+    });
+    expect(operation.parameters).to.deep.equal([
+      { location: 'path', name: 'folderId', required: true, type: 'string' },
+      { location: 'query', name: 'contextContentSpaceId', required: false, type: 'string' },
+    ]);
+  });
+
   it('rejects unsupported array item types', () => {
     const document = {
       components: { schemas: {} },

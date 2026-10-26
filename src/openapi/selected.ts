@@ -25,6 +25,10 @@ export const SELECTED_OPERATION_CONFIG: readonly SelectedOperationConfig[] = [
     operationId: 'postManagedContentUnpublish',
   },
   {
+    localKey: 'folder.get',
+    operationId: 'getManagedContentSpaceFolder',
+  },
+  {
     localKey: 'variant.create',
     operationId: 'postManagedContentVariantCreate',
   },

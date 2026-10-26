@@ -132,6 +132,36 @@ export const SELECTED_OPERATIONS = [
     ]
   },
   {
+    "localKey": "folder.get",
+    "method": "GET",
+    "operationId": "getManagedContentSpaceFolder",
+    "parameters": [
+      {
+        "location": "path",
+        "name": "folderId",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "location": "query",
+        "name": "contextContentSpaceId",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "path": "/connect/cms/folders/{folderId}",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": [
+      {
+        "mediaTypes": [
+          "application/json"
+        ],
+        "status": "200"
+      }
+    ]
+  },
+  {
     "localKey": "variant.create",
     "method": "POST",
     "operationId": "postManagedContentVariantCreate",
