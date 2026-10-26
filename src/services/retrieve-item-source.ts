@@ -1,6 +1,15 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import { sourcePathSegment } from '../contracts/source-definition.js';
+import {
+  EMAIL_FRAGMENT_SOURCE_CONTRACT,
+  EMAIL_FRAGMENT_SOURCE_VERSION,
+  assertEmailFragmentSourceDefinition,
+  assertSingleDefaultEmailFragmentVariant,
+  serializeEmailFragmentSourceDefinition,
+  type EmailFragmentSourceDefinition,
+} from '../contracts/email-fragment-source.js';
+import { acquireFolderEvidence } from './acquire-folder-evidence.js';
 import type { JsonRequestOptions } from '../transport/json-request.js';
 import {
   enumerateNativeFamily,
@@ -186,6 +195,156 @@ export async function acquireEditableEmailSource(
   requestOptions: JsonRequestOptions = {},
 ): Promise<AcquiredEditableEmailSource> {
   return acquireEditableSource(connection, input, 'sfdc_cms__email', requestOptions);
+}
+
+export type AcquiredEditableEmailFragmentSource = {
+  readonly directory: string;
+  readonly projection: {
+    readonly definitionName: string;
+    readonly definition: EmailFragmentSourceDefinition;
+    readonly definitionBytes: Buffer;
+    readonly companions: readonly [];
+  };
+  readonly evidence: { readonly variantId: string; readonly contentId: string };
+};
+
+/**
+ * Acquire a complete single-default Fragment without filesystem or org writes.
+ * @param {RequestConnection} connection - Explicit source org connection.
+ * @param {AcquireEditableEmailSourceInput} input - Exact workspace, API name and language choice.
+ * @param {JsonRequestOptions} requestOptions - Request metadata and cancellation signal.
+ * @returns {Promise<AcquiredEditableEmailFragmentSource>} Canonical full body and detached evidence.
+ */
+export async function acquireEditableEmailFragmentSource(
+  connection: RequestConnection,
+  input: AcquireEditableEmailSourceInput,
+  requestOptions: JsonRequestOptions = {},
+): Promise<AcquiredEditableEmailFragmentSource> {
+  const selected = structuredClone(input);
+  const options = { ...requestOptions };
+  const workspaceId = nonempty(selected.workspaceId, 'workspaceId');
+  const apiName = nonempty(selected.apiName, 'apiName');
+  sourcePathSegment(apiName);
+  if (
+    (selected.language === undefined) === (selected.useDefaultLanguage !== true) ||
+    (selected.useDefaultLanguage !== undefined && selected.useDefaultLanguage !== true)
+  )
+    throw new TypeError('Specify exactly one language or useDefaultLanguage: true');
+  const workspace = await getWorkspace(connection, workspaceId, options);
+  if (workspace.id !== workspaceId) throw new TypeError('Workspace identity does not match');
+  const workspaceApiName = nonempty(workspace.apiName, 'Workspace API name');
+  sourcePathSegment(workspaceApiName);
+  const defaultLanguage = nonempty(workspace.defaultLanguage, 'Workspace defaultLanguage');
+  if (selected.language !== undefined && selected.language !== defaultLanguage)
+    throw new TypeError('Email Fragment requires the exact workspace default language');
+  const nativeConnection = nativeRequestConnection(connection);
+  const family = await enumerateNativeFamily(
+    nativeConnection,
+    workspaceId,
+    ['sfdc_cms__emailFragment'],
+    options,
+  );
+  const matches = family.records.filter((row) => row.ManagedContent.ApiName === apiName);
+  if (matches.length !== 1)
+    throw new TypeError('Email Fragment selection must match exactly one variant');
+  const row = matches[0];
+  const raw = await bindNativeDetail(connection, row, options);
+  const contentId = requiredContentIdentifier(raw);
+  const variantId = requiredVariantIdentifier(raw);
+  const siblings = await enumerateNativeSiblings(nativeConnection, workspaceId, contentId, options);
+  assertSingleDefaultEmailFragmentVariant(
+    siblings.records.map((sibling) => ({ ...sibling, VariantType: sibling.VariantType ?? '' })),
+    defaultLanguage,
+  );
+  if (
+    !isDeepStrictEqual(siblings.records[0], row) ||
+    !isDeepStrictEqual(await bindNativeDetail(connection, siblings.records[0], options), raw)
+  )
+    throw new TypeError('Complete single exact native sibling evidence is required');
+  if (raw.title !== row.Name || raw.urlName !== row.UrlName)
+    throw new TypeError('Email Fragment native title/URL disagreement');
+  const parent = await getContent(connection, contentId, {}, options);
+  const parentType = record(parent.contentType)
+    ? parent.contentType.fullyQualifiedName
+    : parent.contentType;
+  if (
+    requiredContentIdentifier(parent) !== contentId ||
+    parentType !== 'sfdc_cms__emailFragment' ||
+    !record(parent.contentSpace) ||
+    parent.contentSpace.id !== workspaceId
+  )
+    throw new TypeError('Source parent identity/scope disagreement');
+  for (const key of ['isPublished', 'status'])
+    if (key in parent && !isDeepStrictEqual(parent[key], raw[key]))
+      throw new TypeError(`Source parent ${key} disagreement`);
+  const normalized = normalizeReadEnvelopes(raw, parent);
+  const variantFields = new Set([
+    'id',
+    'managedContentVariantId',
+    'contentId',
+    'managedContentId',
+    'contentKey',
+    'apiName',
+    'contentType',
+    'contentSpace',
+    'contentBody',
+    'language',
+    'title',
+    'urlName',
+    'externalId',
+    'isPublished',
+    'status',
+    'folder',
+  ]);
+  const parentFields = new Set([
+    'id',
+    'managedContentId',
+    'contentId',
+    'contentKey',
+    'apiName',
+    'contentType',
+    'contentSpace',
+    'title',
+    'urlName',
+    'folder',
+    'isPublished',
+    'status',
+  ]);
+  if (
+    Object.keys(normalized.raw).some((key) => !variantFields.has(key)) ||
+    Object.keys(normalized.parent).some((key) => !parentFields.has(key)) ||
+    ('externalId' in raw && raw.externalId !== null)
+  )
+    throw new TypeError('Unsupported Email Fragment source envelope');
+  const folderPath = await acquireFolderEvidence(
+    connection,
+    { id: workspaceId, rootFolderId: nonempty(workspace.rootFolderId, 'Workspace rootFolderId') },
+    raw.folder,
+    parent.folder,
+    options,
+  );
+  const definition: unknown = {
+    contract: EMAIL_FRAGMENT_SOURCE_CONTRACT,
+    contractVersion: EMAIL_FRAGMENT_SOURCE_VERSION,
+    identity: { family: 'cms', type: 'Email Fragment', apiName, context: { workspaceApiName } },
+    contentType: 'sfdc_cms__emailFragment',
+    language: raw.language,
+    title: raw.title,
+    urlName: raw.urlName,
+    folderPath,
+    contentBody: structuredClone(raw.contentBody),
+  };
+  assertEmailFragmentSourceDefinition(definition);
+  return {
+    directory: `cms/${workspaceApiName}/emailFragment`,
+    projection: {
+      definitionName: `${apiName}.cms-email-fragment.json`,
+      definition,
+      definitionBytes: Buffer.from(serializeEmailFragmentSourceDefinition(definition), 'utf8'),
+      companions: [],
+    },
+    evidence: { variantId, contentId },
+  };
 }
 
 export type AcquiredEditableBrandSource = {

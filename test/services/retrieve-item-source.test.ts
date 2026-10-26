@@ -13,6 +13,7 @@ import { NativeInventoryRequestError } from '../../src/services/retrieve-native-
 import type { ResolveNativeRetrieveInput } from '../../src/services/retrieve-native-resolution.js';
 import {
   acquireEditableBrandSource,
+  acquireEditableEmailFragmentSource,
   acquireEditableEmailSource,
   acquireEditableTemplateSource,
   prepareEditableSourceSelection,
@@ -86,6 +87,42 @@ function fixture(template = false, brand = false, fragment = false) {
       variantVersion: '1.1',
     });
   }
+  const folders: RecordValue[] = [];
+  if (fragment) {
+    workspace.rootFolderId = '9Pu000000000001AAA';
+    workspace.languages = ['en_US', 'de'];
+    Object.assign(variants[0], {
+      contentType: { fullyQualifiedName: contentType },
+      urlName: 'welcome',
+      contentBody: {
+        'sfdc_cms:title': 'Welcome',
+        'sfdc_cms:urlName': 'welcome',
+        'sfdc_cms:variants': [],
+        'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+        'lightning:dataProviders': [
+          {
+            definition: 'sfdc_cms__dataGraphDataProvider',
+            attributes: { dataGraphApiName: 'Marketing', dataspace: 'default' },
+          },
+        ],
+        'sfdc_cms:block': {
+          type: 'block',
+          definition: 'sfdc_cms/rootContentBlock',
+          id: '10000000-0000-4000-8000-000000000001',
+          children: [2, 3].map((index) => ({
+            type: 'block',
+            definition: index === 2 ? 'lightning/section' : 'lightning/paragraph',
+            id: `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+            attributes: { text: 'Full café & 世界\r\n<p>authored</p>', customLayout: [1, 2] },
+          })),
+        },
+      },
+    });
+    Object.assign(parent, structuredClone(variants[0]), {
+      contentVersion: 1,
+      variantVersion: '1.1',
+    });
+  }
   let nativePatch: (rows: RecordValue[], siblingScope: boolean) => RecordValue[] = unchangedRows;
   const nativeRows = () =>
     variants.map((detail) => ({
@@ -97,6 +134,7 @@ function fixture(template = false, brand = false, fragment = false) {
       IsPublished: detail.isPublished,
       ManagedContentVariantStatus: (detail.status as RecordValue)?.status,
       IsPrimary: true,
+      ...(fragment ? { VariantType: 'Content' } : {}),
       Name: detail.title,
       UrlName: detail.urlName ?? null,
       ManagedContentKey: detail.contentKey,
@@ -137,6 +175,9 @@ function fixture(template = false, brand = false, fragment = false) {
           .slice(0, 2000);
       }
       value = { totalSize: records.length, done: true, records };
+    } else if (url.pathname.startsWith('/connect/cms/folders/')) {
+      expect(url.searchParams.get('contextContentSpaceId')).to.equal(workspace.id);
+      value = folders.find((folder) => folder.id === url.pathname.split('/').at(-1));
     } else if (url.pathname.startsWith('/connect/cms/contents/variants/')) {
       value = variants.find(
         (raw) => raw.managedContentVariantId === url.pathname.split('/').at(-1),
@@ -153,6 +194,7 @@ function fixture(template = false, brand = false, fragment = false) {
     parent,
     parents,
     variants,
+    folders,
     connection: { request, version: '67.0' },
     patchNative(patch: typeof nativePatch) {
       nativePatch = patch;
@@ -269,6 +311,214 @@ async function acquisitionRejects(action: () => Promise<unknown>, message: strin
     expect((error as Error).message).to.include(message);
   }
 }
+
+const acquire = (current: ReturnType<typeof fixture>) =>
+  acquireEditableEmailFragmentSource(current.connection, selection);
+describe('single-default Fragment retrieval projection', () => {
+  it('accepts unused enabled German and preserves full canonical authored content detached from evidence', async () => {
+    const current = fixture(false, false, true);
+    const before = structuredClone(current.variants[0].contentBody);
+    const result = await acquire(current);
+    expect(result.directory).to.equal('cms/Default_Content_Workspace/emailFragment');
+    expect(result.projection.definitionName).to.equal('Welcome.cms-email-fragment.json');
+    expect(result.projection.definition.language).to.equal('en_US');
+    expect(result.projection.definition.contentBody).to.deep.equal(before);
+    expect(JSON.parse(result.projection.definitionBytes.toString())).to.deep.equal(
+      result.projection.definition,
+    );
+    expect(result.projection.definitionBytes.toString()).to.include(
+      '10000000-0000-4000-8000-000000000003',
+    );
+    expect(result.projection.definitionBytes.toString()).not.to.match(
+      /9Ps000|20Y000|0Zu000|key-source/u,
+    );
+    expect(result.projection.companions).to.deep.equal([]);
+    expect(result.evidence).to.deep.equal({
+      variantId: '9Ps000000000001AAA',
+      contentId: '20Y000000000001AAA',
+    });
+    expect(await acquire(current)).to.deep.equal(result);
+    result.projection.definition.contentBody.changed = true;
+    const detached = await acquire(current);
+    expect(detached.projection.definition.contentBody).to.deep.equal(before);
+    expect(
+      current.connection.request.args.every(
+        ([request]) => request.method === 'GET' && !request.url.includes('search'),
+      ),
+    ).to.equal(true);
+  });
+  it('retains portable ordered nested folders from independent workspace-bound evidence', async () => {
+    const current = fixture(false, false, true);
+    current.parent.folder = current.variants[0].folder = { id: '9Pu000000000003AAA' };
+    current.folders.push({
+      id: '9Pu000000000003AAA',
+      name: 'Blocks',
+      parentFolderId: '9Pu000000000002AAA',
+      folderType: 'Standard',
+      isShared: false,
+      folderHierarchy: [
+        { id: current.workspace.rootFolderId, name: 'Root', folderType: 'System' },
+        {
+          id: '9Pu000000000002AAA',
+          name: 'Nested',
+          parentFolderId: current.workspace.rootFolderId,
+          folderType: 'Standard',
+        },
+      ],
+    });
+    const nested = await acquire(current);
+    expect(nested.projection.definition.folderPath).to.deep.equal(['Nested', 'Blocks']);
+    current.parent.folder = null;
+    await acquisitionRejects(() => acquire(current), 'folder');
+  });
+  it('blocks supplied bilingual Fragment and hidden different-type/custom/status siblings', async () => {
+    for (const kind of ['bilingual', 'different-type', 'custom', 'status']) {
+      const current = fixture(false, false, true);
+      const sibling = structuredClone(current.variants[0]);
+      Object.assign(sibling, { managedContentVariantId: '9Ps000000000002AAA', language: 'de' });
+      if (kind === 'different-type') sibling.contentType = 'sfdc_cms__email';
+      if (kind === 'status') sibling.status = { status: 'Published' };
+      current.variants.push(sibling);
+      current.patchNative((rows) =>
+        rows.map((row) => ({
+          ...row,
+          IsPrimary: row.Language === 'en_US',
+          VariantType: kind === 'custom' && row.Language === 'de' ? 'Custom' : 'Content',
+        })),
+      );
+      await acquisitionRejects(() => acquire(current), 'variant');
+    }
+  });
+  it('rejects the supplied CMSF_1015_contentblock_email bilingual evidence anchors', async () => {
+    const current = fixture(false, false, true);
+    Object.assign(current.variants[0], {
+      apiName: 'CMSF_1015_contentblock_email',
+      managedContentId: '20Yaj00000FbqobEAB',
+      managedContentVariantId: '9Psaj00000J6lCbCAJ',
+      contentKey: 'MCGO7G5VVRKVHYTPEPM5CMTMT7UE',
+    });
+    Object.assign(current.parent, {
+      managedContentId: '20Yaj00000FbqobEAB',
+      apiName: 'CMSF_1015_contentblock_email',
+    });
+    current.variants.push({
+      ...structuredClone(current.variants[0]),
+      managedContentVariantId: '9Psaj00000JgR2TCAV',
+      language: 'de',
+    });
+    await acquisitionRejects(
+      () =>
+        acquireEditableEmailFragmentSource(current.connection, {
+          ...selection,
+          apiName: 'CMSF_1015_contentblock_email',
+        }),
+      'exactly one variant',
+    );
+  });
+  it('requires exact API default locale, primary Content classification and complete stable sibling proof', async () => {
+    for (const patch of [
+      { IsPrimary: false },
+      { VariantType: 'Custom' },
+      { VariantType: undefined },
+      { Name: 'Drift' },
+      { UrlName: 'drift' },
+    ]) {
+      const current = fixture(false, false, true);
+      current.patchNative((rows) => rows.map((row) => ({ ...row, ...patch })));
+      await acquisitionRejects(() => acquire(current), '');
+    }
+    const current = fixture(false, false, true);
+    await acquisitionRejects(
+      () =>
+        acquireEditableEmailFragmentSource(current.connection, {
+          workspaceId: selection.workspaceId,
+          apiName: 'Welcome',
+          language: 'en_us',
+        }),
+      'exact workspace default',
+    );
+    const counts = fixture(false, false, true);
+    let reads = 0;
+    counts.patchNative((rows) => (++reads === 3 ? [] : rows));
+    await acquisitionRejects(() => acquire(counts), 'aggregate count');
+    const drift = fixture(false, false, true);
+    drift.patchNative((rows, siblings) =>
+      rows.map((row) => ({ ...row, Name: siblings ? 'Drift' : row.Name })),
+    );
+    await acquisitionRejects(() => acquire(drift), 'single exact');
+  });
+  it('rejects parent scope, duplicate metadata, provider provenance and unknown envelope disagreement', async () => {
+    for (const [key, value] of [
+      ['managedContentId', '20Y000000000002AAA'],
+      ['contentSpace', { id: '0Zu000000000002AAA' }],
+      ['contentType', 'sfdc_cms__email'],
+      ['title', 'Drift'],
+      ['contentBody', {}],
+      ['language', 'de'],
+      ['unknownField', true],
+      ['isPublished', true],
+      ['status', { status: 'Published' }],
+      ['externalId', 'provider'],
+    ] as const) {
+      const current = fixture(false, false, true);
+      current.parent[key] = value;
+      await acquisitionRejects(() => acquire(current), '');
+    }
+    const current = fixture(false, false, true);
+    current.variants[0].source = 'External';
+    current.parent.source = 'External';
+    await acquisitionRejects(() => acquire(current), 'provenance');
+  });
+  it('fails closed on invalid selectors, missing workspace defaults and variant envelope drift', async () => {
+    for (const patch of [
+      { useDefaultLanguage: undefined },
+      { language: 'en_US' },
+      { useDefaultLanguage: false },
+    ]) {
+      const current = fixture(false, false, true);
+      await acquisitionRejects(
+        () =>
+          acquireEditableEmailFragmentSource(current.connection, {
+            ...selection,
+            ...patch,
+          } as AcquireEditableEmailSourceInput),
+        'Specify exactly',
+      );
+      expect(current.connection.request.called).to.equal(false);
+    }
+    for (const patch of [
+      { defaultLanguage: undefined },
+      { id: '0Zu000000000002AAA' },
+      { apiName: '../escape' },
+    ]) {
+      const current = fixture(false, false, true);
+      Object.assign(current.workspace, patch);
+      await acquisitionRejects(() => acquire(current), '');
+    }
+    for (const patch of [{ unknownField: true }, { externalId: 'provider' }]) {
+      const current = fixture(false, false, true);
+      Object.assign(current.variants[0], patch);
+      await acquisitionRejects(() => acquire(current), '');
+    }
+    const count = fixture(false, false, true);
+    let siblingReads = 0;
+    count.patchNative((rows, siblings) => (siblings && ++siblingReads === 3 ? [] : rows));
+    await acquisitionRejects(() => acquire(count), 'aggregate count');
+  });
+  it('retrieves published default content with identical canonical bytes and exact non-English defaults', async () => {
+    const current = fixture(false, false, true);
+    const before = await acquire(current);
+    for (const detail of [current.parent, current.variants[0]]) {
+      detail.isPublished = true;
+      detail.status = { status: 'Published' };
+    }
+    expect(await acquire(current)).to.deep.equal(before);
+    current.workspace.defaultLanguage = 'de';
+    current.variants[0].language = current.parent.language = 'de';
+    const german = await acquire(current);
+    expect(german.projection.definition.language).to.equal('de');
+  });
+});
 
 describe('native Brand retrieval acquisition', () => {
   it('writes, reloads, repeats and overwrites acquired portable Brand JSON without companions', async () => {
