@@ -49,9 +49,10 @@ function email(id = '9Ps000000000001AAA', language = 'en_US', apiName = 'Welcome
 function unchangedRows(rows: RecordValue[]): RecordValue[] {
   return rows;
 }
-function fixture(template = false, brand = false) {
+function fixture(template = false, brand = false, fragment = false) {
   let contentType = template ? 'sfdc_cms__emailTemplate' : 'sfdc_cms__email';
   if (brand) contentType = 'sfdc_cms__brand';
+  if (fragment) contentType = 'sfdc_cms__emailFragment';
   const workspace: RecordValue = {
     id: '0Zu000000000001AAA',
     name: 'Content Workspace for Marketing Cloud',
@@ -1017,6 +1018,36 @@ describe('read-only editable Email acquisition', () => {
         ),
       ).to.equal(true);
       expect(urls.some((url) => url.includes('/items/search'))).to.equal(false);
+    }
+  });
+
+  it('keeps unsupported Email Fragment outside prepared public source acquisition', async () => {
+    const current = fixture(false, false, true);
+    current.variants[0].contentType = { fullyQualifiedName: 'sfdc_cms__emailFragment' };
+    const selected = nativeSelection();
+    current.patchNative((rows) =>
+      rows.map((row) => ({ ...row, ContentTypeFullyQualifiedName: 'sfdc_cms__emailFragment' })),
+    );
+    (selected.selection.groups[0] as { contentType: string }).contentType =
+      'sfdc_cms__emailFragment';
+    await acquisitionRejects(async () => {
+      const prepared = await prepareEditableSourceSelection(current.connection, selected);
+      return prepared.acquire(current.variants[0].managedContentVariantId as string);
+    }, 'Unsupported');
+  });
+
+  it('keeps public Email and Template single-variant guards closed for exact en_US/de siblings', async () => {
+    for (const template of [false, true]) {
+      const current = fixture(template);
+      const sibling = email('translated', 'de');
+      sibling.contentType = structuredClone(current.variants[0].contentType);
+      current.variants.push(sibling);
+      current.patchNative((rows) =>
+        rows.map((row) => ({ ...row, IsPrimary: row.Language === 'en_US' })),
+      );
+      await (template
+        ? rejects(current, 'single exact native sibling')
+        : fails(current, 'single exact native sibling'));
     }
   });
 
