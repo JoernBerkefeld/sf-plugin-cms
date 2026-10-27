@@ -25,7 +25,7 @@ function record(value: JsonValue | undefined): value is Record<string, JsonValue
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function prerequisites(body: Record<string, JsonValue>): WebFragmentDataGraphPrerequisite[] {
+export function prerequisites(body: Record<string, JsonValue>): WebFragmentDataGraphPrerequisite[] {
   const providers = body['lightning:dataProviders'] ?? [];
   if (!Array.isArray(providers)) throw new TypeError('Fragment data providers must be an array');
   const seen = new Set<string>();
