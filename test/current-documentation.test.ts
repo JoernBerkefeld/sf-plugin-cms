@@ -58,7 +58,7 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
-  it('keeps Fragment retrieval and deployment unqualified with explicit remaining portability limits', async () => {
+  it('keeps Fragment operation qualification and overview claims consistent with bounded support', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
       'content.retrieve.email-fragment',
@@ -71,6 +71,45 @@ describe('current public documentation', () => {
       'all seven currently admitted types',
     ])
       expect(readme).to.include(claim);
+    const overview = readme.split('## Content type support')[1].split('## Installation')[0];
+    const fragmentRow = overview
+      .split('\n')
+      .find((line) => line.startsWith('| Content Block: Email (Email Fragment)'));
+    expect(
+      fragmentRow
+        ?.split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    ).to.deep.equal([
+      'Content Block: Email (Email Fragment)',
+      '`sfdc_cms__emailFragment`',
+      'Unqualified (bounded)',
+      'Unqualified (bounded)',
+      'Available (bounded)',
+      'Locally enabled (unqualified)',
+    ]);
+    for (const claim of [
+      'Bounded derived-title UPDATE is live-qualified for the tested profile',
+      'Fragment publish/unpublish/delete are locally enabled',
+      'not yet installed/live-qualified',
+      'six public families: Email, Email Template, Email Fragment, Image, Document and Audio',
+      'Local source bytes are preserved by default',
+      'only explicit `--delete-local-source`',
+    ])
+      expect(overview, claim).to.include(claim);
+    for (const obsolete of [
+      'lifecycle remains unsupported',
+      'unqualified CREATE/UPDATE/unchanged',
+      'five public families',
+      'five-family DELETE',
+      'Fragment deployment is enabled but **unqualified**',
+      'Bounded native observations support this policy, not installed-CLI or whole-type acceptance',
+    ])
+      expect(readme, obsolete).not.to.include(obsolete);
+    expect(overview).not.to.include('only matching, pre-inspected local files are removed');
+    expect(readme).to.include(
+      'Bounded live qualification covers the tested derived-title UPDATE profile',
+    );
     expect(RetrieveContent.description).to.include('Email Fragments support retrieve only');
     expect(RetrieveContent.description).to.include(
       'Unused workspace-enabled languages are allowed',
@@ -455,7 +494,7 @@ describe('current public documentation', () => {
       'Org defaults do not supply or broaden workspace, language, source, mutation or ownership selectors.',
       'Offline `content info` needs no org.',
       'Case and whitespace are not normalized',
-      'retrieve and deploy accept `email`, `emailTemplate`, `image`, `document`, `audio`, `brand`',
+      'retrieve and deploy accept `email`, `emailTemplate`, `image`, `document`, `audio`, `brand`, `emailFragment`',
       'delete admits `email`, `emailTemplate`, `emailFragment`, `image`, `document`, `audio`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
       '`content.retrieve.audio`',
