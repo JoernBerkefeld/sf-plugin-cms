@@ -398,6 +398,21 @@ describe('single-default Fragment retrieval projection', () => {
     expect(loaded.definition.contentBody).to.deep.equal(before);
     expect(current.variants[0].contentBody).to.deep.equal(before);
   });
+  it('exports the independently observed paired envelope after an ordinary title update without reconstructing stale metadata', async () => {
+    const current = fixture(false, false, true);
+    const body = structuredClone(current.variants[0].contentBody) as RecordValue;
+    body['sfdc_cms:title'] = 'Native updated title';
+    Object.assign(current.variants[0], { title: 'Native updated title', contentBody: body });
+    Object.assign(current.parent, structuredClone(current.variants[0]));
+    const source = await acquire(current);
+    expect(source.projection.definition.title).to.equal('Native updated title');
+    expect(source.projection.definition.contentBody).to.deep.equal(body);
+    const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-updated-'));
+    const receipt = await writeEditableItemSource(root, source.directory, source.projection, false);
+    const loaded = await loadEditableEmailFragmentSource(receipt.definitionPath);
+    expect(loaded.definition).to.deep.equal(source.projection.definition);
+    expect(loaded.contentBody).to.deep.equal(body);
+  });
   it('accepts unused enabled German and preserves full canonical authored content detached from evidence', async () => {
     const current = fixture(false, false, true);
     const before = structuredClone(current.variants[0].contentBody);

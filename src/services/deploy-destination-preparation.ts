@@ -222,6 +222,7 @@ async function prepareItem(
       )
         throw new TypeError('Fragment selected source or destination snapshot changed');
       prepared.fragment = proof;
+      prepared.desired.title = proof.payload.title;
       prepared.proposed = proof.proposed;
       if (proof.destination.existing) {
         const existing = proof.destination.existing;

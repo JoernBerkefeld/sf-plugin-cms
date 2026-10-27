@@ -31,7 +31,7 @@ export async function createFixture() {
     urlName: 'envelope',
     folderPath: [],
     contentBody: {
-      'sfdc_cms:title': 'Authored title ',
+      'sfdc_cms:title': 'Envelope ',
       'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
       'lightning:dataProviders': [
         {
@@ -301,7 +301,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
         current.definition.folderPath = ['Nested'];
         await current.save();
       }
-      await failure(current.run(), /UPDATE required|nonroot/u);
+      await failure(current.run(), /UPDATE required|nonroot|Unsupported derived envelope/u);
       expect(posts(current)).to.have.length(0);
     }
   });

@@ -44,7 +44,11 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
   afterEach(() => sinon.restore());
   it('updates full body once without retries, proves same IDs independently and repeats unchanged without journal writes', async () => {
     const current = await execution();
+    const sourceBytes = await readFile(current.file, 'utf8');
     const result = await current.run();
+    expect(await readFile(current.file, 'utf8')).to.equal(sourceBytes);
+    expect(current.definition.title).to.equal('Envelope');
+    expect(current.detail.title).to.equal('Edited body title');
     expect(result.outcome).to.equal('updated');
     expect(result.qualification).to.equal('unqualified');
     expect(result.evidence).to.deep.equal({ contentId, variantId });
@@ -72,10 +76,11 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
         .slice(mutationIndex + 1)
         .some((call) => call.url.includes(`/variants/${variantId}`)),
     ).to.equal(true);
+    await writeFile(current.reportFile, 'untouched non-JSON journal');
     const repeat = await current.run();
     expect(repeat.outcome).to.equal('unchanged');
     expect(repeat.report).to.equal(undefined);
-    expect(await readFile(current.reportFile, 'utf8')).to.equal(journal);
+    expect(await readFile(current.reportFile, 'utf8')).to.equal('untouched non-JSON journal');
     expect(writes(current)).to.have.length(1);
   });
   it('updates envelope title/URL and structural IDs without replacing destination native IDs', async () => {
@@ -84,7 +89,7 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
     current.definition.urlName = 'edited-envelope';
     (current.definition.contentBody['sfdc_cms:block'] as RecordValue).id =
       '10000000-0000-4000-8000-000000000099';
-    delete current.definition.contentBody['sfdc_cms:title'];
+    current.definition.contentBody['sfdc_cms:title'] = 'Edited envelope';
     await current.save();
     const result = await current.run(false);
     expect(result.evidence).to.deep.equal({ contentId, variantId });
@@ -100,6 +105,21 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
     expect(result.outcome).to.equal('unchanged');
     expect(writes(current)).to.have.length(0);
     expect(await readFile(current.reportFile, 'utf8')).to.equal('untouched');
+  });
+  it('rejects unsupported boundary edits before intent and preserves exact boundary unchanged with a non-JSON journal', async () => {
+    const current = await execution();
+    current.definition.contentBody['sfdc_cms:title'] = 'Envelope ';
+    await current.save();
+    await writeFile(current.reportFile, 'untouched');
+    await failure(current.run(), /Unsupported derived envelope/u);
+    expect(current.report).to.equal(undefined);
+    expect(await readFile(current.reportFile, 'utf8')).to.equal('untouched');
+    expect(writes(current)).to.have.length(0);
+    current.detail.contentBody = structuredClone(current.definition.contentBody);
+    const unchanged = await current.run();
+    expect(unchanged.outcome).to.equal('unchanged');
+    expect(await readFile(current.reportFile, 'utf8')).to.equal('untouched');
+    expect(writes(current)).to.have.length(0);
   });
   it('revalidates exact raw baseline, source, providers and connection after pending intent', async () => {
     for (const change of [
@@ -167,6 +187,8 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
   it('never accepts mutation echo as proof and retains precise uncertain target on readback drift', async () => {
     for (const change of [
       'body',
+      'envelope',
+      'stale-envelope',
       'id',
       'parent',
       'siblings',
@@ -183,6 +205,12 @@ describe('internal Fragment UPDATE executor and unchanged', () => {
         if (method !== 'PUT') return;
         if (change === 'body')
           (current.detail.contentBody as RecordValue)['sfdc_cms:title'] = 'server changed';
+        if (change === 'envelope' || change === 'stale-envelope') {
+          const title = change === 'envelope' ? 'Unexpected C' : current.definition.title;
+          current.detail.title = title;
+          current.parent.title = title;
+          current.rows[0].Name = title;
+        }
         if (change === 'id') current.detail.managedContentVariantId = '9Ps000000000002AAA';
         if (change === 'parent') current.parent.managedContentId = '20Y000000000002AAA';
         if (change === 'siblings')

@@ -171,6 +171,50 @@ export function assertEmailFragmentSourceDefinition(
   assertPortablePayload(value, { allowedStructuralIdPaths: idPaths });
 }
 
+const ordinary = (value: unknown): value is string =>
+  typeof value === 'string' && /^[!-~](?:[ -~]*[!-~])?(?![\s\S])/u.test(value);
+
+/**
+ * Bind a detached write expectation without changing observed source metadata or authored body.
+ * UPDATE qualification is deliberately limited to printable ASCII with non-space boundaries.
+ * CREATE retains the observed envelope, including the qualified single-terminal-space body pair.
+ * @param {EmailFragmentSourceDefinition} source - Exact observed source representation.
+ * @param {'create' | 'update'} operation - Native operation whose envelope is expected.
+ * @param {string} workspaceApiName - Destination-local context mapping only.
+ * @param {EmailFragmentSourceDefinition} [native] - Independently acquired native definition.
+ * @returns {EmailFragmentSourceDefinition} Strict expected definition, never a title-ignoring comparator.
+ */
+export function expectedEmailFragmentDefinition(
+  source: EmailFragmentSourceDefinition,
+  operation: 'create' | 'update',
+  workspaceApiName: string,
+  native?: EmailFragmentSourceDefinition,
+): EmailFragmentSourceDefinition {
+  const expected = structuredClone(source);
+  expected.identity.context.workspaceApiName = workspaceApiName;
+  // Exact observed pairs need no derivation or mutation, even outside the write domain.
+  if (
+    native &&
+    serializeEmailFragmentSourceDefinition(native) ===
+      serializeEmailFragmentSourceDefinition(expected)
+  )
+    return expected;
+  const title = source.contentBody['sfdc_cms:title'];
+  if (operation === 'update' && ordinary(title)) {
+    expected.title = title;
+    return expected;
+  }
+  if (
+    operation === 'create' &&
+    ordinary(source.title) &&
+    (title === source.title || title === `${source.title} `)
+  )
+    return expected;
+  throw new TypeError(
+    `Unsupported derived envelope for Fragment ${operation.toUpperCase()}: changed writes require a nonempty printable ASCII body title without boundary whitespace; CREATE additionally requires matching envelope/body or exactly one terminal body space`,
+  );
+}
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((child) => canonical(child));
   if (!record(value)) return value;

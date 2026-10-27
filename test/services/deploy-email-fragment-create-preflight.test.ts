@@ -27,7 +27,7 @@ async function fixture() {
     urlName: 'envelope',
     folderPath: [],
     contentBody: {
-      'sfdc_cms:title': 'Authored title ',
+      'sfdc_cms:title': 'Envelope ',
       'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
       'lightning:dataProviders': [
         {
@@ -203,7 +203,7 @@ describe('internal Fragment CREATE preparation', () => {
     );
     expect(current.graph).not.to.have.property('validationEvidence');
   });
-  it('preserves absent optional authored title and needs no provider for provider-free content', async () => {
+  it('blocks absent authored title for CREATE without inventing an envelope fallback', async () => {
     const current = await fixture();
     delete current.definition.contentBody['sfdc_cms:title'];
     delete current.definition.contentBody['lightning:padding'];
@@ -211,8 +211,7 @@ describe('internal Fragment CREATE preparation', () => {
     current.definition.contentBody['lightning:expressions'] = [];
     current.definition.contentBody['lightning:dataProviders'] = [];
     await current.save();
-    const result = await current.prepare();
-    expect(result.payload.contentBody).to.deep.equal(current.definition.contentBody);
+    await failure(current.prepare(), /Unsupported derived envelope/u);
   });
   it('requires a missing target and exact connection identity', async () => {
     const current = await fixture();

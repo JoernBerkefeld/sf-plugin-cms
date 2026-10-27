@@ -1,6 +1,7 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import type { JsonValue } from '../contracts/capability-registry.js';
+import { expectedEmailFragmentDefinition } from '../contracts/email-fragment-source.js';
 import type { JsonRequestOptions } from '../transport/json-request.js';
 import { resolveEmailFragmentDeployDestination } from './deploy-email-fragment-destination.js';
 import { createPayload } from './import-workspace.js';
@@ -117,26 +118,27 @@ export async function prepareEmailFragmentCreate(
     selected,
     requestOptions,
   );
+  const expected = expectedEmailFragmentDefinition(
+    destination.source.definition,
+    destination.existing ? 'update' : 'create',
+    destination.workspace.apiName,
+    destination.existing?.projection.definition,
+  );
   if (
     destination.existing &&
     destination.inventory.records.some(
       (row) =>
         !row.ManagedContent.ApiName ||
         (row.ManagedContentId !== destination.existing!.evidence.contentId &&
-          (row.Name === destination.source.definition.title ||
+          (row.Name === expected.title ||
+            row.Name === destination.source.definition.title ||
             row.UrlName === destination.source.definition.urlName)),
     )
   )
     throw new TypeError('Fragment destination title/URL collision or unknown parent identity');
   if (
     destination.existing &&
-    !isDeepStrictEqual(destination.existing.projection.definition, {
-      ...destination.source.definition,
-      identity: {
-        ...destination.source.definition.identity,
-        context: { workspaceApiName: destination.workspace.apiName },
-      },
-    })
+    !isDeepStrictEqual(destination.existing.projection.definition, expected)
   )
     throw new TypeError('Fragment destination differs; UPDATE required (not implemented)');
   if (destination.source.definition.folderPath.length > 0)
@@ -166,7 +168,7 @@ export async function prepareEmailFragmentCreate(
       primary: {
         apiName: definition.identity.apiName,
         contentType: definition.contentType,
-        title: definition.title,
+        title: expected.title,
         urlName: definition.urlName,
         contentBody: structuredClone(destination.source.contentBody),
       },

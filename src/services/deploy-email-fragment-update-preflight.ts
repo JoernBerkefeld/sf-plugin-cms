@@ -1,6 +1,7 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import type { JsonRequestOptions } from '../transport/json-request.js';
+import { expectedEmailFragmentDefinition } from '../contracts/email-fragment-source.js';
 import { prerequisites } from './deploy-email-fragment-create-preflight.js';
 import { resolveEmailFragmentDeployDestination } from './deploy-email-fragment-destination.js';
 import type { UpdateVariantInput } from './lifecycle-foundation.js';
@@ -43,12 +44,19 @@ export async function prepareEmailFragmentUpdate(
   );
   const existing = destination.existing;
   if (!existing) throw new TypeError('Fragment target is missing; explicit CREATE required');
+  const expected = expectedEmailFragmentDefinition(
+    destination.source.definition,
+    'update',
+    destination.workspace.apiName,
+    existing.projection.definition,
+  );
   if (
     destination.inventory.records.some(
       (row) =>
         !row.ManagedContent.ApiName ||
         (row.ManagedContentId !== existing.evidence.contentId &&
-          (row.Name === destination.source.definition.title ||
+          (row.Name === expected.title ||
+            row.Name === destination.source.definition.title ||
             row.UrlName === destination.source.definition.urlName)),
     )
   )
@@ -91,16 +99,9 @@ export async function prepareEmailFragmentUpdate(
       'Fragment UPDATE source, destination or prerequisite changed during preparation',
     );
   const definition = destination.source.definition;
-  const expected = {
-    ...definition,
-    identity: {
-      ...definition.identity,
-      context: { workspaceApiName: destination.workspace.apiName },
-    },
-  };
   const payload: UpdateVariantInput = {
     apiName: definition.identity.apiName,
-    title: definition.title,
+    title: expected.title,
     urlName: definition.urlName,
     contentBody: structuredClone(destination.source.contentBody),
   };
@@ -115,5 +116,11 @@ export async function prepareEmailFragmentUpdate(
     baseline,
     dataGraphs,
     payload,
+    expected,
+    envelope: {
+      sourceTitle: definition.title,
+      effectiveTitle: expected.title,
+      derived: definition.title !== expected.title,
+    },
   };
 }

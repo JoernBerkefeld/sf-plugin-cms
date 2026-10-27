@@ -66,9 +66,18 @@ describe('public Fragment deploy pipeline', () => {
     const preview = await preflightDeployBatch(current.connection, scope);
     expect(preview.eligible, JSON.stringify(preview)).to.equal(true);
     expect(preview.items[0].proposed).to.equal('update');
+    expect(preview.items[0].fragment!.payload.title).to.equal('Edited body title');
+    expect(preview.preparation.items[0].desired.title).to.equal('Edited body title');
+    const sourceBytes = await readFile(current.file, 'utf8');
     const updated = await executeDeployBatch(current.connection, scope);
     expect(updated.report.summary.updated, JSON.stringify(updated.report)).to.equal(1);
     expect(updated.report.items[0].target).to.deep.equal({ contentId, variantId });
+    expect(updated.report.items[0].envelope).to.deep.equal({
+      sourceTitle: 'Envelope',
+      effectiveTitle: 'Edited body title',
+      derived: true,
+    });
+    expect(await readFile(current.file, 'utf8')).to.equal(sourceBytes);
     expect(current.detail.contentBody).to.deep.equal(current.definition.contentBody);
     const repeated = await executeDeployBatch(current.connection, scope);
     expect(repeated.report.summary.unchanged, JSON.stringify(repeated.report)).to.equal(1);
@@ -101,9 +110,71 @@ describe('public Fragment deploy pipeline', () => {
     const result = await executeDeployBatch(current.connection, input(current.file));
     expect(result.report.state, JSON.stringify(result.report)).to.equal('completed');
     expect(result.report.summary.updated).to.equal(1);
-    expect(current.rows[0].Name).to.equal('New envelope');
+    expect(current.rows[0].Name).to.equal('Edited body title');
     const unchanged = await executeDeployBatch(current.connection, input(current.file));
     expect(unchanged.report.summary.unchanged).to.equal(1);
+  });
+  it('blocks raw or effective destination title collisions and unsupported boundary writes without journals', async () => {
+    for (const name of ['Edited body title', 'Envelope', undefined]) {
+      const current = await fixture();
+      if (name === undefined) {
+        current.definition.contentBody['sfdc_cms:title'] = 'Edited body title ';
+        await current.save();
+      } else {
+        current.rows.push({
+          ...current.rows[0],
+          Id: '9Ps000000000002AAA',
+          ManagedContentId: '20Y000000000002AAA',
+          Name: name,
+          UrlName: 'different',
+          ManagedContentKey: 'MCOTHER',
+          ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Other' },
+        });
+      }
+      const result = await executeDeployBatch(current.connection, {
+        ...input(current.file),
+        reportFile: current.reportFile,
+      });
+      expect(result.report.state).to.equal('blocked');
+      expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+      const files = await readdir(path.dirname(current.file));
+      expect(files.some((file) => file.includes('.json.'))).to.equal(false);
+    }
+  });
+  it('blocks effective selected-title collisions before an earlier eligible CREATE', async () => {
+    const current = await createFixture();
+    const other = structuredClone(current.definition);
+    other.identity.apiName = 'Second';
+    other.urlName = 'second-url';
+    await writeFile(
+      path.join(path.dirname(current.file), 'Second.cms-email-fragment.json'),
+      JSON.stringify(other),
+    );
+    const result = await executeDeployBatch(current.connection, {
+      ...input(current.file),
+      sources: { 'source-dir': [path.dirname(current.file)], 'content-type': ['emailFragment'] },
+    });
+    expect(result.report.state).to.equal('blocked');
+    expect(result.report.blockedReasons.join('; ')).to.match(/title\/URL collision/u);
+    expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+  });
+  it('blocks a selected CREATE colliding with a stale-envelope UPDATE effective title before either writes', async () => {
+    const current = await fixture();
+    const other = structuredClone(current.definition);
+    other.identity.apiName = 'Second';
+    other.title = 'Edited body title';
+    other.urlName = 'second-url';
+    await writeFile(
+      path.join(path.dirname(current.file), 'Second.cms-email-fragment.json'),
+      JSON.stringify(other),
+    );
+    const result = await executeDeployBatch(current.connection, {
+      ...input(current.file),
+      sources: { 'source-dir': [path.dirname(current.file)], 'content-type': ['emailFragment'] },
+    });
+    expect(result.report.state).to.equal('blocked');
+    expect(result.report.blockedReasons.join('; ')).to.match(/title\/URL collision/u);
+    expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
   });
   it('blocks provider drift after item durable intent before remote dispatch', async () => {
     const current = await fixture();
@@ -134,6 +205,7 @@ describe('public Fragment deploy pipeline', () => {
     const other = structuredClone(current.definition);
     other.identity.apiName = 'ZBlocked';
     other.title = 'Other title';
+    other.contentBody['sfdc_cms:title'] = 'Other title';
     other.urlName = 'other-title';
     other.contentBody.asset = { ref: 'unresolved' };
     await writeFile(

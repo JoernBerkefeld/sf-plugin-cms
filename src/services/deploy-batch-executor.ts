@@ -66,6 +66,7 @@ export type DeployBatchReport = {
   items: Array<{
     source: DeployLocalSelection['items'][number];
     proposed: 'create' | 'update' | 'unchanged' | 'blocked';
+    envelope?: { sourceTitle: string; effectiveTitle: string; derived: boolean };
     reportFile?: string;
     outcome: 'unattempted' | 'created' | 'updated' | 'unchanged' | 'failed' | 'uncertain';
     target?: { contentId: string; variantId: string };
@@ -754,6 +755,14 @@ async function executeDeployBatchInternal(
       return {
         source: baseline.selection.items[index],
         proposed: item.proposed,
+        ...(item.fragment && {
+          envelope: {
+            sourceTitle: baseline.selection.items[index].definition.title!,
+            effectiveTitle: item.fragment.payload.title!,
+            derived:
+              baseline.selection.items[index].definition.title !== item.fragment.payload.title,
+          },
+        }),
         reportFile:
           reportFile === undefined ? undefined : `${reportFile}.${runId}.${index + 1}.json`,
         outcome: 'unattempted',
@@ -1263,8 +1272,8 @@ async function executeDeployBatchInternal(
           ...(item.source.definition.contentType === 'sfdc_cms__emailFragment'
             ? {
                 fragmentMetadata: {
-                  title: item.source.definition.title!,
-                  urlName: item.source.definition.urlName!,
+                  title: baseline.items[index].fragment!.payload.title!,
+                  urlName: baseline.items[index].fragment!.payload.urlName!,
                 },
               }
             : {}),

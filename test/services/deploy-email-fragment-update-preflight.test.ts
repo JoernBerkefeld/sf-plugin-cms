@@ -32,7 +32,7 @@ export async function fixture() {
     urlName: 'envelope',
     folderPath: [],
     contentBody: {
-      'sfdc_cms:title': 'Optional authored title ',
+      'sfdc_cms:title': 'Edited body title',
       'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
       'lightning:dataProviders': [
         {
@@ -146,9 +146,12 @@ export async function fixture() {
           expect(this).to.have.property('_refreshDelegate', undefined);
           const body = JSON.parse(input.body!) as RecordValue;
           Object.assign(detail, structuredClone(body));
-          parent.title = body.title;
+          // Native UPDATE couples ordinary authored title to both envelopes, not stale metadata.
+          const authoredTitle = (body.contentBody as RecordValue)['sfdc_cms:title'];
+          detail.title = typeof authoredTitle === 'string' ? authoredTitle : body.title;
+          parent.title = detail.title;
           parent.urlName = body.urlName;
-          rows[0].Name = body.title;
+          rows[0].Name = detail.title;
           rows[0].UrlName = body.urlName;
         }
         await onRequest?.(input.method, input.url);
@@ -239,13 +242,18 @@ describe('internal Fragment UPDATE preparation', () => {
     expect(result.proposed).to.equal('update');
     expect(result.payload).to.deep.equal({
       apiName: 'Welcome',
-      title: 'Envelope',
+      title: 'Edited body title',
       urlName: 'envelope',
       contentBody: current.definition.contentBody,
     });
     expect(result.baseline.parent).to.deep.equal(current.parent);
     expect(result.baseline.variant).to.deep.equal(current.detail);
     expect(result.destination.existing.evidence).to.deep.equal({ contentId, variantId });
+    expect(result.envelope).to.deep.equal({
+      sourceTitle: 'Envelope',
+      effectiveTitle: 'Edited body title',
+      derived: true,
+    });
     expect(result.dataGraphs[0].validationStatus).to.equal('passed');
     expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
     (result.payload.contentBody as RecordValue)['sfdc_cms:title'] = 'detached';
@@ -259,6 +267,19 @@ describe('internal Fragment UPDATE preparation', () => {
     const result = await current.prepare();
     expect(result.proposed).to.equal('unchanged');
     expect(result.payload.contentBody).not.to.have.property('sfdc_cms:title');
+  });
+  it('rejects unsupported changed boundary or absent titles before mutation, but admits exact observed pairs', async () => {
+    for (const title of ['Boundary ', ' Leading', '', 'Café', undefined]) {
+      const current = await fixture();
+      if (title === undefined) delete current.definition.contentBody['sfdc_cms:title'];
+      else current.definition.contentBody['sfdc_cms:title'] = title;
+      await current.save();
+      await failure(current.prepare(), /Unsupported derived envelope/u);
+      expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+      current.detail.contentBody = structuredClone(current.definition.contentBody);
+      const unchanged = await current.prepare();
+      expect(unchanged.proposed).to.equal('unchanged');
+    }
   });
   it('requires explicit CREATE for absence and blocks collisions, extra variants and published state', async () => {
     for (const change of ['missing', 'collision', 'siblings', 'published', 'root', 'org']) {

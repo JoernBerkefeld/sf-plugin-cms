@@ -5,6 +5,7 @@ import {
   assertEmailFragmentSourceDefinition,
   assertSingleDefaultEmailFragmentVariant,
   serializeEmailFragmentSourceDefinition,
+  expectedEmailFragmentDefinition,
   type EmailFragmentSourceDefinition,
 } from '../../src/contracts/email-fragment-source.js';
 
@@ -69,6 +70,105 @@ function root(value: EmailFragmentSourceDefinition): Record<string, unknown> {
 }
 
 describe('single-default Email Fragment source', () => {
+  it('derives only operation-qualified envelopes without changing source or any authored body value', () => {
+    const value = fixture();
+    const before = structuredClone(value);
+    value.contentBody['sfdc_cms:title'] = 'New ordinary title';
+    const edited = structuredClone(value);
+    const expected = expectedEmailFragmentDefinition(value, 'update', 'Destination');
+    expect(expected.title).to.equal('New ordinary title');
+    expect(expected.contentBody).to.deep.equal(edited.contentBody);
+    expect(value).to.deep.equal(edited);
+    expect(() => expectedEmailFragmentDefinition(value, 'create', 'Destination')).to.throw(
+      'Unsupported derived envelope',
+    );
+    value.contentBody['sfdc_cms:title'] = `${before.title} `;
+    expect(expectedEmailFragmentDefinition(value, 'create', 'Destination').title).to.equal(
+      before.title,
+    );
+    expect(() => expectedEmailFragmentDefinition(value, 'update', 'Destination')).to.throw(
+      'Unsupported derived envelope',
+    );
+    const native = structuredClone(value);
+    native.identity.context.workspaceApiName = 'Destination';
+    expect(expectedEmailFragmentDefinition(value, 'update', 'Destination', native)).to.deep.equal(
+      native,
+    );
+  });
+  it('qualifies ordinary ASCII titles without fixture-name restrictions and returns detached expectations', () => {
+    for (const title of ['X', 'A  repeated space', '! punctuation ~', 'Unrelated 789']) {
+      const value = fixture();
+      value.contentBody['sfdc_cms:title'] = title;
+      const before = structuredClone(value);
+      const expected = expectedEmailFragmentDefinition(value, 'update', 'Destination');
+      expect(expected).to.deep.equal({
+        ...before,
+        title,
+        identity: { ...before.identity, context: { workspaceApiName: 'Destination' } },
+      });
+      expect(value).to.deep.equal(before);
+      expect(expected.contentBody).not.to.equal(value.contentBody);
+      expect(expected.identity.context).not.to.equal(value.identity.context);
+      expect(expected.folderPath).not.to.equal(value.folderPath);
+      const otherNative = structuredClone(expected);
+      otherNative.title = 'Unexpected native envelope';
+      expect(serializeEmailFragmentSourceDefinition(expected)).not.to.equal(
+        serializeEmailFragmentSourceDefinition(otherNative),
+      );
+      value.title = title;
+      expect(expectedEmailFragmentDefinition(value, 'create', 'Destination').title).to.equal(title);
+    }
+  });
+  it('rejects unknown changed-write derivations while preserving exact observed unchanged pairs', () => {
+    for (const title of [
+      undefined,
+      '',
+      ' leading',
+      'trailing ',
+      'two  ',
+      '\tTab',
+      'Line\n',
+      'Line\r\n',
+      'Café',
+      '\u00A0Title',
+      'Title\u2003',
+    ]) {
+      const value = fixture();
+      if (title === undefined) delete value.contentBody['sfdc_cms:title'];
+      else value.contentBody['sfdc_cms:title'] = title;
+      const before = structuredClone(value);
+      for (const operation of ['create', 'update'] as const) {
+        expect(() => expectedEmailFragmentDefinition(value, operation, 'Destination')).to.throw(
+          'Unsupported derived envelope',
+        );
+        const native = structuredClone(value);
+        native.identity.context.workspaceApiName = 'Destination';
+        const expected = expectedEmailFragmentDefinition(value, operation, 'Destination', native);
+        expect(expected).to.deep.equal(native);
+        expect(expected).not.to.equal(native);
+        native.contentBody['extra-field'] = true;
+        expect(() =>
+          expectedEmailFragmentDefinition(value, operation, 'Destination', native),
+        ).to.throw('Unsupported derived envelope');
+      }
+      expect(value).to.deep.equal(before);
+    }
+  });
+  it('does not extend CREATE qualification to arbitrary divergent envelopes or boundary titles', () => {
+    for (const envelope of ['', ' Leading', 'Trailing ', 'Café']) {
+      const value = fixture();
+      value.title = envelope;
+      value.contentBody['sfdc_cms:title'] = envelope;
+      expect(() => expectedEmailFragmentDefinition(value, 'create', 'Destination')).to.throw(
+        'Unsupported derived envelope',
+      );
+    }
+    const value = fixture();
+    value.contentBody['sfdc_cms:title'] = `${value.title}  `;
+    expect(() => expectedEmailFragmentDefinition(value, 'create', 'Destination')).to.throw(
+      'Unsupported derived envelope',
+    );
+  });
   it('preserves full multicolumn content, authored IDs, folders, providers and exact text', () => {
     const value = fixture();
     const before = structuredClone(value);

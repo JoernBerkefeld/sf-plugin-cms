@@ -165,6 +165,7 @@ export async function executeEmailFragmentUpdate(
     const post = await prepareEmailFragmentUpdate(connection, selected, requestOptions);
     if (
       post.proposed !== 'unchanged' ||
+      !isDeepStrictEqual(post.destination.existing.projection.definition, preflight.expected) ||
       post.orgId !== preflight.orgId ||
       post.apiVersion !== preflight.apiVersion ||
       !isDeepStrictEqual(post.destination.existing.evidence, target) ||
