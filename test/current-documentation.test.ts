@@ -127,6 +127,19 @@ describe('current public documentation', () => {
       expect(lifecycle, claim).to.include(claim);
   });
 
+  it('documents delete local preservation compatibility and exact opt-in preview scope', async () => {
+    const readme = await readFile(readmeFile, 'utf8');
+    for (const claim of [
+      'local source bytes are preserved by default for every delete family',
+      '--delete-local-source',
+      'explicit `scope` counts',
+      'zero dependency targets',
+      'exact local source/companion paths and counts',
+      'exactly one actual primary Content variant matching the workspace default',
+      'Fragment delete is locally enabled, not yet installed/live-qualified',
+    ])
+      expect(readme).to.include(claim);
+  });
   it('documents neutral resolved org notices and suppression boundaries', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
@@ -443,7 +456,7 @@ describe('current public documentation', () => {
       'Offline `content info` needs no org.',
       'Case and whitespace are not normalized',
       'retrieve and deploy accept `email`, `emailTemplate`, `image`, `document`, `audio`, `brand`',
-      'delete retains only `email`, `emailTemplate`, `image`, `document`, `audio`',
+      'delete admits `email`, `emailTemplate`, `emailFragment`, `image`, `document`, `audio`',
       'Audio deployment implements CREATE, bytes-only UPDATE and exact unchanged, all unqualified',
       '`content.retrieve.audio`',
       '`content.deploy.audio.create`',

@@ -1,6 +1,7 @@
 import type { Connection } from '@salesforce/core';
 import { normalizeContentTypeAlias } from './content-type-alias.js';
-import { getVariant } from './read.js';
+import { getVariant, getWorkspace } from './read.js';
+import { assertSingleDefaultEmailFragmentVariant } from '../contracts/email-fragment-source.js';
 import {
   enumerateNativeWorkspace,
   type NativeInventoryOptions,
@@ -9,6 +10,7 @@ import {
 export const DELETE_CONTENT_TYPES = [
   'sfdc_cms__email',
   'sfdc_cms__emailTemplate',
+  'sfdc_cms__emailFragment',
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
@@ -58,13 +60,16 @@ export type NativeDeleteResolution = {
 };
 
 function exact(value: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0 || /[*?[\]]/u.test(value))
+  if (typeof value !== 'string' || value.trim().length === 0 || /[*?[\]{}]/u.test(value))
     throw new TypeError('Delete requires a nonempty exact item selector; wildcards are forbidden');
   return value;
 }
 function family(value: string): DeleteContentType {
   const type = normalizeContentTypeAlias(value, DELETE_CONTENT_TYPES);
-  if (!type) throw new TypeError('Delete requires email, emailTemplate, image, document or audio');
+  if (!type)
+    throw new TypeError(
+      'Delete requires email, emailTemplate, emailFragment, image, document or audio',
+    );
   return type;
 }
 
@@ -138,7 +143,7 @@ export async function resolveNativeDeleteSelection(
         (value) =>
           typeof value !== 'string' ||
           value.trim().length === 0 ||
-          (value !== '*' && /[*?[\]]/u.test(value)),
+          (value !== '*' && /[*?[\]{}]/u.test(value)),
       ) ||
       (languages.includes('*') && languages.length !== 1))
   )
@@ -163,6 +168,15 @@ export async function resolveNativeDeleteSelection(
   const items: NativeDeleteItem[] = [];
   for (const [contentId, contentType] of parents) {
     const rows = inventory.records.filter((row) => row.ManagedContentId === contentId);
+    if (contentType === 'sfdc_cms__emailFragment') {
+      const workspace = await getWorkspace(connection, input.workspaceId, options);
+      if (workspace.id !== input.workspaceId || typeof workspace.defaultLanguage !== 'string')
+        throw new TypeError('Fragment workspace default identity is unavailable');
+      assertSingleDefaultEmailFragmentVariant(
+        rows.map((row) => ({ ...row, VariantType: row.VariantType ?? '' })),
+        workspace.defaultLanguage,
+      );
+    }
     const locales = new Set<string>();
     for (const row of rows) {
       if (

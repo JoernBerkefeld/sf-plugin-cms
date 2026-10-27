@@ -40,7 +40,14 @@ function fixture(languages = ['en_US'], type = 'audio', workspace?: unknown) {
     request: ({ url }: { url: string }) => {
       requests.push(url);
       if (url.endsWith(`/spaces/${workspaceId}`))
-        return response(workspace ?? { id: workspaceId, apiName: 'Marketing' });
+        return response(
+          workspace ?? {
+            id: workspaceId,
+            apiName: 'Marketing',
+            defaultLanguage: 'en_US',
+            languages: ['en_US', 'de'],
+          },
+        );
       if (url.includes('/query?')) {
         const query = decodeURIComponent(url);
         let records: unknown[];
@@ -152,7 +159,7 @@ describe('cms delete exact-item CLI', () => {
       }
     }
   });
-  for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio'])
+  for (const type of ['email', 'emailTemplate', 'emailFragment', 'image', 'document', 'audio'])
     it(`previews existing Published ${type} with sole automatic locale`, async () => {
       const f = fixture(['en_US'], type);
       const s = subject({ preview: true, metadata: [`${type}:Existing`] }, f.connection);
@@ -162,6 +169,106 @@ describe('cms delete exact-item CLI', () => {
       expect(output.result?.targets[0]).to.include({ language: 'en_US', isPublished: true });
       expect(f.deletes.notCalled).to.equal(true);
     });
+  for (const type of ['email', 'emailTemplate', 'emailFragment', 'image', 'document', 'audio'])
+    for (const preview of [false, true])
+      it(`preserves even malformed local ${type} bytes by default preview=${String(preview)}`, async () => {
+        const run = await createRunOwnedTemp('cms-delete-preserve-');
+        const directory = path.join(run.root, 'cms', 'Marketing', type);
+        await mkdir(directory, { recursive: true });
+        const file = path.join(
+          directory,
+          `Existing.cms-${type === 'emailFragment' ? 'email-fragment' : type}.json`,
+        );
+        await writeFile(file, 'authored bytes\n');
+        const f = fixture(['en_US'], type);
+        const output = await subject(
+          { metadata: [`${type}:Existing`], preview, 'output-dir': run.root },
+          f.connection,
+        ).command.run();
+        expect(output.status, JSON.stringify(output)).to.equal('success');
+        expect(await readFile(file, 'utf8')).to.equal('authored bytes\n');
+        expect(output.result?.scope).to.deep.equal({
+          selectedComponents: 1,
+          remoteDeletions: 1,
+          dependencyTargets: 0,
+          deleteLocalSource: false,
+          localSourceRemovals: 0,
+          localSourceFiles: [],
+        });
+        expect(f.deletes.callCount).to.equal(preview ? 0 : 1);
+      });
+  for (const preview of [false, true])
+    for (const json of [false, true])
+      it(`lists exact Fragment opt-in removal and unlinks only after confirmation preview=${String(preview)} json=${String(json)}`, async () => {
+        const run = await createRunOwnedTemp('cms-delete-fragment-optin-');
+        const directory = path.join(run.root, 'cms', 'Marketing', 'emailFragment');
+        await mkdir(directory, { recursive: true });
+        const file = path.join(directory, 'Existing.cms-email-fragment.json');
+        const bytes =
+          JSON.stringify(
+            {
+              contract: 'sf-cms-email-fragment-source',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: 'Email Fragment',
+                apiName: 'Existing',
+                context: { workspaceApiName: 'Marketing' },
+              },
+              contentType: 'sfdc_cms__emailFragment',
+              language: 'en_US',
+              title: 'Authored',
+              urlName: 'authored',
+              folderPath: [],
+              contentBody: {
+                'sfdc_cms:block': {
+                  type: 'block',
+                  definition: 'sfdc_cms/rootContentBlock',
+                  id: '00000000-0000-4000-8000-000000000001',
+                  children: [],
+                },
+              },
+            },
+            undefined,
+            4,
+          ) + '\n';
+        await writeFile(file, bytes);
+        const unrelated = path.join(directory, 'untouched.txt');
+        await writeFile(unrelated, 'unrelated');
+        const f = fixture(['en_US'], 'emailFragment');
+        const s = subject(
+          {
+            metadata: ['emailFragment:Existing'],
+            preview,
+            'delete-local-source': true,
+            'output-dir': run.root,
+          },
+          f.connection,
+        );
+        const log = sinon.stub();
+        Object.assign(s.command, { jsonEnabled: () => json, log });
+        const output = await s.command.run();
+        expect(output.status, JSON.stringify(output)).to.equal('success');
+        expect(output.result?.scope).to.deep.equal({
+          selectedComponents: 1,
+          remoteDeletions: 1,
+          dependencyTargets: 0,
+          deleteLocalSource: true,
+          localSourceRemovals: 1,
+          localSourceFiles: [file],
+        });
+        expect(f.deletes.callCount).to.equal(preview ? 0 : 1);
+        expect(await readFile(unrelated, 'utf8')).to.equal('unrelated');
+        if (preview) expect(await readFile(file, 'utf8')).to.equal(bytes);
+        else expect(await readdir(directory)).to.deep.equal(['untouched.txt']);
+        if (json) expect(log.notCalled).to.equal(true);
+        else {
+          expect(log.args.flat().join('\n')).to.include(
+            '1 components; 1 remote deletions; 0 dependency targets; 1 local removals',
+          );
+          if (preview) expect(log.args.flat().join('\n')).to.include(`Local removal: ${file}`);
+        }
+      });
   for (const explicitRoot of [false, true])
     for (const preview of [false, true])
       it(`handles malformed local source honestly explicitRoot=${explicitRoot} preview=${preview}`, async () => {
@@ -175,10 +282,14 @@ describe('cms delete exact-item CLI', () => {
         if (!explicitRoot) process.chdir(run.root);
         try {
           const output = await subject(
-            { preview, ...(explicitRoot ? { 'output-dir': run.root } : {}) },
+            {
+              preview,
+              'delete-local-source': true,
+              ...(explicitRoot ? { 'output-dir': run.root } : {}),
+            },
             f.connection,
           ).command.run();
-          expect(output.status, JSON.stringify(output)).to.equal(preview ? 'success' : 'partial');
+          expect(output.status, JSON.stringify(output)).to.equal(preview ? 'blocked' : 'partial');
           expect(await readFile(definition, 'utf8')).to.equal('{}');
           expect(f.deletes.callCount).to.equal(preview ? 0 : 1);
           if (!preview) {
@@ -214,7 +325,7 @@ describe('cms delete exact-item CLI', () => {
   ])
     it(`blocks unproven local workspace identity ${JSON.stringify(workspace)} before DELETE`, async () => {
       const f = fixture(['en_US'], 'audio', workspace);
-      const output = await subject({}, f.connection).command.run();
+      const output = await subject({ 'delete-local-source': true }, f.connection).command.run();
       expect(output.status).to.equal('blocked');
       expect(f.deletes.notCalled).to.equal(true);
     });
@@ -243,7 +354,7 @@ describe('cms delete exact-item CLI', () => {
     const run = await createRunOwnedTemp('cms-delete-cli-absent-');
     const f = fixture();
     const output = await subject(
-      { 'output-dir': path.join(run.root, 'absent') },
+      { 'output-dir': path.join(run.root, 'absent'), 'delete-local-source': true },
       f.connection,
     ).command.run();
     expect(output.status).to.equal('success');
@@ -448,6 +559,18 @@ describe('cms delete exact-item CLI', () => {
     );
     expect(parsed.flags.metadata).to.deep.equal(['audio:Existing']);
     expect(parsed.flags.preview).to.equal(false);
+    expect(parsed.flags['delete-local-source']).to.equal(false);
+    expect(DeleteContent.description).to.include(
+      'Local source bytes are preserved by default for every family',
+    );
+    expect(DeleteContent.flags['delete-local-source'].summary).to.include(
+      'default preserves bytes',
+    );
+    const explicit = await Parser.parse(
+      ['--workspace-id', workspaceId, '-m', 'emailFragment:Existing', '--delete-local-source'],
+      { flags: DeleteContent.flags },
+    );
+    expect(explicit.flags['delete-local-source']).to.equal(true);
   });
   it('validates command status and rejects legacy result shapes', () => {
     const result = {
@@ -455,6 +578,14 @@ describe('cms delete exact-item CLI', () => {
       outcome: 'blocked',
       workspaceId,
       targets: [],
+      scope: {
+        selectedComponents: 0,
+        remoteDeletions: 0,
+        dependencyTargets: 0,
+        deleteLocalSource: false,
+        localSourceRemovals: 0,
+        localSourceFiles: [],
+      },
       execution: null,
     };
     expect(() => assertContentDeleteResult(result, undefined, 'blocked')).not.to.throw();

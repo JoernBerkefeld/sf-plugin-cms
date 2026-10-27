@@ -75,6 +75,8 @@ function fixture(type: RetrieveContentType = 'sfdc_cms__audio', multilingual = t
           records: structuredClone(records),
         });
       }
+      if (request.url.endsWith(`/spaces/${workspaceId}`))
+        return response({ id: workspaceId, defaultLanguage: 'en_US', languages: ['en_US', 'de'] });
       const id = request.url.split('/').at(-1)!;
       if (id === parentId) {
         if (rows.length === 0)
@@ -201,6 +203,33 @@ async function localFixture() {
 
 describe('API-led native delete executor', () => {
   afterEach(() => sinon.restore());
+  it('deletes the sole default Fragment once and blocks newly observed siblings before dispatch', async () => {
+    for (const drift of [false, true]) {
+      const f = fixture('sfdc_cms__emailFragment', false);
+      const resolution = await f.resolve();
+      if (drift) f.rows.push(row(translatedId, 'de', 'sfdc_cms__emailFragment'));
+      if (drift) {
+        const error = await stopped(() => applyNativeDelete(f.connection, { resolution }));
+        expect(error.result.report.state).to.equal('blocked');
+        expect(f.deletes).to.deep.equal([]);
+      } else {
+        const result = await applyNativeDelete(f.connection, { resolution });
+        expect(result.report.operations[0].exactVariantAbsent).to.equal(true);
+        expect(f.deletes).to.deep.equal([variantId]);
+      }
+      sinon.restore();
+    }
+  });
+  it('preserves authored local bytes when no removal is requested', async () => {
+    const local = await localFixture();
+    const before = await Promise.all([readFile(local.definition), readFile(local.companion)]);
+    const f = fixture('sfdc_cms__email', false);
+    const result = await applyNativeDelete(f.connection, { resolution: await f.resolve() });
+    expect(result.report.operations[0]).not.to.have.property('localSource');
+    expect(
+      await Promise.all([readFile(local.definition), readFile(local.companion)]),
+    ).to.deep.equal(before);
+  });
   it('emits confirmed completion before later dispatch and isolates observer errors', async () => {
     const f = fixture();
     const events: MutationOutcome[] = [];

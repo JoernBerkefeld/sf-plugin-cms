@@ -30,13 +30,14 @@ import { DELETE_CONTENT_TYPES } from '../../../services/delete-native-resolution
 import { resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { sourcePathSegment } from '../../../contracts/source-definition.js';
 import { formatMutationOutcome } from '../../../mutation-outcome.js';
+import { inspectLifecycleLocalSource } from '../../../services/lifecycle-local-source.js';
 
 /** Permanently delete explicitly identified remote items and selected actual languages. */
 export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteResult>> {
   public static readonly aliases = ['content:delete'];
   public static readonly summary = 'Delete exact CMS items and selected languages, or preview.';
   public static readonly description =
-    'Executes by default for email, emailTemplate, image, document and audio. Repeat -m Type:ApiName; type-only and wildcard item selectors are forbidden, including in preview. Alternatively use an exact --api-name with --content-type, or --content-key-or-id with --content-type. A sole actual language is automatic; multiple languages require an explicit --language subset or "*", or interactive multi-selection with All first. JSON, CI and non-TTY use require explicit language selection when ambiguous. Cancel or empty selection performs no mutations. No ownership report, Draft-only restriction or acknowledgement is required; the API may reject a target. Deletes exact native Content/Translation variants sequentially without retry, unpublish, parent-delete fallback or rollback. After independently confirmed remote deletion, removes only the matching pre-inspected local source and declared companions under cwd or --output-dir. Missing copies are no-ops; preview never deletes local files. Local cleanup failure returns partial/nonzero with completed remote evidence: never replay DELETE to retry local cleanup. Historical revision/reference preservation and other collateral effects are not proven; last-language parent disappearance is observed, not an explicit parent delete. --preview is read-only and rejects reporting flags before org access. Reports are opt-in: --report uses a unique cwd logs/cms/reports run directory; --report-dir implies reporting. No hidden journal or crash-recovery guarantee. Diagnostic invocation logs remain enabled.';
+    'Executes by default for email, emailTemplate, emailFragment, image, document and audio. Email Fragment requires exactly one actual primary Content variant matching the workspace default, even with a language subset or "*". Repeat -m Type:ApiName; type-only and wildcard item selectors are forbidden, including in preview. Alternatively use an exact --api-name with --content-type, or --content-key-or-id with --content-type. A sole actual language is automatic; multiple languages require an explicit --language subset or "*", or interactive multi-selection with All first. JSON, CI and non-TTY use require explicit language selection when ambiguous. Cancel or empty selection performs no mutations. No ownership report, Draft-only restriction or acknowledgement is required; the API may reject a target. Deletes exact native Content/Translation variants sequentially without retry, unpublish, parent-delete fallback or rollback. Local source bytes are preserved by default for every family. Only --delete-local-source opts into removing the matching pre-inspected local source and declared companions under cwd or --output-dir after independently confirmed remote deletion. Missing copies are no-ops; preview lists exact removable paths and counts but never deletes local files. Local cleanup failure returns partial/nonzero with completed remote evidence: never replay DELETE to retry local cleanup. Historical revision/reference preservation and other collateral effects are not proven; last-language parent disappearance is observed, not an explicit parent delete. --preview is read-only and rejects reporting flags before org access. Reports are opt-in: --report uses a unique cwd logs/cms/reports run directory; --report-dir implies reporting. No hidden journal or crash-recovery guarantee. Diagnostic invocation logs remain enabled.';
   public static readonly examples = [
     '<%= config.bin %> cms delete content --workspace-id 0Zu... -m email:Welcome --preview --json',
     '<%= config.bin %> content delete --workspace-id 0Zu... -m image:Banner -m audio:Intro --language "*" --report --json',
@@ -72,6 +73,11 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       default: false,
       summary: 'Read-only preflight; no mutation or report allocation.',
     }),
+    'delete-local-source': Flags.boolean({
+      default: false,
+      summary:
+        'Opt in to matching local source/companion removal after confirmed remote deletion; default preserves bytes.',
+    }),
     'output-dir': Flags.directory({
       char: 'd',
       exists: false,
@@ -96,6 +102,14 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       outcome: 'blocked',
       workspaceId: flags['workspace-id'],
       targets: [],
+      scope: {
+        selectedComponents: 0,
+        remoteDeletions: 0,
+        dependencyTargets: 0,
+        deleteLocalSource: flags['delete-local-source'] === true,
+        localSourceRemovals: 0,
+        localSourceFiles: [],
+      },
       execution: null,
     };
     const finish = (status: CmsStatus, message?: string): CmsEnvelope<ContentDeleteResult> => {
@@ -128,6 +142,11 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       };
       if (!this.jsonEnabled()) {
         this.log(`Mode: ${result.mode}; outcome: ${result.outcome}`);
+        this.log(
+          `Scope: ${result.scope.selectedComponents} components; ${result.scope.remoteDeletions} remote deletions; 0 dependency targets; ${result.scope.localSourceRemovals} local removals (${result.scope.deleteLocalSource ? 'opt-in' : 'preserved by default'}).`,
+        );
+        if (result.mode === 'preview')
+          for (const file of result.scope.localSourceFiles) this.log(`Local removal: ${file}`);
         if (result.mode === 'preview')
           for (const [index, target] of result.targets.entries())
             this.log(
@@ -213,20 +232,51 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
           throw new TypeError('Invalid language choice.');
         item.requiresLanguageSelection = false;
       }
-      result = { ...result, targets: resolution.items.flatMap((item) => item.selected) };
+      const targets = resolution.items.flatMap((item) => item.selected);
+      result = {
+        ...result,
+        targets,
+        scope: {
+          ...result.scope,
+          selectedComponents: resolution.items.length,
+          remoteDeletions: targets.length,
+        },
+      };
+      let localSource: { projectRoot: string; workspaceApiName: string } | undefined;
+      if (flags['delete-local-source']) {
+        const workspace = await resolveWorkspace(context.connection, {
+          workspaceId: flags['workspace-id'],
+        });
+        const workspaceApiName = workspace.workspace.apiName;
+        if (typeof workspaceApiName !== 'string' || !workspaceApiName.trim())
+          throw new TypeError(
+            'Workspace API name unavailable; local source identity cannot be proven.',
+          );
+        sourcePathSegment(workspaceApiName);
+        localSource = { projectRoot: flags['output-dir'] ?? process.cwd(), workspaceApiName };
+        const files: string[] = [];
+        for (const target of targets) {
+          const inspection = await inspectLifecycleLocalSource(localSource.projectRoot, {
+            workspaceApiName,
+            contentType: target.contentType,
+            apiName: target.apiName ?? '',
+            language: target.language,
+          });
+          if (inspection.outcome === 'blocked' && flags.preview)
+            throw new TypeError(inspection.message);
+          if (inspection.outcome === 'matched')
+            files.push(
+              ...inspection.companions.map((file) => file.path),
+              inspection.definition.path,
+            );
+        }
+        result.scope.localSourceFiles = [...new Set(files)];
+        result.scope.localSourceRemovals = result.scope.localSourceFiles.length;
+      }
       if (flags.preview) {
         result = { ...result, outcome: 'ready' };
         return finish('success');
       }
-      const workspace = await resolveWorkspace(context.connection, {
-        workspaceId: flags['workspace-id'],
-      });
-      const workspaceApiName = workspace.workspace.apiName;
-      if (typeof workspaceApiName !== 'string' || !workspaceApiName.trim())
-        throw new TypeError(
-          'Workspace API name unavailable; local source identity cannot be proven.',
-        );
-      sourcePathSegment(workspaceApiName);
       const directory = await allocateMutationReportDirectory(
         flags.report,
         flags['report-dir'],
@@ -235,7 +285,7 @@ export default class DeleteContent extends CmsCommand<CmsEnvelope<ContentDeleteR
       const execution = await applyNativeDelete(context.connection, {
         resolution,
         onOutcome: this.mutationOutcomeObserver(),
-        localSource: { projectRoot: flags['output-dir'] ?? process.cwd(), workspaceApiName },
+        localSource,
         ...(directory
           ? { reportDirectory: directory, reportDirectoryAllocated: true as const }
           : {}),

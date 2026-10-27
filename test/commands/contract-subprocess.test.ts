@@ -2142,9 +2142,29 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           await readFile(file(`${caseName}-preview-transport.json`), 'utf8'),
         ) as Array<{ method?: string }>;
         expect(previewEvents.every(({ method }) => method === 'GET')).to.equal(true);
+        const preserved = await runSf(common, `${caseName}-execute`);
+        expect(preserved.exitCode, preserved.stdout + preserved.stderr).to.equal(0);
+        const preservedOutput = parseEnvelope(preserved);
+        expect(preservedOutput.status).to.equal('success');
+        expect(preservedOutput.result).to.deep.include({
+          outcome: 'completed',
+          scope: {
+            selectedComponents: 1,
+            remoteDeletions: 1,
+            dependencyTargets: 0,
+            deleteLocalSource: false,
+            localSourceRemovals: 0,
+            localSourceFiles: [],
+          },
+        });
+        if (family === 'email')
+          expect(
+            await readFile(file('cms/Marketing/email/Existing.cms-email.json'), 'utf8'),
+          ).to.equal('{}');
         const applied = await runSf(
           [
             ...common,
+            '--delete-local-source',
             ...(family === 'emailTemplate' ? ['-d', `${caseName}-${alias}-absent`] : []),
             '--report-dir',
             `${caseName}-${alias}-report`,

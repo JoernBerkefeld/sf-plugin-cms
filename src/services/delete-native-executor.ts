@@ -29,6 +29,7 @@ import { redactSecrets } from '../transport/redact-secrets.js';
 export type NativeDeleteApplyOptions = {
   resolution: NativeDeleteResolution;
   onOutcome?: MutationOutcomeObserver;
+  /** Explicit local-removal opt-in; omitted means preserve all local source bytes. */
   localSource?: { projectRoot: string; workspaceApiName: string };
   reportDirectory?: string;
   reportDirectoryAllocated?: true;

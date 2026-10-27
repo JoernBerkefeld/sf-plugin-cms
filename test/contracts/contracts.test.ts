@@ -61,12 +61,48 @@ describe('CMS contract foundation', () => {
           outcome: 'ready',
           workspaceId: 'space',
           targets: [deleteTarget],
+          scope: {
+            selectedComponents: 1,
+            remoteDeletions: 1,
+            dependencyTargets: 0,
+            deleteLocalSource: false,
+            localSourceRemovals: 0,
+            localSourceFiles: [],
+          },
           execution: null,
         },
         undefined,
         'success',
       ),
     ).not.to.throw();
+  });
+  it('rejects inconsistent delete preview scope and implicit local removal claims', () => {
+    const result = {
+      mode: 'preview',
+      outcome: 'ready',
+      workspaceId: 'space',
+      targets: [deleteTarget],
+      execution: null,
+      scope: {
+        selectedComponents: 1,
+        remoteDeletions: 1,
+        dependencyTargets: 0,
+        deleteLocalSource: false,
+        localSourceRemovals: 0,
+        localSourceFiles: [],
+      },
+    };
+    for (const changes of [
+      { selectedComponents: 2 },
+      { remoteDeletions: 2 },
+      { dependencyTargets: 1 },
+      { deleteLocalSource: 'true' },
+      { localSourceRemovals: 1, localSourceFiles: ['source'] },
+      { deleteLocalSource: true, localSourceRemovals: 2, localSourceFiles: ['source', 'source'] },
+    ])
+      expect(() =>
+        assertContentDeleteResult({ ...result, scope: { ...result.scope, ...changes } }),
+      ).to.throw();
   });
   it('validates completed delete evidence with observed parent absence and no report file', () => {
     const execution = {
@@ -93,6 +129,14 @@ describe('CMS contract foundation', () => {
           outcome: 'completed',
           workspaceId: 'space',
           targets: [deleteTarget],
+          scope: {
+            selectedComponents: 1,
+            remoteDeletions: 1,
+            dependencyTargets: 0,
+            deleteLocalSource: false,
+            localSourceRemovals: 0,
+            localSourceFiles: [],
+          },
           execution,
         },
         undefined,
@@ -107,6 +151,14 @@ describe('CMS contract foundation', () => {
           outcome: 'completed',
           workspaceId: 'space',
           targets: [deleteTarget],
+          scope: {
+            selectedComponents: 1,
+            remoteDeletions: 1,
+            dependencyTargets: 0,
+            deleteLocalSource: false,
+            localSourceRemovals: 0,
+            localSourceFiles: [],
+          },
           execution,
         },
         undefined,
@@ -130,6 +182,14 @@ describe('CMS contract foundation', () => {
         outcome: 'completed',
         workspaceId: 'space',
         targets: [deleteTarget],
+        scope: {
+          selectedComponents: 1,
+          remoteDeletions: 1,
+          dependencyTargets: 0,
+          deleteLocalSource: false,
+          localSourceRemovals: 0,
+          localSourceFiles: [],
+        },
         execution: null,
       }),
     ).to.throw();

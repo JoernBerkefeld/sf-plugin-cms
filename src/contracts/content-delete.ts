@@ -9,6 +9,14 @@ export type ContentDeleteResult = {
   outcome: 'ready' | 'cancelled' | 'blocked' | 'completed' | 'rejected' | 'partial' | 'uncertain';
   workspaceId: string;
   targets: NativeDeleteTarget[];
+  scope: {
+    selectedComponents: number;
+    remoteDeletions: number;
+    dependencyTargets: 0;
+    deleteLocalSource: boolean;
+    localSourceRemovals: number;
+    localSourceFiles: string[];
+  };
   execution: NativeDeleteResult | null;
 };
 
@@ -23,7 +31,38 @@ export function assertContentDeleteResult(
   _provenance?: unknown,
   status?: CmsStatus,
 ): asserts value is ContentDeleteResult {
-  assertExactKeys(value, ['mode', 'outcome', 'workspaceId', 'targets', 'execution'], 'result');
+  assertExactKeys(
+    value,
+    ['mode', 'outcome', 'workspaceId', 'targets', 'scope', 'execution'],
+    'result',
+  );
+  assertExactKeys(
+    value.scope,
+    [
+      'selectedComponents',
+      'remoteDeletions',
+      'dependencyTargets',
+      'deleteLocalSource',
+      'localSourceRemovals',
+      'localSourceFiles',
+    ],
+    'scope',
+  );
+  const scope = value.scope;
+  if (
+    !Array.isArray(value.targets) ||
+    !Array.isArray(scope.localSourceFiles) ||
+    scope.selectedComponents !==
+      new Set(value.targets.map((target: NativeDeleteTarget) => target.contentId)).size ||
+    scope.remoteDeletions !== value.targets.length ||
+    scope.dependencyTargets !== 0 ||
+    typeof scope.deleteLocalSource !== 'boolean' ||
+    scope.localSourceRemovals !== scope.localSourceFiles.length ||
+    new Set(scope.localSourceFiles).size !== scope.localSourceFiles.length ||
+    (!scope.deleteLocalSource && scope.localSourceRemovals !== 0)
+  )
+    throw new TypeError('Invalid delete scope');
+  for (const file of scope.localSourceFiles) assertNonemptyString(file, 'local source file');
   assertNonemptyString(value.workspaceId, 'result.workspaceId');
   if (value.mode !== 'preview' && value.mode !== 'execute')
     throw new TypeError('Invalid delete mode');

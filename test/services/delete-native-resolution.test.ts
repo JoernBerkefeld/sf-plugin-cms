@@ -63,6 +63,12 @@ function fixture(rows = [row()]) {
     request(request: { url: string; method: string }) {
       expect(request.method).to.equal('GET');
       calls.push(request.url);
+      if (request.url.endsWith(`/spaces/${workspaceId}`))
+        return Promise.resolve({
+          id: workspaceId,
+          defaultLanguage: 'en_US',
+          languages: ['en_US', 'de'],
+        });
       if (request.url.includes('/query?'))
         return Promise.resolve(structuredClone(responses.shift()));
       return Promise.resolve(structuredClone(details.get(request.url.split('/').at(-1)!)));
@@ -87,8 +93,8 @@ async function failure(action: () => Promise<unknown>, match: string): Promise<v
 }
 
 describe('exact-item native delete resolver', () => {
-  it('admits exactly the public five families and deduplicates exact repeats', () => {
-    for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio']) {
+  it('admits exactly the public six families and deduplicates exact repeats', () => {
+    for (const type of ['email', 'emailTemplate', 'emailFragment', 'image', 'document', 'audio']) {
       expect(normalizeDeleteSelection({ metadata: [`${type}:One`, `${type}:One`] })).to.deep.equal([
         { contentType: `sfdc_cms__${type}`, kind: 'api-name', value: 'One' },
       ]);
@@ -104,6 +110,8 @@ describe('exact-item native delete resolver', () => {
         'audio:*',
         'audio:A?',
         'audio:[A]',
+        'emailFragment:{A}',
+        'emailFragment:A*',
         'audio:A:B',
         'video:A',
         'brand:A',
@@ -145,14 +153,56 @@ describe('exact-item native delete resolver', () => {
     expect(decodeURIComponent(f.calls[0])).to.include('Language, VariantType');
   });
   it('binds native IDs for every admitted family and resolves repeated exact members once', async () => {
-    for (const type of ['email', 'emailTemplate', 'image', 'document', 'audio'] as const) {
+    for (const type of [
+      'email',
+      'emailTemplate',
+      'emailFragment',
+      'image',
+      'document',
+      'audio',
+    ] as const) {
       const f = fixture([row(0, { ContentTypeFullyQualifiedName: `sfdc_cms__${type}` })]);
       const result = await f.resolve(undefined, {
         metadata: [`${type}:Exact_Name`, `${type}:Exact_Name`],
       });
       expect(result.items[0].selected[0].contentType).to.equal(`sfdc_cms__${type}`);
-      expect(f.calls).to.have.length(7);
+      expect(f.calls).to.have.length(type === 'emailFragment' ? 8 : 7);
     }
+  });
+  it('admits only the actual default primary Fragment despite enabled unused German', async () => {
+    const rows = [row(0, { ContentTypeFullyQualifiedName: 'sfdc_cms__emailFragment' })];
+    for (const languages of [undefined, ['en_US'], ['*']]) {
+      const result = await fixture(rows).resolve(languages, {
+        metadata: ['emailFragment:Exact_Name'],
+      });
+      expect(result.items[0].selected).to.have.length(1);
+    }
+    for (const changes of [
+      { Language: 'de' },
+      { IsPrimary: false },
+      { VariantType: 'Translation' },
+    ])
+      await failure(
+        () =>
+          fixture([{ ...rows[0], ...changes }]).resolve(undefined, {
+            metadata: ['emailFragment:Exact_Name'],
+          }),
+        'default Content variant',
+      );
+    for (const languages of [undefined, ['en_US'], ['*']])
+      await failure(
+        () =>
+          fixture([
+            ...rows,
+            row(1, {
+              ContentTypeFullyQualifiedName: 'sfdc_cms__emailFragment',
+              Language: 'de',
+              IsPrimary: false,
+              VariantType: 'Translation',
+            }),
+          ]).resolve(languages, { metadata: ['emailFragment:Exact_Name'] }),
+        'additional actual variants',
+      );
   });
   it('supports classified Translation without assuming configuration creates a locale', async () => {
     const rows = [row(), row(1, { Language: 'de', VariantType: 'Translation', IsPrimary: false })];
