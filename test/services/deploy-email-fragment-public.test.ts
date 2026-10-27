@@ -12,6 +12,7 @@ import {
 import { selectDeploySources } from '../../src/services/deploy-source-selection.js';
 import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 import { executeDeployBatch } from '../../src/services/deploy-batch-executor.js';
+import DeployContent from '../../src/commands/cms/deploy/content.js';
 
 const input = (file: string) => ({
   sources: { 'source-dir': [file] },
@@ -59,6 +60,66 @@ describe('public Fragment deploy pipeline', () => {
     expect(repeated.report.summary.unchanged, JSON.stringify(repeated.report)).to.equal(1);
     expect(current.calls.filter((call) => call.method !== 'GET')).to.have.length(1);
     expect(await readdir(path.dirname(current.file))).to.deep.equal([path.basename(current.file)]);
+  });
+  it('discloses JSON-escaped derived Fragment titles in non-JSON command preview without mutations or reports', async () => {
+    const current = await fixture();
+    const sourceTitle = String.raw`Stale "A"\metadata`;
+    const effectiveTitle = String.raw`Authored "B"\metadata`;
+    current.definition.title = sourceTitle;
+    current.definition.contentBody['sfdc_cms:title'] = effectiveTitle;
+    await current.save();
+    const directory = path.dirname(current.file);
+    const filesBefore = await readdir(directory);
+    const sourceBefore = await readFile(current.file, 'utf8');
+    const lines: string[] = [];
+    const execute = sinon.stub().throws(new Error('Preview must not execute mutations'));
+    const instance = Object.create(DeployContent.prototype) as DeployContent;
+    Object.assign(instance, {
+      parse: async () => ({
+        flags: {
+          'target-org': { getUsername: () => 'offline-fixture' },
+          'api-version': '67.0',
+          'workspace-id': workspaceId,
+          language: 'en_US',
+          'default-language': false,
+          'source-dir': [current.file],
+          preview: true,
+          report: false,
+        },
+      }),
+      getOrgContext: async () => ({
+        connection: current.connection,
+        orgId: '00D000000000001AAA',
+      }),
+      resolveDestinationWorkspace: async () => ({ id: workspaceId, workspace: current.workspace }),
+      selectSources: selectDeploySources,
+      preflightBatch: preflightDeployBatch,
+      executeBatch: execute,
+      jsonEnabled: () => false,
+      log: (line: string) => lines.push(line),
+    });
+    try {
+      const result = await instance.run();
+      expect(result.status, JSON.stringify(result)).to.equal('success');
+      expect(lines).to.include('Item 1: update (unqualified)');
+      expect(lines).to.include(
+        `  Derived Fragment metadata: title ${JSON.stringify(sourceTitle)} -> ${JSON.stringify(effectiveTitle)}`,
+      );
+      expect(result.result!.preparation!.items[0].fragment).to.have.deep.property('envelope', {
+        sourceTitle,
+        effectiveTitle,
+        derived: true,
+      });
+      expect(result.result!.report).to.equal(null);
+      expect(result.result!.reportFile).to.equal(null);
+      expect(execute.called).to.equal(false);
+      expect(current.calls.length).to.be.greaterThan(0);
+      expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+      expect(await readdir(directory)).to.deep.equal(filesBefore);
+      expect(await readFile(current.file, 'utf8')).to.equal(sourceBefore);
+    } finally {
+      process.exitCode = undefined;
+    }
   });
   it('previews and executes full-body UPDATE then unchanged preserving same IDs', async () => {
     const current = await fixture();

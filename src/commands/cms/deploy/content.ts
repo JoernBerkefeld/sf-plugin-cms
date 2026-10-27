@@ -227,8 +227,16 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         if (result.blockedReasons.length > 0)
           this.log('Deployment stopped. See the invocation log for technical details.');
         if (result.mode === 'preview')
-          for (const [index, item] of result.items.entries())
+          for (const [index, item] of result.items.entries()) {
             this.log(`Item ${index + 1}: ${item.proposed} (unqualified)`);
+            if ('fragment' in item && item.fragment && 'envelope' in item.fragment) {
+              const envelope = item.fragment.envelope;
+              if (envelope.derived)
+                this.log(
+                  `  Derived Fragment metadata: title ${JSON.stringify(envelope.sourceTitle)} -> ${JSON.stringify(envelope.effectiveTitle)}`,
+                );
+            }
+          }
       }
       return this.finishEnvelope(envelope, assertDeployContentResult);
     };
