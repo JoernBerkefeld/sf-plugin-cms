@@ -248,7 +248,7 @@ describe('internal Fragment UPDATE preparation', () => {
     expect(result.destination.existing.evidence).to.deep.equal({ contentId, variantId });
     expect(result.dataGraphs[0].validationStatus).to.equal('passed');
     expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
-    result.payload.contentBody!['sfdc_cms:title'] = 'detached';
+    (result.payload.contentBody as RecordValue)['sfdc_cms:title'] = 'detached';
     expect(result.destination.source.contentBody).to.deep.equal(current.definition.contentBody);
   });
   it('admits unchanged with unused enabled German and preserves absent optional body metadata', async () => {

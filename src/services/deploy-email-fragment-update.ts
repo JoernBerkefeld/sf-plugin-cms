@@ -44,6 +44,7 @@ const sha = (value: unknown): string =>
  * @param {JsonRequestOptions} options - Bounded timeout and cancellation options.
  * @param {WorkspaceImportReportPersistence} persistence - Existing journal persistence seam.
  * @param {Function} onReport - Assignment-only reconciliation evidence handoff.
+ * @param {Function} beforeExecute - Awaited whole-selection revalidation before dispatch or unchanged completion.
  * @returns {Promise<EmailFragmentUpdateResult>} Unqualified independently verified result.
  */
 export async function executeEmailFragmentUpdate(
@@ -52,6 +53,7 @@ export async function executeEmailFragmentUpdate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   onReport?: (report: WorkspaceImportRunReport) => void,
+  beforeExecute?: () => Promise<void>,
 ): Promise<EmailFragmentUpdateResult> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
@@ -69,6 +71,7 @@ export async function executeEmailFragmentUpdate(
       );
   };
   if (preflight.proposed === 'unchanged') {
+    await beforeExecute?.();
     assertBinding(await prepareEmailFragmentUpdate(connection, selected, requestOptions));
     return {
       qualification: 'unqualified',
@@ -113,6 +116,7 @@ export async function executeEmailFragmentUpdate(
     )
       throw new TypeError('Fragment UPDATE durable intent changed before write');
     // Reacquire complete exact raw baseline, actual siblings, source and providers after durable intent.
+    await beforeExecute?.();
     assertBinding(await prepareEmailFragmentUpdate(connection, selected, requestOptions));
     if (
       reportFile !== undefined &&

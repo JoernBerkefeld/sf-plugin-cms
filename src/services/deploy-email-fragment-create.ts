@@ -46,6 +46,7 @@ export type EmailFragmentCreateResult = {
  * @param {JsonRequestOptions} options - Bounded timeout and cancellation options.
  * @param {WorkspaceImportReportPersistence} persistence - Existing journal persistence seam.
  * @param {Function} onReport - Assignment-only live reconciliation evidence handoff.
+ * @param {Function} beforeExecute - Awaited whole-selection revalidation before dispatch or unchanged completion.
  * @returns {Promise<EmailFragmentCreateResult>} Unqualified independent readback evidence.
  */
 export async function executeEmailFragmentCreate(
@@ -54,6 +55,7 @@ export async function executeEmailFragmentCreate(
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
   onReport?: (report: WorkspaceImportRunReport) => void,
+  beforeExecute?: () => Promise<void>,
 ): Promise<EmailFragmentCreateResult> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
@@ -68,6 +70,7 @@ export async function executeEmailFragmentCreate(
       throw new TypeError('Fragment source, destination or provider binding drifted before write');
   };
   if (preflight.proposed === 'unchanged') {
+    await beforeExecute?.();
     assertBinding(await prepareEmailFragmentCreate(connection, selected, requestOptions));
     return {
       qualification: 'unqualified',
@@ -105,6 +108,7 @@ export async function executeEmailFragmentCreate(
   let dispatched = false;
   try {
     if (reportFile !== undefined) await rewrite(reportFile, report);
+    await beforeExecute?.();
     assertBinding(await prepareEmailFragmentCreate(connection, selected, requestOptions));
     if (
       reportFile !== undefined &&

@@ -8,6 +8,10 @@ import { notifyMutationOutcome, type MutationOutcomeObserver } from '../mutation
 import { redactSecrets } from '../transport/redact-secrets.js';
 import { preflightDeployBatch, type DeployBatchPreflightInput } from './deploy-batch-preflight.js';
 import { executeDeployCreate, type ExecuteDeployCreateInput } from './deploy-create-executor.js';
+import { prepareEmailFragmentCreate } from './deploy-email-fragment-create-preflight.js';
+import { prepareEmailFragmentUpdate } from './deploy-email-fragment-update-preflight.js';
+import { executeEmailFragmentCreate } from './deploy-email-fragment-create.js';
+import { executeEmailFragmentUpdate } from './deploy-email-fragment-update.js';
 import { prepareDeployDestination } from './deploy-destination-preparation.js';
 import { acquireEditableBrandSource } from './retrieve-item-source.js';
 import { executeDeployAudioCreate } from './deploy-audio-create-executor.js';
@@ -91,7 +95,8 @@ export type DeployBatchReport = {
  * @returns {Promise<object>} Unqualified result; unchanged allocates no journal.
  */
 export async function executeDeployBatchBrandItem(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: ExecuteDeployCreateInput,
   options: JsonRequestOptions = {},
   persistence?: WorkspaceImportReportPersistence,
@@ -188,6 +193,8 @@ export async function executeDeployBatchBrandItem(
 export type DeployBatchVerifiedUpdateRow = {
   before: NativeInventoryRow;
   after: NativeInventoryRow;
+  /** Independently read back Fragment metadata from the bound full-body UPDATE. */
+  fragmentMetadata?: { title: string; urlName: string };
 };
 
 /**
@@ -220,7 +227,7 @@ export function reconcileDeployBatchInventory(
     ids.add(row.Id);
   }
   const updatedIds = new Set<string>();
-  for (const { before, after } of verifiedUpdatedRows) {
+  for (const { before, after, fragmentMetadata } of verifiedUpdatedRows) {
     if (
       ids.has(before.Id) ||
       updatedIds.has(before.Id) ||
@@ -235,13 +242,23 @@ export function reconcileDeployBatchInventory(
         after,
       ) ||
       // Bytes/rawHtml UPDATEs do not authorize title, URL, lifecycle or identity edits.
-      !isDeepStrictEqual(before, after)
+      !isDeepStrictEqual(
+        fragmentMetadata && before.ContentTypeFullyQualifiedName === 'sfdc_cms__emailFragment'
+          ? { ...before, Name: fragmentMetadata.title, UrlName: fragmentMetadata.urlName }
+          : before,
+        after,
+      )
     )
       throw new TypeError('Earlier verified UPDATE inventory changed');
     updatedIds.add(before.Id);
   }
   const normalized = structuredClone(fresh);
-  normalized.records = normalized.records.filter((row) => !ids.has(row.Id));
+  normalized.records = normalized.records
+    .filter((row) => !ids.has(row.Id))
+    .map((row) => {
+      const update = verifiedUpdatedRows.find((candidate) => candidate.after.Id === row.Id);
+      return update ? structuredClone(update.before) : row;
+    });
   normalized.pagesRequested = baseline.pagesRequested;
   if (!isDeepStrictEqual(normalized, baseline))
     throw new TypeError('Batch workspace inventory changed outside verified CREATE prefix');
@@ -263,7 +280,8 @@ export function reconcileDeployBatchInventory(
  * @returns {Promise<void>} Resolves only while local, identity and complete inventory agree.
  */
 export async function revalidateDeployBatchDocumentBoundary(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: DeployBatchPreflightInput,
   baseline: DeployBatchPreflight,
   index: number,
@@ -370,7 +388,8 @@ export async function revalidateDeployBatchDocumentBoundary(
  * @returns {Promise<void>} Resolves only while source, private proof and destination agree.
  */
 export async function revalidateDeployBatchAudioBoundary(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: DeployBatchPreflightInput,
   baseline: DeployBatchPreflight,
   index: number,
@@ -489,7 +508,8 @@ export async function revalidateDeployBatchAudioBoundary(
  * @returns {Promise<object>} Verified item outcome; uncertainty is never returned as completed.
  */
 export async function executeDeployBatchDocumentItem(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: Parameters<typeof executeDeployDocumentCreate>[1],
   operation: DeployBatchReport['items'][number]['proposed'],
   boundary: () => Promise<void>,
@@ -564,7 +584,8 @@ export async function executeDeployBatchDocumentItem(
  * @returns {Promise<object>} Verified item identity/outcome, never uncertain completion.
  */
 export async function executeDeployBatchAudioItem(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: Parameters<typeof executeDeployAudioCreate>[1],
   operation: DeployBatchReport['items'][number]['proposed'],
   boundary: () => Promise<void>,
@@ -642,7 +663,8 @@ export type DeployBatchPersistence = {
  * @returns {Promise<object>} Unqualified report; item journals remain reconciliation authority.
  */
 export async function executeDeployBatch(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: ExecuteDeployBatchInput,
   options: JsonRequestOptions = {},
   persistence?: DeployBatchPersistence,
@@ -659,7 +681,8 @@ export async function executeDeployBatch(
  * @returns {Promise<object>} Unqualified internal batch result.
  */
 export async function executeDeployBatchWithBrands(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: ExecuteDeployBatchInput,
   options: JsonRequestOptions = {},
   persistence?: DeployBatchPersistence,
@@ -668,7 +691,8 @@ export async function executeDeployBatchWithBrands(
 }
 
 async function executeDeployBatchInternal(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: ExecuteDeployBatchInput,
   options: JsonRequestOptions,
   persistence: DeployBatchPersistence | undefined,
@@ -723,7 +747,8 @@ async function executeDeployBatchInternal(
       // Preserve independently observed destination identity even when UPDATE returns no response.
       const target =
         item.proposed === 'update'
-          ? (item.update?.target ??
+          ? (item.fragment?.destination.existing?.evidence ??
+            item.update?.target ??
             (update && { contentId: update.contentId, variantId: update.variantId }))
           : undefined;
       return {
@@ -842,6 +867,41 @@ async function executeDeployBatchInternal(
         )
           throw new TypeError('Batch durable intent changed before execution');
         await checkInventory();
+        // Every pending Fragment must retain its source, providers and raw destination baseline.
+        for (const [fragmentIndex, source] of baseline.selection.items.entries()) {
+          if (
+            source.definition.contentType !== 'sfdc_cms__emailFragment' ||
+            (fragmentIndex < index &&
+              ['created', 'updated'].includes(report.items[fragmentIndex].outcome))
+          )
+            continue;
+          if (!connection.getAuthInfoFields)
+            throw new TypeError('Fragment requires destination org identity');
+          const fragmentConnection = {
+            request: connection.request.bind(connection),
+            getApiVersion: connection.getApiVersion.bind(connection),
+            getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
+          };
+          const proof = baseline.items[fragmentIndex].fragment;
+          if (!proof || proof.orgId !== selected.destinationOrgId)
+            throw new TypeError('Batch Fragment org or operation binding missing');
+          const fragmentScope = {
+            definitionFile: source.definitionPath,
+            workspaceId: selected.workspaceId,
+          };
+          const fresh =
+            proof.proposed === 'create'
+              ? await prepareEmailFragmentCreate(fragmentConnection, fragmentScope, requestOptions)
+              : await prepareEmailFragmentUpdate(fragmentConnection, fragmentScope, requestOptions);
+          fresh.destination.inventory = reconcileDeployBatchInventory(
+            fresh.destination.inventory,
+            proof.destination.inventory,
+            verifiedCreatedRows,
+            verifiedUpdatedRows,
+          );
+          if (!isDeepStrictEqual(fresh, proof))
+            throw new TypeError('Batch Fragment intent changed before execution');
+        }
         // Pending Brand intent must hold before every family mutation, not just its own turn.
         if (
           admitBrands &&
@@ -902,6 +962,10 @@ async function executeDeployBatchInternal(
         }
         const proof = baseline.items[index];
         switch (item.source.definition.contentType) {
+          case 'sfdc_cms__emailFragment': {
+            // All pending Fragment proofs were reacquired above.
+            break;
+          }
           case 'sfdc_cms__brand': {
             if (!admitBrands || !['create', 'unchanged'].includes(item.proposed))
               throw new TypeError('Batch Brand operation blocked');
@@ -996,6 +1060,37 @@ async function executeDeployBatchInternal(
         reportFile: item.reportFile,
       };
       switch (item.source.definition.contentType) {
+        case 'sfdc_cms__emailFragment': {
+          if (!connection.getAuthInfoFields)
+            throw new TypeError('Fragment requires destination org identity');
+          const fragmentConnection = {
+            request: connection.request,
+            getApiVersion: connection.getApiVersion.bind(connection),
+            getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
+          };
+          Object.setPrototypeOf(fragmentConnection, connection);
+          const execute =
+            item.proposed === 'create' ? executeEmailFragmentCreate : executeEmailFragmentUpdate;
+          const result = await execute(
+            fragmentConnection,
+            itemInput,
+            requestOptions,
+            persistence?.item,
+            onReport,
+            boundary,
+          );
+          const expectedOutcome = {
+            create: 'created',
+            update: 'updated',
+            unchanged: 'unchanged',
+            blocked: 'blocked',
+          }[item.proposed];
+          if (result.outcome !== expectedOutcome)
+            throw new TypeError('Batch Fragment operation changed');
+          item.target = result.evidence;
+          item.outcome = result.outcome;
+          break;
+        }
         case 'sfdc_cms__brand': {
           if (!admitBrands || !['create', 'unchanged'].includes(item.proposed))
             throw new TypeError('Batch Brand operation blocked');
@@ -1162,7 +1257,18 @@ async function executeDeployBatchInternal(
           before.ManagedContent.ApiName !== item.source.targetIdentity.apiName
         )
           throw new TypeError('Verified UPDATE inventory binding missing');
-        const transition = { before, after };
+        const transition = {
+          before,
+          after,
+          ...(item.source.definition.contentType === 'sfdc_cms__emailFragment'
+            ? {
+                fragmentMetadata: {
+                  title: item.source.definition.title!,
+                  urlName: item.source.definition.urlName!,
+                },
+              }
+            : {}),
+        };
         reconcileDeployBatchInventory(inventory, initialInventory, verifiedCreatedRows, [
           ...verifiedUpdatedRows,
           transition,

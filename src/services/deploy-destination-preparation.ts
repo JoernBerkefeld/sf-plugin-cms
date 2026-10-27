@@ -2,6 +2,8 @@ import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { selectDeploySources } from './deploy-source-selection.js';
+import { prepareEmailFragmentCreate } from './deploy-email-fragment-create-preflight.js';
+import { prepareEmailFragmentUpdate } from './deploy-email-fragment-update-preflight.js';
 import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
 import { preflightDeployDocumentCreate } from './deploy-document-create-preflight.js';
 import { admitDeployDocumentUnchanged } from './deploy-document-unchanged.js';
@@ -34,7 +36,8 @@ import { decodeNativeHtml } from './import-identities.js';
 import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-identity.js';
 import { assertCanonicalMarketingWorkspace } from './resolve-workspace.js';
 
-type DestinationConnection = Pick<Connection, 'request' | 'getApiVersion'>;
+type DestinationConnection = Pick<Connection, 'request' | 'getApiVersion'> &
+  Partial<Pick<Connection, 'getAuthInfoFields'>>;
 export type DeployDestinationInput = {
   selection: DeployLocalSelection;
   workspaceId: string;
@@ -56,6 +59,9 @@ export type DeployPreparedItem = {
   audioInventory?: NativeInventory;
   /** Private bytes-only Audio UPDATE observation; public admission remains guarded. */
   audioUpdate?: Awaited<ReturnType<typeof preflightDeployAudioUpdate>>;
+  fragment?:
+    | Awaited<ReturnType<typeof prepareEmailFragmentCreate>>
+    | Awaited<ReturnType<typeof prepareEmailFragmentUpdate>>;
   blockedReasons: string[];
   desired: { contentBody: Record<string, JsonValue>; title?: string; urlName?: string };
   existing?: {
@@ -124,8 +130,11 @@ async function bindBrandItem(item: DeployLocalItem): Promise<void> {
 function localBody(item: DeployLocalItem): Record<string, JsonValue> {
   const definition = item.definition;
   const body = item.contentBody;
-  if (definition.contract === 'sf-cms-media-source')
-    throw new TypeError('Image requires independent media admission');
+  if (
+    definition.contract === 'sf-cms-media-source' ||
+    definition.contract === 'sf-cms-email-fragment-source'
+  )
+    throw new TypeError('Media and Fragment require independent source admission');
   const reconstructed =
     definition.contractVersion === '2.0.0'
       ? reassembleEditableItemSourceV2(
@@ -189,6 +198,44 @@ async function prepareItem(
     },
   };
   try {
+    if (item.definition.contract === 'sf-cms-email-fragment-source') {
+      if (!connection.getAuthInfoFields)
+        throw new TypeError('Fragment preparation requires destination org identity');
+      const fragmentConnection = {
+        request: connection.request.bind(connection),
+        getApiVersion: connection.getApiVersion.bind(connection),
+        getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
+      };
+      const scope = { definitionFile: item.definitionPath, workspaceId: input.workspaceId };
+      const proof = inventory.records.some(
+        (row) => row.ManagedContent.ApiName === item.targetIdentity.apiName,
+      )
+        ? await prepareEmailFragmentUpdate(fragmentConnection, scope, options)
+        : await prepareEmailFragmentCreate(fragmentConnection, scope, options);
+      const fresh = await selectDeploySources({ 'source-dir': [item.definitionPath] });
+      if (
+        !isDeepStrictEqual(fresh.items, [item]) ||
+        !isDeepStrictEqual(proof.destination.inventory, inventory) ||
+        proof.destination.workspace.defaultLanguage !== input.language ||
+        (input.expectedRootFolderId !== undefined &&
+          proof.destination.workspace.rootFolderId !== input.expectedRootFolderId)
+      )
+        throw new TypeError('Fragment selected source or destination snapshot changed');
+      prepared.fragment = proof;
+      prepared.proposed = proof.proposed;
+      if (proof.destination.existing) {
+        const existing = proof.destination.existing;
+        const definition = existing.projection.definition;
+        prepared.existing = {
+          ...existing.evidence,
+          contentBody: structuredClone(definition.contentBody),
+          title: definition.title,
+          urlName: definition.urlName,
+        };
+        prepared.changedFields = changes(prepared.desired, prepared.existing);
+      }
+      return prepared;
+    }
     if (item.definition.contract === 'sf-cms-media-source') {
       if (
         !['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio'].includes(
@@ -599,7 +646,11 @@ export async function prepareDeployDestination(
           throw new TypeError('Unsupported deploy media content type');
         await bindMediaItem(item);
       } else if (item.definition.contentType === 'sfdc_cms__brand') await bindBrandItem(item);
-      else localBody(item);
+      else if (item.definition.contentType === 'sfdc_cms__emailFragment') {
+        const fresh = await selectDeploySources({ 'source-dir': [item.definitionPath] });
+        if (!isDeepStrictEqual(fresh.items, [item]))
+          throw new TypeError('Fragment selected source changed');
+      } else localBody(item);
       const key = item.targetIdentity.apiName;
       if (identities.has(key))
         throw new TypeError('Selected sources collide at destination parent API name');

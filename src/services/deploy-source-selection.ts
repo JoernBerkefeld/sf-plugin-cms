@@ -1,5 +1,10 @@
 import path from 'node:path';
-import { lstat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
+import {
+  assertEmailFragmentSourceDefinition,
+  type EmailFragmentSourceDefinition,
+} from '../contracts/email-fragment-source.js';
+import { loadEditableEmailFragmentSource } from './editable-item-source.js';
 import { normalizeContentTypeAlias } from './content-type-alias.js';
 import { createHash } from 'node:crypto';
 import {
@@ -31,6 +36,7 @@ export const DEPLOY_SOURCE_CONTENT_TYPES = [
   'sfdc_cms__document',
   'sfdc_cms__audio',
   'sfdc_cms__brand',
+  'sfdc_cms__emailFragment',
 ] as const;
 
 export interface DeploySourceSelectionFlags {
@@ -46,7 +52,11 @@ export interface DeploySourceSelectionFlags {
 export interface DeployLocalItem {
   definitionPath: string;
   companionPaths: string[];
-  definition: SourceDefinition | EditableItemDefinitionV2 | EditableMediaDefinition;
+  definition:
+    | SourceDefinition
+    | EditableItemDefinitionV2
+    | EditableMediaDefinition
+    | EmailFragmentSourceDefinition;
   /** Observed binary binding for media planning, never apply authority. */
   mediaSha256?: string;
   contentBody: Record<string, JsonValue>;
@@ -131,6 +141,10 @@ async function readDefinition(file: string): Promise<DeployLocalItem['definition
       );
     return candidate;
   }
+  if ((candidate as { contract?: string })?.contract === 'sf-cms-email-fragment-source') {
+    assertEmailFragmentSourceDefinition(candidate);
+    return candidate;
+  }
   assertSourceDefinition(candidate);
   return candidate;
 }
@@ -170,18 +184,36 @@ export async function selectDeploySources(
     sourcePathSegment(flags.workspaceApiName);
     const cwd = flags.cwd ?? process.cwd();
     await assertEditableDirectoryPath(cwd, false);
-    roots = [
-      ...new Set(
-        selectors!.map((selector) =>
+    roots = [];
+    for (const selector of selectors!) {
+      if (selector.contentType === 'sfdc_cms__emailFragment') {
+        // Fragment source workspace identity is independent of the destination name.
+        const cms = path.join(cwd, 'cms');
+        await assertEditableDirectoryPath(cms, false);
+        for (const entry of await readdir(cms, { withFileTypes: true })) {
+          const workspace = path.join(cms, entry.name);
+          await assertEditableDirectoryPath(workspace, false);
+          const directory = path.join(workspace, 'emailFragment');
+          try {
+            await lstat(directory);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+            throw error;
+          }
+          roots.push(directory);
+        }
+      } else {
+        roots.push(
           path.join(
             cwd,
             'cms',
             flags.workspaceApiName!,
             selector.contentType.slice('sfdc_cms__'.length),
           ),
-        ),
-      ),
-    ];
+        );
+      }
+    }
+    roots = [...new Set(roots)];
   }
   for (const directory of roots ?? []) {
     // Validate the original route before resolving; files share the existing guarded loaders.
@@ -198,7 +230,7 @@ export async function selectDeploySources(
     // Reuse the package's no-follow recursive traversal, never a permissive new walker.
     for (const relative of await enumeratePackageFiles(root, root)) {
       if (
-        /\.cms-email(?:-template)?\.json$/u.test(relative) ||
+        /\.cms-email(?:-template|-fragment)?\.json$/u.test(relative) ||
         /\.cms-(?:image|document|audio)\.json$/u.test(relative) ||
         (brands && /\.cms-brand\.json$/u.test(relative))
       )
@@ -215,7 +247,9 @@ export async function selectDeploySources(
       const typeRoot = path.join(
         flags.cwd ?? process.cwd(),
         'cms',
-        flags.workspaceApiName!,
+        definition.contentType === 'sfdc_cms__emailFragment'
+          ? definition.identity.context.workspaceApiName
+          : flags.workspaceApiName!,
         definition.contentType.slice('sfdc_cms__'.length),
       );
       const relative = path.relative(typeRoot, file);
@@ -237,9 +271,13 @@ export async function selectDeploySources(
       | Awaited<ReturnType<typeof loadEditableItemSourceV2>>
       | Awaited<ReturnType<typeof loadEditableItemSource>>
       | Awaited<ReturnType<typeof loadEditableBrandSource>>
+      | Awaited<ReturnType<typeof loadEditableEmailFragmentSource>>
       | undefined;
     if (!media) {
-      if (definition.contentType === 'sfdc_cms__brand') email = await loadEditableBrandSource(file);
+      if (definition.contentType === 'sfdc_cms__emailFragment')
+        email = await loadEditableEmailFragmentSource(file);
+      else if (definition.contentType === 'sfdc_cms__brand')
+        email = await loadEditableBrandSource(file);
       else
         email =
           definition.contractVersion === '2.0.0'

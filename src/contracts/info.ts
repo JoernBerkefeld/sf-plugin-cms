@@ -163,6 +163,24 @@ export const CMS_PUBLIC_CAPABILITIES: readonly CmsCapability[] = [
     contract: 'sf-cms-content-deploy@1',
   },
   {
+    id: 'content.deploy.email-fragment.create',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email-fragment.update',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
+    id: 'content.deploy.email-fragment.unchanged',
+    state: 'unqualified',
+    transport: 'cli-json',
+    contract: 'sf-cms-content-deploy@1',
+  },
+  {
     id: 'content.deploy.audio.create',
     state: 'unqualified',
     transport: 'cli-json',

@@ -58,10 +58,13 @@ describe('coverage launcher configuration', () => {
 });
 
 describe('current public documentation', () => {
-  it('limits public Fragment claims to unqualified single-default retrieval', async () => {
+  it('keeps Fragment retrieval and deployment unqualified with explicit remaining portability limits', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     for (const claim of [
       'content.retrieve.email-fragment',
+      'content.deploy.email-fragment.create',
+      'Current nonroot destination folder mapping',
+      'same/cross-workspace, cross-org, rendering and lifecycle qualification remain outstanding',
       'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY',
       'no companions',
       'the type is not complete',

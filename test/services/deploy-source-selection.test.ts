@@ -191,50 +191,90 @@ describe('local deploy source selection', () => {
     it(`selects identical canonical sources for both ${short} spellings`, async () => {
       const root = await temporary();
       let file: string;
-      if (short === 'brand') {
-        file = path.join(root, 'Exact.cms-brand.json');
-        await writeFile(
-          file,
-          JSON.stringify({
-            ...definition(false, 'Exact'),
-            identity: { ...definition(false, 'Exact').identity, type: 'Brand' },
-            contentType: canonical,
-            title: 'Exact',
-            urlName: 'exact',
-            contentBody: brandBody('Exact'),
-            companions: {},
-          }),
-        );
-      } else if (short === 'email' || short === 'emailTemplate') {
-        file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
-      } else {
-        const token = short;
-        const mediaType = { image: 'Image', document: 'Document', audio: 'Audio' }[short]!;
-        file = path.join(root, `Exact.cms-${token}.json`);
-        const companion = `Exact.cms-${token}.media.txt`;
-        await writeFile(
-          file,
-          JSON.stringify({
-            contract: 'sf-cms-media-source',
-            contractVersion: '1.0.0',
-            identity: {
-              family: 'cms',
-              type: mediaType,
-              apiName: 'Exact',
-              context: { workspaceApiName: 'Source' },
-            },
-            contentType: canonical,
-            language: 'en_US',
-            title: 'Exact',
-            folderPath: [],
-            media: {
-              representation: 'binary',
-              mimeType: 'text/plain',
-              companion: { role: 'media', path: companion },
-            },
-          }),
-        );
-        await writeFile(path.join(root, companion), 'Exact bytes');
+      switch (short) {
+        case 'brand': {
+          file = path.join(root, 'Exact.cms-brand.json');
+          await writeFile(
+            file,
+            JSON.stringify({
+              ...definition(false, 'Exact'),
+              identity: { ...definition(false, 'Exact').identity, type: 'Brand' },
+              contentType: canonical,
+              title: 'Exact',
+              urlName: 'exact',
+              contentBody: brandBody('Exact'),
+              companions: {},
+            }),
+          );
+
+          break;
+        }
+        case 'emailFragment': {
+          file = path.join(root, 'Exact.cms-email-fragment.json');
+          await writeFile(
+            file,
+            JSON.stringify({
+              contract: 'sf-cms-email-fragment-source',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: 'Email Fragment',
+                apiName: 'Exact',
+                context: { workspaceApiName: 'Destination' },
+              },
+              contentType: canonical,
+              language: 'en_US',
+              title: 'Exact',
+              urlName: 'exact',
+              folderPath: [],
+              contentBody: {
+                'sfdc_cms:block': {
+                  type: 'block',
+                  definition: 'sfdc_cms/rootContentBlock',
+                  id: '10000000-0000-4000-8000-000000000001',
+                  children: [],
+                },
+              },
+            }),
+          );
+
+          break;
+        }
+        case 'email':
+        case 'emailTemplate': {
+          file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
+
+          break;
+        }
+        default: {
+          const token = short;
+          const mediaType = { image: 'Image', document: 'Document', audio: 'Audio' }[short]!;
+          file = path.join(root, `Exact.cms-${token}.json`);
+          const companion = `Exact.cms-${token}.media.txt`;
+          await writeFile(
+            file,
+            JSON.stringify({
+              contract: 'sf-cms-media-source',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: mediaType,
+                apiName: 'Exact',
+                context: { workspaceApiName: 'Source' },
+              },
+              contentType: canonical,
+              language: 'en_US',
+              title: 'Exact',
+              folderPath: [],
+              media: {
+                representation: 'binary',
+                mimeType: 'text/plain',
+                companion: { role: 'media', path: companion },
+              },
+            }),
+          );
+          await writeFile(path.join(root, companion), 'Exact bytes');
+        }
       }
       const expected = await selectDeploySources({ 'source-dir': [file] });
       const canonicalDirectory = path.join(root, 'cms', 'Destination', short);

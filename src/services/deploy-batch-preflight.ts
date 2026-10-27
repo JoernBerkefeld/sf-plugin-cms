@@ -8,6 +8,8 @@ import {
   type DeploySourceSelectionFlags,
 } from './deploy-source-selection.js';
 import { prepareDeployDestination } from './deploy-destination-preparation.js';
+import { prepareEmailFragmentCreate } from './deploy-email-fragment-create-preflight.js';
+import { prepareEmailFragmentUpdate } from './deploy-email-fragment-update-preflight.js';
 import { preflightDeployCreate } from './deploy-create-preflight.js';
 import { preflightDeployUpdate } from './deploy-update-executor.js';
 import { preflightDeployImageCreate } from './deploy-image-create-preflight.js';
@@ -44,6 +46,9 @@ export type DeployBatchPreflight = {
     definitionFile: string;
     proposed: 'create' | 'update' | 'unchanged' | 'blocked';
     blockedReasons: string[];
+    fragment?:
+      | Awaited<ReturnType<typeof prepareEmailFragmentCreate>>
+      | Awaited<ReturnType<typeof prepareEmailFragmentUpdate>>;
     create?: Awaited<ReturnType<typeof preflightDeployCreate>>;
     update?: Awaited<ReturnType<typeof preflightDeployUpdate>>;
     imageCreate?: Awaited<ReturnType<typeof preflightDeployImageCreate>>;
@@ -69,7 +74,8 @@ export type DeployBatchPreflight = {
  * @returns {Promise<DeployBatchPreflight>} Whole-selection eligibility without files or mutations.
  */
 export async function preflightDeployBatch(
-  connection: Pick<Connection, 'request' | 'getApiVersion'>,
+  connection: Pick<Connection, 'request' | 'getApiVersion'> &
+    Partial<Pick<Connection, 'getAuthInfoFields'>>,
   input: DeployBatchPreflightInput,
   options: JsonRequestOptions = {},
   internal: { admitBrands?: boolean } = {},
@@ -167,6 +173,27 @@ export async function preflightDeployBatch(
         expectedRootFolderId: rootFolderId,
       };
       switch (source.definition.contentType) {
+        case 'sfdc_cms__emailFragment': {
+          if (!connection.getAuthInfoFields)
+            throw new TypeError('Fragment requires destination org identity');
+          const fragmentConnection = {
+            request: connection.request.bind(connection),
+            getApiVersion: connection.getApiVersion.bind(connection),
+            getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
+          };
+          const proof =
+            prepared.proposed === 'create'
+              ? await prepareEmailFragmentCreate(fragmentConnection, scope, requestOptions)
+              : await prepareEmailFragmentUpdate(fragmentConnection, scope, requestOptions);
+          if (!isDeepStrictEqual(proof, prepared.fragment))
+            throw new TypeError('Batch Fragment intent changed');
+          if (titles.has(proof.payload.title!) || urls.has(proof.payload.urlName!))
+            throw new TypeError('Selected Fragment title/URL collision');
+          titles.add(proof.payload.title!);
+          urls.add(proof.payload.urlName!);
+          item.fragment = proof;
+          break;
+        }
         case 'sfdc_cms__brand': {
           if (!['create', 'unchanged'].includes(prepared.proposed))
             throw new TypeError('Brand operation unsupported');

@@ -12,7 +12,7 @@ type RecordValue = Record<string, unknown>;
 const workspaceId = '0Zu000000000001AAA';
 const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
-async function fixture() {
+export async function createFixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-execute-'));
   const file = path.join(root, 'Welcome.cms-email-fragment.json');
   const reportFile = path.join(root, 'intent.json');
@@ -183,6 +183,7 @@ async function fixture() {
   } as unknown as Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>;
   let report: WorkspaceImportRunReport | undefined;
   return {
+    connection,
     definition,
     save,
     workspace,
@@ -235,11 +236,11 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
   }
   throw new Error('Expected rejection');
 }
-const posts = (current: Awaited<ReturnType<typeof fixture>>) =>
+const posts = (current: Awaited<ReturnType<typeof createFixture>>) =>
   current.calls.filter((call) => call.method !== 'GET');
 describe('internal Fragment CREATE executor and unchanged', () => {
   it('POSTs once, records destination ownership and independently reads full Draft parent/variant/siblings', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     const result = await current.run();
     expect(result.outcome).to.equal('created');
     expect(result.qualification).to.equal('unqualified');
@@ -269,7 +270,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     expect(posts(current)).to.have.length(before);
   });
   it('admits identical destination-local identity with unused enabled German and no journal writes', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     current.install();
     await writeFile(current.reportFile, 'untouched');
     const existing = await current.run();
@@ -279,7 +280,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
   });
   it('requires UPDATE for divergent authored body, structural IDs, envelope metadata or folder', async () => {
     for (const change of ['body', 'id', 'title', 'url', 'folder']) {
-      const current = await fixture();
+      const current = await createFixture();
       current.install();
       if (change === 'body')
         (current.detail.contentBody as RecordValue)['sfdc_cms:title'] = 'different';
@@ -306,7 +307,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
   });
   it('blocks provider, source, root, org and API drift after pending intent before POST', async () => {
     for (const change of ['provider', 'source', 'root', 'org', 'api']) {
-      const current = await fixture();
+      const current = await createFixture();
       let graphs = 0;
       current.onRequest(async (_method, url) => {
         if (!url.includes('/ssot/') || ++graphs !== 3) return;
@@ -326,7 +327,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
   });
   it('blocks stale absence, collisions, extra variants and published targets without writes', async () => {
     for (const change of ['absence', 'collision', 'siblings', 'published']) {
-      const current = await fixture();
+      const current = await createFixture();
       if (change !== 'absence') current.install();
       if (change === 'collision') (current.rows[0].ManagedContent as RecordValue).ApiName = 'Other';
       if (change === 'siblings')
@@ -348,7 +349,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
   });
   it('retains returned IDs and uncertain journal for independently mismatched readback without replay', async () => {
     for (const change of ['body', 'parent', 'siblings', 'published', 'root', 'source', 'key']) {
-      const current = await fixture();
+      const current = await createFixture();
       current.onRequest(async (method) => {
         if (method !== 'POST') return;
         if (change === 'body')
@@ -377,7 +378,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     }
   });
   it('never replays uncertain transport results and preserves durable pending intent', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     current.failPost(new Error('connection reset'));
     await failure(current.run(), /connection reset/u);
     expect(posts(current)).to.have.length(1);
@@ -390,7 +391,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     expect(posts(current)).to.have.length(1);
   });
   it('captures malformed response identities without claiming ownership or repeating the POST', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     current.response.managedContentVariantId = 'bad';
     await failure(current.run(), /invalid native/u);
     expect(posts(current)).to.have.length(1);
@@ -399,7 +400,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
   });
   it('does not write remotely when durable intent changes or cannot be persisted', async () => {
     for (const fail of [false, true]) {
-      const current = await fixture();
+      const current = await createFixture();
       await failure(
         current.run(true, {
           rewrite: async (file) => {
@@ -413,7 +414,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     }
   });
   it('blocks unchanged when another destination parent collides with its title or URL', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     current.install();
     current.rows.push({
       ...current.rows[0],
@@ -426,14 +427,14 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     expect(posts(current)).to.have.length(0);
   });
   it('blocks nonroot missing sources rather than flattening them', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     current.definition.folderPath = ['Nested'];
     await current.save();
     await failure(current.run(), /nonroot/u);
     expect(posts(current)).to.have.length(0);
   });
   it('retains ownership uncertainty if result persistence fails after a successful POST', async () => {
-    const current = await fixture();
+    const current = await createFixture();
     let rewrites = 0;
     await failure(
       current.run(true, {

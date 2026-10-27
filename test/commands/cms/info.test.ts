@@ -119,6 +119,9 @@ describe('cms info', () => {
       'content.deploy.document.create',
       'content.deploy.document.update',
       'content.deploy.document.unchanged',
+      'content.deploy.email-fragment.create',
+      'content.deploy.email-fragment.update',
+      'content.deploy.email-fragment.unchanged',
       'content.deploy.audio.create',
       'content.deploy.audio.update',
       'content.deploy.audio.unchanged',
@@ -154,6 +157,12 @@ describe('cms info', () => {
         transport: 'cli-json',
         contract: 'sf-cms-content-retrieve@1',
       },
+      ...['create', 'update', 'unchanged'].map((operation) => ({
+        id: `content.deploy.email-fragment.${operation}`,
+        state: 'unqualified',
+        transport: 'cli-json',
+        contract: 'sf-cms-content-deploy@1',
+      })),
     ]);
     expect(result?.capabilities.filter(({ id }) => id.includes('.audio'))).to.deep.equal([
       {

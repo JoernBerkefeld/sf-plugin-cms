@@ -143,6 +143,9 @@ describe('cms deploy content command', () => {
       ['-d', './a', '-t', 'sfdc_cms__audio'],
       ['-m', 'brand:Brand'],
       ['-d', './a', '-t', 'sfdc_cms__brand'],
+      ['-m', 'emailFragment:Welcome'],
+      ['-m', 'sfdc_cms__emailFragment'],
+      ['-d', './a', '-t', 'emailFragment'],
       ['-m', 'audio:Chime'],
       ['-m', 'sfdc_cms__audio:Chime'],
     ]) {
