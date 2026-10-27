@@ -43,27 +43,152 @@ const envelopeKeys = [
 
 const file = (relative: string) => path.join(isolatedDataDirectory, relative);
 
-type ProcessResult = {
+type ProcessResult = Readonly<{
   exitCode: number;
   stderr: string;
   stdout: string;
-};
+}>;
+
+const aliasRows = [
+  ['retrieve', 'retrieve content', '--metadata'],
+  ['deploy', 'deploy content', '--source-dir'],
+  ['delete', 'delete content', '--metadata'],
+  ['publish', 'publish content', '--acknowledge-no-send'],
+  ['unpublish', 'unpublish content', '--acknowledge-active-use-stops'],
+  ['list workspace', 'list workspace', '--name-fragment'],
+  ['list channel', 'list channel', '--workspace-id'],
+  ['upload', 'upload', '--file'],
+  ['info', 'info', '--contract-version'],
+] as const;
+
+// Settle every started child before exposing a failure or allowing fixture teardown.
+async function runAliasJobs<T>(jobs: Array<() => Promise<T>>): Promise<T[]> {
+  const results: T[] = [];
+  for (let offset = 0; offset < jobs.length; offset += 4) {
+    const settled = await Promise.allSettled(jobs.slice(offset, offset + 4).map((job) => job()));
+    const failure = settled.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    for (const result of settled) {
+      if (result.status === 'fulfilled') results.push(result.value);
+    }
+  }
+  return results;
+}
+
+type AliasCapture = { directory: string; argv: string[]; result: ProcessResult };
+let aliasBatch: Promise<AliasCapture[]> | undefined;
+let canonicalInfo: Promise<ProcessResult> | undefined;
+let aliasDirectory: string | undefined;
+
+function installedInfo(): Promise<ProcessResult> {
+  canonicalInfo ??= runSf(['cms', 'info', '--json']).then((result) => Object.freeze(result));
+  return canonicalInfo;
+}
+
+async function installedHelp(canonical: string): Promise<ProcessResult> {
+  const captures = await captureAliasMatrix();
+  return captures[aliasRows.findIndex((row) => row[1] === canonical) * 4].result;
+}
+
+function captureAliasMatrix(): Promise<AliasCapture[]> {
+  aliasBatch ??= (async () => {
+    aliasDirectory = await createRunOwnedDirectory(fixtureRun, 'alias-matrix');
+    const installed = JSON.parse(await readFile(file('package.json'), 'utf8')) as {
+      oclif: { plugins: Array<Record<string, unknown>> };
+    };
+    const jobs: Array<() => Promise<AliasCapture>> = [];
+    for (const [alias, canonical] of aliasRows) {
+      for (const route of [
+        ['cms', ...canonical.split(' ')],
+        ['content', ...alias.split(' ')],
+      ]) {
+        const list = canonical.startsWith('list ');
+        const lifecycle = ['publish content', 'unpublish content'].includes(canonical);
+        let invalidArgv = [...route, '--api', 'cli', '--json'];
+        if (list)
+          invalidArgv = [
+            ...route,
+            '--page',
+            '0',
+            '--target-org',
+            'unused',
+            ...(canonical === 'list channel' ? ['--workspace-id', 'space'] : []),
+            '--json',
+          ];
+        else if (lifecycle)
+          invalidArgv = [
+            ...route,
+            '--target-org',
+            'unused',
+            '--workspace-id',
+            'space',
+            '-m',
+            'email',
+            ...(route[0] === 'cms' ? ['--api-name', 'pilot_email'] : []),
+            '--json',
+          ];
+        let invalidCase: string | undefined;
+        if (list) invalidCase = 'logging-pagination-invalid';
+        else if (lifecycle) invalidCase = 'logging-guards';
+        for (const [argv, contractCase] of [
+          [[...route, '--help'], undefined],
+          [invalidArgv, invalidCase],
+        ] as const) {
+          const directory = path.join(aliasDirectory, `scenario-${jobs.length}`);
+          jobs.push(async () => {
+            await mkdir(directory);
+            await writeFile(
+              path.join(directory, 'package.json'),
+              JSON.stringify({
+                name: 'sf-plugin-cms-cli-fixture',
+                private: true,
+                oclif: {
+                  schema: 1,
+                  plugins: installed.oclif.plugins.map((plugin) => ({
+                    ...plugin,
+                    root: installedPluginRoot,
+                  })),
+                },
+              }),
+            );
+            const result = await runSf(
+              [...argv],
+              contractCase,
+              {
+                HOME: directory,
+                USERPROFILE: directory,
+                XDG_CONFIG_HOME: directory,
+                XDG_CACHE_HOME: path.join(directory, 'cache'),
+                SF_CACHE_DIR: path.join(directory, 'cache'),
+              },
+              directory,
+            );
+            return { directory, argv: [...argv], result: Object.freeze(result) };
+          });
+        }
+      }
+    }
+    return runAliasJobs(jobs);
+  })();
+  return aliasBatch;
+}
 
 async function runSf(
   arguments_: string[],
   contractCase?: string,
   environment: NodeJS.ProcessEnv = {},
+  directory = isolatedDataDirectory,
 ): Promise<ProcessResult> {
   try {
     const pending = execFileAsync(executable, [...sfPrefix, ...arguments_], {
-      cwd: isolatedDataDirectory,
+      cwd: directory,
       encoding: 'utf8',
       env: {
         ...process.env,
         NO_COLOR: '1',
         ...environment,
-        SF_DATA_DIR: isolatedDataDirectory,
-        SF_CONFIG_DIR: isolatedDataDirectory,
+        SF_DATA_DIR: directory,
+        SF_CONFIG_DIR: directory,
         ...(contractCase === undefined
           ? {}
           : {
@@ -90,11 +215,15 @@ async function runSf(
 
 type LogRecord = { message: string; details?: Record<string, unknown> };
 
-async function invocationRecords(result: ProcessResult, argv: string[]): Promise<LogRecord[]> {
+async function invocationRecords(
+  result: ProcessResult,
+  argv: string[],
+  directory = isolatedDataDirectory,
+): Promise<LogRecord[]> {
   const notices = [...result.stderr.matchAll(/^CMS log: (.+)\r?$/gmu)];
   expect(notices, result.stderr).to.have.length(1);
   const logPath = notices[0][1].trim();
-  expect(path.dirname(logPath)).to.equal(file('logs/cms'));
+  expect(path.dirname(logPath)).to.equal(path.join(directory, 'logs/cms'));
   expect(path.basename(logPath)).to.match(/^\d{4}-\d\d-\d\dT\d\d\.\d\d\.\d\d\.\d{3}Z\.log$/u);
   const bytes = await readFile(logPath, 'utf8');
   const records = bytes
@@ -103,7 +232,7 @@ async function invocationRecords(result: ProcessResult, argv: string[]): Promise
     .map((line) => JSON.parse(line) as LogRecord);
   expect(records[0].message).to.equal(`sf-plugin-cms ${installedPackageVersion}`);
   expect(records[1].message).to.equal('invocation');
-  expect(records[1].details).to.deep.include({ argv, cwd: isolatedDataDirectory });
+  expect(records[1].details).to.deep.include({ argv, cwd: directory });
   for (const channel of ['stdout', 'stderr']) {
     const transcript = records
       .filter(({ message, details }) => message === 'terminal' && details?.channel === channel)
@@ -252,6 +381,8 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   after(async () => {
     if (isolatedDataDirectory === undefined) return;
+    if (aliasBatch !== undefined) await aliasBatch.catch(() => {});
+    if (aliasDirectory !== undefined) await removeRunOwnedPath(fixtureRun, aliasDirectory);
     await removeRunOwnedNodeModules(fixtureRun, isolatedDataDirectory, 'sf-plugin-cms-cli-fixture');
     await removeRunOwnedPath(fixtureRun, isolatedDataDirectory);
     await lstat(isolatedDataDirectory).then(
@@ -262,11 +393,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
-  for (const [title, command, contractCase, expectedStatus, expectedExit] of [
-    ['success', ['cms', 'info', '--json'], undefined, 'success', 0],
-  ] as const) {
+  for (const [title, expectedStatus, expectedExit] of [['success', 'success', 0]] as const) {
     it(`emits one exact seven-key envelope for ${title} and exits ${expectedExit}`, async () => {
-      const result = await runSf([...command], contractCase);
+      const result = await installedInfo();
       const envelope = parseEnvelope(result);
 
       expect(result.exitCode).to.equal(expectedExit);
@@ -356,24 +485,61 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     }
   });
 
-  for (const [alias, canonical, evidence] of [
-    ['retrieve', 'retrieve content', '--metadata'],
-    ['deploy', 'deploy content', '--source-dir'],
-    ['delete', 'delete content', '--metadata'],
-    ['publish', 'publish content', '--acknowledge-no-send'],
-    ['unpublish', 'unpublish content', '--acknowledge-active-use-stops'],
-    ['list workspace', 'list workspace', '--name-fragment'],
-    ['list channel', 'list channel', '--workspace-id'],
-    ['upload', 'upload', '--file'],
-    ['info', 'info', '--contract-version'],
-  ]) {
+  it('bounds alias children and settles started siblings before propagating failure', async () => {
+    let active = 0;
+    let peak = 0;
+    const values = await runAliasJobs(
+      Array.from({ length: 9 }, (_, index) => async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active--;
+        return index;
+      }),
+    );
+    expect(peak).to.equal(4);
+    expect(active).to.equal(0);
+    expect(values).to.deep.equal([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    let release!: () => void;
+    const sibling = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const failure = new Error('controlled alias failure');
+    let finished = false;
+    let started = 0;
+    const pending = runAliasJobs(
+      Array.from({ length: 5 }, (_, index) => async () => {
+        started++;
+        if (index === 0) throw failure;
+        await sibling;
+        return index;
+      }),
+    ).then(
+      () => {},
+      (error: unknown) => {
+        finished = true;
+        return error;
+      },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).to.equal(4);
+    expect(finished).to.equal(false);
+    release();
+    expect(await pending).to.equal(failure);
+    expect(finished).to.equal(true);
+    expect(started).to.equal(4);
+  });
+
+  for (const [rowIndex, [alias, canonical, evidence]] of aliasRows.entries()) {
     it(`resolves packed content ${alias} help to the canonical command`, async () => {
-      for (const route of [
+      const captures = await captureAliasMatrix();
+      for (const [routeIndex, route] of [
         ['cms', ...canonical.split(' ')],
         ['content', ...alias.split(' ')],
-      ]) {
-        const argv = [...route, '--help'];
-        const help = await runSf(argv);
+      ].entries()) {
+        const capture = captures[rowIndex * 4 + routeIndex * 2];
+        const help = capture.result;
         expect(help.exitCode, help.stdout + help.stderr).to.equal(0);
         const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
         expect(normalizedHelp).to.include(`sf cms ${canonical}`);
@@ -409,9 +575,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
             ...(route[0] === 'cms' ? ['--api-name', 'pilot_email'] : []),
             '--json',
           ];
-        let invalidCase = lifecycle ? 'logging-guards' : undefined;
-        if (list) invalidCase = 'logging-pagination-invalid';
-        const invalid = await runSf(invalidArgv, invalidCase);
+        const invalidCapture = captures[rowIndex * 4 + routeIndex * 2 + 1];
+        expect(invalidCapture.argv).to.deep.equal(invalidArgv);
+        const invalid = invalidCapture.result;
         const parseFailure = list || (lifecycle && route[0] === 'cms');
         expect(invalid.exitCode, invalid.stdout + invalid.stderr).to.equal(parseFailure ? 2 : 1);
         if (lifecycle) {
@@ -420,7 +586,12 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           else
             expect(JSON.stringify(parseEnvelope(invalid).diagnostics)).to.include('Type:ApiName');
           expect(
-            JSON.parse(await readFile(file('logging-guards-transport.json'), 'utf8')),
+            JSON.parse(
+              await readFile(
+                path.join(invalidCapture.directory, 'logging-guards-transport.json'),
+                'utf8',
+              ),
+            ),
           ).to.deep.equal([]);
         } else
           expect(JSON.parse(invalid.stdout).message).to.match(
@@ -428,12 +599,17 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
           );
         if (list) {
           expect(
-            JSON.parse(await readFile(file('logging-pagination-invalid-transport.json'), 'utf8')),
+            JSON.parse(
+              await readFile(
+                path.join(invalidCapture.directory, 'logging-pagination-invalid-transport.json'),
+                'utf8',
+              ),
+            ),
           ).to.deep.equal([]);
           expect(invalid.stdout + invalid.stderr).not.to.include('Unexpected pagination fixture');
           expect(invalid.stderr).not.to.include('Using org ');
         }
-        const records = await invocationRecords(invalid, invalidArgv);
+        const records = await invocationRecords(invalid, invalidArgv, invalidCapture.directory);
         expect(
           records.some(
             ({ message }) =>
@@ -450,7 +626,9 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       const suffix = unsupported
         ? ['--contract-version', '3', '--api', 'log', '--json']
         : ['--json'];
-      const canonical = await runSf(['cms', 'info', ...suffix]);
+      const canonical = unsupported
+        ? await runSf(['cms', 'info', ...suffix])
+        : await installedInfo();
       const alias = await runSf(['content', 'info', ...suffix]);
       expect(alias.exitCode, alias.stdout + alias.stderr).to.equal(unsupported ? 1 : 0);
       expect(alias.exitCode).to.equal(canonical.exitCode);
@@ -841,7 +1019,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   it('reports current installed public support separately from internal registry provenance', async () => {
-    const response = await runSf(['cms', 'info', '--json']);
+    const response = await installedInfo();
     expect(response.exitCode).to.equal(0);
     const envelope = parseEnvelope(response);
     expectPluginVersion(envelope, installedPackageVersion);
@@ -926,7 +1104,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
         contract: 'sf-cms-content-delete@1',
       },
     ]);
-    const deployHelp = await runSf(['cms', 'deploy', 'content', '--help']);
+    const deployHelp = await installedHelp('deploy content');
     expect(deployHelp.exitCode, deployHelp.stderr).to.equal(0);
     const helpText = deployHelp.stdout.replaceAll(/\s+/gu, ' ');
     expect(helpText).to.include('Documents support CREATE, bytes-only UPDATE and exact unchanged');
@@ -1402,7 +1580,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('previews ordered packed Email publish metadata v2 with exact selectors', async function () {
     this.timeout(300_000);
-    const help = await runSf(['cms', 'publish', 'content', '--help']);
+    const help = await installedHelp('publish content');
     expect(help.exitCode, help.stderr).to.equal(0);
     const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
     expect(normalizedHelp).to.include('sf cms publish content');
@@ -1524,7 +1702,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
 
   it('previews and applies one installed packed Email unpublish', async function () {
     this.timeout(300_000);
-    const help = await runSf(['cms', 'unpublish', 'content', '--help']);
+    const help = await installedHelp('unpublish content');
     expect(help.exitCode, help.stderr).to.equal(0);
     const normalizedHelp = help.stdout.replaceAll(/\s+/gu, ' ');
     expect(normalizedHelp).to.include('sf cms unpublish content');
@@ -1641,7 +1819,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
   });
 
   it('renders installed retrieve defaults and operation-scoped friendly examples without auth', async () => {
-    const retrieve = await runSf(['cms', 'retrieve', 'content', '--help']);
+    const retrieve = await installedHelp('retrieve content');
     expect(retrieve.exitCode, retrieve.stderr).to.equal(0);
     const retrieveHelp = retrieve.stdout.replaceAll(/\s+/gu, ' ');
     expect(retrieveHelp).to.include('Content Workspace for Marketing Cloud');
@@ -1649,7 +1827,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     expect(retrieveHelp).to.include('current directory');
     expect(retrieveHelp).to.include('emailTemplate');
     expect(retrieveHelp).to.include('sfdc_cms__ names');
-    const deploy = await runSf(['cms', 'deploy', 'content', '--help']);
+    const deploy = await installedHelp('deploy content');
     expect(deploy.exitCode, deploy.stderr).to.equal(0);
     const deployHelp = deploy.stdout.replaceAll(/\s+/gu, ' ');
     expect(deployHelp).to.include('-m email:Welcome');
@@ -1661,7 +1839,7 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
       'Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile',
     );
     expect(retrieveHelp).not.to.include('Audio deployment is not enabled');
-    const deletion = await runSf(['cms', 'delete', 'content', '--help']);
+    const deletion = await installedHelp('delete content');
     expect(deletion.exitCode, deletion.stderr).to.equal(0);
     expect(deletion.stdout.replaceAll(/\s+/gu, ' ')).to.include('--metadata');
     expect(deletion.stdout).to.include('audio');
