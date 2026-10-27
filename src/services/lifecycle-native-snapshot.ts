@@ -2,7 +2,14 @@ import type { Connection } from '@salesforce/core';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { sourcePathSegment } from '../contracts/source-definition.js';
-import { getContent, getVariant, type CmsRecord } from './read.js';
+import { getContent, getVariant, getWorkspace, type CmsRecord } from './read.js';
+import { assertSingleDefaultEmailFragmentVariant } from '../contracts/email-fragment-source.js';
+import { acquireEditableEmailFragmentSource } from './retrieve-item-source.js';
+import { prerequisites } from './deploy-email-fragment-create-preflight.js';
+import {
+  validateDataGraphPrerequisites,
+  type WebFragmentDataGraphPrerequisite,
+} from './web-fragment.js';
 import { inventoryExportReferences } from './export-references.js';
 import { assertNativeBody, decodeNativeHtml, safeNativeRawHtml } from './import-identities.js';
 import type { WorkspaceImportItem } from './import-workspace.js';
@@ -41,6 +48,8 @@ export type LifecycleNativeMediaReceipt = { sha256: string; size: number; mimeTy
 export type LifecycleNativeSnapshot = LifecycleNativeIdentitySnapshot & {
   references: ReturnType<typeof inventoryExportReferences>['externalReferences'];
   mediaReceipt?: LifecycleNativeMediaReceipt;
+  fragmentVersion?: string;
+  fragmentPrerequisites?: readonly WebFragmentDataGraphPrerequisite[];
 };
 type NativeConnection = Pick<Connection, 'request' | 'getApiVersion'> &
   Partial<Pick<Connection, 'accessToken' | 'instanceUrl'>>;
@@ -123,6 +132,7 @@ export async function acquireLifecycleNativeIdentitySnapshot(
     ![
       'sfdc_cms__email',
       'sfdc_cms__emailTemplate',
+      'sfdc_cms__emailFragment',
       'sfdc_cms__image',
       'sfdc_cms__document',
       'sfdc_cms__audio',
@@ -153,6 +163,15 @@ export async function acquireLifecycleNativeIdentitySnapshot(
     (selected.contentType !== 'sfdc_cms__email' && siblings.records.length !== 1)
   )
     throw new TypeError('Independent native sibling evidence disagrees or is not single-variant');
+  if (selected.contentType === 'sfdc_cms__emailFragment') {
+    const workspace = await getWorkspace(connection, selected.workspaceId, requestOptions);
+    if (workspace.id !== selected.workspaceId || typeof workspace.defaultLanguage !== 'string')
+      throw new TypeError('Fragment workspace default identity is unavailable');
+    assertSingleDefaultEmailFragmentVariant(
+      siblings.records.map((sibling) => ({ ...sibling, VariantType: sibling.VariantType ?? '' })),
+      workspace.defaultLanguage,
+    );
+  }
   const variant = await getVariant(connection, row.Id, requestOptions);
   const parent = await getContent(connection, row.ManagedContentId, {}, requestOptions);
   bind(variant, row);
@@ -227,6 +246,55 @@ export async function acquireLifecycleNativeSnapshot(
     )
       throw new TypeError('Native lifecycle requires only the included self identity reference');
     if (references.length === 0) references.push(self);
+  }
+  if (selected.contentType === 'sfdc_cms__emailFragment') {
+    // Reuse the strict full-body Fragment projection, including native provenance and folder guards.
+    const acquired = await acquireEditableEmailFragmentSource(
+      connection,
+      {
+        workspaceId: selected.workspaceId,
+        apiName: selected.apiName,
+        language: selected.language,
+      },
+      requestOptions,
+    );
+    const definition = acquired.projection.definition;
+    if (
+      acquired.evidence.contentId !== snapshot.identity.contentId ||
+      acquired.evidence.variantId !== snapshot.identity.variantId ||
+      !isDeepStrictEqual(definition.contentBody, snapshot.variant.contentBody) ||
+      definition.title !== snapshot.variant.title ||
+      definition.urlName !== snapshot.variant.urlName
+    )
+      throw new TypeError('Fragment full authoring projection drifted during acquisition');
+    // Brand/provider expressions remain authored references, never additional lifecycle targets.
+    const dataGraphs = prerequisites(definition.contentBody);
+    await validateDataGraphPrerequisites(
+      {
+        version: connection.getApiVersion(),
+        request: connection.request.bind(connection),
+      },
+      dataGraphs,
+    );
+    const repeated = await acquireLifecycleNativeIdentitySnapshot(
+      connection,
+      selected,
+      requestOptions,
+    );
+    if (!isDeepStrictEqual(repeated, snapshot))
+      throw new TypeError('Fragment native evidence changed during prerequisite acquisition');
+    if (
+      typeof snapshot.variant.managedContentVersionId !== 'string' ||
+      !snapshot.variant.managedContentVersionId ||
+      snapshot.variant.managedContentVersionId !== snapshot.parent.managedContentVersionId
+    )
+      throw new TypeError('Fragment native version identity is unavailable or disagrees');
+    return structuredClone({
+      ...snapshot,
+      references,
+      fragmentVersion: snapshot.variant.managedContentVersionId,
+      fragmentPrerequisites: dataGraphs,
+    });
   }
   if (['sfdc_cms__email', 'sfdc_cms__emailTemplate'].includes(selected.contentType)) {
     for (const detail of [snapshot.variant, snapshot.parent]) {

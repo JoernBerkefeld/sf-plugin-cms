@@ -8,7 +8,11 @@ import {
 } from './shared.js';
 
 export type QualifiedNativePublishType =
-  'sfdc_cms__emailTemplate' | 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
+  | 'sfdc_cms__emailTemplate'
+  | 'sfdc_cms__emailFragment'
+  | 'sfdc_cms__image'
+  | 'sfdc_cms__document'
+  | 'sfdc_cms__audio';
 type NativePublishObservation = {
   isPublished: boolean;
   status: { label: string; status: string };
@@ -21,6 +25,8 @@ export type ContentPublishNativeEvidence = {
   variantLifecycle: NativePublishObservation;
   references: readonly OpaqueCmsReference[];
   mediaReceipt?: { sha256: string; size: number; mimeType: string };
+  fragmentVersion?: string;
+  fragmentPrerequisites?: readonly import('../services/web-fragment.js').WebFragmentDataGraphPrerequisite[];
 };
 
 export const CONTENT_PUBLISH_CONTRACT = 'sf-cms-content-publish' as const;
@@ -342,10 +348,13 @@ export function assertNativePublishEvidence(
   published: boolean,
 ): void {
   if (!record(value)) throw new TypeError('Native publish evidence must be an object');
-  const media = value.contentType !== 'sfdc_cms__emailTemplate';
+  const media = !['sfdc_cms__emailTemplate', 'sfdc_cms__emailFragment'].includes(
+    value.contentType as string,
+  );
   if (
     ![
       'sfdc_cms__emailTemplate',
+      'sfdc_cms__emailFragment',
       'sfdc_cms__image',
       'sfdc_cms__document',
       'sfdc_cms__audio',
@@ -362,6 +371,9 @@ export function assertNativePublishEvidence(
       'variantLifecycle',
       'references',
       ...(media ? ['mediaReceipt'] : []),
+      ...(value.contentType === 'sfdc_cms__emailFragment'
+        ? ['fragmentVersion', 'fragmentPrerequisites']
+        : []),
     ],
     'nativeEvidence',
   );
@@ -406,6 +418,56 @@ export function assertNativePublishEvidence(
     reference.portableKey.value !== identity.contentKey
   )
     throw new TypeError('Native publish reference must bind selected identity');
+  if (value.contentType === 'sfdc_cms__emailFragment') {
+    assertNonemptyString(value.fragmentVersion, 'nativeEvidence.fragmentVersion');
+    if (!Array.isArray(value.fragmentPrerequisites))
+      throw new TypeError('Fragment prerequisite evidence must be an array');
+    for (const prerequisite of value.fragmentPrerequisites as unknown[]) {
+      assertExactKeys(
+        prerequisite,
+        [
+          'sourceDeveloperName',
+          'sourceDataSpace',
+          'targetDeveloperName',
+          'targetDataSpace',
+          'resolution',
+          'validationStatus',
+          'validationEvidence',
+        ],
+        'Fragment prerequisite',
+      );
+      for (const key of [
+        'sourceDeveloperName',
+        'sourceDataSpace',
+        'targetDeveloperName',
+        'targetDataSpace',
+      ])
+        assertNonemptyString(prerequisite[key], `Fragment prerequisite ${key}`);
+      if (
+        prerequisite.resolution !== 'preserved' ||
+        prerequisite.validationStatus !== 'passed' ||
+        prerequisite.sourceDeveloperName !== prerequisite.targetDeveloperName ||
+        prerequisite.sourceDataSpace !== prerequisite.targetDataSpace
+      )
+        throw new TypeError(
+          'Fragment prerequisites must be independently validated without mapping',
+        );
+      assertExactKeys(
+        prerequisite.validationEvidence,
+        ['url', 'name', 'dataspaceName', 'status'],
+        'Fragment prerequisite validation',
+      );
+      const validation = prerequisite.validationEvidence as Record<string, unknown>;
+      assertNonemptyString(validation.url, 'Fragment prerequisite URL');
+      if (
+        validation.name !== prerequisite.targetDeveloperName ||
+        validation.dataspaceName !== prerequisite.targetDataSpace ||
+        typeof validation.status !== 'string' ||
+        !['ready', 'active'].includes(validation.status.trim().toLowerCase())
+      )
+        throw new TypeError('Fragment prerequisite validation identity or status disagrees');
+    }
+  }
   if (media) {
     assertExactKeys(
       value.mediaReceipt,

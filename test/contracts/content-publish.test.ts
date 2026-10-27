@@ -38,6 +38,9 @@ function fixture(contentType = 'sfdc_cms__emailTemplate', completed = false) {
         canonicalAuthoringHash: hash,
         parentLifecycle: structuredClone(lifecycle),
         variantLifecycle: structuredClone(lifecycle),
+        ...(contentType === 'sfdc_cms__emailFragment'
+          ? { fragmentVersion: 'version', fragmentPrerequisites: [] }
+          : {}),
         references: [
           {
             referenceId: `ref:${'b'.repeat(64)}`,
@@ -49,7 +52,7 @@ function fixture(contentType = 'sfdc_cms__emailTemplate', completed = false) {
             resolution: 'included',
           },
         ],
-        ...(contentType === 'sfdc_cms__emailTemplate'
+        ...(['sfdc_cms__emailTemplate', 'sfdc_cms__emailFragment'].includes(contentType)
           ? {}
           : { mediaReceipt: { sha256: hash, size: 70, mimeType: 'image/png' } }),
       },
@@ -95,6 +98,7 @@ describe('strict optional native publish evidence (no execution admission)', () 
   });
   for (const family of [
     'sfdc_cms__emailTemplate',
+    'sfdc_cms__emailFragment',
     'sfdc_cms__image',
     'sfdc_cms__document',
     'sfdc_cms__audio',
@@ -107,6 +111,56 @@ describe('strict optional native publish evidence (no execution admission)', () 
       });
     }
   }
+  it('rejects missing, mapped, failed or foreign Fragment prerequisite receipts', () => {
+    const prerequisite = {
+      sourceDeveloperName: 'CustomerGraph',
+      sourceDataSpace: 'default',
+      targetDeveloperName: 'CustomerGraph',
+      targetDataSpace: 'default',
+      resolution: 'preserved',
+      validationStatus: 'passed',
+      validationEvidence: {
+        url: '/ssot/data-graphs/CustomerGraph',
+        name: 'CustomerGraph',
+        dataspaceName: 'default',
+        status: 'Ready',
+      },
+    };
+    const result = fixture('sfdc_cms__emailFragment');
+    const evidence = result.evidence.nativeEvidence as unknown as Record<string, unknown>;
+    evidence.fragmentPrerequisites = [prerequisite];
+    expect(() => assertContentPublishResult(result)).not.to.throw();
+    for (const change of [
+      { fragmentVersion: '' },
+      { fragmentPrerequisites: undefined },
+      { fragmentPrerequisites: [{ ...prerequisite, resolution: 'mapped' }] },
+      { fragmentPrerequisites: [{ ...prerequisite, targetDeveloperName: 'Foreign' }] },
+      { fragmentPrerequisites: [{ ...prerequisite, validationStatus: 'failed' }] },
+      {
+        fragmentPrerequisites: [
+          {
+            ...prerequisite,
+            validationEvidence: { ...prerequisite.validationEvidence, name: 'Foreign' },
+          },
+        ],
+      },
+      {
+        fragmentPrerequisites: [
+          {
+            ...prerequisite,
+            validationEvidence: { ...prerequisite.validationEvidence, status: 'Pending' },
+          },
+        ],
+      },
+    ]) {
+      expect(() =>
+        assertContentPublishResult({
+          ...result,
+          evidence: { ...result.evidence, nativeEvidence: { ...evidence, ...change } },
+        }),
+      ).to.throw();
+    }
+  });
   it('keeps legacy evidence without native additions valid', () => {
     const result = fixture() as unknown as { evidence: Record<string, unknown> };
     delete result.evidence.nativeEvidence;

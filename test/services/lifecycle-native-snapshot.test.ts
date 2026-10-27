@@ -1,5 +1,5 @@
 import type { Connection } from '@salesforce/core';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import PublishContent from '../../src/commands/cms/publish/content.js';
 import UnpublishContent from '../../src/commands/cms/unpublish/content.js';
 import { runLifecycleMetadataBatch } from '../../src/services/lifecycle-batch.js';
@@ -130,6 +130,34 @@ function staticFixture() {
   current.parent.contentBody = structuredClone(body);
   return current;
 }
+function fragmentFixture() {
+  const current = fixture('sfdc_cms__emailFragment');
+  for (const row of [current.row, current.siblings[0]]) {
+    row.VariantType = 'Content';
+    row.UrlName = 'native';
+  }
+  Object.assign(current.workspace, {
+    rootFolderId: '9Puaj0000000001CAA',
+    languages: ['en_US', 'de'],
+  });
+  for (const detail of [current.variant, current.parent]) {
+    detail.folder = null;
+    detail.source = 'User';
+    detail.managedContentVersionId = '5OUaj0000000001GAA';
+    detail.contentBody = {
+      'sfdc_cms:title': 'Native template',
+      'sfdc_cms:block': {
+        type: 'block',
+        definition: 'sfdc_cms/rootContentBlock',
+        id: '00000000-0000-4000-8000-000000000001',
+        children: [],
+      },
+      'lightning:brandSource': { defaultBrandOption: 'sfdcBrand' },
+      'lightning:expressions': { color: '{!$brand.color}' },
+    };
+  }
+  return current;
+}
 function mediaFixture(contentType = 'sfdc_cms__image') {
   const current = fixture(contentType);
   const bytes = Buffer.from('Exact native bytes');
@@ -178,10 +206,11 @@ const batchResponse = (value: unknown) =>
 // Real batch/CLI fixture: native queries retain family and independent parent scope.
 function batchFixture(operation: 'publish' | 'unpublish', families: string[]) {
   const entries = families.map((family, index) => {
-    const current =
-      family === 'sfdc_cms__emailTemplate' || family === 'sfdc_cms__email'
-        ? staticFixture()
-        : mediaFixture(family);
+    let current: ReturnType<typeof fixture>;
+    if (family === 'sfdc_cms__emailFragment') current = fragmentFixture();
+    else if (family === 'sfdc_cms__emailTemplate' || family === 'sfdc_cms__email')
+      current = staticFixture();
+    else current = mediaFixture(family);
     const suffix = String(index).padStart(3, '0');
     const parentId = `20Yaj00000Fa${suffix}EAF`;
     const id = `9Psaj00000J5${suffix}CAR`;
@@ -219,7 +248,12 @@ function batchFixture(operation: 'publish' | 'unpublish', families: string[]) {
     request: sinon.stub().callsFake(({ url, method }: { url: string; method?: string }) => {
       expect(method ?? 'GET').to.equal('GET');
       if (url.includes('/spaces/'))
-        return batchResponse({ id: workspaceId, apiName: 'Marketing', defaultLanguage: 'en_US' });
+        return batchResponse({
+          id: workspaceId,
+          apiName: 'Marketing',
+          defaultLanguage: 'en_US',
+          rootFolderId: '9Puaj0000000001CAA',
+        });
       if (url.includes('/query?q=')) {
         const query = decodeURIComponent(url.split('?q=')[1]);
         const rows = entries
@@ -325,6 +359,159 @@ function batchFixture(operation: 'publish' | 'unpublish', families: string[]) {
     },
   };
 }
+
+describe('Fragment native lifecycle admission', () => {
+  afterEach(() => sinon.restore());
+  for (const operation of ['publish', 'unpublish'] as const) {
+    for (const problem of [
+      'none',
+      'primary',
+      'classification',
+      'default',
+      'body',
+      'reference',
+      'provider',
+      'graph ready',
+      'graph denied',
+      'graph wrong',
+      'extra sibling',
+    ] as const) {
+      it(`${operation}: validates full Fragment and native default evidence: ${problem}`, async () => {
+        const current = fragmentFixture();
+        if (operation === 'unpublish') {
+          for (const row of [current.row, current.siblings[0]]) {
+            row.IsPublished = true;
+            row.ManagedContentVariantStatus = 'Published';
+          }
+          for (const detail of [current.parent, current.variant]) {
+            detail.isPublished = true;
+            detail.status = { label: 'Published', status: 'Published' };
+          }
+        }
+        for (const row of [current.row, current.siblings[0]]) {
+          if (problem === 'primary') row.IsPrimary = false;
+          if (problem === 'classification') row.VariantType = 'Translation';
+        }
+        if (problem === 'default') current.workspace.defaultLanguage = 'de';
+        for (const detail of [current.parent, current.variant]) {
+          const body = detail.contentBody as Record<string, unknown>;
+          if (problem === 'body') body.rawHtml = 'not Fragment';
+          if (problem === 'reference') body.foreign = { ref: { contentKey: 'FOREIGN' } };
+          if (problem === 'provider') body['lightning:dataProviders'] = [{ definition: 'unknown' }];
+        }
+        if (problem === 'extra sibling')
+          current.siblings.push({ ...current.row, Id: '9Psaj00000J5oxKCAR', Language: 'de' });
+        if (problem.startsWith('graph ')) {
+          for (const detail of [current.parent, current.variant])
+            (detail.contentBody as Record<string, unknown>)['lightning:dataProviders'] = [
+              {
+                definition: 'sfdc_cms__dataGraphDataProvider',
+                sfdcExpressionKey: '$dataGraph',
+                attributes: { dataGraphApiName: 'CustomerGraph', dataspace: 'default' },
+              },
+            ];
+          const request = current.connection.request.bind(current.connection);
+          sinon.stub(current.connection, 'request').callsFake(((
+            ...args: Parameters<typeof request>
+          ) => {
+            if ((args[0] as { url: string }).url.includes('/ssot/data-graphs/')) {
+              if (problem === 'graph denied') return Promise.reject(new Error('permission denied'));
+              return Promise.resolve({
+                name: problem === 'graph wrong' ? 'Foreign' : 'CustomerGraph',
+                dataspaceName: 'default',
+                status: 'Ready',
+              });
+            }
+            return request(...args);
+          }) as typeof request);
+        }
+        const preview =
+          operation === 'publish'
+            ? await previewDraftEmailPublish(current.connection, input(current))
+            : await previewPublishedEmailUnpublish(current.connection, input(current));
+        expect(preview.status, JSON.stringify(preview)).to.equal(
+          ['none', 'graph ready'].includes(problem) ? 'ready' : 'blocked',
+        );
+        expect(current.calls.every((url) => !url.includes('/search'))).to.equal(true);
+      });
+    }
+    for (const problem of [
+      'none',
+      'fresh sibling',
+      'fresh default',
+      'body drift',
+      'version drift',
+      'local drift',
+      'pending failure',
+    ] as const) {
+      it(`${operation}: real Fragment batch is single-attempt and stops on ${problem}`, async () => {
+        const current = batchFixture(operation, ['sfdc_cms__emailFragment']);
+        const run = await createRunOwnedTemp('cms-fragment-lifecycle-');
+        const original = structuredClone(current.entries[0].variant.contentBody);
+        const directory = path.join(run.root, 'cms', 'Marketing', 'emailFragment');
+        await mkdir(directory, { recursive: true });
+        const file = path.join(directory, 'Native_0.cms-email-fragment.json');
+        const bytes = Buffer.from(
+          JSON.stringify(
+            {
+              contract: 'sf-cms-email-fragment-source',
+              contractVersion: '1.0.0',
+              identity: {
+                family: 'cms',
+                type: 'Email Fragment',
+                apiName: 'Native_0',
+                context: { workspaceApiName: 'Marketing' },
+              },
+              contentType: 'sfdc_cms__emailFragment',
+              language: 'en_US',
+              title: 'Local authored edits',
+              urlName: 'local-edits',
+              folderPath: [],
+              contentBody: original,
+            },
+            undefined,
+            4,
+          ) + '\n',
+        );
+        await writeFile(file, bytes);
+        const result = await runLifecycleMetadataBatch(current.connection, current.input, {
+          mode: 'apply',
+          projectRoot: run.root,
+          reportDirectory: path.join(run.root, 'reports'),
+          rewriteReport: async (file, data) => {
+            const report = data as { state?: string };
+            if (file.includes('target-') && report.state === 'pending') {
+              if (problem === 'pending failure') throw new Error('disk failed');
+              if (problem === 'local drift')
+                await writeFile(
+                  path.join(directory, 'Native_0.cms-email-fragment.json'),
+                  Buffer.concat([bytes, Buffer.from(' ')]),
+                );
+              if (problem === 'fresh sibling') current.entries[0].row.VariantType = 'Translation';
+              if (problem === 'fresh default') current.entries[0].row.IsPrimary = false;
+              if (problem === 'body drift') current.entries[0].variant.title = 'changed';
+              if (problem === 'version drift')
+                for (const detail of [current.entries[0].variant, current.entries[0].parent])
+                  detail.managedContentVersionId = '5OUaj0000000002GAA';
+            }
+            await rewriteAtomic(file, data);
+          },
+        });
+        let expectedStatus = 'blocked';
+        if (problem === 'none') expectedStatus = 'success';
+        if (problem === 'local drift') expectedStatus = 'partial';
+        expect(result.status, JSON.stringify(result)).to.equal(expectedStatus);
+        expect(current.dispatched).to.have.length(
+          ['none', 'local drift'].includes(problem) ? 1 : 0,
+        );
+        expect(await readFile(file)).to.deep.equal(
+          problem === 'local drift' ? Buffer.concat([bytes, Buffer.from(' ')]) : bytes,
+        );
+        expect(current.entries[0].variant.contentBody).to.deep.equal(original);
+      });
+    }
+  }
+});
 
 describe('qualified native metadata batch integration', () => {
   afterEach(() => {

@@ -219,6 +219,8 @@ async function resolveSelector(
 ): Promise<ResolvedSelector> {
   nonempty(selector.workspaceId, 'workspaceId');
   nonempty(selector.apiName, 'apiName');
+  if (/[:*?[\]{}]/u.test(selector.apiName))
+    throw new TypeError('Unpublish requires an exact API name without wildcards');
   if ((selector.language === undefined) === (selector.useDefaultLanguage !== true))
     throw new TypeError('Specify language or useDefaultLanguage');
   if (selector.language !== undefined)
@@ -387,6 +389,12 @@ async function prepareNative(
       variantLifecycle: observed.variantLifecycle,
       references: observed.references,
       ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+      ...(observed.fragmentVersion === undefined
+        ? {}
+        : {
+            fragmentVersion: observed.fragmentVersion,
+            fragmentPrerequisites: observed.fragmentPrerequisites,
+          }),
     };
     return { observed, evidence, ledger };
   };
@@ -595,7 +603,9 @@ export async function refreshPreparedPublishedEmailUnpublish(
         !isDeepStrictEqual(baseline.identity, native.identity) ||
         baseline.canonicalAuthoringHash !== native.canonicalAuthoringHash ||
         !isDeepStrictEqual(baseline.references, native.references) ||
-        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt)))
+        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt) ||
+        baseline.fragmentVersion !== native.fragmentVersion ||
+        !isDeepStrictEqual(baseline.fragmentPrerequisites, native.fragmentPrerequisites)))
   )
     throw new EmailUnpublishPreflightBlockedError('Email destination drifted since preparation');
   return fresh;
@@ -761,6 +771,12 @@ async function execute(
           variantLifecycle: observed.variantLifecycle,
           references: observed.references,
           ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+          ...(observed.fragmentVersion === undefined
+            ? {}
+            : {
+                fragmentVersion: observed.fragmentVersion,
+                fragmentPrerequisites: observed.fragmentPrerequisites,
+              }),
         };
         const postInventory = await nativeLedger(connection, observed.family.records, options);
         if (
@@ -770,7 +786,9 @@ async function execute(
           !isDeepStrictEqual(nativeEvidence.identity, baseline.identity) ||
           nativeEvidence.canonicalAuthoringHash !== baseline.canonicalAuthoringHash ||
           !isDeepStrictEqual(nativeEvidence.references, baseline.references) ||
-          !isDeepStrictEqual(nativeEvidence.mediaReceipt, baseline.mediaReceipt)
+          !isDeepStrictEqual(nativeEvidence.mediaReceipt, baseline.mediaReceipt) ||
+          nativeEvidence.fragmentVersion !== baseline.fragmentVersion ||
+          !isDeepStrictEqual(nativeEvidence.fragmentPrerequisites, baseline.fragmentPrerequisites)
         )
           throw new TypeError('Native unpublish readback integrity or binding drifted');
         const phases = [observed.parentLifecycle, observed.variantLifecycle];

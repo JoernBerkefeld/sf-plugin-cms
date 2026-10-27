@@ -37,7 +37,7 @@ export default class PublishContent extends CmsCommand<PublishOutput> {
   public static readonly aliases = ['content:publish'];
   public static readonly summary = 'Preview or publish exact bounded Draft CMS variants.';
   public static readonly description =
-    'Repeat -m/--metadata Type:ApiName for ordered exact selections (v2), or use --api-name for one legacy Email result (v1). Exactly one selector mode is required; type-only selectors do not expand. Metadata admits bounded email, emailTemplate, image, document and audio profiles (or their sfdc_cms__ names); legacy --api-name is Email-only. Selects each unpublished Draft variant by workspace ID, API name, and explicit language or workspace default language. Unsupported shapes remain blocked. Local source inspection uses cwd or -d/--output-dir; missing copies are no-ops, authored edits are preserved and only proven retrieval-equivalent profiles are admitted. Human apply outcomes appear per item before the next dispatch; technical identities and diagnostic details stay in the invocation log. Remote completion with blocked local work is partial (exit 2), never a retry instruction. Dry-run is the default. --apply requires a new --report-dir and --acknowledge-no-send, writes durable pending intent, then performs one non-retried variant-scoped publish with content references excluded. Publishing CMS content does not send the Email; this command never starts a Flow, transactional send, journey, or campaign.';
+    'Repeat -m/--metadata Type:ApiName for ordered exact selections (v2), or use --api-name for one legacy Email result (v1). Exactly one selector mode is required; type-only selectors do not expand. Metadata admits bounded email, emailTemplate, emailFragment, image, document and audio profiles (or their sfdc_cms__ names); legacy --api-name is Email-only. Selects each unpublished Draft variant by workspace ID, API name, and explicit language or workspace default language. Unsupported shapes remain blocked. Local source inspection uses cwd or -d/--output-dir; missing copies are no-ops, authored edits are preserved and only proven retrieval-equivalent profiles are admitted. Human apply outcomes appear per item before the next dispatch; technical identities and diagnostic details stay in the invocation log. Remote completion with blocked local work is partial (exit 2), never a retry instruction. Dry-run is the default. --apply requires a new --report-dir and --acknowledge-no-send, writes durable pending intent, then performs one non-retried variant-scoped publish with content references excluded. Publishing CMS content does not send the Email; this command never starts a Flow, transactional send, journey, or campaign.';
   public static readonly examples = [
     '<%= config.bin %> cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --language en_US --json',
     '<%= config.bin %> cms publish content --target-org my-org --workspace-id 0Zu... --api-name WelcomeEmail --default-language --apply --acknowledge-no-send --report-dir ./cms-publish-report --json',
@@ -117,7 +117,11 @@ export default class PublishContent extends CmsCommand<PublishOutput> {
     try {
       if ((flags.metadata === undefined) === (flags['api-name'] === undefined))
         throw new TypeError('Specify exactly one of --metadata or --api-name.');
-      if (flags.metadata !== undefined) selectors = normalizeLifecycleMetadata(flags.metadata);
+      if (flags.metadata === undefined) {
+        normalizeLifecycleMetadata([`email:${flags['api-name']!}`]);
+      } else {
+        selectors = normalizeLifecycleMetadata(flags.metadata);
+      }
     } catch (error) {
       return reject({
         code: 'LIFECYCLE_SELECTOR_REQUIRED',

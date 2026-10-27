@@ -4,6 +4,7 @@ import { normalizeLifecycleMetadata } from '../../src/services/lifecycle-selecti
 const types = [
   'sfdc_cms__email',
   'sfdc_cms__emailTemplate',
+  'sfdc_cms__emailFragment',
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
@@ -74,6 +75,11 @@ describe('pure lifecycle metadata normalization', () => {
     ' email:Welcome',
     'email :Welcome',
     'email/Welcome',
+    'emailFragment:*',
+    'emailFragment:Welcome?',
+    'email:Welcome*',
+    'image:[Hero]',
+    'audio:{One,Two}',
   ]) {
     it(`rejects malformed or unsupported selector ${JSON.stringify(value)}`, () => {
       expect(() => normalizeLifecycleMetadata([value])).to.throw(TypeError);

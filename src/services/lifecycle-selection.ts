@@ -8,6 +8,7 @@ import { normalizeContentTypeAlias } from './content-type-alias.js';
 const LIFECYCLE_CONTENT_TYPES = [
   'sfdc_cms__email',
   'sfdc_cms__emailTemplate',
+  'sfdc_cms__emailFragment',
   'sfdc_cms__image',
   'sfdc_cms__document',
   'sfdc_cms__audio',
@@ -37,6 +38,8 @@ export function normalizeLifecycleMetadata(
     const apiName = value.slice(separator + 1);
     if (apiName.trim().length === 0)
       throw new TypeError('Lifecycle metadata API names must not be empty');
+    if (/[*?[\]{}]/u.test(apiName))
+      throw new TypeError('Lifecycle metadata requires exact API names without wildcards');
     // Inspect whitespace only for emptiness; resolution must see the exact API name.
     return { contentType, apiName };
   });

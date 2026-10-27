@@ -148,6 +148,7 @@ export async function acquireNativePublishCheckpoint(
   if (
     ![
       'sfdc_cms__emailTemplate',
+      'sfdc_cms__emailFragment',
       'sfdc_cms__image',
       'sfdc_cms__document',
       'sfdc_cms__audio',
@@ -177,6 +178,12 @@ function nativeCheckpointEvidence(
     variantLifecycle: observed.variantLifecycle,
     references: observed.references,
     ...(observed.mediaReceipt === undefined ? {} : { mediaReceipt: observed.mediaReceipt }),
+    ...(observed.fragmentVersion === undefined
+      ? {}
+      : {
+          fragmentVersion: observed.fragmentVersion,
+          fragmentPrerequisites: observed.fragmentPrerequisites,
+        }),
   };
   // Only the intended lifecycle phase may change; authoring, identities and byte receipts may not.
   if (
@@ -185,7 +192,9 @@ function nativeCheckpointEvidence(
       !isDeepStrictEqual(expected.identity, evidence.identity) ||
       expected.canonicalAuthoringHash !== evidence.canonicalAuthoringHash ||
       !isDeepStrictEqual(expected.references, evidence.references) ||
-      !isDeepStrictEqual(expected.mediaReceipt, evidence.mediaReceipt))
+      !isDeepStrictEqual(expected.mediaReceipt, evidence.mediaReceipt) ||
+      expected.fragmentVersion !== evidence.fragmentVersion ||
+      !isDeepStrictEqual(expected.fragmentPrerequisites, evidence.fragmentPrerequisites))
   )
     throw new TypeError('Native publish checkpoint integrity drifted');
   return structuredClone(evidence);
@@ -280,6 +289,7 @@ async function resolveSelector(
     ![
       EMAIL_TYPE,
       'sfdc_cms__emailTemplate',
+      'sfdc_cms__emailFragment',
       'sfdc_cms__image',
       'sfdc_cms__document',
       'sfdc_cms__audio',
@@ -288,6 +298,8 @@ async function resolveSelector(
     throw new TypeError('Unsupported publish content family');
   nonempty(selector.workspaceId, 'workspaceId');
   nonempty(selector.apiName, 'apiName');
+  if (/[:*?[\]{}]/u.test(selector.apiName))
+    throw new TypeError('Publish requires an exact API name without wildcards');
   if ((selector.language === undefined) === (selector.useDefaultLanguage !== true))
     throw new TypeError('Specify language or useDefaultLanguage');
   if (selector.language !== undefined)
@@ -656,7 +668,9 @@ export async function refreshPreparedDraftEmailPublish(
         !isDeepStrictEqual(baseline.identity, native.identity) ||
         baseline.canonicalAuthoringHash !== native.canonicalAuthoringHash ||
         !isDeepStrictEqual(baseline.references, native.references) ||
-        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt)))
+        !isDeepStrictEqual(baseline.mediaReceipt, native.mediaReceipt) ||
+        baseline.fragmentVersion !== native.fragmentVersion ||
+        !isDeepStrictEqual(baseline.fragmentPrerequisites, native.fragmentPrerequisites)))
   )
     throw new EmailPublishPreflightBlockedError('Email destination drifted since preparation');
   return fresh;

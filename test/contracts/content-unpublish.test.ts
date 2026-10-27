@@ -47,6 +47,9 @@ function fixture(contentType = 'sfdc_cms__emailTemplate') {
         canonicalAuthoringHash: hash,
         parentLifecycle: structuredClone(lifecycle),
         variantLifecycle: structuredClone(lifecycle),
+        ...(contentType === 'sfdc_cms__emailFragment'
+          ? { fragmentVersion: 'version', fragmentPrerequisites: [] }
+          : {}),
         references: [
           {
             referenceId: `ref:${'b'.repeat(64)}`,
@@ -58,7 +61,7 @@ function fixture(contentType = 'sfdc_cms__emailTemplate') {
             resolution: 'included',
           },
         ],
-        ...(contentType === 'sfdc_cms__emailTemplate'
+        ...(['sfdc_cms__emailTemplate', 'sfdc_cms__emailFragment'].includes(contentType)
           ? {}
           : { mediaReceipt: { sha256: hash, size: 70, mimeType: 'image/png' } }),
       },
@@ -109,6 +112,7 @@ describe('strict native unpublish completion (execution admission remains closed
   });
   for (const family of [
     'sfdc_cms__emailTemplate',
+    'sfdc_cms__emailFragment',
     'sfdc_cms__image',
     'sfdc_cms__document',
     'sfdc_cms__audio',

@@ -7,6 +7,7 @@ export type LifecycleOperation = 'publish' | 'unpublish';
 export type LifecycleContentType =
   | 'sfdc_cms__email'
   | 'sfdc_cms__emailTemplate'
+  | 'sfdc_cms__emailFragment'
   | 'sfdc_cms__image'
   | 'sfdc_cms__document'
   | 'sfdc_cms__audio';
@@ -206,6 +207,7 @@ function assertItem(value: unknown, operation: LifecycleOperation, index: number
     ![
       'sfdc_cms__email',
       'sfdc_cms__emailTemplate',
+      'sfdc_cms__emailFragment',
       'sfdc_cms__image',
       'sfdc_cms__document',
       'sfdc_cms__audio',
@@ -213,7 +215,7 @@ function assertItem(value: unknown, operation: LifecycleOperation, index: number
   )
     throw new TypeError(`${label}.selector.contentType must be canonical`);
   assertNonemptyString(value.selector.apiName, `${label}.selector.apiName`);
-  if (value.selector.apiName.trim().length === 0 || value.selector.apiName.includes(':'))
+  if (value.selector.apiName.trim().length === 0 || /[:*?[\]{}]/u.test(value.selector.apiName))
     throw new TypeError(`${label}.selector.apiName must be exact`);
   if (
     ![

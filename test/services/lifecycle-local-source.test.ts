@@ -74,6 +74,54 @@ async function blocked(root: string, selected = identity, pattern = /./u) {
   if (result.outcome === 'blocked') expect(result.message).to.match(pattern);
 }
 
+describe('Fragment inline local lifecycle synchronization', () => {
+  for (const outcome of ['published', 'unpublished'] as const) {
+    for (const drift of [false, true]) {
+      it(`preserves full authored Fragment bytes after ${outcome}, drift=${String(drift)}`, async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'cms-fragment-local-'));
+        const selected = { ...identity, contentType: 'sfdc_cms__emailFragment' as const };
+        const directory = path.join(root, 'cms', 'Marketing', 'emailFragment');
+        await mkdir(directory, { recursive: true });
+        const file = path.join(directory, 'Welcome.cms-email-fragment.json');
+        const source = {
+          contract: 'sf-cms-email-fragment-source',
+          contractVersion: '1.0.0',
+          identity: { ...definition.identity, type: 'Email Fragment' },
+          contentType: selected.contentType,
+          language: 'en_US',
+          title: 'Authored title',
+          urlName: 'authored',
+          folderPath: [],
+          contentBody: {
+            'sfdc_cms:block': {
+              type: 'block',
+              definition: 'sfdc_cms/rootContentBlock',
+              id: '00000000-0000-4000-8000-000000000001',
+              children: [],
+              attributes: { text: 'Local edits need not match remote authoring' },
+            },
+          },
+        };
+        const bytes = Buffer.from(JSON.stringify(source, undefined, 4) + '\n');
+        await writeFile(file, bytes);
+        const inspection = await inspectLifecycleLocalSource(root, selected);
+        expect(inspection.outcome).to.equal('matched');
+        if (inspection.outcome === 'matched') expect(inspection.companions).to.deep.equal([]);
+        if (drift) await fs.appendFile(file, ' ');
+        const result = await synchronizeLifecycleLocalSource(root, inspection, {
+          outcome,
+          identity: selected,
+        });
+        expect(result.outcome).to.equal(drift ? 'blocked' : 'noop');
+        if (!drift) expect(result.reason).to.equal('retrieval-equivalent');
+        expect(await readFile(file)).to.deep.equal(
+          drift ? Buffer.concat([bytes, Buffer.from(' ')]) : bytes,
+        );
+      });
+    }
+  }
+});
+
 describe('confirmed Template local lifecycle synchronization', () => {
   for (const outcome of ['published', 'unpublished'] as const)
     for (const legacy of [false, true])

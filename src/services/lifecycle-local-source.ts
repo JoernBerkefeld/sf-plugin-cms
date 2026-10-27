@@ -1,4 +1,8 @@
 import path from 'node:path';
+import {
+  assertEmailFragmentSourceDefinition,
+  type EmailFragmentSourceDefinition,
+} from '../contracts/email-fragment-source.js';
 import fs, { lstat, readdir } from 'node:fs/promises';
 import type { LifecycleContentType } from '../contracts/content-lifecycle-batch.js';
 import {
@@ -237,6 +241,7 @@ export function assertLifecycleLocalSynchronizationEligible(
   };
   const qualified =
     inspection.identity.contentType === 'sfdc_cms__emailTemplate' ||
+    inspection.identity.contentType === 'sfdc_cms__emailFragment' ||
     (inspection.identity.language === 'en_US' &&
       (inspection.identity.contentType === 'sfdc_cms__email' ||
         (definition.contract === 'sf-cms-media-source' &&
@@ -250,9 +255,15 @@ export function assertLifecycleLocalSynchronizationEligible(
     );
 }
 
-type Definition = SourceDefinition | EditableItemDefinitionV2 | EditableMediaDefinition;
+type Definition =
+  | SourceDefinition
+  | EditableItemDefinitionV2
+  | EditableMediaDefinition
+  | EmailFragmentSourceDefinition;
 
 function profile(contentType: string) {
+  if (contentType === 'sfdc_cms__emailFragment')
+    return { directory: 'emailFragment', token: 'email-fragment' };
   const email = SOURCE_EMAIL_PROFILES.find((entry) => entry.contentType === contentType);
   if (email) return email;
   const media = {
@@ -267,7 +278,9 @@ function profile(contentType: string) {
 
 function parse(bytes: Buffer): Definition {
   const value = strictSourceJson(bytes, 'Local lifecycle definition');
-  if ((value as { contract?: unknown })?.contract === 'sf-cms-media-source') {
+  if ((value as { contract?: unknown })?.contract === 'sf-cms-email-fragment-source') {
+    assertEmailFragmentSourceDefinition(value);
+  } else if ((value as { contract?: unknown })?.contract === 'sf-cms-media-source') {
     assertEditableMediaDefinition(value);
   } else if ((value as { contractVersion?: unknown })?.contractVersion === '2.0.0') {
     assertEditableItemDefinitionV2(value);
@@ -280,6 +293,7 @@ function parse(bytes: Buffer): Definition {
 }
 
 function companions(definition: Definition): string[] {
+  if (definition.contract === 'sf-cms-email-fragment-source') return [];
   if (definition.contract === 'sf-cms-media-source')
     return definition.media.representation === 'binary' ? [definition.media.companion.path] : [];
   return Array.isArray(definition.companions)
@@ -388,7 +402,10 @@ export async function inspectLifecycleLocalSource(
       selectedNames.map(async (file) => snapshot(directory, file)),
     );
     const files = new Map(selected.map((file) => [path.basename(file.path), file.bytes]));
-    if (parsed.contract === 'sf-cms-media-source') reassembleEditableMediaSource(parsed, files);
+    if (parsed.contract === 'sf-cms-email-fragment-source')
+      assertEmailFragmentSourceDefinition(parsed);
+    else if (parsed.contract === 'sf-cms-media-source')
+      reassembleEditableMediaSource(parsed, files);
     else if (parsed.contractVersion === '2.0.0') reassembleEditableItemSourceV2(parsed, files);
     else {
       const html = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(

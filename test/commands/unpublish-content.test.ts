@@ -144,6 +144,13 @@ describe('cms unpublish content command', () => {
     ],
     ['type-only selection', { metadata: ['email'] }, undefined, 'LIFECYCLE_SELECTOR_REQUIRED'],
     ['empty selection', { metadata: [] }, undefined, 'LIFECYCLE_SELECTOR_REQUIRED'],
+    ['legacy wildcard', { 'api-name': 'Welcome*' }, undefined, 'LIFECYCLE_SELECTOR_REQUIRED'],
+    [
+      'wildcard selection',
+      { metadata: ['emailFragment:Prefix*'] },
+      undefined,
+      'LIFECYCLE_SELECTOR_REQUIRED',
+    ],
     ['legacy version mismatch', { 'api-name': 'A' }, 2, 'UNSUPPORTED_CONTRACT_VERSION'],
     [
       'metadata version mismatch',
