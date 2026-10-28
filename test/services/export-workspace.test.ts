@@ -184,15 +184,34 @@ function sourceFixture(contentType = 'sfdc_cms__email') {
 
 describe('workspace export service', () => {
   let root: string;
+  let run: RunOwnedTemp;
+  let container: string;
+  const fixtures: string[] = [];
   let temporaryDirectories: Array<{ run: RunOwnedTemp; parent: string }>;
   let fixtureLinks: string[];
+  let linksCleaned = true;
 
   async function createFixture(prefix: string): Promise<string> {
-    const fixtureRun = await createRunOwnedTemp(prefix);
-    const parent = await createRunOwnedDirectory(fixtureRun, 'fixture');
-    temporaryDirectories.push({ run: fixtureRun, parent });
+    const parent = path.join(container, `${prefix}-${fixtures.length}`);
+    await mkdir(parent);
+    fixtures.push(parent);
+    expect(await readdir(parent)).to.deep.equal([]);
     return parent;
   }
+
+  it('isolates mutable fixtures while retaining them until suite cleanup', async () => {
+    const sibling = await createFixture('cms-export-isolation');
+    await writeFile(path.join(root, 'only-first.txt'), 'first');
+    expect(await readdir(sibling)).to.deep.equal([]);
+    await writeFile(path.join(sibling, 'only-second.txt'), 'second');
+    expect(await readdir(root)).to.deep.equal(['only-first.txt']);
+    expect(await readFile(path.join(root, 'only-first.txt'), 'utf8')).to.equal('first');
+    expect(await readFile(path.join(sibling, 'only-second.txt'), 'utf8')).to.equal('second');
+    expect(path.dirname(root)).to.equal(container);
+    expect(path.dirname(sibling)).to.equal(container);
+    const metadata = await lstat(run.root);
+    expect(metadata.isDirectory()).to.equal(true);
+  });
 
   it('publishes flat qualified Email and Template sources without changing baseline or result contracts', async () => {
     for (const contentType of ['sfdc_cms__email', 'sfdc_cms__emailTemplate']) {
@@ -491,9 +510,16 @@ describe('workspace export service', () => {
     }
   });
 
+  before(async () => {
+    run = await createRunOwnedTemp('sf-plugin-cms-export');
+    container = await createRunOwnedDirectory(run, 'fixtures');
+  });
+
   beforeEach(async () => {
+    expect(linksCleaned).to.equal(true);
     temporaryDirectories = [];
     fixtureLinks = [];
+    linksCleaned = false;
     root = await createFixture('sf-plugin-cms-export');
   });
 
@@ -504,12 +530,29 @@ describe('workspace export service', () => {
       expect(metadata.isSymbolicLink()).to.equal(true);
       await unlink(link);
     }
+    linksCleaned = true;
+    // Parent-inspection collision fixtures keep their dedicated immediate cleanup.
     for (const fixture of temporaryDirectories) {
       await removeRunOwnedPath(fixture.run, fixture.parent);
       const metadata = await lstat(fixture.run.root);
       expect(metadata.isDirectory()).to.equal(true);
       try {
         await lstat(fixture.parent);
+        expect.fail('expected fixture removal');
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      }
+    }
+  });
+
+  after(async () => {
+    expect(linksCleaned, 'per-test link cleanup must succeed before suite cleanup').to.equal(true);
+    await removeRunOwnedPath(run, container);
+    const metadata = await lstat(run.root);
+    expect(metadata.isDirectory()).to.equal(true);
+    for (const removed of [container, ...fixtures]) {
+      try {
+        await lstat(removed);
         expect.fail('expected fixture removal');
       } catch (error) {
         expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');

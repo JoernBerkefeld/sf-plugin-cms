@@ -1,6 +1,9 @@
 import { Parser } from '@oclif/core';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { createRunOwnedDirectory, createRunOwnedTemp } from '../../src/filesystem/runOwnedTemp.js';
 import PublishContent from '../../src/commands/cms/publish/content.js';
 
 describe('cms publish content command', () => {
@@ -33,8 +36,44 @@ describe('cms publish content command', () => {
     }
   });
 
-  for (const useDefaultLanguage of [false, true]) {
-    it(`returns a strict ready Email batch with default-language=${String(useDefaultLanguage)}`, async () => {
+  for (const { useDefaultLanguage, rootFlag, legacy } of [
+    { useDefaultLanguage: false },
+    { useDefaultLanguage: true },
+    ...(['cwd', '-d', '--output-dir'] as const).flatMap((rootFlag) =>
+      [false, true].map((legacy) => ({ useDefaultLanguage: false, rootFlag, legacy })),
+    ),
+  ] as Array<{ useDefaultLanguage: boolean; rootFlag?: string; legacy?: boolean }>) {
+    it(`returns ready Email and forwards parsed root=${rootFlag ?? 'default'} legacy=${String(legacy)} default-language=${String(useDefaultLanguage)}`, async () => {
+      let localDefinition: string | undefined;
+      let parsedFlags = {};
+      if (rootFlag !== undefined) {
+        const run = await createRunOwnedTemp('cms-publish-root-');
+        const cwd = await createRunOwnedDirectory(run, 'cwd');
+        const selected = await createRunOwnedDirectory(run, 'selected');
+        context.SANDBOX.stub(process, 'cwd').returns(cwd);
+        const { 'target-org': targetOrg, ...flags } = PublishContent.flags;
+        expect(targetOrg.required).to.equal(true);
+        const parsed = await Parser.parse(
+          [
+            '--workspace-id',
+            'space',
+            ...(legacy ? ['--api-name', 'A'] : ['-m', 'email:A']),
+            '--language',
+            'en_US',
+            ...(rootFlag === 'cwd' ? [] : [rootFlag, '../selected']),
+          ],
+          { flags },
+        );
+        expect(parsed.flags['output-dir']).to.equal(rootFlag === 'cwd' ? undefined : '../selected');
+        parsedFlags = parsed.flags;
+        localDefinition = path.join(
+          rootFlag === 'cwd' ? cwd : selected,
+          'cms',
+          'Marketing',
+          'email',
+          'A.cms-email.json',
+        );
+      }
       const variant = {
         managedContentVariantId: 'variant-a',
         managedContentId: 'parent-a',
@@ -78,8 +117,9 @@ describe('cms publish content command', () => {
             'target-org': { getUsername: () => 'org' },
             'api-version': '67.0',
             'workspace-id': 'space',
-            metadata: ['email:A'],
+            ...(legacy ? { 'api-name': 'A' } : { metadata: ['email:A'] }),
             ...(useDefaultLanguage ? { 'default-language': true } : { language: 'en_US' }),
+            ...parsedFlags,
           },
         }),
         getOrgContext: context.SANDBOX.stub().resolves({
@@ -90,11 +130,28 @@ describe('cms publish content command', () => {
       });
       const result = await command.run();
       expect(result.status).to.equal('success');
-      expect(result.contractVersion).to.equal('2.0.0');
-      if (!result.result || !('selection' in result.result)) throw new Error('Expected batch');
-      expect(result.result.items[0].target?.language).to.equal('en_US');
-      expect(result.result.items[0].outcome).to.equal('ready');
+      expect(result.contractVersion).to.equal(legacy ? '1.0.0' : '2.0.0');
+      if (!result.result) throw new Error('Expected result');
+      if ('selection' in result.result) {
+        expect(result.result.items[0].target?.language).to.equal('en_US');
+        expect(result.result.items[0].outcome).to.equal('ready');
+      } else {
+        expect(result.result.target.language).to.equal('en_US');
+        expect(result.result.outcome).to.equal('ready');
+      }
       expect(process.exitCode).to.equal(0);
+      if (localDefinition !== undefined) {
+        await mkdir(path.dirname(localDefinition), { recursive: true });
+        await writeFile(localDefinition, '{');
+        const blocked = await command.run();
+        expect(blocked.status).to.equal('blocked');
+        expect(blocked.result?.outcome).to.equal('blocked');
+        expect(process.exitCode).to.equal(1);
+        expect(await readFile(localDefinition, 'utf8')).to.equal('{');
+        expect(
+          request.getCalls().every(({ args }) => !args[0].method || args[0].method === 'GET'),
+        ).to.equal(true);
+      }
     });
   }
 

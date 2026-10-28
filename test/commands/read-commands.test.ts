@@ -4,11 +4,42 @@ import sinon from 'sinon';
 import { expect } from 'chai';
 import ListChannel from '../../src/commands/cms/list/channel.js';
 import ListWorkspace from '../../src/commands/cms/list/workspace.js';
+import RetrieveContent from '../../src/commands/cms/retrieve/content.js';
+import DeployContent from '../../src/commands/cms/deploy/content.js';
+import DeleteContent from '../../src/commands/cms/delete/content.js';
+import PublishContent from '../../src/commands/cms/publish/content.js';
+import UnpublishContent from '../../src/commands/cms/unpublish/content.js';
+import Upload from '../../src/commands/cms/upload.js';
+import Info from '../../src/commands/cms/info.js';
 
 const commands = [ListChannel, ListWorkspace];
 
 describe('CMS read command definitions', () => {
   afterEach(() => sinon.restore());
+
+  for (const command of [
+    ...commands,
+    RetrieveContent,
+    DeployContent,
+    DeleteContent,
+    PublishContent,
+    UnpublishContent,
+    Upload,
+    Info,
+  ]) {
+    it(`${command.name} rejects invalid generic API mode before org access`, async () => {
+      const org = sinon.stub(Org, 'create').rejects(new Error('unexpected org access'));
+      try {
+        await Parser.parse(['--api', 'cli', '--json'], {
+          flags: { ...command.baseFlags, ...command.flags },
+        });
+        expect.fail('Expected invalid API mode rejection');
+      } catch (error) {
+        expect((error as Error).message).to.match(/--api.*(?:log|cli)/su);
+      }
+      expect(org.called).to.equal(false);
+    });
+  }
 
   for (const command of commands) {
     it(`${command.name} keeps pagination optional without defaults`, async () => {

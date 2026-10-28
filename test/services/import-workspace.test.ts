@@ -418,19 +418,29 @@ function liveNativeBody(type: string, rawHtml: string) {
 describe('native raw-HTML workspace copy', () => {
   let root: string;
   let run: RunOwnedTemp;
-  beforeEach(async () => {
+  let container: string;
+  const fixtures: string[] = [];
+  before(async () => {
     run = await createRunOwnedTemp('cms-native');
-    root = await createRunOwnedDirectory(run, 'fixture');
+    container = await createRunOwnedDirectory(run, 'fixtures');
   });
-  afterEach(async () => {
-    await removeRunOwnedPath(run, root);
+  beforeEach(async () => {
+    root = path.join(container, `fixture-${fixtures.length}`);
+    await mkdir(root);
+    fixtures.push(root);
+    expect(await readdir(root)).to.deep.equal([]);
+  });
+  after(async () => {
+    await removeRunOwnedPath(run, container);
     const metadata = await lstat(run.root);
     expect(metadata.isDirectory()).to.equal(true);
-    try {
-      await lstat(root);
-      expect.fail('expected fixture removal');
-    } catch (error) {
-      expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+    for (const removed of [container, ...fixtures]) {
+      try {
+        await lstat(removed);
+        expect.fail('expected fixture removal');
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+      }
     }
   });
   const mapping = [
@@ -1005,19 +1015,29 @@ describe('native raw-HTML workspace copy', () => {
 
 describe('workspace import core', () => {
   let root: string;
-  let temporaryDirectories: Array<{ run: RunOwnedTemp; parent: string }>;
+  let run: RunOwnedTemp;
+  let container: string;
+  const fixtures: string[] = [];
   let fixtureLinks: string[];
+  let linksCleaned = true;
 
   async function createFixture(prefix: string): Promise<string> {
-    const run = await createRunOwnedTemp(prefix);
-    const parent = await createRunOwnedDirectory(run, 'fixture');
-    temporaryDirectories.push({ run, parent });
+    const parent = path.join(container, `${prefix}-${fixtures.length}`);
+    await mkdir(parent);
+    fixtures.push(parent);
+    expect(await readdir(parent)).to.deep.equal([]);
     return parent;
   }
 
+  before(async () => {
+    run = await createRunOwnedTemp('sf-plugin-cms-import');
+    container = await createRunOwnedDirectory(run, 'fixtures');
+  });
+
   beforeEach(async () => {
-    temporaryDirectories = [];
+    expect(linksCleaned).to.equal(true);
     fixtureLinks = [];
+    linksCleaned = false;
     root = await createFixture('sf-plugin-cms-import');
   });
 
@@ -1028,17 +1048,36 @@ describe('workspace import core', () => {
       expect(metadata.isSymbolicLink()).to.equal(true);
       await unlink(link);
     }
-    for (const fixture of temporaryDirectories) {
-      await removeRunOwnedPath(fixture.run, fixture.parent);
-      const metadata = await lstat(fixture.run.root);
-      expect(metadata.isDirectory()).to.equal(true);
+    linksCleaned = true;
+  });
+
+  after(async () => {
+    expect(linksCleaned, 'per-test link cleanup must succeed before suite cleanup').to.equal(true);
+    await removeRunOwnedPath(run, container);
+    const metadata = await lstat(run.root);
+    expect(metadata.isDirectory()).to.equal(true);
+    for (const removed of [container, ...fixtures]) {
       try {
-        await lstat(fixture.parent);
+        await lstat(removed);
         expect.fail('expected fixture removal');
       } catch (error) {
         expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
       }
     }
+  });
+
+  it('isolates mutable fixtures while retaining them until suite cleanup', async () => {
+    const sibling = await createFixture('cms-import-isolation');
+    await writeFile(path.join(root, 'only-first.txt'), 'first');
+    expect(await readdir(sibling)).to.deep.equal([]);
+    await writeFile(path.join(sibling, 'only-second.txt'), 'second');
+    expect(await readdir(root)).to.deep.equal(['only-first.txt']);
+    expect(await readFile(path.join(root, 'only-first.txt'), 'utf8')).to.equal('first');
+    expect(await readFile(path.join(sibling, 'only-second.txt'), 'utf8')).to.equal('second');
+    expect(path.dirname(root)).to.equal(container);
+    expect(path.dirname(sibling)).to.equal(container);
+    const metadata = await lstat(run.root);
+    expect(metadata.isDirectory()).to.equal(true);
   });
 
   it('plans fresh parent identities coherently without changing raw hashes or literal content', async () => {

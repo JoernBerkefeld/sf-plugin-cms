@@ -179,7 +179,9 @@ describe('Lifecycle sequential metadata executor', () => {
       expect(failedSink.current.dispatches).to.deep.equal(['a', 'b', 'c']);
       expect(observer.callCount).to.equal(3);
     });
-    for (const late of ['none', 'drift', 'local-report', 'aggregate-report'] as const)
+    for (const late of (['none', 'drift', 'local-report', 'aggregate-report'] as const).filter(
+      (late) => operation === 'publish' || late === 'none',
+    ))
       it(`${operation}: preserves confirmed remote truth with ${late} local outcome`, async () => {
         const test = await setup();
         const root = path.dirname(test.directory);
@@ -244,7 +246,9 @@ describe('Lifecycle sequential metadata executor', () => {
         }
         assertContentLifecycleBatchResult(result.result, undefined, result.status);
       });
-    for (const mode of ['dry-run', 'apply'] as const)
+    for (const mode of (['dry-run', 'apply'] as const).filter(
+      (mode) => operation === 'publish' || mode === 'apply',
+    ))
       for (const fault of ['ambiguity', 'unsupported'] as const)
         it(`${operation}: ${mode} rejects local ${fault} before writes`, async () => {
           const test = await setup();

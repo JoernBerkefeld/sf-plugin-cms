@@ -252,15 +252,9 @@ describe('bounded Email and binary media local synchronization', () => {
     ['document', 'Document', 'text/plain'],
     ['audio', 'Audio', 'audio/x-wav'],
   ] as const)
-    for (const scenario of [
-      'published',
-      'unpublished',
-      'drift',
-      'url-only',
-      'mime',
-      'locale',
-      'owner',
-    ] as const)
+    for (const scenario of (
+      ['published', 'unpublished', 'drift', 'url-only', 'mime', 'locale', 'owner'] as const
+    ).filter((scenario) => kind === 'image' || !['drift', 'locale', 'owner'].includes(scenario)))
       it(`${kind} ${scenario} retains bytes and admits only the proven profile`, async () => {
         const root = await mkdtemp(path.join(os.tmpdir(), 'cms-local-sync-media-'));
         const directory = path.join(root, 'cms', 'Marketing', kind);

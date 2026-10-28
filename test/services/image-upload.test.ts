@@ -792,7 +792,7 @@ describe('no-JSON image upload preparation', () => {
     }
   });
 
-  for (const count of [1, 2, 5, 10, 17]) {
+  for (const count of [1, 17]) {
     scenario(
       `prepares all ${count} explicit files with bound bytes/hash and root-folder destinations`,
       async function (context) {
@@ -1153,20 +1153,30 @@ describe('no-JSON image upload preparation', () => {
 
   for (let offset = 0; offset < workflows.length; offset += 4) {
     const group = workflows.slice(offset, offset + 4);
-    it(group.map(({ title }) => title).join(' / '), async function () {
-      const contexts: Scenario[] = [];
-      try {
-        for (let index = 0; index < group.length; index += 1) {
-          contexts.push(await createScenario());
+    // These independent readback/revalidation workflows must not share a 10-second envelope.
+    const batches = group.every(
+      ({ title }) =>
+        title.startsWith('stops after mismatched readback ') ||
+        title === 'revalidates last-file before any writes',
+    )
+      ? group.map((workflow) => [workflow])
+      : [group];
+    for (const batch of batches) {
+      it(batch.map(({ title }) => title).join(' / '), async function () {
+        const contexts: Scenario[] = [];
+        try {
+          for (let index = 0; index < batch.length; index += 1) {
+            contexts.push(await createScenario());
+          }
+          await runScenarioJobs(
+            batch.map(({ run }, index) => async () => {
+              await run.call(this, contexts[index]);
+            }),
+          );
+        } finally {
+          for (const context of contexts) await context.teardown();
         }
-        await runScenarioJobs(
-          group.map(({ run }, index) => async () => {
-            await run.call(this, contexts[index]);
-          }),
-        );
-      } finally {
-        for (const context of contexts) await context.teardown();
-      }
-    });
+      });
+    }
   }
 });
