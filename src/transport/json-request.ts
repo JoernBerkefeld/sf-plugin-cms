@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import type { Transport } from '@jsforce/jsforce-node/lib/transport.js';
+import { StreamPromise } from '@jsforce/jsforce-node/lib/util/promise.js';
 import type { Duplex } from 'node:stream';
 import { SELECTED_OPERATIONS, type SelectedOperation } from '../generated/operations.js';
 import { redactSecrets } from './redact-secrets.js';
@@ -245,11 +247,41 @@ export async function requestJson<T>(
     operationKey: operation.localKey,
   };
   logApiEvent('request', event);
+  // HttpApi accepts a per-request transport at runtime (not in HttpRequestOptions).
+  // Keep Connection.request for URL normalization, CLI headers, auth and quota handling.
+  // Only these exact readbacks need status that HttpApi.getError otherwise discards.
+  let observedStatus: number | undefined;
+  const requestOptions: { timeout: number; transport?: Pick<Transport, 'httpRequest'> } = {
+    timeout: timeoutMs,
+  };
+  const transport = (connection as RequestConnection & { _transport?: Transport })._transport;
+  if (
+    (operation.localKey === 'variant.get' || operation.localKey === 'content.get') &&
+    transport &&
+    typeof transport.httpRequest === 'function'
+  ) {
+    requestOptions.transport = {
+      httpRequest(request, transportOptions) {
+        // A refresh can issue another attempt: an earlier 401 is not terminal evidence.
+        observedStatus = undefined;
+        const pending = transport.httpRequest(request, transportOptions);
+        return StreamPromise.create(() => ({
+          stream: pending.stream(),
+          promise: pending.then((response) => {
+            observedStatus = Number.isInteger(response.statusCode)
+              ? response.statusCode
+              : undefined;
+            return response;
+          }),
+        }));
+      },
+    };
+  }
   let request: RequestStream<T>;
   try {
     request = connection.request<T>(
       { method: operation.method, url },
-      { timeout: timeoutMs },
+      requestOptions as unknown as Parameters<Connection['request']>[1],
     ) as RequestStream<T>;
   } catch (error) {
     logApiEvent('error', event, error);
@@ -268,16 +300,17 @@ export async function requestJson<T>(
     logApiEvent('error', event, error);
     if (error instanceof CmsRequestError) throw error;
     const message = options.signal?.aborted ? 'CMS request cancelled' : safeErrorMessage(error);
-    const status = errorStatus(error);
+    const status = observedStatus ?? errorStatus(error);
     throw new CmsRequestError(operation.localKey, message, status, {
       ...errorEvidence(error),
       statusObserved:
-        isRecord(error) &&
-        (typeof error.statusCode === 'number' ||
-          typeof error.status === 'number' ||
-          (isRecord(error.response) &&
-            (typeof error.response.statusCode === 'number' ||
-              typeof error.response.status === 'number'))),
+        observedStatus !== undefined ||
+        (isRecord(error) &&
+          (typeof error.statusCode === 'number' ||
+            typeof error.status === 'number' ||
+            (isRecord(error.response) &&
+              (typeof error.response.statusCode === 'number' ||
+                typeof error.response.status === 'number')))),
     });
   } finally {
     options.signal?.removeEventListener('abort', cancel);

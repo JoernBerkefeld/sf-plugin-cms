@@ -17,6 +17,7 @@ import { resolveNativeDeleteSelection } from '../../src/services/delete-native-r
 import type { NativeInventoryRow } from '../../src/services/retrieve-native-inventory.js';
 import type { RetrieveContentType } from '../../src/services/retrieve-selection.js';
 
+const readRequest = JsforceConnection.prototype.request;
 const workspaceId = '0Zuaj000007dgL8CAI';
 const parentId = '20Yaj00000FaO1aEAF';
 const variantId = '9Psaj00000J5oxJCAR';
@@ -220,6 +221,68 @@ describe('API-led native delete executor', () => {
       sinon.restore();
     }
   });
+  it('completes only actual SDK exact absence readbacks after one resolved DELETE', async () => {
+    for (const status of [404, 403]) {
+      const f = fixture('sfdc_cms__emailFragment', false);
+      const resolution = await f.resolve();
+      const original = f.connection.request.bind(f.connection);
+      const sdk = new JsforceConnection({
+        instanceUrl: 'https://example.salesforce.com',
+        accessToken: 'token',
+        version: '67.0',
+      });
+      // Replace the fixture's mutation stub while retaining the real SDK read parser.
+      sinon.restore();
+      const transport = {
+        httpRequest(request: { url: string }) {
+          return response({
+            statusCode: status,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify([
+              {
+                errorCode: request.url.includes('/variants/') ? 'VARIANT_NOT_FOUND' : 'NOT_FOUND',
+                message: 'Absent',
+              },
+            ]),
+          });
+        },
+      };
+      Object.assign(sdk, { _transport: transport });
+      Object.assign(f.connection, {
+        _transport: transport,
+        request(request: { method: string; url: string }, options: unknown) {
+          if (
+            f.deletes.length > 0 &&
+            (request.url.endsWith(variantId) || request.url.endsWith(parentId))
+          )
+            return sdk.request(request as never, options as never);
+          return original(request as never, options as never);
+        },
+      });
+      sinon.stub(JsforceConnection.prototype, 'request').callsFake(function (
+        this: JsforceConnection,
+        request,
+        options,
+      ) {
+        if (request.method === 'DELETE') {
+          f.deletes.push(variantId);
+          f.rows.splice(0);
+          return response() as never;
+        }
+        return readRequest.call(this, request, options) as never;
+      });
+      if (status === 404) {
+        const result = await applyNativeDelete(f.connection, { resolution });
+        expect(result.report.operations[0].exactVariantAbsent).to.equal(true);
+      } else {
+        const error = await stopped(() => applyNativeDelete(f.connection, { resolution }));
+        expect(error.result.report.state).to.equal('uncertain');
+      }
+      expect(f.deletes).to.deep.equal([variantId]);
+      sinon.restore();
+    }
+  });
+
   it('preserves authored local bytes when no removal is requested', async () => {
     const local = await localFixture();
     const before = await Promise.all([readFile(local.definition), readFile(local.companion)]);
