@@ -64,7 +64,10 @@ describe('current public documentation', () => {
       'content.retrieve.email-fragment',
       'content.deploy.email-fragment.create',
       'Current nonroot destination folder mapping',
-      'same/cross-workspace, cross-org, rendering and lifecycle qualification remain outstanding',
+      'General portability, cross-workspace, cross-org, publish, rendering and current combined-artifact qualification remain outstanding',
+      'public re-retrieval with full canonical comparison and the expected derived envelope',
+      'Distinct seed and destination identities do not prove every restore or topology profile',
+      'Whole-type stable roundtrip and source-workspace-name-independent selection remain evidence-mapping checkpoints',
       'RETRIEVE_UNSUPPORTED_FRAGMENT_FAMILY',
       'no companions',
       'the type is not complete',
@@ -89,9 +92,12 @@ describe('current public documentation', () => {
       'Locally enabled (unqualified)',
     ]);
     for (const claim of [
-      'Bounded derived-title UPDATE is live-qualified for the tested profile',
-      'Fragment publish/unpublish/delete are locally enabled',
-      'not yet installed/live-qualified',
+      'Bounded installed development-artifact evidence covers same-org/same-workspace seed retrieval',
+      'edited portable CREATE, ordinary-title derived UPDATE',
+      'zero-write unchanged',
+      'Separate installed development-artifact evidence covers the tested unpublish profile and exact DELETE',
+      'These receipts bind specific artifacts and profiles',
+      'general publish, declared-companion, cross-workspace, cross-org, rendering or released-package acceptance',
       'six public families: Email, Email Template, Email Fragment, Image, Document and Audio',
       'Local source bytes are preserved by default',
       'only explicit `--delete-local-source`',
@@ -99,6 +105,10 @@ describe('current public documentation', () => {
       expect(overview, claim).to.include(claim);
     for (const obsolete of [
       'lifecycle remains unsupported',
+      'not yet installed/live-qualified',
+      'Fragment lifecycle is locally enabled but not yet live-qualified',
+      'it does not establish installed-CLI',
+      'not whole-type or installed-CLI acceptance',
       'unqualified CREATE/UPDATE/unchanged',
       'five public families',
       'five-family DELETE',
@@ -108,9 +118,29 @@ describe('current public documentation', () => {
       expect(readme, obsolete).not.to.include(obsolete);
     expect(overview).not.to.include('only matching, pre-inspected local files are removed');
     expect(readme).to.include(
-      'Bounded live qualification covers the tested derived-title UPDATE profile',
+      'Bounded installed development-artifact qualification covers the tested ordinary-title derived UPDATE profile',
     );
-    expect(RetrieveContent.description).to.include('Email Fragments support retrieve only');
+    expect(RetrieveContent.description).to.include('This command retrieves Email Fragments');
+    for (const description of [RetrieveContent.description, DeployContent.description]) {
+      for (const claim of [
+        'Bounded installed development-artifact evidence covers same-workspace seed retrieval',
+        'edited portable CREATE, ordinary-title derived UPDATE',
+        'public re-retrieval with full canonical comparison and the expected derived envelope',
+        'zero-write unchanged',
+        'Separate artifact-bound evidence covers tested unpublish and exact DELETE',
+        'default local preservation or explicit matching inline JSON removal',
+        'General publish, declared-companion, cross-workspace/cross-org, rendering and released-package acceptance remain outstanding',
+        'these receipts do not qualify the current combined artifact or whole type',
+      ])
+        expect(description, claim).to.include(claim);
+      for (const obsolete of [
+        'Email Fragments support retrieve only',
+        'Fragment deploy and lifecycle are not qualified',
+        'Fragment lifecycle is not enabled',
+        'Installed public artifact, live cross-workspace/cross-org and rendering acceptance remain outstanding',
+      ])
+        expect(description, obsolete).not.to.include(obsolete);
+    }
     expect(RetrieveContent.description).to.include(
       'Unused workspace-enabled languages are allowed',
     );
@@ -144,7 +174,10 @@ describe('current public documentation', () => {
       'before org context/transport access',
       'type-only',
       'Metadata publish/unpublish admission supports bounded',
-      'Fragment lifecycle is locally enabled but not yet live-qualified',
+      'Fragment publish remains unqualified',
+      'exact channel/publication prerequisites remain a separate execution checkpoint',
+      'Artifact-bound installed development-artifact evidence covers the tested unpublish profile',
+      'a Published starting fixture is not installed public publish or published-source retrieval proof',
       'Inline Fragment local definitions have no companions',
       'Exact selectors reject wildcards before org access',
       'Legacy `--api-name` remains Email-only',
@@ -175,7 +208,11 @@ describe('current public documentation', () => {
       'zero dependency targets',
       'exact local source/companion paths and counts',
       'exactly one actual primary Content variant matching the workspace default',
-      'Fragment delete is locally enabled, not yet installed/live-qualified',
+      'Bounded installed development-artifact acceptance covers the tested same-org/workspace single-default-variant Fragment DELETE profile',
+      'default local preservation and explicit removal of only its matching inline JSON',
+      'it does not qualify declared companions, other environments or released packages',
+      'The earlier artifact-bound uncertain DELETE remains uncertain',
+      'fixed-artifact success does not retroactively settle it',
     ])
       expect(readme).to.include(claim);
   });
