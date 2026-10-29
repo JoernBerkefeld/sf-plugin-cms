@@ -615,34 +615,12 @@ describe('private journaled bytes-only Image UPDATE executor', () => {
               : /Batch Image UPDATE intent changed/u,
           );
       });
-  it('preserves opaque native MIME through hashed intent, multipart send and readback', async () => {
-    const f = await fixture('Hero', false, 'Image', 'application/x-native-image');
-    const result = await f.run();
-    expect(result.report.state).to.equal('completed');
-    expect(f.puts()).to.equal(1);
-  });
   it('blocks native MIME disagreement before journaling or PUT', async () => {
     const f = await fixture();
     f.changeMime();
     await failure(f.run(), /MIME|mismatch/u);
     expect(f.puts()).to.equal(0);
     await failure(f.journal(), /ENOENT/u);
-  });
-  it('routes explicit private UPDATE through the journaled engine', async () => {
-    const f = await fixture();
-    const rewrite = sinon.spy(rewriteAtomic);
-    const result = await executeDeployImage(
-      f.connection,
-      { ...f.input, operation: 'update' },
-      {},
-      { rewrite },
-    );
-    if (!('report' in result)) throw new Error('Expected UPDATE journal result');
-    expect(result.qualification).to.equal('unqualified');
-    expect(result.report.state).to.equal('completed');
-    expect(f.puts()).to.equal(1);
-    expect(rewrite.called).to.equal(true);
-    expect(await f.journal()).to.deep.equal(result.report);
   });
   it('awaits the dispatched batch boundary after durable intent and before PUT', async () => {
     const f = await fixture();

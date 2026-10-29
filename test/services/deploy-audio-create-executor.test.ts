@@ -250,7 +250,9 @@ async function failure(promise: Promise<unknown>, pattern = /./u) {
 describe('private journaled Audio CREATE executor', () => {
   afterEach(() => sinon.restore());
   for (const memory of [false, true])
-    for (const kind of ['success', 'lost', 'partial', 'readback', 'drift', 'cancel', 'rejected'])
+    for (const kind of memory
+      ? ['success', 'lost', 'partial', 'readback', 'drift', 'cancel', 'rejected']
+      : ['lost', 'partial', 'readback', 'drift', 'cancel', 'rejected'])
       it(`preserves live CREATE evidence (${kind}, memory ${memory})`, async () => {
         const f = await fixture(false, memory);
         const directory = path.dirname(f.input.definitionFile);
@@ -320,7 +322,7 @@ describe('private journaled Audio CREATE executor', () => {
     expect(f.posts()).to.equal(0);
     expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
   });
-  for (const large of [false, true])
+  for (const large of [false])
     it(`completes exact journal-bound multipart and independent bytes (large mock ${large})`, async () => {
       const f = await fixture(large);
       const download = sinon

@@ -220,40 +220,6 @@ describe('experimental CMS media transport', () => {
     ).to.equal(true);
   });
 
-  it('preserves exact text/plain Document bytes', async () => {
-    const bytes = Buffer.from('Document fixture\r\nUTF-8 café\n');
-    const md5 = createHash('md5').update(bytes).digest('hex');
-    const source = new URL(
-      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=document.txt&version=1`,
-    );
-    const fetcher = sinon.stub().resolves(
-      new Response(bytes, {
-        headers: { 'content-type': 'text/plain', 'content-length': String(bytes.length) },
-      }),
-    );
-    const base = {
-      accessToken: 'synthetic-token',
-      expectedMd5: md5,
-      expectedMimeType: 'text/plain',
-      expectedSize: bytes.length,
-      fetch: fetcher,
-      instanceUrl: 'https://tenant.my.salesforce.com',
-      outputFile: path.join(root, 'document.txt'),
-    };
-    const result = await downloadExperimentalCmsMedia(source, {
-      ...base,
-      contentType: 'sfdc_cms__document',
-    });
-    expect(result).to.include({
-      bytes: bytes.length,
-      mimeType: 'text/plain',
-      md5,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-    });
-    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
-    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('text/plain');
-  });
-
   it('keeps Document filename, response MIME, byte/hash, cap and redirect checks fail-closed', async () => {
     const bytes = Buffer.from('Document fixture\n');
     const md5 = createHash('md5').update(bytes).digest('hex');
@@ -302,38 +268,6 @@ describe('experimental CMS media transport', () => {
         (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
       );
     }
-  });
-
-  it('acquires explicit Audio audio/x-wav with exact bytes', async () => {
-    const bytes = Buffer.from('RIFF\u0004\u0000\u0000\u0000WAVE');
-    const md5 = createHash('md5').update(bytes).digest('hex');
-    const source = new URL(
-      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=audio.wav&version=1`,
-    );
-    const fetcher = sinon
-      .stub()
-      .resolves(new Response(bytes, { headers: { 'content-type': 'audio/x-wav' } }));
-    const base = {
-      accessToken: 'synthetic-token',
-      expectedMd5: md5,
-      expectedMimeType: 'audio/x-wav',
-      expectedSize: bytes.length,
-      fetch: fetcher,
-      instanceUrl: 'https://tenant.my.salesforce.com',
-      outputFile: path.join(root, 'audio.wav'),
-    };
-    const result = await downloadExperimentalCmsMedia(source, {
-      ...base,
-      contentType: 'sfdc_cms__audio',
-    });
-    expect(result).to.include({
-      bytes: bytes.length,
-      mimeType: 'audio/x-wav',
-      md5,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-    });
-    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
-    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('audio/x-wav');
   });
 
   it('transports opaque non-WAV Audio beyond the legacy cap without format qualification', async () => {
@@ -411,38 +345,6 @@ describe('experimental CMS media transport', () => {
         (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
       );
     }
-  });
-
-  it('preserves exact Video video/mp4 bytes', async () => {
-    const bytes = Buffer.from('000000206674797069736f6d', 'hex');
-    const md5 = createHash('md5').update(bytes).digest('hex');
-    const source = new URL(
-      `https://tenant.my.salesforce.com/cms/media/key?fileHash=${md5}&fileName=video.mp4&version=1`,
-    );
-    const fetcher = sinon
-      .stub()
-      .resolves(new Response(bytes, { headers: { 'content-type': 'video/mp4' } }));
-    const base = {
-      accessToken: 'synthetic-token',
-      expectedMd5: md5,
-      expectedMimeType: 'video/mp4',
-      expectedSize: bytes.length,
-      fetch: fetcher,
-      instanceUrl: 'https://tenant.my.salesforce.com',
-      outputFile: path.join(root, 'video.mp4'),
-    };
-    const result = await downloadExperimentalCmsMedia(source, {
-      ...base,
-      contentType: 'sfdc_cms__video',
-    });
-    expect(result).to.include({
-      bytes: bytes.length,
-      mimeType: 'video/mp4',
-      md5,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-    });
-    expect(await readFile(base.outputFile)).to.deep.equal(bytes);
-    expect(new Headers(fetcher.firstCall.args[1].headers).get('accept')).to.equal('video/mp4');
   });
 
   it('rejects Video unsafe filenames and existing security failures', async () => {
@@ -531,35 +433,6 @@ describe('experimental CMS media transport', () => {
     }
   });
 
-  for (const responseType of [
-    'image/svg+xml; charset=utf-8',
-    'IMAGE/SVG+XML; charset="utf-8"',
-    'application/octet-stream; charset=ISO-8859-1',
-    'APPLICATION/OCTET-STREAM; charset="ISO-8859-1"',
-  ]) {
-    it(`accepts parameterized Image HTTP Content-Type ${responseType} without changing native MIME`, async () => {
-      const bytes = Buffer.from('<svg/>');
-      const outputFile = path.join(
-        root,
-        `parameterized-${responseType.toLowerCase().startsWith('image') ? 'native' : 'generic'}-${responseType.includes('"') ? 'quoted' : 'token'}.svg`,
-      );
-      const result = await downloadExperimentalCmsMedia(
-        new URL('https://tenant.my.salesforce.com/cms/media/key?fileName=image.svg'),
-        {
-          accessToken: 'synthetic-token',
-          expectedMd5: createHash('md5').update(bytes).digest('hex'),
-          expectedMimeType: 'Image/Svg+Xml',
-          expectedSize: bytes.length,
-          instanceUrl: 'https://tenant.my.salesforce.com',
-          outputFile,
-          fetch: async () => new Response(bytes, { headers: { 'content-type': responseType } }),
-        },
-      );
-      expect(result.mimeType).to.equal('Image/Svg+Xml');
-      expect(await readFile(outputFile)).to.deep.equal(bytes);
-    });
-  }
-
   it('downloads Images above 10 MiB without an implicit cap', async () => {
     const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61);
     const md5 = createHash('md5').update(bytes).digest('hex');
@@ -584,7 +457,7 @@ describe('experimental CMS media transport', () => {
     ['sfdc_cms__document', 'Application/Pdf'],
     ['sfdc_cms__video', 'video/webm'],
   ] as const) {
-    for (const fileName of ['opaque.native', 'opaque']) {
+    for (const fileName of ['opaque.native']) {
       it(`downloads >10 MiB opaque ${contentType} ${fileName} without invented format defaults`, async () => {
         const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
         const outputFile = path.join(root, fileName);

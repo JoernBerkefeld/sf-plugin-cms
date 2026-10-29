@@ -36,10 +36,16 @@ import { decodeNativeHtml } from './import-identities.js';
 import { requiredContentIdentifier, requiredVariantIdentifier } from './variant-identity.js';
 import { assertCanonicalMarketingWorkspace } from './resolve-workspace.js';
 
+import {
+  assertDestinationFolderMappings,
+  destinationFolderIdFor,
+} from './deploy-destination-folder-mapping.js';
+
 type DestinationConnection = Pick<Connection, 'request' | 'getApiVersion'> &
   Partial<Pick<Connection, 'getAuthInfoFields'>>;
 export type DeployDestinationInput = {
   selection: DeployLocalSelection;
+  destinationFolderIds?: Readonly<Record<string, string>>;
   workspaceId: string;
   language: string;
   /** Destination root captured before whole-selection operation admission. */
@@ -206,7 +212,14 @@ async function prepareItem(
         getApiVersion: connection.getApiVersion.bind(connection),
         getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
       };
-      const scope = { definitionFile: item.definitionPath, workspaceId: input.workspaceId };
+      const scope = {
+        definitionFile: item.definitionPath,
+        workspaceId: input.workspaceId,
+        destinationFolderId: destinationFolderIdFor(
+          input.destinationFolderIds,
+          item.targetIdentity.apiName,
+        ),
+      };
       const proof = inventory.records.some(
         (row) => row.ManagedContent.ApiName === item.targetIdentity.apiName,
       )
@@ -631,6 +644,7 @@ export async function prepareDeployDestination(
     blockedReasons: [],
   };
   try {
+    assertDestinationFolderMappings(selected.destinationFolderIds, selected.selection);
     sourcePathSegment(selected.language);
     if (!/^0Zu[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.workspaceId))
       throw new TypeError('Exact destination workspace ID is required');

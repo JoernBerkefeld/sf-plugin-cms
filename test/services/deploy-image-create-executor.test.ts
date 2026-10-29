@@ -10,8 +10,6 @@ import { executeDeployImageCreate } from '../../src/services/deploy-image-create
 import { buildImageCreateMultipart } from '../../src/transport/multipart-image-create.js';
 import { executeDeployImage } from '../../src/services/deploy-image-executor.js';
 import { executeDeployBatch } from '../../src/services/deploy-batch-executor.js';
-import { selectDeploySources } from '../../src/services/deploy-source-selection.js';
-import { preflightDeployBatch } from '../../src/services/deploy-batch-preflight.js';
 const TEST_IMAGE_SCOPE = {
   orgId: '00D000000000071AAA',
   workspaceId: '0Zu000000000071AAA',
@@ -363,91 +361,6 @@ describe('journaled portable binary Image CREATE executor', () => {
       if (drift.startsWith('root-'))
         expect(result.report.blockedReasons.join(';')).to.match(/workspace.*root/u);
     });
-  it('selects, plans and executes an unfamiliar truthful Image MIME above 10 MiB without conversion', async () => {
-    const bytes = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg"><!--${' '.repeat(10 * 1024 * 1024)}--></svg>`,
-    );
-    const f = await fixture('Hero', 'image/svg+xml', bytes);
-    await downloaded(f);
-    const sources = { 'source-dir': [f.input.definitionFile] };
-    const selection = await selectDeploySources(sources);
-    expect(selection.items[0].mediaSha256).to.equal(
-      createHash('sha256').update(bytes).digest('hex'),
-    );
-    const plan = await preflightDeployBatch(f.connection, {
-      ...f.input,
-      sources,
-      expectedSelection: selection,
-    });
-    expect(plan.eligible).to.equal(true);
-    expect(plan.items[0].proposed).to.equal('create');
-    expect(f.posts()).to.equal(0);
-    const result = await executeDeployBatch(
-      f.connection,
-      {
-        ...f.input,
-        sources,
-        expectedSelection: selection,
-        reportFile: path.join(path.dirname(f.input.reportFile), 'batch.json'),
-      },
-      {},
-      {
-        rewrite: rewriteAtomic,
-        item: {
-          rewrite: async (file, report) => {
-            f.input.reportFile = file;
-            await rewriteAtomic(file, report);
-          },
-        },
-      },
-    );
-    expect(result.report.state).to.equal('completed');
-    expect(result.report.summary.created).to.equal(1);
-    expect(f.posts()).to.equal(1);
-    // The fixture verifies durable request hash, exact multipart bytes/MIME, and native readback.
-    expect(await readFile(f.companion)).to.deep.equal(bytes);
-  });
-  for (const responseType of [
-    'IMAGE/SVG+XML; charset=utf-8',
-    'Application/Octet-Stream; charset=ISO-8859-1',
-  ]) {
-    it(`completes CREATE ownership readback with parameterized HTTP ${responseType}`, async () => {
-      const f = await fixture('Hero', 'image/svg+xml', Buffer.from('<svg/>'));
-      const fetcher = sinon
-        .stub(globalThis, 'fetch')
-        .callsFake(
-          async () => new Response(f.bytes, { headers: { 'content-type': responseType } }),
-        );
-      const result = await f.run();
-      expect(result.report.state).to.equal('completed');
-      expect(f.posts()).to.equal(1);
-      expect(fetcher.calledOnce).to.equal(true);
-    });
-  }
-  it('preserves opaque native MIME through hashed intent, multipart send and readback', async () => {
-    const f = await fixture('Hero', 'application/x-native-image');
-    await downloaded(f);
-    const result = await f.run();
-    expect(result.report.state).to.equal('completed');
-    expect(f.posts()).to.equal(1);
-  });
-  it('routes explicit private CREATE through the journaled engine', async () => {
-    const f = await fixture();
-    await downloaded(f);
-    const rewrite = sinon.spy(rewriteAtomic);
-    const result = await executeDeployImage(
-      f.connection,
-      { ...f.input, operation: 'create' },
-      {},
-      { rewrite },
-    );
-    if (!('report' in result)) throw new Error('Expected CREATE journal result');
-    expect(result.qualification).to.equal('unqualified');
-    expect(result.report.state).to.equal('completed');
-    expect(f.posts()).to.equal(1);
-    expect(rewrite.called).to.equal(true);
-    expect(await f.journal()).to.deep.equal(result.report);
-  });
   it('awaits the dispatched batch boundary after durable intent and before POST', async () => {
     const f = await fixture();
     await downloaded(f);

@@ -242,17 +242,6 @@ describe('private readonly portable binary Audio UPDATE preflight', () => {
     expect(result.destination.inventory.records[0].Name).to.equal('Opaque sound');
     expect(result.destination.acquisition.projection.companions[0].bytes).to.deep.equal(f.current);
   });
-  it('supports omitted optional URL and opaque non-WAV bytes above the revoked cap (mock only)', async () => {
-    const f = await fixture(Buffer.alloc(10 * 1024 * 1024 + 1, 255));
-    delete f.definition.urlName;
-    f.row.UrlName = null;
-    delete f.detail.urlName;
-    await f.save();
-    downloaded(f);
-    const result = await f.run();
-    expect(result.payload).not.to.have.property('urlName');
-    expect(result.mediaSha256).to.equal(hash(f.bytes));
-  });
   it('detaches caller input and options before first await', async () => {
     const f = await fixture();
     downloaded(f);

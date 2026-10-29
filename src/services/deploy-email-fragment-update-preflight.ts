@@ -8,6 +8,8 @@ import type { UpdateVariantInput } from './lifecycle-foundation.js';
 import { getContent, getVariant } from './read.js';
 import { validateDataGraphPrerequisites } from './web-fragment.js';
 
+import type { FragmentDestinationInput } from './deploy-destination-folder-mapping.js';
+
 type FragmentConnection = Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>;
 
 /** Detached observations, never reusable mutation authority. */
@@ -24,7 +26,7 @@ export type EmailFragmentUpdatePreparation = Awaited<ReturnType<typeof prepareEm
  */
 export async function prepareEmailFragmentUpdate(
   connection: FragmentConnection,
-  input: { definitionFile: string; workspaceId: string },
+  input: FragmentDestinationInput,
   options: JsonRequestOptions = {},
 ) {
   const selected = structuredClone(input);
@@ -61,13 +63,6 @@ export async function prepareEmailFragmentUpdate(
     )
   )
     throw new TypeError('Fragment destination title/URL collision or unknown parent identity');
-  if (
-    destination.source.definition.folderPath.length > 0 ||
-    existing.projection.definition.folderPath.length > 0
-  )
-    throw new TypeError(
-      'Fragment nonroot folder destination resolution is not yet qualified; UPDATE blocked',
-    );
   const dataGraphs = structuredClone(prerequisites(destination.source.contentBody));
   const graphConnection = { version: apiVersion, request: connection.request.bind(connection) };
   await validateDataGraphPrerequisites(graphConnection, dataGraphs);

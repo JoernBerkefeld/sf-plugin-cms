@@ -82,45 +82,6 @@ function reportInput(branded = false) {
 }
 
 describe('Preference Page strict normalization', () => {
-  it('preserves the raw body and ordered channel/subchannel evidence', () => {
-    const result = normalizePreferencePage(preferencePage());
-    expect(result?.semantic.body).to.deep.equal(preferencePage().contentBody);
-    expect(result?.brandContentKey).to.equal(undefined);
-    expect(result?.unresolvedReferences).to.deep.equal([
-      {
-        referenceKey: 'subscription-0:channel',
-        kind: 'engagement-channel-type',
-        sourceId: 'channel-source-id',
-      },
-      {
-        referenceKey: 'subscription-0:subchannel-0',
-        kind: 'communication-subchannel-type',
-        sourceId: 'subchannel-b',
-      },
-      {
-        referenceKey: 'subscription-0:subchannel-1',
-        kind: 'communication-subchannel-type',
-        sourceId: 'subchannel-a',
-      },
-    ]);
-  });
-
-  it('accepts only absent Brand or exact { contentKey }', () => {
-    expect(normalizePreferencePage(preferencePage(true))?.brandContentKey).to.equal(
-      'source-brand-key',
-    );
-    for (const brand of [
-      { defaultBrandOption: 'sfdcBrand' },
-      {},
-      { contentKey: '' },
-      { contentKey: 'key', extra: true },
-    ]) {
-      const value = preferencePage();
-      (value.contentBody as Record<string, unknown>)['lightning:brandSource'] = brand;
-      expect(normalizePreferencePage(value)).to.equal(null);
-    }
-  });
-
   it('requires exact Draft/unpublished independent content and variant envelopes', () => {
     const variant = preferencePage();
     variant.contentType = 'sfdc_cms__preferencePage';

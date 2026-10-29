@@ -11,6 +11,8 @@ import {
   type WebFragmentDataGraphPrerequisite,
 } from './web-fragment.js';
 
+import type { FragmentDestinationInput } from './deploy-destination-folder-mapping.js';
+
 type CreateConnection = Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>;
 export type EmailFragmentCreatePreparation = {
   qualification: 'unqualified';
@@ -90,7 +92,7 @@ function assertNoUnresolvedReferences(value: JsonValue): void {
 
 /**
  * Prepare detached CREATE observations without mutation authority or public deployment integration.
- * Nonroot folders require a later destination folder-resolution checkpoint; they are never flattened.
+ * Explicit destination folder IDs require contextual ancestry proof; paths are never flattened.
  * @param {CreateConnection} connection - Explicit destination org transport and identity.
  * @param {object} input - Standalone definition and exact destination workspace ID.
  * @param {string} input.definitionFile - Exact standalone source path.
@@ -100,7 +102,7 @@ function assertNoUnresolvedReferences(value: JsonValue): void {
  */
 export async function prepareEmailFragmentCreate(
   connection: CreateConnection,
-  input: { definitionFile: string; workspaceId: string },
+  input: FragmentDestinationInput,
   options: JsonRequestOptions = {},
 ): Promise<EmailFragmentCreatePreparation> {
   const selected = structuredClone(input);
@@ -141,10 +143,6 @@ export async function prepareEmailFragmentCreate(
     !isDeepStrictEqual(destination.existing.projection.definition, expected)
   )
     throw new TypeError('Fragment destination differs; UPDATE required (not implemented)');
-  if (destination.source.definition.folderPath.length > 0)
-    throw new TypeError(
-      'Fragment nonroot folder destination resolution is not yet qualified; CREATE blocked',
-    );
   const dataGraphs = structuredClone(prerequisites(destination.source.contentBody));
   const graphConnection = { version: apiVersion, request: connection.request.bind(connection) };
   await validateDataGraphPrerequisites(graphConnection, dataGraphs);
@@ -173,7 +171,7 @@ export async function prepareEmailFragmentCreate(
         contentBody: structuredClone(destination.source.contentBody),
       },
     },
-    destination.workspace.rootFolderId,
+    destination.folder.id,
   );
   return {
     qualification: 'unqualified',

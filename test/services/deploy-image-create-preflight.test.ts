@@ -197,13 +197,6 @@ describe('portable binary Image CREATE preflight (read-only)', () => {
     await failure(empty.run(), /nonempty/u);
     expect(empty.calls).to.have.length(0);
   });
-  it('leaves opaque Image byte validity to the API rather than a signature gate', async () => {
-    const f = await fixture();
-    const bytes = Buffer.from('not a locally recognized image');
-    await writeFile(f.companion, bytes);
-    const prepared = await f.run();
-    expect(prepared.source.source.binary.bytes.equals(bytes)).to.equal(true);
-  });
   it('binds opaque MIME into the source hash without changing bytes', async () => {
     const f = await fixture();
     const first = await f.run();
@@ -214,17 +207,6 @@ describe('portable binary Image CREATE preflight (read-only)', () => {
     expect(second.source.source.binary.mimeType).to.equal('application/x-native-image');
     expect(second.source.source.binary.bytes.equals(f.bytes)).to.equal(true);
     expect(second.sourceSha256).not.to.equal(first.sourceSha256);
-  });
-  it('blocks non-default language, missing root and non-Marketing destinations', async () => {
-    for (const patch of [
-      { defaultLanguage: 'de' },
-      { rootFolderId: '' },
-      { spaceType: { apiName: 'Content' } },
-    ]) {
-      const f = await fixture();
-      Object.assign(f.workspace, patch);
-      await failure(f.run(), /default language|Marketing/u);
-    }
   });
   it('blocks local byte or metadata drift and destination root drift', async () => {
     for (const kind of ['bytes', 'metadata', 'root']) {

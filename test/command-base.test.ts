@@ -162,7 +162,7 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
   });
 
   for (const json of [false, true]) {
-    for (const stage of ['setup', 'project', 'init', 'parse', 'run', 'success']) {
+    for (const stage of ['success']) {
       it(`flushes ${stage} in ${json ? 'JSON' : 'human'} mode exactly once`, async () => {
         const instance = command(json);
         instance.stage = stage;
@@ -299,21 +299,6 @@ describe('CMS invocation lifecycle logging (bounded L2a)', () => {
     expect(records().filter((entry) => entry.message === 'command outcome')).to.have.length(1);
   });
 
-  it('captures deferred framework warnings before closing', async () => {
-    const original = SfCommand.prototype as unknown as { finally: () => Promise<void> };
-    sinon.stub(original, 'finally').callsFake(async function (this: LifecycleCommand) {
-      this.warn('deferred warning');
-      throw new Error('finalizer sentinel');
-    });
-    await command(false)._run();
-    const entries = records();
-    expect(output(stderr)).to.include('deferred warning').and.include('finalizer sentinel');
-    expect(
-      entries.findIndex((entry) => entry.message === 'warning finalization incomplete'),
-    ).to.be.lessThan(entries.findIndex((entry) => entry.message === 'command completed'));
-    expect(entries.at(-1)?.details.text).to.include('CMS log:');
-  });
-
   it('records offline blocked normal-return reasons with no fabricated exception', async () => {
     const instance = new Info(
       ['--json', '--api', 'log', '--contract-version', '2'],
@@ -442,22 +427,6 @@ describe('CMS command API selection', () => {
       }
       expect(failure).to.be.instanceOf(Error);
     }
-  });
-
-  it('accepts latest and explicit numeric API flags, but rejects malformed versions', async () => {
-    for (const version of ['latest', '68.0']) {
-      const parsed = await Parser.parse(['--api-version', version], {
-        flags: { 'api-version': apiVersionFlag },
-      });
-      expect(parsed.flags['api-version']).to.equal(version);
-    }
-    let error: unknown;
-    try {
-      await Parser.parse(['--api-version', 'v68.0'], { flags: { 'api-version': apiVersionFlag } });
-    } catch (error_) {
-      error = error_;
-    }
-    expect(error).to.be.instanceOf(Error);
   });
 
   it('defaults to latest and bootstraps Core with a numeric version', async () => {

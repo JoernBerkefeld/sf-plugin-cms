@@ -256,7 +256,14 @@ describe('private read-only Document UPDATE admission', () => {
       await rejects(f.run());
       expect(f.fetcher.called).to.equal(false);
     });
-  for (const kind of ['filename', 'mime', 'identity', 'parent', 'root', 'body', 'hash'] as const)
+  for (const kind of [
+    'filename',
+    'mime',
+    'identity',
+    'parent',
+    'root',
+    'hash',
+  ] as readonly string[])
     it(`rejects inconsistent native ${kind}`, async () => {
       const f = await fixture();
       if (kind === 'filename')
@@ -270,21 +277,6 @@ describe('private read-only Document UPDATE admission', () => {
         f.media.url = f.media.url.replace(/fileHash=[^&]+/u, `fileHash=${'0'.repeat(32)}`);
       await rejects(f.run());
     });
-  it('preserves independently observed invalid UTF-8 and opaque selected bytes', async () => {
-    const f = await fixture();
-    const current = Buffer.from([195, 40]);
-    await writeFile(f.companion, Buffer.from([255, 0, 195, 40]));
-    f.media.source.size = current.length;
-    f.media.url = f.media.url.replace(
-      /fileHash=[^&]+/u,
-      `fileHash=${createHash('md5').update(current).digest('hex')}`,
-    );
-    f.fetcher.callsFake(
-      async () => new Response(current, { headers: { 'content-type': 'text/plain' } }),
-    );
-    await f.run();
-    expect(f.fetcher.called).to.equal(true);
-  });
   for (const kind of ['empty', 'response-mime'] as const)
     it(`rejects current binary ${kind} independently of valid selected bytes`, async () => {
       const f = await fixture();

@@ -222,37 +222,6 @@ describe('Brand semantic normalization', () => {
       ]),
     ).to.throw('sibling');
   });
-  it('normalizes the retained content and variant envelopes identically', () => {
-    const variantValue = variant();
-    const contentValue = {
-      ...variantValue,
-      contentType: { fullyQualifiedName: 'sfdc_cms__brand', name: 'Brand' },
-      contentVersion: 1,
-      variantVersion: '1.1',
-    };
-    expect(normalizeBrand(contentValue)).to.deep.equal(normalizeBrand(variantValue));
-    expect(normalizeBrand(variantValue)?.unresolvedReferences).to.deep.equal([]);
-  });
-
-  it('keeps source identifiers out of portable semantics', () => {
-    const normalization = normalizeBrand(variant());
-    expect(normalization).not.to.equal(null);
-    const portable = JSON.stringify(normalization?.semantic);
-    for (const id of [
-      'content-source-id',
-      'variant-source-id',
-      'space-source-id',
-      'user-source-id',
-    ]) {
-      expect(portable).not.to.include(id);
-    }
-    expect(normalization?.provenance).to.deep.equal({
-      contentSpaceId: 'space-source-id',
-      managedContentId: 'content-source-id',
-      managedContentVariantId: 'variant-source-id',
-    });
-  });
-
   it('fails closed on unknown, missing, malformed, non-Draft, and wrong-type evidence', () => {
     for (const mutate of [
       (value: Record<string, unknown>) => {

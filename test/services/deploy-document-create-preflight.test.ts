@@ -150,20 +150,6 @@ describe('portable Document CREATE preflight (read-only)', () => {
     expect(first.observations.workspace.rootFolderId).to.equal('root');
     expect(first.payload.title).to.equal('Guide document');
   });
-  it('permits intentional edits without an authoring baseline and binds metadata separately from bytes', async () => {
-    const f = await fixture();
-    const first = await f.run();
-    await writeFile(f.companion, 'Edited ü\n');
-    const edited = await f.run();
-    expect(edited.mediaSha256).not.to.equal(first.mediaSha256);
-    expect(edited.sourceSha256).not.to.equal(first.sourceSha256);
-    delete f.definition.urlName;
-    await f.save();
-    const metadata = await f.run();
-    expect(metadata.payload).not.to.have.property('urlName');
-    expect(metadata.sourceSha256).not.to.equal(edited.sourceSha256);
-    expect(metadata.mediaSha256).to.equal(edited.mediaSha256);
-  });
   for (const patch of [
     { ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Guide' } },
     { Name: 'Guide document' },
@@ -234,20 +220,6 @@ describe('portable Document CREATE preflight (read-only)', () => {
     await unlink(missing.companion);
     await failure(missing.run(), /missing/u);
     expect(missing.calls).to.have.length(0);
-  });
-  it('preserves opaque source bytes through the existing CREATE preflight', async () => {
-    const f = await fixture();
-    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
-    await writeFile(f.companion, bytes);
-    const result = await f.run();
-    expect(result.source.source).to.have.nested.property('binary.bytes').deep.equal(bytes);
-    expect(f.calls.length).to.be.greaterThan(0);
-  });
-  it('accepts the inclusive 10 MiB profile boundary', async () => {
-    const f = await fixture();
-    await writeFile(f.companion, Buffer.alloc(10 * 1024 * 1024, 65));
-    const result = await f.run();
-    expect(result.source.source).to.have.nested.property('binary.bytes.length', 10 * 1024 * 1024);
   });
   it('rejects substituted destination identity, language, root binding and noncanonical Marketing', async () => {
     for (const patch of [

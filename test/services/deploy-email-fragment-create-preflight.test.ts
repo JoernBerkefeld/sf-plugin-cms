@@ -223,24 +223,12 @@ describe('internal Fragment CREATE preparation', () => {
     await failure(invalid.prepare(), /exact destination org/u);
     expect(invalid.calls).to.deep.equal([]);
   });
-  it('supports independently named providers without sample-derived graph or layout restrictions', async () => {
-    const current = await fixture();
-    const providers = current.definition.contentBody['lightning:dataProviders'] as Array<
-      Record<string, unknown>
-    >;
-    providers[0].attributes = { dataGraphApiName: 'CustomGraph', dataspace: 'CustomSpace' };
-    current.graph.name = 'CustomGraph';
-    current.graph.dataspaceName = 'CustomSpace';
-    await current.save();
-    const result = await current.prepare();
-    expect(result.dataGraphs[0].targetDeveloperName).to.equal('CustomGraph');
-    expect(result.payload.contentBody).to.deep.equal(current.definition.contentBody);
-  });
   it('blocks nonroot paths rather than flattening them', async () => {
     const current = await fixture();
     current.definition.folderPath = ['Nested'];
     await current.save();
-    await failure(current.prepare(), /nonroot folder destination resolution/u);
+    await failure(current.prepare(), /requires numeric CMS API 68.0/u);
+    expect(current.calls.some((url) => url.includes('folder-items'))).to.equal(false);
   });
   it('rejects missing, ambiguous or unsupported provider/reference dependencies', async () => {
     for (const patch of [

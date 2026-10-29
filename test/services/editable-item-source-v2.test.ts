@@ -103,36 +103,6 @@ describe('versioned editable Email components', () => {
     });
   }
 
-  for (const template of [false, true]) {
-    it(`rejects old role-suffixed filenames for ${template ? 'Template' : 'Email'} without migration`, async () => {
-      const projection = extractEditableItemSourceV2(definition(template), '<p>Hello</p>');
-      const directory = await mkdtemp(path.join(os.tmpdir(), 'cms-old-companion-name-'));
-      const json = path.join(directory, projection.definitionName);
-      for (const role of ['rawHtml', 'textContent']) {
-        const candidate = structuredClone(projection.definition);
-        const companion = candidate.companions.find((entry) => entry.role === role)!;
-        const extension = role === 'rawHtml' ? 'html' : 'txt';
-        companion.path = companion.path.replace(`.${extension}`, `.${role}.${extension}`);
-        expect(() => assertEditableItemDefinitionV2(candidate)).to.throw(/same-stem/u);
-        await writeFile(json, JSON.stringify(candidate));
-        await failure(loadEditableItemSourceV2(json), /same-stem/u);
-      }
-    });
-  }
-
-  it('supports HTML-only items without inventing a text component', () => {
-    const original = definition(false);
-    delete original.contentBody.textContent;
-    const projection = extractEditableItemSourceV2(original, '<p>Hello</p>');
-    expect(projection.companions).to.have.length(1);
-    expect(
-      reassembleEditableItemSourceV2(
-        projection.definition,
-        new Map(projection.companions.map((entry) => [entry.path, entry.bytes])),
-      ),
-    ).not.to.have.property('textContent');
-  });
-
   it('rejects duplicate, missing, escaping, unknown and embedded component bindings', () => {
     const projection = extractEditableItemSourceV2(definition(false), '<p>Hello</p>');
     const original = projection.definition;

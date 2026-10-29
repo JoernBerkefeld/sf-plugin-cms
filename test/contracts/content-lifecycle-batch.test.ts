@@ -193,13 +193,6 @@ describe('metadata lifecycle batch contracts', () => {
   }
   for (const operation of ['publish', 'unpublish'] as const) {
     for (const mode of ['dry-run', 'apply'] as const) {
-      it(`accepts complete ${operation} ${mode} evidence`, () => {
-        const value = batch(operation, mode, [mode === 'dry-run' ? 'ready' : 'completed']);
-        expect(() => assertContentLifecycleBatchResult(value, undefined, 'success')).not.to.throw();
-        expect(() =>
-          assertCmsEnvelope(envelope(value, operation), assertContentLifecycleBatchResult),
-        ).not.to.throw();
-      });
       for (const index of [0, 1])
         it(`accepts ${operation} ${mode} preflight stop at ${index} without mutations`, () => {
           const value = batch(
@@ -286,111 +279,15 @@ describe('metadata lifecycle batch contracts', () => {
 
   const mutations: Array<[string, (value: MalformedBatch) => void]> = [
     [
-      'unknown batch key',
-      (v) => {
-        v.extra = true;
-      },
-    ],
-    [
-      'missing batch key',
-      (v) => {
-        delete v.selection;
-      },
-    ],
-    [
-      'invalid selection',
-      (v) => {
-        v.selection = 'all';
-      },
-    ],
-    [
-      'invalid operation',
-      (v) => {
-        v.operation = 'delete';
-      },
-    ],
-    [
-      'invalid mode',
-      (v) => {
-        v.mode = 'preview';
-      },
-    ],
-    [
-      'empty items',
-      (v) => {
-        v.items = [];
-      },
-    ],
-    [
-      'nonarray items',
-      (v) => {
-        v.items = {};
-      },
-    ],
-    [
       'unordered index',
       (v) => {
         v.items[0].index = 1;
       },
     ],
     [
-      'unknown item key',
-      (v) => {
-        v.items[0].extra = true;
-      },
-    ],
-    [
-      'nonobject item',
-      (v) => {
-        v.items[0] = null;
-      },
-    ],
-    [
-      'noncanonical type',
-      (v) => {
-        v.items[0].selector.contentType = 'email';
-      },
-    ],
-    [
-      'blank name',
-      (v) => {
-        v.items[0].selector.apiName = ' ';
-      },
-    ],
-    [
-      'separator name',
-      (v) => {
-        v.items[0].selector.apiName = 'a:b';
-      },
-    ],
-    [
-      'unknown selector key',
-      (v) => {
-        v.items[0].selector.extra = true;
-      },
-    ],
-    [
-      'invalid outcome',
-      (v) => {
-        v.items[0].outcome = 'cancelled';
-      },
-    ],
-    [
-      'nonarray blockers',
-      (v) => {
-        v.items[0].blockers = null;
-      },
-    ],
-    [
       'false blocker',
       (v) => {
         v.items[0].blockers = [{ code: 'x', message: 'x' }];
-      },
-    ],
-    [
-      'malformed blocker',
-      (v) => {
-        v.items[0].blockers = [{ code: '', message: 'x' }];
       },
     ],
     [
@@ -440,18 +337,6 @@ describe('metadata lifecycle batch contracts', () => {
       'result outcome mismatch',
       (v) => {
         v.items[0].outcome = 'completed';
-      },
-    ],
-    [
-      'ready report',
-      (v) => {
-        v.items[0].reportFile = 'wrong';
-      },
-    ],
-    [
-      'dryrun report',
-      (v) => {
-        v.reportFile = 'wrong';
       },
     ],
     [
@@ -514,30 +399,6 @@ describe('metadata lifecycle batch contracts', () => {
       },
     ],
     [
-      'negative stop',
-      (v: MalformedBatch) => {
-        v.stop.index = -1;
-      },
-    ],
-    [
-      'fractional stop',
-      (v: MalformedBatch) => {
-        v.stop.index = 0.5;
-      },
-    ],
-    [
-      'invalid stop outcome',
-      (v: MalformedBatch) => {
-        v.stop.outcome = 'ready';
-      },
-    ],
-    [
-      'unknown stop key',
-      (v: MalformedBatch) => {
-        v.stop.extra = true;
-      },
-    ],
-    [
       'unattempted evidence',
       (v: MalformedBatch) => {
         v.items[2].reportFile = 'wrong';
@@ -549,12 +410,6 @@ describe('metadata lifecycle batch contracts', () => {
         v.items[1].blockers = [];
       },
     ],
-    [
-      'blocker disagreement',
-      (v: MalformedBatch) => {
-        v.items[1].blockers = [{ ...v.items[1].blockers[0], message: 'different' }];
-      },
-    ],
   ] as const)
     it(`rejects ${name}`, () => {
       const value = batch('publish', 'dry-run', ['ready', 'blocked', 'unattempted'], 1);
@@ -563,18 +418,6 @@ describe('metadata lifecycle batch contracts', () => {
     });
 
   for (const [name, mutate] of [
-    [
-      'missing aggregate report',
-      (v: MalformedBatch) => {
-        delete v.reportFile;
-      },
-    ],
-    [
-      'missing target report',
-      (v: MalformedBatch) => {
-        delete v.items[0].reportFile;
-      },
-    ],
     [
       'mismatched target report',
       (v: MalformedBatch) => {

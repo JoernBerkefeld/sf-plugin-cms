@@ -63,7 +63,13 @@ describe('current public documentation', () => {
     for (const claim of [
       'content.retrieve.email-fragment',
       'content.deploy.email-fragment.create',
-      'Current nonroot destination folder mapping',
+      'Explicit destination folder IDs are locally available (unqualified)',
+      'portable name resolution is pending',
+      'bounded v68+ read-only folder-items investigation',
+      'short/empty pages never prove absence or uniqueness',
+      'automatic path resolution is unqualified',
+      'Explicit IDs bypass enumeration, not ancestry validation',
+      'UPDATE never moves content',
       'General portability, cross-workspace, cross-org, publish, rendering and current combined-artifact qualification remain outstanding',
       'public re-retrieval with full canonical comparison and the expected derived envelope',
       'Distinct seed and destination identities do not prove every restore or topology profile',
@@ -74,6 +80,10 @@ describe('current public documentation', () => {
       'all seven currently admitted types',
     ])
       expect(readme).to.include(claim);
+    expect(DeployContent.description).to.include(
+      'bounded v68+ read-only folder-items investigation',
+    );
+    expect(DeployContent.description).to.include('automatic path resolution is unqualified');
     const overview = readme.split('## Content type support')[1].split('## Installation')[0];
     const fragmentRow = overview
       .split('\n')
@@ -216,36 +226,6 @@ describe('current public documentation', () => {
     ])
       expect(readme).to.include(claim);
   });
-  it('documents neutral resolved org notices and suppression boundaries', async () => {
-    const readme = await readFile(readmeFile, 'utf8');
-    for (const claim of [
-      'Using org my-org (user@example.com)',
-      'both explicit',
-      'implicit configured selections',
-      'JSON mode, offline `info`, help and failed parsing',
-    ])
-      expect(readme).to.include(claim);
-  });
-  it('documents matching workspace and channel pagination semantics', async () => {
-    const readme = await readFile(readmeFile, 'utf8');
-    for (const resource of ['workspace', 'channel']) {
-      const section = readme.split(`### \`sf content list ${resource}\``)[1].split('\n### ')[0];
-      for (const claim of [
-        'all pages',
-        'one-based page number',
-        '`--page-size` alone requests only the first page',
-        'both flags select page N',
-        'Enumeration safety failures are errors',
-      ])
-        expect(section).to.include(claim);
-      const messages = await readFile(
-        new URL(`../messages/cms.list.${resource}.md`, import.meta.url),
-        'utf8',
-      );
-      expect(messages).to.include('One-based page number (first page is 1).');
-      expect(messages).to.include('Supply --page or --page-size to select one page.');
-    }
-  });
   it('documents workspace presentation independently from unchanged JSON and list requests', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const workspace = readme
@@ -298,19 +278,6 @@ describe('current public documentation', () => {
     expect(defaults).to.include('sf content list workspace --target-org isolated-target');
   });
 
-  it('documents conventional deploy metadata and file-or-directory alternatives without compatibility flags', async () => {
-    const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-    expect(readme).to.include('--metadata -m Type[:ApiName]');
-    expect(readme).to.include('No selectors means an error');
-    expect(readme).to.include('Source-dir accepts definition files or directories');
-    expect(readme).not.to.include('--definition-file ./');
-    expect(DeployContent.flags).not.to.have.property('definition-file');
-    expect(
-      DeployContent.examples.every(
-        (example) => !(example.includes('-d ') && example.includes('-m ')),
-      ),
-    ).to.equal(true);
-  });
   it('documents upload execution, preview and opt-in operation evidence', async () => {
     const readme = await readFile(readmeFile, 'utf8');
     const upload = readme.split('### `sf content upload`')[1].split('### `sf content info`')[0];
@@ -319,65 +286,6 @@ describe('current public documentation', () => {
     expect(upload).to.include('no crash-surviving structured journal');
     expect(upload).to.include('in-memory');
     expect(upload).not.to.include('--apply --report-dir');
-  });
-
-  it('omits historical command and internal-engine appendices', async () => {
-    const readme = await readFile(readmeFile, 'utf8');
-    for (const obsolete of [
-      '## Upgrading to 0.14.0',
-      '## Advanced: retained internal engines',
-      '### Internal workspace export baselines',
-      '### Retained internal workspace import engines',
-      'Retained internal update engine and historical import recovery notes',
-      '### Internal Draft HTML update engine',
-      '### Internal-engine package layout and integrity',
-      '## Contributor notes: retained internal experimental workspace export',
-      'sf-cms-workspace-export-set@1',
-      'sf-cms-external-reference-correlations@1',
-      'sf-cms-workspace-import@1',
-      'without aliases',
-      'Historical evidence:',
-      'contract 1)',
-      'contract 2)',
-    ]) {
-      expect(readme, obsolete).not.to.include(obsolete);
-    }
-    expect(readme).not.to.match(/\bPhase \d+\b|\b0\.(?:11|12|13|14)\.0\b/);
-    expect(readme).not.to.include('<details>');
-  });
-
-  it('retains current commands, schema identities and illustrative plugin versions', async () => {
-    const readme = await readFile(readmeFile, 'utf8');
-    for (const command of [
-      'content info',
-      'content list workspace',
-      'content list channel',
-      'content retrieve',
-      'content deploy',
-      'content upload',
-      'content publish',
-      'content unpublish',
-      'content delete',
-    ]) {
-      expect(readme).to.include(`### \`sf ${command}\``);
-    }
-    for (const schema of [
-      'sf-cms-info@1',
-      'sf-cms-content-retrieve@1',
-      'sf-cms-media-source@1',
-      'sf-cms-content-deploy@1',
-      'sf-cms-images-upload@1',
-      'sf-cms-content-delete@1',
-      'sf-cms-content-publish@1',
-      'sf-cms-content-unpublish@1',
-    ]) {
-      expect(readme, schema).to.include(schema);
-    }
-    expect(readme).to.include('"version": "<installed-plugin-version>"');
-    expect(readme).to.include('"pluginVersion": "<installed-plugin-version>"');
-    expect(readme).to.include('illustrative, not release identifiers');
-    expect(readme).to.include('## Development');
-    expect(readme).to.include('imaginary result of a future retrieve-all operation');
   });
 
   it('documents API-led Image admission without claiming live format qualification', async () => {

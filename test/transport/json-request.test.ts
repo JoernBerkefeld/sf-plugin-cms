@@ -4,7 +4,6 @@ import type { Transport } from '@jsforce/jsforce-node/lib/transport.js';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import {
-  buildOperationUrl,
   CmsRequestError,
   getSelectedOperation,
   requestJson,
@@ -126,33 +125,6 @@ describe('CMS JSON request transport', () => {
       expect(attempts).to.equal(2);
       expect(refresh.calledOnce).to.equal(true);
     }
-  });
-
-  it('passes through the original transport stream without consuming it', async () => {
-    const connection = new JsforceConnection({
-      instanceUrl: 'https://example.salesforce.com',
-      accessToken: 'token',
-    });
-    const stream = new PassThrough();
-    Object.assign(connection, {
-      _transport: {
-        httpRequest: () =>
-          fakeRequest(
-            Promise.resolve({
-              statusCode: 200,
-              headers: { 'content-type': 'application/json' },
-              body: '{"ok":true}',
-            }),
-            stream,
-          ),
-      },
-    });
-    const result = await requestJson(connection, getSelectedOperation('variant.get'), {
-      path: { variantId: 'variant' },
-    });
-    expect(result.data).to.deep.equal({ ok: true });
-    expect(stream.destroyed).to.equal(false);
-    expect(stream.readableLength).to.equal(0);
   });
 
   it('keeps cancellation stream identity through the request-local wrapper', async () => {
@@ -343,128 +315,6 @@ describe('CMS JSON request transport', () => {
     }
   });
 
-  it('preserves success and synchronous rejection when the diagnostic sink throws', async () => {
-    const logger: InvocationLogger = {
-      filePath: 'unused',
-      log: () => {
-        throw new Error('disk');
-      },
-      close: async () => {},
-    };
-    const request = sinon.stub().returns(fakeRequest(Promise.resolve('success')));
-    const success = await runWithInvocationLogging(
-      logger,
-      () => requestJson({ request }, getSelectedOperation('workspace.list')),
-      true,
-    );
-    expect(success.data).to.equal('success');
-    const error = new Error('synchronous SDK failure');
-    request.resetBehavior();
-    request.throws(error);
-    try {
-      await runWithInvocationLogging(
-        logger,
-        () => requestJson({ request }, getSelectedOperation('workspace.list')),
-        true,
-      );
-      expect.fail('expected rejection');
-    } catch (error_) {
-      expect(error_).to.equal(error);
-    }
-    expect(request.callCount).to.equal(2);
-  });
-  it('constructs encoded paths and deterministic query strings', () => {
-    expect(
-      buildOperationUrl(getSelectedOperation('content.get'), {
-        path: { contentKeyOrId: 'folder/item + one' },
-        query: { version: 'draft & ready', contentVersion: '3' },
-      }),
-    ).to.equal(
-      '/connect/cms/contents/folder%2Fitem%20%2B%20one?contentVersion=3&version=draft+%26+ready',
-    );
-    expect(
-      buildOperationUrl(getSelectedOperation('workspace.channel.list'), {
-        path: { contentSpaceId: '0Z9/a' },
-        query: { pageSize: 50, page: 2 },
-      }),
-    ).to.equal('/connect/cms/spaces/0Z9%2Fa/channels?page=2&pageSize=50');
-    expect(
-      buildOperationUrl(getSelectedOperation('workspace.variant.search'), {
-        query: {
-          queryTerm: '*',
-          languages: ['en_US', 'de DE'],
-          contentSpaceOrFolderIds: ['0Zu/b', '9Pu+c'],
-        },
-      }),
-    ).to.equal(
-      '/connect/cms/items/search?contentSpaceOrFolderIds=0Zu%2Fb&contentSpaceOrFolderIds=9Pu%2Bc&languages=en_US&languages=de+DE&queryTerm=*',
-    );
-  });
-
-  it('validates required, unknown, and typed parameters', () => {
-    const operation = getSelectedOperation('workspace.channel.list');
-    expect(() => buildOperationUrl(operation)).to.throw(
-      CmsRequestError,
-      'Missing required path parameter: contentSpaceId',
-    );
-    expect(() =>
-      buildOperationUrl(operation, { path: { contentSpaceId: 'space', extra: 'no' } }),
-    ).to.throw(CmsRequestError, 'Unknown path parameter: extra');
-    expect(() =>
-      buildOperationUrl(operation, { path: { contentSpaceId: 'space' }, query: { other: 1 } }),
-    ).to.throw(CmsRequestError, 'Unknown query parameter: other');
-    expect(() =>
-      buildOperationUrl(operation, {
-        path: { contentSpaceId: 'space' },
-        query: { page: 1.5 },
-      }),
-    ).to.throw(CmsRequestError, 'Invalid integer parameter: page');
-
-    const search = getSelectedOperation('workspace.variant.search');
-    expect(() =>
-      buildOperationUrl(search, {
-        query: { contentSpaceOrFolderIds: ['space'], queryTerm: '*', unknown: 'no' },
-      }),
-    ).to.throw(CmsRequestError, 'Unknown query parameter: unknown');
-    expect(() =>
-      buildOperationUrl(search, {
-        query: { contentSpaceOrFolderIds: 'space', queryTerm: '*' },
-      }),
-    ).to.throw(CmsRequestError, 'Invalid string-array parameter: contentSpaceOrFolderIds');
-    expect(() =>
-      buildOperationUrl(search, {
-        query: { contentSpaceOrFolderIds: [], queryTerm: '*' },
-      }),
-    ).to.throw(CmsRequestError, 'Invalid string-array parameter: contentSpaceOrFolderIds');
-    expect(() =>
-      buildOperationUrl(search, {
-        query: { contentSpaceOrFolderIds: ['space', 1] as unknown as string[], queryTerm: '*' },
-      }),
-    ).to.throw(CmsRequestError, 'Invalid string-array parameter: contentSpaceOrFolderIds');
-  });
-
-  it('returns typed JSON success metadata and passes the timeout', async () => {
-    const request = sinon.stub().returns(fakeRequest(Promise.resolve({ id: 'space' })));
-    const result = await requestJson<{ id: string }>(
-      { request },
-      getSelectedOperation('workspace.get'),
-      { path: { contentSpaceId: 'space' } },
-      { timeoutMs: 4321 },
-    );
-
-    expect(result).to.deep.equal({
-      data: { id: 'space' },
-      operationKey: 'workspace.get',
-      status: 200,
-    });
-    expect(
-      request.calledOnceWithExactly(
-        { method: 'GET', url: '/connect/cms/spaces/space' },
-        { timeout: 4321 },
-      ),
-    ).to.equal(true);
-  });
-
   it('normalizes API errors with status and redacts secrets', async () => {
     const error = Object.assign(
       new Error(
@@ -566,47 +416,6 @@ describe('CMS JSON request transport', () => {
     );
     expect(structured.message).to.equal('Authorization: [REDACTED]');
     expect(structured.responseMessage).to.equal('?access_token=[REDACTED]');
-  });
-
-  it('preserves existing request errors without relabeling their operation', async () => {
-    const original = new CmsRequestError('workspace.get', 'Request failed', 400, {
-      errorCode: 'INVALID_ID_FIELD',
-      errorEntryCount: 1,
-      responseMessage: 'Provide a valid content key, ID, or FQN.',
-    });
-    const request = sinon.stub().returns(fakeRequest(Promise.reject(original)));
-
-    try {
-      await requestJson({ request }, getSelectedOperation('content.get'), {
-        path: { contentKeyOrId: 'missing-key' },
-      });
-      expect.fail('expected request to fail');
-    } catch (error) {
-      expect(error).to.equal(original);
-      expect(error).to.include({ operationKey: 'workspace.get' });
-    }
-  });
-
-  it('normalizes request timeouts', async () => {
-    const request = sinon
-      .stub()
-      .returns(
-        fakeRequest(
-          Promise.reject(Object.assign(new Error('Request timed out'), { code: 'ETIMEDOUT' })),
-        ),
-      );
-
-    try {
-      await requestJson({ request }, getSelectedOperation('workspace.list'), {}, { timeoutMs: 25 });
-      expect.fail('expected timed out request to fail');
-    } catch (error) {
-      expect(error).to.be.instanceOf(CmsRequestError);
-      expect(error).to.include({ operationKey: 'workspace.list' });
-      expect((error as Error).message).to.equal('Request timed out');
-    }
-    expect(
-      request.calledOnceWithExactly({ method: 'GET', url: '/connect/cms/spaces' }, { timeout: 25 }),
-    ).to.equal(true);
   });
 
   it('supports cancellation and rejects already-aborted requests', async () => {

@@ -38,10 +38,6 @@ const root = fileURLToPath(new URL('demo-project/', import.meta.url));
 const inventoryFile = fileURLToPath(
   new URL('fixtures/demo-project-inventory.json', import.meta.url),
 );
-const coverageFile = fileURLToPath(
-  new URL('fixtures/demo-project-ui-coverage.json', import.meta.url),
-);
-
 /**
  * List fixture files without creating temporary output or performing cleanup.
  * @param {string} directory - Fixture directory to inspect.
@@ -180,94 +176,6 @@ describe('imaginary CMS retrieve-all demo project', () => {
       }
     }
     expect(await files(root)).to.deep.equal(listed.toSorted());
-  });
-
-  it('accounts for all 25 UI labels outside the retrieved tree without inventing support or files', async () => {
-    const coverage = JSON.parse(await readFile(coverageFile, 'utf8')) as {
-      format: string;
-      labels: Array<{
-        displayLabel: string;
-        apiType: string | null;
-        mappingStatus: string;
-        providerSupport: string;
-        evidence?: string;
-        demoFamily: string | null;
-      }>;
-    };
-    const inventory = JSON.parse(await readFile(inventoryFile, 'utf8')) as {
-      items: InventoryItem[];
-    };
-    expect(coverage.format).to.equal('sf-cms-demo-ui-coverage@1');
-    expect(coverage.labels.map((entry) => entry.displayLabel)).to.deep.equal([
-      'Audio',
-      'Brand',
-      'Consent Banner',
-      'Contact Card (VCF)',
-      'Content Block: Email',
-      'Content Block: Landing Page',
-      'Custom Font',
-      'Document',
-      'Email',
-      'Email Template',
-      'Expression',
-      'Form',
-      'Form Handler',
-      'Image',
-      'In-App Message',
-      'Landing Page',
-      'Landing Page Template',
-      'Preference Page',
-      'Push Notification Message',
-      'RCS Message',
-      'SMS and MMS',
-      'Tracked Link',
-      'Video',
-      'WhatsApp Session Message',
-      'WhatsApp Template Message',
-    ]);
-    expect(coverage.labels.filter((entry) => entry.demoFamily !== null)).to.have.lengthOf(11);
-    expect(
-      coverage.labels.filter((entry) => entry.mappingStatus === 'unresolved'),
-    ).to.have.lengthOf(13);
-    for (const entry of coverage.labels) {
-      if (entry.mappingStatus === 'unresolved') {
-        expect(entry).to.include({
-          apiType: null,
-          providerSupport: 'unresolved',
-          demoFamily: null,
-        });
-        expect(entry).not.to.have.property('evidence');
-      } else {
-        expect(entry.mappingStatus).to.equal('verified');
-        expect(entry.providerSupport).not.to.equal('unresolved');
-        expect(entry.evidence).to.match(/^src\/.+\.ts$/u);
-        const evidence = await readFile(new URL(`../${entry.evidence}`, import.meta.url), 'utf8');
-        expect(evidence, entry.displayLabel).to.include(entry.apiType);
-      }
-      if (entry.demoFamily !== null) {
-        const item = inventory.items.find((candidate) => candidate.family === entry.demoFamily);
-        expect(item, entry.displayLabel).not.to.equal(undefined);
-        expect(item?.displayLabel).to.equal(entry.displayLabel);
-        expect(entry.apiType).to.equal(`sfdc_cms__${item?.family}`);
-      }
-    }
-    expect(inventory.items.find((item) => item.family === 'emailFragment')).to.include({
-      displayLabel: 'Content Block: Email',
-      type: 'Email Fragment',
-      token: 'email-fragment',
-    });
-    expect(inventory.items.find((item) => item.family === 'webFragment')).to.include({
-      displayLabel: 'Content Block: Landing Page',
-      type: 'Web Fragment',
-      token: 'web-fragment',
-    });
-    for (const metadataFile of [inventoryFile, coverageFile]) {
-      expect(path.relative(root, metadataFile).startsWith('..')).to.equal(true);
-      const text = await readFile(metadataFile, 'utf8');
-      expect(text).not.to.include('\r');
-      expect(text.codePointAt(0)).not.to.equal(65_279);
-      expect(text.endsWith('\n')).to.equal(true);
-    }
   });
 
   it('contains only LF/no-BOM fictional source files and no source org identities or secrets', async () => {

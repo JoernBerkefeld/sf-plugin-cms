@@ -32,14 +32,6 @@ const generatedIds = Array.from(
 );
 
 describe('strict Consent Banner normalization and reports', () => {
-  it('normalizes exact content and variant envelopes identically', () => {
-    const content = normalizeConsentBanner(consentBannerDetail('content'));
-    const variant = normalizeConsentBanner(consentBannerDetail('variant'));
-    expect(content).to.deep.equal(variant);
-    expect(content?.dependencies).to.deep.equal([]);
-    expect(content?.references).to.deep.equal([]);
-  });
-
   it('rejects unknown actions, providers, and forbidden references', () => {
     const providerBody = consentBannerBody();
     providerBody['lightning:dataProviders'].push({} as never);

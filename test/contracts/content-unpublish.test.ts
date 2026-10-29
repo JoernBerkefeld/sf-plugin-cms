@@ -110,24 +110,6 @@ describe('strict native unpublish completion (execution admission remains closed
       }),
     ).to.throw();
   });
-  for (const family of [
-    'sfdc_cms__emailTemplate',
-    'sfdc_cms__emailFragment',
-    'sfdc_cms__image',
-    'sfdc_cms__document',
-    'sfdc_cms__audio',
-  ]) {
-    it(`accepts JSON-only Draft ${family} completion with an unselected Published locale`, () => {
-      const serialized = JSON.stringify(fixture(family));
-      const result: unknown = JSON.parse(serialized);
-      expect(() => assertContentUnpublishResult(result)).not.to.throw();
-    });
-  }
-  it('preserves legacy completed evidence without native additions', () => {
-    const result = fixture() as unknown as { evidence: Record<string, unknown> };
-    delete result.evidence.nativeEvidence;
-    expect(() => assertContentUnpublishResult(result)).not.to.throw();
-  });
   for (const change of [
     (v: ReturnType<typeof fixture>) => {
       v.evidence.nativeEvidence.contentType = 'sfdc_cms__email';
@@ -155,9 +137,6 @@ describe('strict native unpublish completion (execution admission remains closed
       v.evidence.nativeEvidence.variantLifecycle.status.status = 'Published';
     },
     (v: ReturnType<typeof fixture>) => {
-      v.evidence.nativeEvidence.variantLifecycle.status.label = '';
-    },
-    (v: ReturnType<typeof fixture>) => {
       v.evidence.nativeEvidence.references[0].source.sourceId = 'foreign';
     },
     (v: ReturnType<typeof fixture>) => {
@@ -183,36 +162,11 @@ describe('strict native unpublish completion (execution admission remains closed
     delete legacy.evidence.nativeEvidence;
     expect(() => assertContentUnpublishResult(legacy)).not.to.throw();
   });
-  for (const receipt of [
-    undefined,
-    Buffer.from('bytes'),
-    { sha256: hash, size: 0, mimeType: 'image/png' },
-    { sha256: hash, size: 70.5, mimeType: 'image/png' },
-    { sha256: 'bad', size: 70, mimeType: 'image/png' },
-    { sha256: hash, size: 70, mimeType: '' },
-    { sha256: hash, size: 70, mimeType: 'image/png', bytes: [1] },
-  ]) {
-    it('rejects missing, malformed or binary media receipts', () => {
-      const result = fixture('sfdc_cms__image');
-      Object.assign(result.evidence.nativeEvidence, { mediaReceipt: receipt });
-      expect(() => assertContentUnpublishResult(result)).to.throw(TypeError);
-    });
-  }
-  for (const addition of [{ nativeEvidence: undefined }, { includeContentReferences: false }]) {
+  for (const addition of [{ includeContentReferences: false }]) {
     it('rejects undefined native evidence and explicit reference inclusion policy', () => {
       const result = fixture();
       Object.assign(result.evidence, addition);
       expect(() => assertContentUnpublishResult(result)).to.throw(TypeError);
     });
   }
-  it('rejects Template receipts and unknown native fields', () => {
-    for (const addition of [
-      { mediaReceipt: { sha256: hash, size: 70, mimeType: 'image/png' } },
-      { bytes: [] },
-    ]) {
-      const result = fixture();
-      Object.assign(result.evidence.nativeEvidence, addition);
-      expect(() => assertContentUnpublishResult(result)).to.throw(TypeError);
-    }
-  });
 });

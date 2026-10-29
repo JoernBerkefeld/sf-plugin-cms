@@ -1,175 +1,58 @@
 import path from 'node:path';
 import { expect } from 'chai';
+import { readFile } from 'node:fs/promises';
 import {
   buildSelectedOperationDescriptors,
   generateSelectedOpenApi,
 } from '../../src/openapi/generate.js';
-import { intakeOpenApi, OpenApiIntakeError } from '../../src/openapi/intake.js';
+import { intakeOpenApi } from '../../src/openapi/intake.js';
+import { SELECTED_OPERATION_CONFIG, SUPPLEMENTAL_OPERATIONS } from '../../src/openapi/selected.js';
+import { SELECTED_OPERATIONS } from '../../src/generated/operations.js';
 
 const canonicalPath = path.resolve('resources', 'openapi', 'connect-rest-api-cms-v67.yaml');
 
 describe('selected OpenAPI generation', () => {
-  it('emits byte-identical results on repeated generation', async () => {
-    const first = await generateSelectedOpenApi(canonicalPath);
-    const second = await generateSelectedOpenApi(canonicalPath);
-    expect(second).to.deep.equal(first);
-  });
-
-  it('maps exactly the unambiguous Stage 1 read operations', async () => {
-    const { document } = await intakeOpenApi(canonicalPath);
-    const descriptors = buildSelectedOperationDescriptors(document as Record<string, unknown>, [
-      { localKey: 'workspace.list', operationId: 'getManagedContentSpaceCollection' },
-      { localKey: 'workspace.get', operationId: 'getManagedContentSpace' },
-      { localKey: 'workspace.channel.list', operationId: 'getManagedContentSpaceChannels' },
-      { localKey: 'channel.get', operationId: 'getManagedContentChannel' },
-      { localKey: 'content.get', operationId: 'getManagedContentDocument' },
-      { localKey: 'variant.get', operationId: 'getManagedContentVariant' },
-      { localKey: 'workspace.variant.search', operationId: 'getManagedContentSearchItems' },
-    ]);
-
+  it('adds only the locally identified v68 excerpt supplement and preserves the v67 inventory', async () => {
+    const intake = await intakeOpenApi(canonicalPath);
+    const original = buildSelectedOperationDescriptors(
+      intake.document as Record<string, unknown>,
+      SELECTED_OPERATION_CONFIG,
+    );
+    expect(original).to.have.length(14);
     expect(
-      descriptors.map(({ localKey, operationId, method, path: operationPath }) => ({
-        localKey,
-        method,
-        operationId,
-        path: operationPath,
-      })),
-    ).to.deep.equal([
-      {
-        localKey: 'channel.get',
-        method: 'GET',
-        operationId: 'getManagedContentChannel',
-        path: '/connect/cms/channels/{channelId}',
-      },
-      {
-        localKey: 'content.get',
-        method: 'GET',
-        operationId: 'getManagedContentDocument',
-        path: '/connect/cms/contents/{contentKeyOrId}',
-      },
-      {
-        localKey: 'variant.get',
-        method: 'GET',
-        operationId: 'getManagedContentVariant',
-        path: '/connect/cms/contents/variants/{variantId}',
-      },
-      {
-        localKey: 'workspace.channel.list',
-        method: 'GET',
-        operationId: 'getManagedContentSpaceChannels',
-        path: '/connect/cms/spaces/{contentSpaceId}/channels',
-      },
-      {
-        localKey: 'workspace.get',
-        method: 'GET',
-        operationId: 'getManagedContentSpace',
-        path: '/connect/cms/spaces/{contentSpaceId}',
-      },
-      {
-        localKey: 'workspace.list',
-        method: 'GET',
-        operationId: 'getManagedContentSpaceCollection',
-        path: '/connect/cms/spaces',
-      },
-      {
-        localKey: 'workspace.variant.search',
-        method: 'GET',
-        operationId: 'getManagedContentSearchItems',
-        path: '/connect/cms/items/search',
-      },
-    ]);
-
-    expect(descriptors.every(({ requestBodyPresent }) => !requestBodyPresent)).to.equal(true);
-    expect(
-      descriptors.every(({ responses }) =>
-        responses.some(
-          ({ mediaTypes, status }) => status === '200' && mediaTypes.includes('application/json'),
-        ),
-      ),
-    ).to.equal(true);
-    expect(descriptors.find(({ localKey }) => localKey === 'workspace.channel.list')?.parameters)
-      .to.deep.include({ location: 'path', name: 'contentSpaceId', required: true, type: 'string' })
-      .and.deep.include({ location: 'query', name: 'pageSize', required: false, type: 'integer' });
-    expect(descriptors.find(({ localKey }) => localKey === 'workspace.variant.search')?.parameters)
-      .to.deep.include({
-        location: 'query',
-        name: 'contentSpaceOrFolderIds',
-        required: true,
-        type: 'string-array',
-      })
-      .and.deep.include({
-        location: 'query',
-        name: 'languages',
-        required: false,
-        type: 'string-array',
-      })
-      .and.deep.include({ location: 'query', name: 'scope', required: false, type: 'string' });
-  });
-
-  it('generates the bounded folder read from the bundled contract', async () => {
-    const { document } = await intakeOpenApi(canonicalPath);
-    const [operation] = buildSelectedOperationDescriptors(document as Record<string, unknown>, [
-      { localKey: 'folder.get', operationId: 'getManagedContentSpaceFolder' },
-    ]);
-    expect(operation).to.include({
+      SELECTED_OPERATIONS.filter(({ localKey }) => localKey !== 'folder.items.list'),
+    ).to.deep.equal(original);
+    expect(SELECTED_OPERATIONS).to.have.length(15);
+    const supplemental = SELECTED_OPERATIONS.find(
+      ({ localKey }) => localKey === 'folder.items.list',
+    );
+    expect(supplemental).to.deep.equal(SUPPLEMENTAL_OPERATIONS[0]);
+    expect(supplemental).to.include({
       method: 'GET',
-      path: '/connect/cms/folders/{folderId}',
-      requestBodyPresent: false,
+      path: '/connect/cms/folders/{folderId}/folder-items',
+      minimumApiVersion: '68.0',
+      operationId: 'local:folder.items.list',
     });
-    expect(operation.parameters).to.deep.equal([
-      { location: 'path', name: 'folderId', required: true, type: 'string' },
-      { location: 'query', name: 'contextContentSpaceId', required: false, type: 'string' },
-    ]);
+    expect(supplemental).to.have.nested.property('provenance.sourceKind', 'rendered-excerpt');
+    expect(supplemental).to.have.nested.property('provenance.documentedApiVersion', '68.0');
+    expect(supplemental).to.have.nested.property(
+      'provenance.operationIdentity',
+      'local-descriptor',
+    );
+    expect(supplemental).to.have.nested.property(
+      'provenance.sourceUrl',
+      'https://developer.salesforce.com/docs/platform/connect-rest-api/references/connect-rest-api-cms',
+    );
+    expect(supplemental?.parameters.map(({ name }) => name)).to.not.include('queryTerm');
   });
 
-  it('rejects unsupported array item types', () => {
-    const document = {
-      components: { schemas: {} },
-      paths: {
-        '/example': {
-          get: {
-            operationId: 'getExample',
-            parameters: [
-              {
-                in: 'query',
-                name: 'values',
-                schema: { items: { type: 'integer' }, type: 'array' },
-              },
-            ],
-            responses: { 200: { content: { 'application/json': {} } } },
-          },
-        },
-      },
-    };
-    expect(() =>
-      buildSelectedOperationDescriptors(document, [
-        { localKey: 'example.get', operationId: 'getExample' },
-      ]),
-    ).to.throw(OpenApiIntakeError, 'unsupported selected parameter type: array');
+  it('deterministically emits the checked-in mixed-source selection', async () => {
+    const first = await generateSelectedOpenApi(canonicalPath);
+    expect(await generateSelectedOpenApi(canonicalPath)).to.deep.equal(first);
+    expect(await readFile(path.resolve('src/generated/operations.ts'), 'utf8')).to.equal(
+      first.operations,
+    );
   });
-
-  it('rejects unknown and duplicate selections', async () => {
-    const { document } = await intakeOpenApi(canonicalPath);
-    const recordDocument = document as Record<string, unknown>;
-    expect(() =>
-      buildSelectedOperationDescriptors(recordDocument, [
-        { localKey: 'unknown.get', operationId: 'notAnOperation' },
-      ]),
-    ).to.throw(OpenApiIntakeError, 'selected operation missing: notAnOperation');
-    expect(() =>
-      buildSelectedOperationDescriptors(recordDocument, [
-        { localKey: 'same', operationId: 'getManagedContentSpace' },
-        { localKey: 'same', operationId: 'getManagedContentChannel' },
-      ]),
-    ).to.throw(OpenApiIntakeError, 'duplicate selected operation local key: same');
-    expect(() =>
-      buildSelectedOperationDescriptors(recordDocument, [
-        { localKey: 'workspace.first', operationId: 'getManagedContentSpace' },
-        { localKey: 'workspace.second', operationId: 'getManagedContentSpace' },
-      ]),
-    ).to.throw(OpenApiIntakeError, 'duplicate selected operationId: getManagedContentSpace');
-  });
-
   it('keeps deferred delivery and excluded mutations out of the generated descriptors', async () => {
     const { operations } = await generateSelectedOpenApi(canonicalPath);
     expect(operations).to.not.include('getManagedContentDelivery');

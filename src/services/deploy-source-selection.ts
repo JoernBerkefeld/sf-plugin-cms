@@ -76,6 +76,15 @@ export type DeploySelectionOptions = {
 
 type Selector = { contentType: string; apiName?: string };
 
+/**
+ * Normalize caller metadata with the same parser used by guarded local selection.
+ * @param {readonly string[]} metadata - Original caller metadata selectors.
+ * @returns {Selector[]} Canonical type and optional exact API name pairs.
+ */
+export function normalizeDeployMetadataSelectors(metadata: readonly string[]): Selector[] {
+  return values(metadata)!.map((value) => metadataSelector(value, true));
+}
+
 function values(input: readonly string[] | undefined): string[] | undefined {
   if (input === undefined) return undefined;
   if (
@@ -179,9 +188,11 @@ export async function selectDeploySources(
   const candidates = new Set<string>();
   let roots = directories;
   if (metadata !== undefined) {
-    if (typeof flags.workspaceApiName !== 'string' || !flags.workspaceApiName)
-      throw new TypeError('Deploy metadata requires the resolved destination workspace API name');
-    sourcePathSegment(flags.workspaceApiName);
+    if (selectors!.some((selector) => selector.contentType !== 'sfdc_cms__emailFragment')) {
+      if (typeof flags.workspaceApiName !== 'string' || !flags.workspaceApiName)
+        throw new TypeError('Deploy metadata requires the resolved destination workspace API name');
+      sourcePathSegment(flags.workspaceApiName);
+    }
     const cwd = flags.cwd ?? process.cwd();
     await assertEditableDirectoryPath(cwd, false);
     roots = [];

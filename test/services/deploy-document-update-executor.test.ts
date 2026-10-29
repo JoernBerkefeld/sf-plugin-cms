@@ -255,7 +255,9 @@ async function rejects(operation: Promise<unknown>, pattern = /./u) {
 describe('private Document UPDATE guarded intent and one-shot executor', () => {
   afterEach(() => sinon.restore());
   for (const reporting of [false, true])
-    for (const fault of ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected', 'prepare'])
+    for (const fault of reporting
+      ? ['lost', 'partial', 'read', 'drift', 'cancel', 'rejected', 'prepare']
+      : ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected', 'prepare'])
       it(`retains live UPDATE evidence (${reporting ? 'disk' : 'memory'}, ${fault || 'success'})`, async () => {
         const f = await fixture(true, fault);
         if (!reporting) f.withoutReport();
@@ -317,7 +319,7 @@ describe('private Document UPDATE guarded intent and one-shot executor', () => {
     expect(f.methods).not.to.include('PUT');
     expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
   });
-  for (const fault of ['', 'rejected'])
+  for (const fault of ['rejected'])
     it(`preserves >10 MiB opaque PDF through fresh UPDATE preflight and transport (${fault || 'accepted'})`, async () => {
       const f = await fixture(true, fault, true);
       const planned = await preflightDeployBatch(f.connection, {

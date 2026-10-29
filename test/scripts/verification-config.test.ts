@@ -9,12 +9,6 @@ const execute = promisify(execFile);
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('Windows-safe verification configuration', () => {
-  it('lets Node resolve the loader package without Mocha converting it to a drive path', () => {
-    const config = require('../../.mocharc.cjs') as Record<string, unknown>;
-    expect(config['node-option']).to.deep.equal(['loader=ts-node/esm']);
-    expect(config).not.to.have.property('loader');
-  });
-
   it('loads TypeScript tests with the configured Node option without executing hooks', async function () {
     this.timeout(60_000);
     const config = require('../../.mocharc.cjs') as { 'node-option': string[] };

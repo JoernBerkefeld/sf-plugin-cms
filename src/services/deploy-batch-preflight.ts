@@ -24,8 +24,14 @@ import { preflightDeployAudioCreate } from './deploy-audio-create-preflight.js';
 import { admitDeployAudioUnchanged } from './deploy-audio-unchanged.js';
 import { preflightDeployAudioUpdate } from './deploy-audio-update-preflight.js';
 
+import {
+  assertDestinationFolderMappings,
+  destinationFolderIdFor,
+} from './deploy-destination-folder-mapping.js';
+
 export type DeployBatchPreflightInput = {
   sources: DeploySourceSelectionFlags;
+  destinationFolderIds?: Readonly<Record<string, string>>;
   /** Legacy Brand observation option; never operation or mutation authority. */
   includeUnqualifiedBrands?: boolean;
   /** Optional root binding for independent reacquisition of a previously observed destination. */
@@ -88,6 +94,7 @@ export async function preflightDeployBatch(
       internal.admitBrands !== false || selected.includeUnqualifiedBrands === true,
   };
   const selection = await selectDeploySources(selected.sources, selectionOptions);
+  assertDestinationFolderMappings(selected.destinationFolderIds, selection);
   if (
     selected.expectedSelection !== undefined &&
     !isDeepStrictEqual(selection, selected.expectedSelection)
@@ -125,6 +132,7 @@ export async function preflightDeployBatch(
     connection,
     {
       selection,
+      destinationFolderIds: selected.destinationFolderIds,
       workspaceId: selected.workspaceId,
       language: selected.language,
       expectedRootFolderId: rootFolderId,
@@ -181,10 +189,17 @@ export async function preflightDeployBatch(
             getApiVersion: connection.getApiVersion.bind(connection),
             getAuthInfoFields: connection.getAuthInfoFields.bind(connection),
           };
+          const fragmentScope = {
+            ...scope,
+            destinationFolderId: destinationFolderIdFor(
+              selected.destinationFolderIds,
+              source.targetIdentity.apiName,
+            ),
+          };
           const proof =
             prepared.proposed === 'create'
-              ? await prepareEmailFragmentCreate(fragmentConnection, scope, requestOptions)
-              : await prepareEmailFragmentUpdate(fragmentConnection, scope, requestOptions);
+              ? await prepareEmailFragmentCreate(fragmentConnection, fragmentScope, requestOptions)
+              : await prepareEmailFragmentUpdate(fragmentConnection, fragmentScope, requestOptions);
           if (!isDeepStrictEqual(proof, prepared.fragment))
             throw new TypeError('Batch Fragment intent changed');
           if (titles.has(proof.payload.title!) || urls.has(proof.payload.urlName!))

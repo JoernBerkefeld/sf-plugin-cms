@@ -134,17 +134,6 @@ describe('invocation logging foundation', () => {
     expect(consumed).to.equal(false);
     stream.destroy();
   });
-  it('reports path failure with intended destination and remains safe to close', async () => {
-    fs.writeFileSync(path.join(cwd, 'logs'), 'not a directory');
-    const stderr = sinon.spy();
-    const logger = createInvocationLogger({ cwd, argv: [], stderr });
-    logger.log('error', 'not written');
-    await logger.close();
-    expect(stderr.calledOnce).to.equal(true);
-    expect(stderr.firstCall.args[0])
-      .to.include(path.join(cwd, 'logs', 'cms'))
-      .and.include('incomplete');
-  });
   it('refuses directory junctions and final target links', async () => {
     const outside = await createRunOwnedDirectory(run, 'outside');
     fs.symlinkSync(

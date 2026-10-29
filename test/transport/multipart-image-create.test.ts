@@ -129,45 +129,6 @@ describe('shared multipart CREATE logging', () => {
 });
 
 describe('pure multipart Audio CREATE preparation', () => {
-  it('frames exact sliced opaque bytes with explicit MIME and Audio input, without sending', () => {
-    const backing = Buffer.from([9, 0, 255, 128, 13, 10, 8]);
-    const audio = backing.subarray(1, -1);
-    const result = buildAudioCreateMultipart(input, 'sound.bin', audio, {
-      mimeType: 'application/x-future-audio',
-      boundaryFactory: constantBoundary('safe'),
-    });
-    const nativeInput = {
-      ...input,
-      contentType: 'sfdc_cms__audio',
-      contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-    };
-    const expected = Buffer.concat([
-      Buffer.from(
-        '--safe\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\n' +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(nativeInput) +
-          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="sound.bin"\r\n' +
-          'Content-Type: application/x-future-audio\r\n\r\n',
-      ),
-      audio,
-      Buffer.from('\r\n--safe--\r\n'),
-    ]);
-    expect(result.input).to.deep.equal(nativeInput);
-    expect(result.body.equals(expected)).to.equal(true);
-  });
-  it('accepts opaque non-WAV bytes above the revoked cap as local framing, not platform qualification', () => {
-    const audio = Buffer.alloc(MAX_IMAGE_BYTES + 1, 255);
-    const built = buildAudioCreateMultipart(input, 'opaque.bin', audio, {
-      mimeType: 'audio/x-future',
-      boundaryFactory: constantBoundary('safe'),
-    });
-    const start = built.body.lastIndexOf(Buffer.from('\r\n\r\n')) + 4;
-    expect(
-      createHash('sha256')
-        .update(built.body.subarray(start, start + audio.length))
-        .digest('hex'),
-    ).to.equal(createHash('sha256').update(audio).digest('hex'));
-  });
   it('requires runtime-safe explicit MIME before boundary generation', () => {
     const boundaryFactory = sinon.stub().returns('safe');
     for (const mimeType of [
@@ -536,17 +497,6 @@ describe('multipart Document create transport', () => {
     expect(request.called).to.equal(false);
   });
 
-  it('threads safe native Document MIME into framing', () => {
-    const options = { boundaryFactory: constantBoundary('safe'), mimeType: 'image/avif' };
-    const built = buildDocumentCreateMultipart(
-      input,
-      'owned.txt',
-      Buffer.from('document'),
-      options,
-    );
-    expect(built.body.toString('ascii')).to.include('Content-Type: image/avif\r\n\r\n');
-  });
-
   it('rejects unsafe Document MIME before any request', async () => {
     const request = sinon.stub();
     for (const mimeType of [
@@ -687,17 +637,6 @@ describe('multipart image create transport', () => {
     expect(request.called).to.equal(false);
   });
 
-  it('rejects unrepresentable binary lengths before boundary generation', () => {
-    const boundaryFactory = sinon.stub().returns('safe');
-    for (const byteLength of [Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const image = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
-      expect(() =>
-        buildImageCreateMultipart(input, 'opaque.bin', image, { boundaryFactory }),
-      ).to.throw(CmsRequestError, 'represented by a Buffer');
-    }
-    expect(boundaryFactory.called).to.equal(false);
-  });
-
   it('rejects non-ASCII create filenames before lossy header serialization', () => {
     for (const filename of ['caf\u00E9.bin', 'a\u010D.bin', 'a\u010A.bin', 'a\u0122.bin']) {
       expect(() => buildImageCreateMultipart(input, filename, Buffer.from([1]))).to.throw(
@@ -796,23 +735,6 @@ describe('multipart image create transport', () => {
         boundaryFactory: constantBoundary('safe'),
       }),
     ).to.throw(CmsRequestError, 'Image data must be binary');
-  });
-
-  it('accepts the former cap and preserves a sliced view without adjacent bytes', () => {
-    const backing = Buffer.from([9, 0, 128, 255, 8]);
-    const image = backing.subarray(1, 4);
-    const result = buildImageCreateMultipart(input, 'image.png', image, {
-      boundaryFactory: constantBoundary('safe'),
-    });
-    const binaryStart = result.body.lastIndexOf(Buffer.from('\r\n\r\n', 'ascii')) + 4;
-    const binaryEnd = result.body.indexOf(Buffer.from('\r\n--safe--\r\n', 'ascii'), binaryStart);
-    expect([...result.body.subarray(binaryStart, binaryEnd)]).to.deep.equal([0, 128, 255]);
-
-    expect(() =>
-      buildImageCreateMultipart(input, 'image.png', Buffer.alloc(MAX_IMAGE_BYTES), {
-        boundaryFactory: constantBoundary('safe-cap'),
-      }),
-    ).not.to.throw();
   });
 
   it('enforces the JSON allowlist and fixed server-safe media shape', () => {

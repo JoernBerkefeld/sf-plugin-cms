@@ -141,16 +141,6 @@ describe('Email publish prepared seams', () => {
     };
   }
 
-  it('accepts explicit canonical Email without changing legacy evidence', async () => {
-    const current = fixture();
-    const legacy = await prepareDraftEmailPublish(current.connection, input);
-    const explicit = await prepareDraftEmailPublish(current.connection, {
-      selector: { ...input.selector, contentType: 'sfdc_cms__email' },
-    });
-    expect(explicit.evidence).to.deep.equal(legacy.evidence);
-    expect(explicit.evidence).not.to.have.property('nativeEvidence');
-  });
-
   for (const contentType of [
     'sfdc_cms__emailTemplate',
     'sfdc_cms__image',

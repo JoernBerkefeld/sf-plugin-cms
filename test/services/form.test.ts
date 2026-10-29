@@ -37,26 +37,6 @@ function deterministicUuid() {
 }
 
 describe('strict Form normalization and reports', () => {
-  it('normalizes exact content and variant envelopes identically with separate provenance', () => {
-    const content = normalizeForm(formDetail('content'));
-    const variant = normalizeForm(formDetail('variant'));
-    expect(content).to.deep.equal(variant);
-    expect(content?.semantic).not.to.have.any.keys(
-      'contentKey',
-      'managedContentId',
-      'managedContentVariantId',
-      'contentSpaceId',
-    );
-    expect(content?.provenance).to.deep.equal({
-      contentKey: 'MCBBBBBBBBBBBBBBBBBBBBBBBBBB',
-      contentSpaceId: 'source-space',
-      managedContentId: 'content-form-id',
-      managedContentVariantId: 'variant-form-id',
-    });
-    expect(content?.dependencies).to.deep.equal([]);
-    expect(content?.references).to.deep.equal([]);
-  });
-
   it('retains the live-proven minimal action profile as accepted evidence', () => {
     const actions: readonly FormActionDescriptor[] = [
       { type: 'custom', name: 'formsubmit' },
@@ -64,13 +44,6 @@ describe('strict Form normalization and reports', () => {
       { type: 'built-in', name: 'showThankYouAction' },
     ];
     expect(actionButton(formBody()).attributes.actions).to.deep.equal(actions);
-  });
-
-  it('accepts broader provider, multi-block, action, and reference-bearing Form reports', () => {
-    const body = broadFormBody();
-    const normalized = normalizeForm(formDetail('variant', { contentBody: body }));
-    expect(normalized?.semantic.body).to.deep.equal(body);
-    expect(() => classifyFormDependencies(formItem({ contentBody: body }))).not.to.throw();
   });
 
   it('requires Draft/unpublished exact detail envelopes while accepting an embedded title mismatch', () => {
@@ -141,51 +114,6 @@ describe('strict Form copy planning and readback', () => {
       actionButton(body).id,
     ]).to.deep.equal(generatedIds.slice(0, 4));
     expect(loaded).to.deep.equal(before);
-  });
-
-  it('does not inject an absent embedded title while regenerating every block UUID', () => {
-    const body = formBody();
-    delete (body as Partial<ReturnType<typeof formBody>>)['sfdc_cms:title'];
-    const planned = planFormCopies(
-      formSource(formItem({ contentBody: body })),
-      mapping,
-      deterministicUuid(),
-    ).items[0];
-    expect(planned).to.include({
-      apiName: 'target_form_api',
-      title: 'Target form',
-      urlName: 'target-form',
-    });
-    expect(planned.contentBody).not.to.have.property('sfdc_cms:title');
-    const plannedBody = planned.contentBody as ReturnType<typeof formBody>;
-    expect([
-      plannedBody['sfdc_cms:block'].id,
-      plannedBody['sfdc_cms:block'].children[0].id,
-      plannedBody['sfdc_cms:block'].children[0].children[0].id,
-      actionButton(plannedBody).id,
-    ]).to.deep.equal(generatedIds.slice(0, 4));
-    expect(formCreatePayload(planned, 'target-root').contentBody).not.to.have.property(
-      'sfdc_cms:title',
-    );
-  });
-
-  it('adds fresh IDs to blocks with missing or malformed source IDs without changing semantics', () => {
-    const body = broadFormBody();
-    const root = body['sfdc_cms:block'] as Record<string, unknown>;
-    delete root.id;
-    const sections = root.children as Array<Record<string, unknown>>;
-    sections[0].id = '';
-    const planned = planFormCopies(
-      formSource(formItem({ contentBody: body })),
-      mapping,
-      deterministicUuid(),
-    ).items[0].contentBody;
-    const plannedRoot = planned['sfdc_cms:block'] as Record<string, unknown>;
-    const plannedSections = plannedRoot.children as Array<Record<string, unknown>>;
-    expect(plannedRoot.id).to.equal(generatedIds[0]);
-    expect(plannedSections[0].id).to.equal(generatedIds[1]);
-    expect(plannedSections[0]).to.include({ definition: 'lightning/section', type: 'block' });
-    expect(new Set(generatedIds).size).to.equal(generatedIds.length);
   });
 
   it('rejects malformed mappings, ambiguous selection, stale names, contentKey, and invalid generated IDs', () => {

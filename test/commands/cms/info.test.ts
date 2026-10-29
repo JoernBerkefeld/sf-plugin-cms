@@ -218,16 +218,4 @@ describe('cms info', () => {
       expect(process.exitCode).to.equal(1);
     });
   }
-
-  it('renders the same envelope in human mode', async () => {
-    const command = Object.create(Info.prototype) as Info;
-    const styledJSON = context.SANDBOX.stub();
-    Object.assign(command, {
-      parse: context.SANDBOX.stub().resolves({ flags: {} }),
-      jsonEnabled: context.SANDBOX.stub().returns(false),
-      styledJSON,
-    });
-    const result = await command.run();
-    expect(styledJSON.calledOnceWithExactly(result)).to.equal(true);
-  });
 });

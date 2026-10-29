@@ -162,6 +162,54 @@ export const SELECTED_OPERATIONS = [
     ]
   },
   {
+    "localKey": "folder.items.list",
+    "method": "GET",
+    "operationId": "local:folder.items.list",
+    "minimumApiVersion": "68.0",
+    "provenance": {
+      "sourceUrl": "https://developer.salesforce.com/docs/platform/connect-rest-api/references/connect-rest-api-cms",
+      "documentedApiVersion": "68.0",
+      "sourceKind": "rendered-excerpt",
+      "operationIdentity": "local-descriptor"
+    },
+    "parameters": [
+      {
+        "location": "path",
+        "name": "folderId",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "location": "query",
+        "name": "includeSharedWithSpaceFolder",
+        "required": false,
+        "type": "boolean"
+      },
+      {
+        "location": "query",
+        "name": "itemType",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "location": "query",
+        "name": "page",
+        "required": false,
+        "type": "integer"
+      },
+      {
+        "location": "query",
+        "name": "pageSize",
+        "required": false,
+        "type": "integer"
+      }
+    ],
+    "path": "/connect/cms/folders/{folderId}/folder-items",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": []
+  },
+  {
     "localKey": "variant.create",
     "method": "POST",
     "operationId": "postManagedContentVariantCreate",

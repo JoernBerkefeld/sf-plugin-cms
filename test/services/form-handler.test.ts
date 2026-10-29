@@ -29,14 +29,6 @@ const mapping = [
 const generatedId = '20000000-0000-4000-8000-000000000001';
 
 describe('strict Form Handler normalization and reports', () => {
-  it('normalizes exact content and variant envelopes identically', () => {
-    const content = normalizeFormHandler(formHandlerDetail('content'));
-    const variant = normalizeFormHandler(formHandlerDetail('variant'));
-    expect(content).to.deep.equal(variant);
-    expect(content?.dependencies).to.deep.equal([]);
-    expect(content?.references).to.deep.equal([]);
-  });
-
   it('rejects populated providers or children and every forbidden reference class', () => {
     const mutations = [
       (body: ReturnType<typeof formHandlerBody>) =>

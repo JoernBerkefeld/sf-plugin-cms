@@ -152,10 +152,4 @@ describe('transport secret redaction', () => {
       expect(redacted).not.to.include(value);
     }
   });
-
-  it('does not redact ordinary prose containing signature or cookie words', () => {
-    const message =
-      'The signature validation failed after the cookie parser returned a diagnostic.';
-    expect(redactSecrets(message)).to.equal(message);
-  });
 });

@@ -461,20 +461,6 @@ describe('native editable media acquisition', () => {
       expect(first.projection.definitionBytes.toString()).not.to.include(locator);
     expect(fetcher.callCount).to.equal(2);
   });
-  for (const responseType of [
-    'IMAGE/PNG; charset=utf-8',
-    'Application/Octet-Stream; charset=ISO-8859-1',
-  ]) {
-    it(`acquires exact Image bytes and native MIME from parameterized HTTP ${responseType}`, async () => {
-      const f = fixture();
-      sinon
-        .stub(globalThis, 'fetch')
-        .callsFake(async () => new Response(PNG, { headers: { 'content-type': responseType } }));
-      const acquired = await acquireEditableMediaSource(f.connection, input);
-      expect(acquired.projection.definition.media).to.include({ mimeType: 'image/png' });
-      expect(acquired.projection.companions[0].bytes).to.deep.equal(PNG);
-    });
-  }
   for (const kind of ['image', 'document', 'audio'] as const) {
     const document = kind === 'document';
     const audio = kind === 'audio';

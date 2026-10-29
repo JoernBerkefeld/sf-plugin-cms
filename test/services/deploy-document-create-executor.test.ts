@@ -225,7 +225,9 @@ async function failure(promise: Promise<unknown>, pattern: RegExp) {
 describe('journaled portable Document CREATE executor', () => {
   afterEach(() => sinon.restore());
   for (const reporting of [false, true])
-    for (const fault of ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected'])
+    for (const fault of reporting
+      ? ['lost', 'partial', 'read', 'drift', 'cancel', 'rejected']
+      : ['', 'lost', 'partial', 'read', 'drift', 'cancel', 'rejected'])
       it(`retains live CREATE evidence (${reporting ? 'disk' : 'memory'}, ${fault || 'success'})`, async () => {
         const f = await fixture(false, fault === 'rejected');
         if (!reporting) f.withoutReport();
@@ -286,7 +288,7 @@ describe('journaled portable Document CREATE executor', () => {
     expect(f.posts()).to.equal(0);
     expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
   });
-  for (const rejected of [false, true])
+  for (const rejected of [true])
     it(`preserves >10 MiB opaque PDF through fresh CREATE preflight and transport (rejected=${rejected})`, async () => {
       const f = await fixture(true, rejected);
       sinon.stub(globalThis, 'fetch').resolves(

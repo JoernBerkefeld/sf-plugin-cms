@@ -48,6 +48,8 @@ import {
   type WorkspaceImportRunReport,
 } from './import-workspace.js';
 
+import { destinationFolderIdFor } from './deploy-destination-folder-mapping.js';
+
 export type ExecuteDeployBatchInput = DeployBatchPreflightInput & {
   destinationOrgId: string;
   /** Optional exclusive new batch journal, in an existing caller-owned directory. Never resumed. */
@@ -897,6 +899,10 @@ async function executeDeployBatchInternal(
           const fragmentScope = {
             definitionFile: source.definitionPath,
             workspaceId: selected.workspaceId,
+            destinationFolderId: destinationFolderIdFor(
+              selected.destinationFolderIds,
+              source.targetIdentity.apiName,
+            ),
           };
           const fresh =
             proof.proposed === 'create'
@@ -922,6 +928,7 @@ async function executeDeployBatchInternal(
             connection,
             {
               selection: await reselect(),
+              destinationFolderIds: selected.destinationFolderIds,
               workspaceId: selected.workspaceId,
               language: selected.language,
               expectedRootFolderId: baseline.rootFolderId,
@@ -1082,7 +1089,13 @@ async function executeDeployBatchInternal(
             item.proposed === 'create' ? executeEmailFragmentCreate : executeEmailFragmentUpdate;
           const result = await execute(
             fragmentConnection,
-            itemInput,
+            {
+              ...itemInput,
+              destinationFolderId: destinationFolderIdFor(
+                selected.destinationFolderIds,
+                item.source.targetIdentity.apiName,
+              ),
+            },
             requestOptions,
             persistence?.item,
             onReport,

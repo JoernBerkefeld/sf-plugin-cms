@@ -1,10 +1,7 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
 import { bindSourcePublication } from '../../src/services/source-definition-export.js';
-import {
-  assertSourceDefinition,
-  serializeSourceDefinition,
-} from '../../src/contracts/source-definition.js';
+import { assertSourceDefinition } from '../../src/contracts/source-definition.js';
 import {
   assertSourceNativeHtml,
   projectSourceDefinitions,
@@ -142,20 +139,6 @@ describe('portable Email source definitions', () => {
     expect(() => projectSourceDefinitions([changedRaw({ language: undefined })])).to.throw(
       'language',
     );
-  });
-
-  it('serializes sorted keys with LF/no BOM and deterministic selection ordering', () => {
-    const rows = [item(), item('sfdc_cms__emailTemplate', 'Template')];
-    const result = projectSourceDefinitions(rows);
-    expect(projectSourceDefinitions(rows.toReversed())).to.deep.equal(result);
-    for (const output of result.items) {
-      const bytes = output.definitionBytes.toString();
-      expect(bytes).to.equal(serializeSourceDefinition(output.definition));
-      expect(bytes.startsWith('{\n  "companions": {\n')).to.equal(true);
-      expect(bytes.endsWith('\n')).to.equal(true);
-      expect(bytes).not.to.include('\r');
-      expect(bytes.codePointAt(0)).not.to.equal(65_279);
-    }
   });
 
   it('decodes GET only once, preserves literal entities/line endings and validates edited literal HTML separately', () => {

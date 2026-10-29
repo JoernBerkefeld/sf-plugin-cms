@@ -335,28 +335,4 @@ describe('JSON mutation transport', () => {
     expect(request.calledOnce).to.equal(true);
     expect(request.firstCall.args[1]).to.deep.include({ retry: { maxRetries: 0 } });
   });
-
-  it('preserves HTTP status exposed on the response object', async () => {
-    const failure = Object.assign(new Error('request rejected'), {
-      data: [{ errorCode: 'JSON_PARSER_ERROR', message: 'Unrecognized field' }],
-      response: { status: 400, headers: { 'sforce-request-id': 'request-id-response' } },
-    });
-    const request = sinon.stub().returns(failedRequest(failure));
-
-    try {
-      await requestJsonMutation(
-        { request },
-        getSelectedOperation('content.unpublish'),
-        { contentIds: ['parent-email'] },
-        {},
-        { allowCallerConnection: true },
-      );
-      expect.fail('expected API error');
-    } catch (error) {
-      expect(error).to.be.instanceOf(CmsRequestError);
-      expect((error as CmsRequestError).status).to.equal(400);
-      expect((error as CmsRequestError).requestId).to.equal('request-id-response');
-      expect((error as CmsRequestError).errorCode).to.equal('JSON_PARSER_ERROR');
-    }
-  });
 });

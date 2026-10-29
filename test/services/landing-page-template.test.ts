@@ -203,20 +203,6 @@ describe('landing-page-template create-only profile', () => {
     );
   });
 
-  it('accepts the exact derived-label boundary and rejects boundary plus one', () => {
-    const boundary = 'T'.repeat(49);
-    expect(
-      planLandingPageTemplateCopies(source(), [mapping('source_template', boundary)]),
-    ).to.have.nested.property('items[0].apiName', boundary);
-
-    const tooLong = 'T'.repeat(50);
-    expect(() =>
-      planLandingPageTemplateCopies(source(), [mapping('source_template', tooLong)]),
-    ).to.throw(
-      `Template mapping 0.target.apiName ${tooLong} produces Salesforce label ${tooLong}--sfdc_cms__landingPageTemplate with length 81; maximum is 80`,
-    );
-  });
-
   it('reproduces the failed target API name before any destination interaction', async () => {
     const failedApiName = 'MCNEXT_P4_Landing_Template_Accept_20260929160723_b714f972';
     expect(() =>

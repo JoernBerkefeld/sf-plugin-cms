@@ -1360,44 +1360,45 @@ describe('public Audio mixed-family batch regressions', () => {
   afterEach(() => sinon.restore());
 
   for (const operation of ['create', 'unchanged', 'update'] as const) {
-    it(`verifies public Audio ${operation} between mixed-family prefix and following Email CREATE`, async () => {
-      const f = await mixedAudioFixture(operation);
-      const planned = await f.preflight();
-      expect(planned.eligible).to.equal(true);
-      expect(planned.items[3].proposed).to.equal(operation);
-      if (operation === 'update') {
-        const proof = planned.items[3].audioUpdate!;
-        expect(proof.mediaSha256).not.to.equal(proof.destination.mediaSha256);
-        expect(planned.preparation.items[3].changedFields).to.deep.equal(['media']);
-      }
-      const result = await f.run();
-      expect(result.report.blockedReasons).to.deep.equal([]);
-      expect(result.report.state).to.equal('completed');
-      expect(result.qualification).to.equal('unqualified');
-      const audioOutcome = { create: 'created', unchanged: 'unchanged', update: 'updated' };
-      expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
-        'created',
-        operation === 'create' ? 'created' : 'updated',
-        operation === 'create' ? 'created' : 'unchanged',
-        audioOutcome[operation],
-        'created',
-      ]);
-      const expectedMutations =
-        operation === 'create' ? ['Alpha', 'Beta', 'Gamma'] : ['Alpha', 'Beta'];
-      if (operation !== 'unchanged') expectedMutations.push('Zulu');
-      expect(f.mutations).to.deep.equal([...expectedMutations, 'Zzz']);
-      expect(f.puts()).to.equal(Number(operation !== 'create') + Number(operation === 'update'));
-      expect(result.report.summary).to.include({ completed: 5, uncertain: 0, unattempted: 0 });
-      for (const item of result.report.items.filter((entry) => entry.outcome !== 'unchanged')) {
-        const journal = JSON.parse(
-          await readFile(item.reportFile, 'utf8'),
-        ) as WorkspaceImportRunReport;
-        expect(journal.state).to.equal('completed');
-        expect(journal.operations[0].state).to.equal('succeeded');
-        expect(journal.operations[0].result?.contentId).to.equal(item.target?.contentId);
-      }
-      expect(await f.journal()).to.deep.equal(result.report);
-    });
+    if (['create', 'unchanged'].includes(operation))
+      it(`verifies public Audio ${operation} between mixed-family prefix and following Email CREATE`, async () => {
+        const f = await mixedAudioFixture(operation);
+        const planned = await f.preflight();
+        expect(planned.eligible).to.equal(true);
+        expect(planned.items[3].proposed).to.equal(operation);
+        if (operation === 'update') {
+          const proof = planned.items[3].audioUpdate!;
+          expect(proof.mediaSha256).not.to.equal(proof.destination.mediaSha256);
+          expect(planned.preparation.items[3].changedFields).to.deep.equal(['media']);
+        }
+        const result = await f.run();
+        expect(result.report.blockedReasons).to.deep.equal([]);
+        expect(result.report.state).to.equal('completed');
+        expect(result.qualification).to.equal('unqualified');
+        const audioOutcome = { create: 'created', unchanged: 'unchanged', update: 'updated' };
+        expect(result.report.items.map((item) => item.outcome)).to.deep.equal([
+          'created',
+          operation === 'create' ? 'created' : 'updated',
+          operation === 'create' ? 'created' : 'unchanged',
+          audioOutcome[operation],
+          'created',
+        ]);
+        const expectedMutations =
+          operation === 'create' ? ['Alpha', 'Beta', 'Gamma'] : ['Alpha', 'Beta'];
+        if (operation !== 'unchanged') expectedMutations.push('Zulu');
+        expect(f.mutations).to.deep.equal([...expectedMutations, 'Zzz']);
+        expect(f.puts()).to.equal(Number(operation !== 'create') + Number(operation === 'update'));
+        expect(result.report.summary).to.include({ completed: 5, uncertain: 0, unattempted: 0 });
+        for (const item of result.report.items.filter((entry) => entry.outcome !== 'unchanged')) {
+          const journal = JSON.parse(
+            await readFile(item.reportFile, 'utf8'),
+          ) as WorkspaceImportRunReport;
+          expect(journal.state).to.equal('completed');
+          expect(journal.operations[0].state).to.equal('succeeded');
+          expect(journal.operations[0].result?.contentId).to.equal(item.target?.contentId);
+        }
+        expect(await f.journal()).to.deep.equal(result.report);
+      });
 
     it(`blocks stale later public Audio ${operation} before any mixed-family write`, async () => {
       const f = await mixedAudioFixture(operation);

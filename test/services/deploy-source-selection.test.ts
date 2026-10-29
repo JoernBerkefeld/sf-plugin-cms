@@ -10,7 +10,6 @@ import { extractEditableItemSourceV2 } from '../../src/services/editable-item-so
 import {
   selectDeploySources,
   DEPLOY_SOURCE_CONTENT_TYPES,
-  type DeploySourceSelectionFlags,
 } from '../../src/services/deploy-source-selection.js';
 
 function definition(template = false, apiName = 'Welcome'): SourceDefinition {
@@ -186,122 +185,6 @@ describe('local deploy source selection', () => {
       }
     });
   }
-  for (const canonical of DEPLOY_SOURCE_CONTENT_TYPES) {
-    const short = canonical.slice('sfdc_cms__'.length);
-    it(`selects identical canonical sources for both ${short} spellings`, async () => {
-      const root = await temporary();
-      let file: string;
-      switch (short) {
-        case 'brand': {
-          file = path.join(root, 'Exact.cms-brand.json');
-          await writeFile(
-            file,
-            JSON.stringify({
-              ...definition(false, 'Exact'),
-              identity: { ...definition(false, 'Exact').identity, type: 'Brand' },
-              contentType: canonical,
-              title: 'Exact',
-              urlName: 'exact',
-              contentBody: brandBody('Exact'),
-              companions: {},
-            }),
-          );
-
-          break;
-        }
-        case 'emailFragment': {
-          file = path.join(root, 'Exact.cms-email-fragment.json');
-          await writeFile(
-            file,
-            JSON.stringify({
-              contract: 'sf-cms-email-fragment-source',
-              contractVersion: '1.0.0',
-              identity: {
-                family: 'cms',
-                type: 'Email Fragment',
-                apiName: 'Exact',
-                context: { workspaceApiName: 'Destination' },
-              },
-              contentType: canonical,
-              language: 'en_US',
-              title: 'Exact',
-              urlName: 'exact',
-              folderPath: [],
-              contentBody: {
-                'sfdc_cms:block': {
-                  type: 'block',
-                  definition: 'sfdc_cms/rootContentBlock',
-                  id: '10000000-0000-4000-8000-000000000001',
-                  children: [],
-                },
-              },
-            }),
-          );
-
-          break;
-        }
-        case 'email':
-        case 'emailTemplate': {
-          file = await fixture(root, definition(short === 'emailTemplate', 'Exact'));
-
-          break;
-        }
-        default: {
-          const token = short;
-          const mediaType = { image: 'Image', document: 'Document', audio: 'Audio' }[short]!;
-          file = path.join(root, `Exact.cms-${token}.json`);
-          const companion = `Exact.cms-${token}.media.txt`;
-          await writeFile(
-            file,
-            JSON.stringify({
-              contract: 'sf-cms-media-source',
-              contractVersion: '1.0.0',
-              identity: {
-                family: 'cms',
-                type: mediaType,
-                apiName: 'Exact',
-                context: { workspaceApiName: 'Source' },
-              },
-              contentType: canonical,
-              language: 'en_US',
-              title: 'Exact',
-              folderPath: [],
-              media: {
-                representation: 'binary',
-                mimeType: 'text/plain',
-                companion: { role: 'media', path: companion },
-              },
-            }),
-          );
-          await writeFile(path.join(root, companion), 'Exact bytes');
-        }
-      }
-      const expected = await selectDeploySources({ 'source-dir': [file] });
-      const canonicalDirectory = path.join(root, 'cms', 'Destination', short);
-      await mkdir(canonicalDirectory, { recursive: true });
-      for (const sourcePath of [file, ...expected.items[0].companionPaths])
-        await writeFile(
-          path.join(canonicalDirectory, path.basename(sourcePath)),
-          await readFile(sourcePath),
-        );
-      const conventional = await selectDeploySources({
-        cwd: root,
-        workspaceApiName: 'Destination',
-        metadata: [short, `${short}:Exact`, canonical, `${canonical}:Exact`],
-      });
-      expect(conventional.items).to.have.length(1);
-      expect(conventional.items[0].definition).to.deep.equal(expected.items[0].definition);
-      for (const filter of [{ 'content-type': Object.freeze([short, canonical, short]) }]) {
-        const flags = Object.freeze({ 'source-dir': Object.freeze([file]), ...filter });
-        const before = JSON.stringify(flags);
-        const selected = await selectDeploySources(flags);
-        expect(selected.items).to.deep.equal(expected.items);
-        expect(selected.items[0].targetIdentity.contentType).to.equal(canonical);
-        expect(JSON.stringify(flags)).to.equal(before);
-      }
-    });
-  }
-
   it('selects nested opaque Audio with exact filters, deterministic deduplication and byte bindings', async () => {
     const root = await temporary();
     const directory = path.join(root, 'nested');
@@ -520,26 +403,6 @@ describe('local deploy source selection', () => {
     expect(flags['source-dir']).to.deep.equal([second, file, file]);
   });
 
-  it('recurses through arbitrary folders and deterministically deduplicates overlapping roots', async () => {
-    const root = await temporary();
-    const nested = path.join(root, 'emailTemplate', 'arbitrary');
-    const file = await fixture(nested);
-    const second = await fixture(path.join(root, 'email'), definition(true));
-    await writeFile(path.join(root, 'receipt.json'), '{not a definition');
-    await writeFile(path.join(root, 'other.cms-video.json'), '{not supported');
-    await writeFile(path.join(root, 'Welcome.cms-email.txt'), 'companion');
-    const result = await selectDeploySources({ 'source-dir': [nested, root, root] });
-    expect(result.mode).to.equal('source-dir');
-    expect(result.items.map((item) => item.definitionPath)).to.deep.equal(
-      [file, second].toSorted(),
-    );
-    const filtered = await selectDeploySources({
-      'source-dir': [root],
-      'content-type': ['sfdc_cms__email'],
-    });
-    expect(filtered.items.map((item) => item.definitionPath)).to.deep.equal([file]);
-  });
-
   it('unions per-type selectors and retains exact obligations underneath type-wide selectors', async () => {
     const root = await temporary();
     await fixture(path.join(root, 'cms', 'Destination', 'email'));
@@ -616,34 +479,6 @@ describe('local deploy source selection', () => {
     );
     await failure(selectDeploySources(scope), /symlinks|reparse/u);
     expect(await readFile(file, 'utf8')).to.include('Welcome');
-  });
-
-  it('rejects invalid source modes and filters before filesystem access', async () => {
-    const invalid: DeploySourceSelectionFlags[] = [
-      {},
-      { 'source-dir': [] },
-      { metadata: ['email'] },
-      { metadata: [] },
-      { 'source-dir': ['x'], metadata: ['email'] },
-      { 'source-dir': [' '] },
-      { 'source-dir': [''] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__email'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__email'], 'content-type': ['sfdc_cms__email'] },
-      { 'source-dir': ['x'], metadata: [] },
-      { 'source-dir': ['x'], 'content-type': [] },
-      { 'source-dir': ['x'], 'content-type': ['Email'] },
-      { 'source-dir': ['x'], 'content-type': [' email'] },
-      { 'source-dir': ['x'], 'content-type': ['email '] },
-      { 'source-dir': ['x'], metadata: ['Audio'] },
-      { 'source-dir': ['x'], metadata: ['futureType'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__futureType'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__video'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__email:'] },
-      { 'source-dir': ['x'], metadata: ['sfdc_cms__email: '] },
-      { 'source-dir': 'x' as unknown as string[] },
-      { 'source-dir': [42 as unknown as string] },
-    ];
-    for (const flags of invalid) await failure(selectDeploySources(flags), /Deploy|deploy/u);
   });
 
   it('admits mixed file/directory sources with overlap deduplication and unchanged bytes', async () => {

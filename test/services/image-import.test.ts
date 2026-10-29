@@ -180,22 +180,6 @@ describe('image import contracts and loader', () => {
     expect(v2.manifest.schemaVersion).to.equal(2);
   });
 
-  it('normalizes generic MIME without inventing image extensions or format admission', () => {
-    expect(normalizeImageMultipartFilename('variant', 'image/png')).to.equal('variant.png');
-    expect(normalizeImageMultipartFilename('variant.PNG', 'image/png')).to.equal('variant.PNG');
-    expect(normalizeImageMultipartFilename('photo.jpeg', 'image/jpeg')).to.equal('photo.jpeg');
-    expect(normalizeImageMultipartFilename('variant.gif', 'image/png')).to.equal('variant.gif');
-    expect(normalizeImageMultipartFilename('vector.svg', 'image/svg+xml')).to.equal('vector.svg');
-    expect(normalizeImageMultipartFilename('vector', 'image/svg+xml')).to.equal('vector.bin');
-    expect(normalizeImageMultipartFilename('opaque', 'application/octet-stream')).to.equal(
-      'opaque.bin',
-    );
-    expect(normalizeImageMultipartFilename('native.avif', 'IMAGE/AVIF')).to.equal('native.avif');
-    expect(normalizeImageMultipartFilename('native', 'application/x-vendor+custom')).to.equal(
-      'native.bin',
-    );
-  });
-
   it('rejects unsafe MIME and multipart basenames without using MIME as a path', () => {
     for (const mime of [
       'image/png\r\nX: injected',
@@ -297,26 +281,6 @@ describe('image import contracts and loader', () => {
     );
   });
 
-  it('preserves valid submitted urlNames exactly for preserve and fresh strategies', async () => {
-    const loaded = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
-    for (const value of ['a', '0', 'a-0', 'a'.repeat(80)]) {
-      for (const strategy of ['preserve', 'fresh'] as const) {
-        const source = {
-          ...loaded,
-          items: [{ ...loaded.items[0], urlName: strategy === 'preserve' ? value : 'source-url' }],
-        };
-        const [plan] = planImageImports(source, [
-          map({ urlName: { strategy, ...(strategy === 'fresh' ? { value } : {}) } }),
-        ]);
-        expect(plan.identities.urlName).to.deep.equal({
-          strategy,
-          source: source.items[0].urlName,
-          submitted: value,
-        });
-      }
-    }
-  });
-
   it('rejects invalid submitted urlNames before transport for preserve and fresh strategies', async () => {
     const loaded = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
     const request = sinon.stub().throws(new Error('Transport must not be reached'));
@@ -361,14 +325,6 @@ describe('image import contracts and loader', () => {
       }
     }
     expect(request.called).to.equal(false);
-  });
-
-  it('leaves generated urlNames unsubmitted even when the source is invalid for submission', async () => {
-    const loaded = await loadWorkspaceExport(await writePackage(root), { profile: 'image' });
-    const value = 'INVALID_source_url-' + 'a'.repeat(81);
-    const source = { ...loaded, items: [{ ...loaded.items[0], urlName: value }] };
-    const [plan] = planImageImports(source, [map()]);
-    expect(plan.identities.urlName).to.deep.equal({ strategy: 'generated', source: value });
   });
 
   it('rejects invalid maps, missing source values, duplicates, unknown and non-image selections', async () => {

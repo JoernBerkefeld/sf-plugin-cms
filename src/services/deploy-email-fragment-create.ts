@@ -27,6 +27,7 @@ type FragmentConnection = Pick<Connection, 'request' | 'getApiVersion' | 'getAut
 export type ExecuteEmailFragmentCreateInput = {
   definitionFile: string;
   workspaceId: string;
+  destinationFolderId?: string;
   /** Optional exclusive new journal in an existing caller-owned directory. Never resumed. */
   reportFile?: string;
 };
@@ -39,7 +40,7 @@ export type EmailFragmentCreateResult = {
 };
 
 /**
- * Execute an internal root Fragment CREATE or independently proven zero-write unchanged result.
+ * Execute a validated-folder Fragment CREATE or independently proven zero-write unchanged result.
  * No caller-supplied preparation grants mutation authority; errors never replay the POST.
  * @param {FragmentConnection} connection - Exact destination org and selected API transport.
  * @param {ExecuteEmailFragmentCreateInput} input - Standalone definition, destination and new journal.
@@ -189,6 +190,7 @@ export async function executeEmailFragmentCreate(
       connection.getAuthInfoFields().orgId !== preflight.orgId ||
       connection.getApiVersion() !== preflight.apiVersion ||
       !isDeepStrictEqual(destination.workspace, preflight.destination.workspace) ||
+      !isDeepStrictEqual(destination.folder, preflight.destination.folder) ||
       !isDeepStrictEqual(destination.source, preflight.destination.source) ||
       !isDeepStrictEqual(acquired.projection.definition, expected) ||
       !isDeepStrictEqual(destination.existing, acquired) ||

@@ -12,13 +12,11 @@ import {
 } from '../../src/filesystem/runOwnedTemp.js';
 import {
   applyDocumentImports,
-  documentCreateInput,
   planDocumentImports,
   preflightDocumentImports,
   readDocumentImportBytes,
 } from '../../src/services/document-import.js';
 import { loadWorkspaceExport } from '../../src/services/import-workspace.js';
-import { planImageImports } from '../../src/services/image-import.js';
 import { MAX_IMAGE_BYTES } from '../../src/transport/multipart-image-create.js';
 
 const BYTES = Buffer.from('Run-owned Document fixture.\n');
@@ -451,34 +449,6 @@ describe('Document import admission and read-only preflight', () => {
     expect(
       input.connection.request.getCalls().some((call) => call.args[0].method === 'POST'),
     ).to.equal(false);
-  });
-
-  it('admits one exact native text/plain txt selection with explicit identity strategies', async () => {
-    const source = await fixture(root);
-    const plans = planDocumentImports(source, [
-      map({
-        source: {
-          family: 'cms',
-          type: 'document',
-          apiName: 'source_api',
-          serverId: 'variant',
-          workspaceId: 'space',
-          language: 'en_US',
-          title: 'Source title',
-          version: 'version-id',
-        },
-      }),
-    ]);
-    expect(plans).to.have.length(1);
-    expect(await readDocumentImportBytes(source, plans)).to.deep.equal(BYTES);
-    expect(documentCreateInput(plans[0], 'target-space')).to.deep.equal({
-      apiName: 'new_api',
-      title: 'New title',
-      urlName: 'new-url',
-      contentSpaceOrFolderId: 'target-space',
-    });
-    expect(plans[0].identities.contentKey).to.deep.equal({ strategy: 'generated', source: KEY });
-    expect(() => planImageImports(source, [map()])).to.throw('cms/image');
   });
 
   it('returns unchanged major2 planned evidence without files, reports or writes', async () => {

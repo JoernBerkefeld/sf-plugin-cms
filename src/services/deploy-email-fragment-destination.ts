@@ -8,6 +8,12 @@ import { acquireEditableEmailFragmentSource } from './retrieve-item-source.js';
 import { enumerateNativeWorkspace } from './retrieve-native-inventory.js';
 import { getWorkspace } from './read.js';
 import { assertCanonicalMarketingWorkspace } from './resolve-workspace.js';
+import type { FragmentDestinationInput } from './deploy-destination-folder-mapping.js';
+import {
+  resolveEmailFragmentFolder,
+  assertEmailFragmentNativeFolder,
+} from './resolve-email-fragment-folder.js';
+import { getContent, getVariant } from './read.js';
 
 type DestinationConnection = Pick<Connection, 'request' | 'getApiVersion'>;
 
@@ -16,6 +22,7 @@ export type EmailFragmentDestination = {
   qualification: 'unqualified';
   source: Awaited<ReturnType<typeof loadEditableEmailFragmentSource>>;
   workspace: { id: string; apiName: string; defaultLanguage: string; rootFolderId: string };
+  folder: Awaited<ReturnType<typeof resolveEmailFragmentFolder>>;
   inventory: Awaited<ReturnType<typeof enumerateNativeWorkspace>>;
   existing?: Awaited<ReturnType<typeof acquireEditableEmailFragmentSource>>;
 };
@@ -32,11 +39,16 @@ export type EmailFragmentDestination = {
  */
 export async function resolveEmailFragmentDeployDestination(
   connection: DestinationConnection,
-  input: { definitionFile: string; workspaceId: string },
+  input: FragmentDestinationInput,
   options: JsonRequestOptions = {},
 ): Promise<EmailFragmentDestination> {
   const selected = structuredClone(input);
   const requestOptions = { ...options };
+  if (
+    selected.destinationFolderId !== undefined &&
+    !/^9Pu[A-Za-z0-9]{12}(?:[A-Z0-5]{3})?$/u.test(selected.destinationFolderId)
+  )
+    throw new TypeError('Invalid explicit destination folder ID');
   if (!/^0Zu[A-Za-z0-9]{12}[A-Z0-5]{3}$/u.test(selected.workspaceId))
     throw new TypeError('Exact destination workspace ID is required');
   const source = await loadEditableEmailFragmentSource(selected.definitionFile);
@@ -58,6 +70,13 @@ export async function resolveEmailFragmentDeployDestination(
   await assertCanonicalMarketingWorkspace(
     connection,
     { id: selected.workspaceId, workspace },
+    requestOptions,
+  );
+  const folder = await resolveEmailFragmentFolder(
+    connection,
+    { id: selected.workspaceId, rootFolderId: workspace.rootFolderId },
+    source.definition.folderPath,
+    selected.destinationFolderId,
     requestOptions,
   );
   const inventory = await enumerateNativeWorkspace(
@@ -105,6 +124,16 @@ export async function resolveEmailFragmentDeployDestination(
       existing.projection.definition.identity.context.workspaceApiName !== workspace.apiName
     )
       throw new TypeError('Fragment destination identity changed during resolution');
+    const parent = await getContent(connection, existing.evidence.contentId, {}, requestOptions);
+    const variant = await getVariant(connection, existing.evidence.variantId, requestOptions);
+    assertEmailFragmentNativeFolder(
+      variant.folder,
+      parent.folder,
+      folder.id,
+      workspace.rootFolderId,
+    );
+    if (!isDeepStrictEqual(existing.projection.definition.folderPath, folder.path))
+      throw new TypeError('Fragment existing folder path disagrees with validated destination');
   }
   if (
     !isDeepStrictEqual(await loadEditableEmailFragmentSource(selected.definitionFile), source) ||
@@ -127,6 +156,7 @@ export async function resolveEmailFragmentDeployDestination(
       defaultLanguage: workspace.defaultLanguage,
       rootFolderId: workspace.rootFolderId,
     },
+    folder,
     inventory,
     ...(existing ? { existing } : {}),
   };

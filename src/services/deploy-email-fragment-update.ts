@@ -24,6 +24,7 @@ type FragmentConnection = Pick<Connection, 'request' | 'getApiVersion' | 'getAut
 export type ExecuteEmailFragmentUpdateInput = {
   definitionFile: string;
   workspaceId: string;
+  destinationFolderId?: string;
   /** Exclusive new intent journal; never resumed or overwritten for replay. */
   reportFile?: string;
 };
@@ -171,6 +172,7 @@ export async function executeEmailFragmentUpdate(
       !isDeepStrictEqual(post.destination.existing.evidence, target) ||
       !isDeepStrictEqual(post.destination.source, preflight.destination.source) ||
       !isDeepStrictEqual(post.destination.workspace, preflight.destination.workspace) ||
+      !isDeepStrictEqual(post.destination.folder, preflight.destination.folder) ||
       !isDeepStrictEqual(post.dataGraphs, preflight.dataGraphs) ||
       post.baseline.variant.contentKey !== preflight.baseline.variant.contentKey ||
       post.baseline.parent.contentKey !== preflight.baseline.parent.contentKey

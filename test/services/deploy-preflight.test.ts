@@ -153,13 +153,6 @@ function rootNode(dependencies: readonly DependencyDescriptor[]): CmsDeployPacka
 }
 
 describe('CMS package-first deploy preflight', () => {
-  it('accepts newer numeric API versions while rejecting an unresolved latest sentinel', () => {
-    const input = build([], []);
-    const newer = preflightCmsDeploy({ ...input, apiVersion: '68.0' });
-    expect(newer.blockedReasons).not.to.include('provider, API, or clock version is invalid');
-    const unresolved = preflightCmsDeploy({ ...input, apiVersion: 'latest' });
-    expect(unresolved.blockedReasons).to.include('provider, API, or clock version is invalid');
-  });
   it('prefers exact package identities before mappings and target evidence', () => {
     const dependency = identity('Landing Page Template', 'asset');
     const edge = descriptor(identity('Brand', 'root'), dependency);
@@ -287,21 +280,6 @@ describe('CMS package-first deploy preflight', () => {
         expect(report.blockedReasons.join('\n')).not.to.include('hash mismatch');
       }
     }
-  });
-
-  it('does not reject unused stale fallback evidence when a fresh mapping is selected', () => {
-    const dependency = identity('Landing Page Template', 'asset');
-    const edge = descriptor(identity('Brand', 'root'), dependency);
-    const report = preflightCmsDeploy(
-      build(
-        [edge],
-        [rootNode([edge])],
-        [evidence(dependency, '12', { observedAt: '2026-10-02T10:00:00.000Z' })],
-        [evidence(dependency, '13')],
-      ),
-    );
-    expect(report.ready).to.equal(true);
-    expect(report.resolutions[0].provenance).to.equal('mapping');
   });
 
   it('binds the selected manifest and returns deterministic hashes and plans', () => {

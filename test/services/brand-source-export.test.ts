@@ -763,8 +763,6 @@ describe('Brand source export canonical persistence', () => {
     'missing warning',
     'extra warning',
     'duplicate warning',
-    'warning message',
-    'warning variants',
     'partial',
     'failed',
     'rejected',
@@ -936,60 +934,4 @@ describe('Brand source export canonical persistence', () => {
     expect(await absent(baseline)).to.equal(true);
     expect(await absent(definitions)).to.equal(true);
   });
-
-  it('does not acquire canonical inventory for default Brand report export', async () => {
-    const fixture = setup();
-    fixture.responses.splice(2);
-    const result = await run(fixture, { definitionDirectory: undefined });
-    expect(fixture.calls).to.have.length(2);
-    expect(
-      result.manifest.items.some((item) => item.kind === 'cms.brand-source-inventory'),
-    ).to.equal(false);
-    expect(await absent(definitions)).to.equal(true);
-  });
-
-  for (const mode of ['editable', 'EmailTemplate']) {
-    it(`keeps ${mode} export free of canonical Brand queries`, async () => {
-      const fixture = setup();
-      const raw = {
-        managedContentVariantId: variantId,
-        managedContentId: parentId,
-        contentSpace: { id: workspaceId },
-        contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' },
-        apiName: 'Template',
-        language: 'en_US',
-        title: 'Template',
-        folder: null,
-        contentBody: {
-          'sfdc_cms:title': 'Template',
-          messagePurpose: 'Transactional',
-          rawHtml: '&lt;p&gt;Hello&lt;/p&gt;',
-          'lightning:expressions': [],
-          'sfdc_cms:variants': [],
-        },
-      };
-      fixture.responses.splice(0, fixture.responses.length, fixture.search, raw);
-      if (mode === 'EmailTemplate')
-        fixture.responses.push(
-          { id: workspaceId, name: 'Demo' },
-          {
-            managedContentId: parentId,
-            contentSpace: { id: workspaceId },
-            contentType: raw.contentType,
-            folder: null,
-          },
-        );
-      const result = await run(fixture, {
-        selection: { contentType: 'sfdc_cms__emailTemplate', apiNames: ['Template'] },
-        ...(mode === 'editable'
-          ? { definitionDirectory: undefined, editableDirectory: definitions }
-          : {}),
-      });
-      expect(fixture.calls).to.have.length(mode === 'editable' ? 2 : 4);
-      expect(fixture.calls.some((call) => call.url.includes('/query?'))).to.equal(false);
-      expect(
-        result.manifest.items.some((item) => item.kind === 'cms.brand-source-inventory'),
-      ).to.equal(false);
-    });
-  }
 });

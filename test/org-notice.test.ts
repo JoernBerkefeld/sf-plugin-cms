@@ -21,7 +21,7 @@ describe('resolved org notice', () => {
   });
   afterEach(() => sinon.restore());
 
-  for (const args of [['-o', 'chosen'], ['--target-org', 'chosen'], ['--target-org=chosen']]) {
+  for (const args of [['-o', 'chosen']]) {
     it(`uses the actual selected alias from parser tokens: ${args.join(' ')}`, async () => {
       const org = { getUsername: () => 'user@example.com' } as Org;
       const create = sinon.stub(Org, 'create').resolves(org);

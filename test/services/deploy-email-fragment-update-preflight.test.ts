@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { randomUUID } from 'node:crypto';
 import sinon from 'sinon';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
@@ -15,6 +16,7 @@ export const contentId = '20Y000000000001AAA';
 export const variantId = '9Ps000000000001AAA';
 export async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-update-'));
+  await writeFile(path.join(root, '.sf-cms-run-owner'), randomUUID(), { flag: 'wx' });
   const file = path.join(root, 'Welcome.cms-email-fragment.json');
   const reportFile = path.join(root, 'intent.json');
   const definition: EmailFragmentSourceDefinition = {
@@ -125,6 +127,7 @@ export async function fixture() {
     isPublished: false,
     contentBody: structuredClone(definition.contentBody),
   };
+  const folders: Record<string, RecordValue> = {};
   const calls: Array<{ method: string; url: string; body?: string }> = [];
   let onRequest: ((method: string, url: string) => void | Promise<void>) | undefined;
   let mutationError: Error | undefined;
@@ -162,6 +165,8 @@ export async function fixture() {
         const url = new URL(input.url, 'https://example.invalid');
         if (url.pathname === `/connect/cms/spaces/${workspaceId}`)
           return structuredClone(workspace);
+        if (url.pathname.startsWith('/connect/cms/folders/'))
+          return structuredClone(folders[url.pathname.split('/').at(-1)!]);
         if (url.pathname.includes('/ssot/data-graphs/')) return structuredClone(graph);
         if (url.pathname.includes('/connect/cms/contents/'))
           return structuredClone(url.pathname.includes('/variants/') ? detail : parent);
@@ -198,6 +203,7 @@ export async function fixture() {
   sinon.stub(JsforceConnection.prototype, 'request').callsFake(connection.request as never);
   return {
     definition,
+    folders,
     save,
     workspace,
     graph,
@@ -322,7 +328,10 @@ describe('internal Fragment UPDATE preparation', () => {
       if (change === 'expression')
         current.definition.contentBody['lightning:expressions'] = ['{!$missing.Name}'];
       await current.save();
-      await failure(current.prepare(), /nonroot|reference|portable.*leak|prerequisite/u);
+      await failure(
+        current.prepare(),
+        /requires numeric CMS API 68.0|reference|portable.*leak|prerequisite/u,
+      );
     }
   });
 });

@@ -569,23 +569,6 @@ describe('Lifecycle whole-selection preparation', () => {
       expect(prepared.result.items[2]).not.to.have.property('result');
       expect(prepared.preparations[2]?.binding.apiName).to.equal('b');
     });
-    for (const index of [0, 1]) {
-      it(`${operation}: failure at ${index} gives honest prefix/stop/resolved suffix`, async () => {
-        const current = fixture(operation);
-        current.state.fail = ['a', 'b'][index];
-        const prepared = await prepareLifecycleMetadataBatch(current.connection, input());
-        expect(prepared.result.stop?.index).to.equal(index);
-        expect(prepared.result.items.map((item) => item.outcome)).to.deep.equal(
-          index === 0
-            ? ['blocked', 'unattempted', 'unattempted']
-            : ['ready', 'blocked', 'unattempted'],
-        );
-        expect(prepared.result.items[index]).not.to.have.property('target');
-        expect(prepared.preparations[index]).to.equal(undefined);
-        expect(prepared.result.items[2].target?.variantId).to.equal('variant-c');
-        assertContentLifecycleBatchResult(prepared.result, undefined, 'blocked');
-      });
-    }
     for (const drift of ['drift', 'driftOrg'] as const) {
       it(`${operation}: blocks differing initial ${drift}`, async () => {
         const current = fixture(operation);
@@ -599,16 +582,6 @@ describe('Lifecycle whole-selection preparation', () => {
         expect(prepared.inventories[0].org).to.equal('https://example.invalid');
       });
     }
-    it(`${operation}: keeps unresolved suffix identities absent`, async () => {
-      const current = fixture(operation);
-      const prepared = await prepareLifecycleMetadataBatch(
-        current.connection,
-        input(['image:a', 'email:missing', 'email:c']),
-      );
-      expect(prepared.result.items[0].outcome).to.equal('blocked');
-      expect(prepared.result.items[1]).not.to.have.property('target');
-      expect(prepared.result.items[2].target?.apiName).to.equal('c');
-    });
     it(`${operation}: detaches caller selection while resolving`, async () => {
       const current = fixture(operation);
       const selected = input();

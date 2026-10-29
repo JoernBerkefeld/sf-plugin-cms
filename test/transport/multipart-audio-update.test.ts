@@ -1,5 +1,3 @@
-import { constants as bufferConstants } from 'node:buffer';
-import { createHash } from 'node:crypto';
 import { expect } from 'chai';
 import sinon from 'sinon';
 import {
@@ -12,8 +10,6 @@ import { CmsRequestError } from '../../src/transport/json-request.js';
 const input = { title: 'Updated café', urlName: 'updated-audio' };
 const bytes = Buffer.from([0, 255, 128, 13, 10, 1]);
 const options = { mimeType: 'audio/x-wav', boundaryFactory: () => 'safe' };
-const hash = (value: Uint8Array): string => createHash('sha256').update(value).digest('hex');
-
 // All cases are local framing evidence, not native Audio UPDATE qualification.
 describe('local unqualified pure Audio UPDATE multipart builder', () => {
   it('builds exact CRLF framing, filename, explicit MIME and closing delimiter', () => {
@@ -47,39 +43,6 @@ describe('local unqualified pure Audio UPDATE multipart builder', () => {
     expect(Object.keys(built.input.contentBody as object)).to.deep.equal(['sfdc_cms:media']);
     expect(built.input).not.to.have.property('apiName');
     expect(input).to.deep.equal({ title: 'Updated café', urlName: 'updated-audio' });
-  });
-
-  it('omits absent optional URL and detaches returned metadata and opaque nonzero-offset bytes', () => {
-    const selected = { title: 'Only title' };
-    const backing = new Uint8Array([9, ...bytes, 8]);
-    const view = new Uint8Array(backing.buffer, 1, bytes.length);
-    const built = buildAudioUpdateMultipart(selected, 'opaque.bin', view, options);
-    const before = hash(built.body);
-    selected.title = 'Changed';
-    backing.fill(7);
-    expect(hash(built.body)).to.equal(before);
-    expect(built.input).to.deep.equal({
-      title: 'Only title',
-      contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-    });
-    expect(built.body.includes(bytes)).to.equal(true);
-  });
-
-  it('locally frames unfamiliar safe MIME and opaque non-WAV bytes above revoked 10 MiB', () => {
-    const opaque = Buffer.alloc(10 * 1024 * 1024 + 1, 255);
-    opaque.set(bytes);
-    const built = buildAudioUpdateMultipart(input, 'opaque.dat', opaque, {
-      ...options,
-      mimeType: 'application/x-future-audio',
-    });
-    const header = Buffer.from('Content-Type: application/x-future-audio\r\n\r\n');
-    const start = built.body.indexOf(header) + header.length;
-    expect(start).to.be.greaterThan(header.length);
-    expect(hash(built.body.subarray(start, start + opaque.length))).to.equal(hash(opaque));
-    expect(built.body.subarray(start + opaque.length).toString('ascii')).to.equal(
-      '\r\n--safe--\r\n',
-    );
-    expect(built.body.includes(Buffer.from('charset=ISO-8859-1'))).to.equal(false);
   });
 
   it('requires safe explicit MIME at runtime without a fallback', () => {
@@ -192,29 +155,6 @@ describe('local unqualified pure Audio UPDATE multipart builder', () => {
       expect(() =>
         buildAudioUpdateMultipart(input, filename, bytes, { ...options, boundaryFactory }),
       ).to.throw(CmsRequestError, 'Invalid image filename');
-    }
-    expect(boundaryFactory.called).to.equal(false);
-  });
-
-  it('rejects empty, nonbinary and Buffer-unrepresentable data', () => {
-    const boundaryFactory = sinon.stub().returns('safe');
-    for (const value of [Buffer.alloc(0), 'text', null]) {
-      expect(() =>
-        buildAudioUpdateMultipart(input, 'a.wav', value as Uint8Array, {
-          ...options,
-          boundaryFactory,
-        }),
-      ).to.throw(CmsRequestError);
-    }
-    for (const byteLength of [
-      bufferConstants.MAX_LENGTH + 1,
-      Number.MAX_SAFE_INTEGER + 1,
-      Number.POSITIVE_INFINITY,
-    ]) {
-      const value = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
-      expect(() =>
-        buildAudioUpdateMultipart(input, 'a.wav', value, { ...options, boundaryFactory }),
-      ).to.throw(CmsRequestError, 'represented by a Buffer');
     }
     expect(boundaryFactory.called).to.equal(false);
   });

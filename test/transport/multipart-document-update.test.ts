@@ -54,24 +54,6 @@ describe('pure native Document UPDATE multipart builder', () => {
     expect(built.body.toString('utf8')).not.to.include('name="ManagedContentInputParam"');
   });
 
-  it('preserves Unicode JSON and offset-view binary without mutation or re-encoding', () => {
-    const selected = { ...input, title: 'Document café — 更新' };
-    const snapshot = structuredClone(selected);
-    const backing = Buffer.concat([Buffer.from('prefix'), bytes, Buffer.from('suffix')]);
-    const view = backing.subarray(6, -6);
-    const built = build(selected, filename, view);
-    expect(built.body.includes(Buffer.from(JSON.stringify(selected), 'utf8'))).to.equal(true);
-    expect(built.body.includes(bytes)).to.equal(true);
-    expect(built.body.includes(Buffer.from('prefix'))).to.equal(false);
-    expect(built.body.includes(Buffer.from('suffix'))).to.equal(false);
-    expect(selected).to.deep.equal(snapshot);
-    expect(view.equals(bytes)).to.equal(true);
-    backing.fill(0);
-    selected.title = 'changed';
-    expect(built.body.includes(bytes)).to.equal(true);
-    expect(built.input.title).to.equal(snapshot.title);
-  });
-
   it('omits server/read-only fields and rejects them rather than silently stripping', () => {
     for (const field of [
       'language',

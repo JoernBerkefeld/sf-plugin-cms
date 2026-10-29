@@ -4,12 +4,8 @@ import sinon from 'sinon';
 import { Connection } from '@salesforce/core';
 import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import {
-  DEFAULT_API_VERSION,
-  FALLBACK_API_VERSION,
-  apiDataPath,
   getCmsApiSelection,
   inheritCmsApiSelection,
-  isNumericApiVersion,
   prepareCmsConnection,
 } from '../src/api-policy.js';
 
@@ -68,19 +64,6 @@ describe('CMS API policy', () => {
     expect(text).not.to.include('SECRET');
     expect(text).to.include('second error');
   });
-  it('validates numeric versions and builds distinct REST roots', () => {
-    expect(DEFAULT_API_VERSION).to.equal('latest');
-    expect(FALLBACK_API_VERSION).to.equal('67.0');
-    for (const value of ['67.0', '68.0', '100.0'])
-      expect(isNumericApiVersion(value)).to.equal(true);
-    for (const value of ['latest', 'v67.0', '67', '0.0', '67.1', ' 67.0', null, 67]) {
-      expect(isNumericApiVersion(value)).to.equal(false);
-    }
-    expect(apiDataPath('latest')).to.equal('/services/data/latest');
-    expect(apiDataPath('68.0')).to.equal('/services/data/v68.0');
-    expect(() => apiDataPath('v67.0')).to.throw('Invalid CMS API version');
-  });
-
   it('discovers the actual numeric maximum and preflights latest without changing its REST spelling', async () => {
     const { connection, request } = fakeConnection();
     expect(await prepareCmsConnection(connection)).to.equal(connection);

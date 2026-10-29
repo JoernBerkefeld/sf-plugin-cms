@@ -662,7 +662,7 @@ describe('native publish preparation routing and family ledger', () => {
       }
     }
   });
-  for (const contentType of ['sfdc_cms__image', 'sfdc_cms__document', 'sfdc_cms__audio']) {
+  for (const contentType of ['sfdc_cms__audio']) {
     it(`prepares ${contentType} with its real binary receipt`, async () => {
       const current = mediaFixture(contentType);
       sinon

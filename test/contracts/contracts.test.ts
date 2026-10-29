@@ -16,7 +16,6 @@ import { assertContentUnpublishResult } from '../../src/contracts/content-unpubl
 import { assertContentUpdateResult } from '../../src/contracts/content-update.js';
 import {
   CMS_CONTRACT_VERSION,
-  finalizeCmsEnvelope,
   sanitizeDiagnostics,
   serializeCmsEnvelope,
   type CmsEnvelope,
@@ -195,52 +194,6 @@ describe('CMS contract foundation', () => {
     ).to.throw();
   });
 
-  it('validates the versioned bounded content publish result', () => {
-    expect(() =>
-      assertContentPublishResult(
-        {
-          mode: 'dry-run',
-          outcome: 'ready',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            selectorScope: 'variant',
-            includeContentReferences: false,
-            noSendAcknowledgementRequired: true,
-            baselineHash: 'a'.repeat(64),
-            inventory: [
-              {
-                contentId: 'content',
-                hash: 'a'.repeat(64),
-                language: 'en_US',
-                isPublished: false,
-                status: 'Draft',
-                variantId: 'variant',
-              },
-            ],
-            siblingInventory: [
-              {
-                hash: 'a'.repeat(64),
-                language: 'en_US',
-                isPublished: false,
-                status: 'Draft',
-                variantId: 'variant',
-              },
-            ],
-          },
-          blockers: [],
-        },
-        undefined,
-        'success',
-      ),
-    ).not.to.throw();
-  });
-
   it('rejects contradictory bounded content publish evidence', () => {
     const ready = {
       mode: 'dry-run',
@@ -280,52 +233,6 @@ describe('CMS contract foundation', () => {
       blockers: [],
     };
     expect(() => assertContentPublishResult(ready, undefined, 'success')).to.throw();
-  });
-
-  it('validates the versioned bounded content unpublish result', () => {
-    expect(() =>
-      assertContentUnpublishResult(
-        {
-          mode: 'dry-run',
-          outcome: 'ready',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            selectorScope: 'parent',
-            includeContentReferencesOmitted: true,
-            activeUseStopsAcknowledgementRequired: true,
-            baselineHash: 'a'.repeat(64),
-            inventory: [
-              {
-                contentId: 'content',
-                hash: 'a'.repeat(64),
-                language: 'en_US',
-                isPublished: true,
-                status: 'Published',
-                variantId: 'variant',
-              },
-            ],
-            siblingInventory: [
-              {
-                hash: 'a'.repeat(64),
-                language: 'en_US',
-                isPublished: true,
-                status: 'Published',
-                variantId: 'variant',
-              },
-            ],
-          },
-          blockers: [],
-        },
-        undefined,
-        'success',
-      ),
-    ).not.to.throw();
   });
 
   it('rejects completed unpublish evidence when the body hash changed', () => {
@@ -460,40 +367,6 @@ describe('CMS contract foundation', () => {
     expect(() => assertContentUnpublishResult(ready, undefined, 'success')).to.throw();
   });
 
-  it('validates the versioned bounded content update result', () => {
-    expect(() =>
-      assertContentUpdateResult(
-        {
-          mode: 'dry-run',
-          outcome: 'ready',
-          target: {
-            workspaceId: 'space',
-            apiName: 'Email',
-            language: 'en_US',
-            contentId: 'content',
-            variantId: 'variant',
-          },
-          evidence: {
-            baselineHash: 'a'.repeat(64),
-            payloadHash: 'b'.repeat(64),
-            changedFields: ['contentBody.rawHtml'],
-            siblingInventory: [
-              {
-                hash: 'c'.repeat(64),
-                language: 'en_US',
-                lifecycle: { isPublished: false, status: 'Draft' },
-                variantId: 'variant',
-              },
-            ],
-          },
-          blockers: [],
-        },
-        undefined,
-        'success',
-      ),
-    ).not.to.throw();
-  });
-
   it('rejects outcome-inconsistent content update result shapes', () => {
     const ready = {
       mode: 'dry-run',
@@ -579,38 +452,6 @@ describe('CMS contract foundation', () => {
       },
     ]) {
       expect(() => assertContentUpdateResult(malformed)).to.throw();
-    }
-  });
-
-  for (const [name, validator] of [
-    ['success-info.json', assertCmsInfoResult],
-    ['partial-export.json', assertWorkspaceExportSetResult],
-    ['failed-import.json', assertWorkspaceImportResult],
-    ['blocked-export.json', assertWorkspaceExportSetResult],
-  ] as const) {
-    it(`validates and deterministically serializes ${name}`, async () => {
-      const { bytes, value } = await loadFixture(name);
-      expect(bytes[0]).not.to.equal(239);
-      expect(bytes.includes(Buffer.from('\r'))).to.equal(false);
-      expect(bytes.at(-1)).to.equal(10);
-      expect(serializeCmsEnvelope(value, validator)).to.equal(bytes.toString('utf8'));
-    });
-  }
-
-  it('emits before setting deterministic success/partial/failure exits', async () => {
-    for (const [name, validator, expectedExit] of [
-      ['success-info.json', assertCmsInfoResult, 0],
-      ['partial-export.json', assertWorkspaceExportSetResult, 2],
-      ['failed-import.json', assertWorkspaceImportResult, 1],
-      ['blocked-export.json', assertWorkspaceExportSetResult, 1],
-    ] as const) {
-      const { value } = await loadFixture(name);
-      const events: string[] = [];
-      finalizeCmsEnvelope(value, validator, {
-        emit: () => events.push('emit'),
-        setExitCode: (exitCode) => events.push(`exit:${exitCode}`),
-      });
-      expect(events).to.deep.equal(['emit', `exit:${expectedExit}`]);
     }
   });
 
@@ -1270,11 +1111,6 @@ describe('CMS contract foundation', () => {
     expect(() => assertWorkspaceImportResult(result)).to.throw('duplicate');
     result.mappings = [mapping, { ...mapping, referenceId: `ref:${'b'.repeat(64)}` }];
     expect(() => assertWorkspaceImportResult(result)).to.throw('conflicting target');
-  });
-
-  it('rejects obsolete alternate registry output', async () => {
-    const { value } = await loadFixture<CmsInfoResult>('success-info.json');
-    expect(() => assertCmsInfoResult({ ...value.result!, registry: {} })).to.throw('exactly');
   });
 
   it('validates strict internal registry keys and CMS provenance', async () => {

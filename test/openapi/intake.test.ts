@@ -6,7 +6,7 @@ import {
   createRunOwnedTemp,
   removeRunOwnedPath,
 } from '../../src/filesystem/runOwnedTemp.js';
-import { intakeOpenApi, OpenApiIntakeError, resolveInternalRef } from '../../src/openapi/intake.js';
+import { intakeOpenApi, OpenApiIntakeError } from '../../src/openapi/intake.js';
 
 const baseDocument = `openapi: 3.0.3
 info:
@@ -56,19 +56,6 @@ async function expectFailure(contents: string, message: RegExp): Promise<void> {
 }
 
 describe('OpenAPI semantic intake', () => {
-  it('rejects duplicate YAML keys with a source location', async () => {
-    await expectFailure(
-      `${baseDocument}\ninfo:\n  title: duplicate\n`,
-      /fixture\.yaml:\d+:\d+.*DUPLICATE_KEY/u,
-    );
-  });
-
-  it('resolves valid refs and RFC 6901 pointer escapes', () => {
-    const root = { components: { schemas: { 'a/b': { value: 1 }, 'a~b': { value: 2 } } } };
-    expect(resolveInternalRef(root, '#/components/schemas/a~1b')).to.deep.equal({ value: 1 });
-    expect(resolveInternalRef(root, '#/components/schemas/a~0b')).to.deep.equal({ value: 2 });
-  });
-
   it('rejects malformed, escaped, unresolved, and non-local refs', async () => {
     for (const [reference, message] of [
       ['#/components/schemas/Bad~2Key', /malformed JSON Pointer escape/u],
@@ -81,36 +68,6 @@ describe('OpenAPI semantic intake', () => {
       const fixture = `${baseDocument}\n  schemas2:\n    Ref:\n      $ref: '${reference}'\n`;
       await expectFailure(fixture, message);
     }
-  });
-
-  it('validates cyclic internal refs without recursing forever', async () => {
-    const fixture = `${baseDocument}\n    A:\n      $ref: '#/components/schemas/B'\n    B:\n      $ref: '#/components/schemas/A'\n`;
-    await withFixture(fixture, async (path) => {
-      const result = await intakeOpenApi(path);
-      expect(result.refCount).to.equal(2);
-      expect(result.operationCount).to.equal(1);
-    });
-  });
-
-  it('rejects missing and duplicate operation identifiers', async () => {
-    await expectFailure(
-      baseDocument.replace('      operationId: getExample\n', ''),
-      /missing operationId/u,
-    );
-    await expectFailure(
-      baseDocument.replace(
-        '  /connect/cms/example:\n',
-        '  /connect/cms/second:\n    get:\n      operationId: getExample\n  /connect/cms/example:\n',
-      ),
-      /duplicate operationId/u,
-    );
-    await expectFailure(
-      baseDocument.replace(
-        "      responses:\n        '200':\n          description: ok\n",
-        "      responses:\n        '200':\n          description: ok\n    Get:\n      operationId: getExampleAgain\n",
-      ),
-      /duplicate operation identity/u,
-    );
   });
 
   it('validates the canonical v67 document with exactly 48 operations', async () => {

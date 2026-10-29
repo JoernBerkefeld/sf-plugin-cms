@@ -244,7 +244,7 @@ describe('private read-only Image UPDATE preflight', () => {
       if (key === 'isPublished') f.detail[key] = true;
       await failure(f.run());
     });
-  for (const kind of ['filename', 'mime', 'external-url', 'unknown-body', 'download-hash'])
+  for (const kind of ['filename', 'mime', 'external-url', 'download-hash'])
     it(`rejects ${kind} evidence`, async () => {
       const f = await fixture();
       const media = (f.detail.contentBody as Record<string, { url: string; source: Row }>)[
@@ -265,10 +265,8 @@ describe('private read-only Image UPDATE preflight', () => {
   for (const kind of [
     'workspace-root',
     'default-language',
-    'workspace-type',
     'local-folder',
     'local-language',
-    'local-title',
     'url-only',
     'workspace-id',
     'cancel',

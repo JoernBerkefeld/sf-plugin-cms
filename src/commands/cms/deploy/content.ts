@@ -19,10 +19,16 @@ import {
 } from '../../../services/deploy-destination-preparation.js';
 import {
   selectDeploySources,
+  normalizeDeployMetadataSelectors,
   type DeployLocalSelection,
 } from '../../../services/deploy-source-selection.js';
 import { assertWorkspaceSelector, resolveWorkspace } from '../../../services/resolve-workspace.js';
 import { redactSecrets } from '../../../transport/redact-secrets.js';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  assertDestinationFolderMappings,
+  parseDestinationFolderIds,
+} from '../../../services/deploy-destination-folder-mapping.js';
 
 export type DeployContentResult = {
   mode: 'preview' | 'execute';
@@ -66,7 +72,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
   public static readonly summary =
     'Deploy portable Email, Email Template, Email Fragment, Image, Document, Audio and Brand content.';
   public static readonly description =
-    'Uses your configured default org unless -o overrides it. Executes by default. Email Fragment supports unqualified full-body CREATE, UPDATE and zero-write unchanged for one actual default unpublished Draft variant. Unused enabled workspace languages are allowed; additional actual variants block. Standalone JSON needs no manifest or index. Fragment metadata selection searches cms/<sourceWorkspaceApiName>/emailFragment independently of the destination name; duplicate destination identities block. Current nonroot folder mapping and unresolved Brand/content references block before mutation; these remain outstanding portability work, not permanent product limitations. Provider prerequisites must resolve. Bounded installed development-artifact evidence covers same-workspace seed retrieval, edited portable CREATE, ordinary-title derived UPDATE, public re-retrieval with full canonical comparison and the expected derived envelope, and zero-write unchanged. Separate artifact-bound evidence covers tested unpublish and exact DELETE with default local preservation or explicit matching inline JSON removal. General publish, declared-companion, cross-workspace/cross-org, rendering and released-package acceptance remain outstanding; these receipts do not qualify the current combined artifact or whole type, and the type is not complete. Brand supports unqualified strict dependency-free root/default-language CREATE and exact zero-write unchanged only, with explicit matching title and URL and a single-primary unpublished Draft for existing content. Brand UPDATE, lifecycle operations, defaultBrand assignment and deletion remain unsupported. Installed internal same/cross-org Brand evidence does not qualify the final public CLI artifact or live mixed-family batches. --preview reads explicit local sources and destination with no org mutations, content writes or report allocation; existing diagnostic invocation logs remain enabled. Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged for binary root/default-language sources with safe MIME and paths. Existing Audio must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile for CREATE, bytes-only UPDATE, zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks; this is not general-format or released-package qualification. Whole-selection preflight precedes sequential CREATE/UPDATE/unchanged execution, stopping on first failure or uncertainty. Reporting is opt-in: --report allocates ./logs/cms/reports/<timestamp>-<unique-id>/ under invocation cwd; --report-dir implies reporting at that exact fresh directory. Without either flag no reports or hidden journals are written, and no crash-surviving structured journal is available. Preview rejects both reporting options. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language opaque nonempty runtime-representable bytes with safe native MIME and ASCII filename; no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Salesforce determines format and size acceptance; explicit caller download budgets still bind. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
+    'Uses your configured default org unless -o overrides it. Executes by default. Email Fragment supports unqualified full-body CREATE, UPDATE and zero-write unchanged for one actual default unpublished Draft variant. Unused enabled workspace languages are allowed; additional actual variants block. Standalone JSON needs no manifest or index. Fragment metadata selection searches cms/<sourceWorkspaceApiName>/emailFragment independently of the destination name; duplicate destination identities block. Explicit --destination-folder-id emailFragment:ApiName=9Pu... mappings are locally available but unqualified, not installed-artifact or live-qualified. Contextual ancestry and exact source folderPath must agree; existing content must already occupy that exact folder ID. Unmapped root sources retain existing behavior. Unmapped nonroot sources attempt a bounded v68+ read-only folder-items investigation; without an authoritative pagination completion contract, even one match or short/empty pages remain inconclusive. Use explicit --destination-folder-id; automatic path resolution is unqualified. Unresolved Brand/content references block before mutation. Provider prerequisites must resolve. Bounded installed development-artifact evidence covers same-workspace seed retrieval, edited portable CREATE, ordinary-title derived UPDATE, public re-retrieval with full canonical comparison and the expected derived envelope, and zero-write unchanged. Separate artifact-bound evidence covers tested unpublish and exact DELETE with default local preservation or explicit matching inline JSON removal. General publish, declared-companion, cross-workspace/cross-org, rendering and released-package acceptance remain outstanding; these receipts do not qualify the current combined artifact or whole type, and the type is not complete. Brand supports unqualified strict dependency-free root/default-language CREATE and exact zero-write unchanged only, with explicit matching title and URL and a single-primary unpublished Draft for existing content. Brand UPDATE, lifecycle operations, defaultBrand assignment and deletion remain unsupported. Installed internal same/cross-org Brand evidence does not qualify the final public CLI artifact or live mixed-family batches. --preview reads explicit local sources and destination with no org mutations, content writes or report allocation; existing diagnostic invocation logs remain enabled. Audio supports unqualified CREATE, bytes-only UPDATE and exact unchanged for binary root/default-language sources with safe MIME and paths. Existing Audio must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Bounded two-org development-artifact acceptance covers the tested 844-byte WAV profile for CREATE, bytes-only UPDATE, zero-write unchanged and public retrieval with independent native identity, inventory and exact-byte readbacks; this is not general-format or released-package qualification. Whole-selection preflight precedes sequential CREATE/UPDATE/unchanged execution, stopping on first failure or uncertainty. Reporting is opt-in: --report allocates ./logs/cms/reports/<timestamp>-<unique-id>/ under invocation cwd; --report-dir implies reporting at that exact fresh directory. Without either flag no reports or hidden journals are written, and no crash-surviving structured journal is available. Preview rejects both reporting options. Images require root/default-language binary sources; Salesforce determines format and size acceptance (no client format whitelist or 25 MB cap); existing Images must be single-primary unpublished Drafts with exact metadata, filename and MIME, with bytes-only UPDATE. Documents support CREATE, bytes-only UPDATE and exact unchanged: root/default-language opaque nonempty runtime-representable bytes with safe native MIME and ASCII filename; no client format whitelist, UTF-8 conversion, suffix restriction or 10 MiB cap. Salesforce determines format and size acceptance; explicit caller download budgets still bind. Existing Documents must be single-primary unpublished Drafts with unchanged metadata, native filename, MIME, language and type. Only bytes may change; all other Document differences block the whole selection before mutation. Document UPDATE never falls back to Image transport and remains unqualified; bounded two-org development-artifact acceptance covers the tested text/plain profile. No retry, rollback, resume or publication. This capability remains unqualified. Narrow installed same-org PNG acceptance does not establish cross-org qualification; successful execution does not broaden supported shapes.';
   public static readonly examples = [
     '<%= config.bin %> cms deploy content -o destination -w 0ZuDESTINATION -l en_US --source-dir ./Welcome.cms-email.json --json',
     '<%= config.bin %> cms deploy content -W Marketing -L -m email:Welcome --json',
@@ -114,6 +120,12 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         'Select cwd cms/<workspaceApiName>/<type> by Type[:ApiName]; repeat. Fragment searches source workspaces independently of destination; other types use destination name. Exact members must exist.',
       exclusive: ['source-dir', 'content-type'],
     }),
+    'destination-folder-id': Flags.string({
+      multiple: true,
+      multipleNonGreedy: true,
+      summary:
+        'Optional destination-specific emailFragment:ApiName=9Pu... mapping; repeat per mapped Fragment.',
+    }),
     preview: Flags.boolean({
       default: false,
       summary:
@@ -139,6 +151,8 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
     const targetOrg = flags['target-org'].getUsername()!;
     const invocationCwd = process.cwd();
     let orgId = 'unresolved-org';
+    let destinationFolderIds: Readonly<Record<string, string>> | undefined;
+    let fragmentSelection: DeployLocalSelection | undefined;
     const result: DeployContentResult = {
       mode: flags.preview ? 'preview' : 'execute',
       mutationEnabled: false,
@@ -263,12 +277,23 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         throw new TypeError('Choose exactly one metadata or source-dir selection.');
       if (flags.metadata !== undefined && flags['content-type'] !== undefined)
         throw new TypeError('Content-type filters require source-dir selection.');
+      destinationFolderIds = parseDestinationFolderIds(flags['destination-folder-id']);
       if (flags.metadata === undefined) {
         result.selection = await this.selectSources(flags);
+        assertDestinationFolderMappings(destinationFolderIds, result.selection!);
       } else {
-        // Canonical paths require the resolved destination API name, never the display name.
-        if (flags.metadata.length === 0 || flags.metadata.some((value) => !value.trim()))
-          throw new TypeError('Deploy metadata selectors must be nonempty.');
+        const selectors = normalizeDeployMetadataSelectors(flags.metadata);
+        if (destinationFolderIds !== undefined) {
+          const metadata = flags.metadata.filter(
+            (_, index) => selectors[index].contentType === 'sfdc_cms__emailFragment',
+          );
+          fragmentSelection =
+            metadata.length > 0
+              ? await this.selectSources({ metadata, cwd: invocationCwd })
+              : { mode: 'metadata', items: [] };
+          assertDestinationFolderMappings(destinationFolderIds, fragmentSelection!);
+          if (metadata.length === flags.metadata.length) result.selection = fragmentSelection!;
+        }
       }
       if (result.selection) {
         result.summary.selected = result.selection.items.length;
@@ -303,6 +328,17 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         result.summary.selected = result.selection.items.length;
         result.unattempted = [...result.selection.items];
       }
+      if (
+        fragmentSelection !== undefined &&
+        !isDeepStrictEqual(
+          result.selection.items.filter(
+            (item) => item.targetIdentity.contentType === 'sfdc_cms__emailFragment',
+          ),
+          fragmentSelection.items,
+        )
+      )
+        throw new TypeError('Fragment selection changed since local mapping admission');
+      assertDestinationFolderMappings(destinationFolderIds, result.selection);
       const language = flags.language ?? workspace.workspace.defaultLanguage;
       sourcePathSegment(language as string);
       result.scope.language = language as string;
@@ -315,6 +351,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
         result.reportFile = directory ? path.join(directory, 'content-deploy-run.json') : null;
         const applied = await this.executeBatch(context.connection, {
           sources,
+          ...(destinationFolderIds === undefined ? {} : { destinationFolderIds }),
           expectedSelection: result.selection,
           workspaceId: workspace.id,
           language: language as string,
@@ -344,6 +381,7 @@ export default class DeployContent extends CmsCommand<CmsEnvelope<DeployContentR
       }
       const preflight = await this.preflightBatch(context.connection, {
         sources,
+        ...(destinationFolderIds === undefined ? {} : { destinationFolderIds }),
         expectedSelection: result.selection,
         workspaceId: workspace.id,
         language: language as string,

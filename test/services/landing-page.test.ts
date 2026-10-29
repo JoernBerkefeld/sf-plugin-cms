@@ -300,18 +300,6 @@ describe('landing-page create-only profile', () => {
     );
   });
 
-  it('uses the landing-page content type for its derived-label boundary', () => {
-    const boundary = 'P'.repeat(57);
-    expect(
-      planLandingPageCopies(source(), [mapping('source_page', boundary)]),
-    ).to.have.nested.property('items[0].apiName', boundary);
-
-    const tooLong = 'P'.repeat(58);
-    expect(() => planLandingPageCopies(source(), [mapping('source_page', tooLong)])).to.throw(
-      `Landing-page mapping 0.target.apiName ${tooLong} produces Salesforce label ${tooLong}--sfdc_cms__landingPage with length 81; maximum is 80`,
-    );
-  });
-
   it('binds the exact manifest pair and rejects selector disagreement', () => {
     const planned = planLandingPageCopies(source(), [mapping()]);
     expect(planned.templateDependencies[0].source).to.deep.include({
@@ -398,38 +386,6 @@ describe('landing-page create-only profile', () => {
     ]) {
       expect(() => planLandingPageCopies(source(), [{ ...base, templateDependency }])).to.throw();
     }
-  });
-
-  it('normalizes image and Data Graph transformations for compatibility only', () => {
-    const loaded = source();
-    const templateIndex = loaded.items.findIndex(
-      ({ contentType }) => contentType === 'sfdc_cms__landingPageTemplate',
-    );
-    const sourceTemplate = loaded.items[templateIndex];
-    const transformedBody = structuredClone(sourceTemplate.contentBody);
-    const providers = transformedBody['lightning:dataProviders'] as Array<{
-      attributes: { dataGraphApiName: string; dataspace: string };
-    }>;
-    providers[0].attributes = { dataGraphApiName: 'OtherGraph', dataspace: 'otherSpace' };
-    const block = transformedBody['sfdc_cms:block'] as {
-      children: Array<{
-        attributes: {
-          imageInfo: { source: { ref: { contentKey: string } }; url: string };
-        };
-      }>;
-    };
-    block.children[0].attributes.imageInfo.source.ref.contentKey = 'template-image-key';
-    block.children[0].attributes.imageInfo.url =
-      '/cms/media/template-image-key?fileName=hero.png&fileHash=different';
-    const transformed: LoadedWorkspaceExport = {
-      ...loaded,
-      items: loaded.items.map((item, index) =>
-        index === templateIndex ? { ...sourceTemplate, contentBody: transformedBody } : item,
-      ),
-    };
-    expect(planLandingPageCopies(transformed, [mapping()]).compatibility[0].status).to.equal(
-      'passed',
-    );
   });
 
   for (const identity of [

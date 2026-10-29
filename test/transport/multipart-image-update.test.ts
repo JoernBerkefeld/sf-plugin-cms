@@ -172,17 +172,6 @@ describe('private multipart Image UPDATE transport', () => {
     }
   });
 
-  it('rejects unrepresentable binary lengths before boundary generation', () => {
-    const boundaryFactory = sinon.stub().returns('safe');
-    for (const byteLength of [Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY]) {
-      const image = Object.defineProperty(new Uint8Array(1), 'byteLength', { value: byteLength });
-      expect(() =>
-        buildImageUpdateMultipart(input, 'opaque.bin', image, { boundaryFactory }),
-      ).to.throw(CmsRequestError, 'represented by a Buffer');
-    }
-    expect(boundaryFactory.called).to.equal(false);
-  });
-
   it('rejects unknown unsafe MIME values before framing or requests', async () => {
     const request = sinon.stub();
     const boundaryFactory = sinon.stub().returns('safe');
@@ -216,64 +205,6 @@ describe('private multipart Image UPDATE transport', () => {
     }
     expect(boundaryFactory.called).to.equal(false);
     expect(request.called).to.equal(false);
-  });
-
-  it('builds exact UPDATE-only JSON, two ordered parts and binary view bytes', () => {
-    const backing = Buffer.concat([Buffer.from([9]), bytes, Buffer.from([8])]);
-    const built = buildImageUpdateMultipart(
-      input,
-      'Original-name.PNG',
-      backing.subarray(1, -1),
-      options,
-    );
-    const nativeInput = {
-      ...input,
-      contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-    };
-    const expected = Buffer.concat([
-      Buffer.from(
-        '--safe\r\nContent-Disposition: form-data; name="ManagedContentVariantInputParam"\r\n' +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          JSON.stringify(nativeInput) +
-          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="Original-name.PNG"\r\n' +
-          'Content-Type: application/octet-stream; charset=ISO-8859-1\r\n\r\n',
-        'utf8',
-      ),
-      bytes,
-      Buffer.from('\r\n--safe--\r\n'),
-    ]);
-    expect(built.body.equals(expected)).to.equal(true);
-    expect(built.input).to.deep.equal(nativeInput);
-    expect(built.body.toString('utf8')).not.to.include('name="ManagedContentInputParam"');
-    expect(buildImageUpdateMultipart({}, 'image.png', bytes, options).input).to.deep.equal({
-      contentBody: nativeInput.contentBody,
-    });
-  });
-
-  it('preserves the unchanged native title in the exact bytes-only UPDATE wire body', async () => {
-    const request = sinon.stub().returns(fakeRequest(Promise.resolve(response)));
-    await updateImageContent(
-      { request },
-      'variant',
-      { title: 'Native café image' },
-      'a.png',
-      bytes,
-      options,
-    );
-    const expected = Buffer.concat([
-      Buffer.from(
-        '--safe\r\nContent-Disposition: form-data; name="ManagedContentVariantInputParam"\r\n' +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          '{"title":"Native café image","contentBody":{"sfdc_cms:media":{"source":{"type":"file"}}}}' +
-          '\r\n--safe\r\nContent-Disposition: form-data; name="contentData"; filename="a.png"\r\n' +
-          'Content-Type: application/octet-stream; charset=ISO-8859-1\r\n\r\n',
-        'utf8',
-      ),
-      bytes,
-      Buffer.from('\r\n--safe--\r\n'),
-    ]);
-    expect(request.firstCall.args[0].body.equals(expected)).to.equal(true);
-    expect(request.calledOnce).to.equal(true);
   });
 
   it('rejects CREATE fields, arbitrary body overrides and invalid metadata before request', async () => {

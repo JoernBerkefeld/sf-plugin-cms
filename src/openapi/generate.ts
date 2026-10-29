@@ -1,7 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { intakeOpenApi, OpenApiIntakeError } from './intake.js';
-import { SELECTED_OPERATION_CONFIG, type SelectedOperationConfig } from './selected.js';
+import {
+  SELECTED_OPERATION_CONFIG,
+  SUPPLEMENTAL_OPERATIONS,
+  type SelectedOperationConfig,
+} from './selected.js';
 
 type RecordValue = Record<string, unknown>;
 type ParameterLocation = 'path' | 'query';
@@ -17,6 +21,13 @@ export type OperationDescriptor = {
   localKey: string;
   method: string;
   operationId: string;
+  minimumApiVersion?: string;
+  provenance?: {
+    sourceUrl: string;
+    documentedApiVersion: string;
+    sourceKind: 'rendered-excerpt';
+    operationIdentity: 'local-descriptor';
+  };
   parameters: ParameterDescriptor[];
   path: string;
   requestBodyMediaTypes: string[];
@@ -180,7 +191,13 @@ export async function generateSelectedOpenApi(sourcePath: string): Promise<Gener
   const intake = await intakeOpenApi(sourcePath);
   return {
     operations: emitOperations(
-      buildSelectedOperationDescriptors(intake.document as RecordValue, SELECTED_OPERATION_CONFIG),
+      [
+        ...buildSelectedOperationDescriptors(
+          intake.document as RecordValue,
+          SELECTED_OPERATION_CONFIG,
+        ),
+        ...SUPPLEMENTAL_OPERATIONS,
+      ].toSorted((left, right) => left.localKey.localeCompare(right.localKey)),
     ),
   };
 }

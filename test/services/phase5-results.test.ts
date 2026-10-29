@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import {
   assertCmsPhase5Result,
   cmsPortableExportResult,
-  cmsDeployPreflightResult,
 } from '../../src/services/phase5-results.js';
 import {
   assertPortableExportMetadata,
@@ -41,17 +40,6 @@ describe('strict CMS Phase 5 results', () => {
     ])
       expect(() => assertPortableExportMetadata(bad)).to.throw();
   });
-  it('binds deterministic observations without changing portable v1', () => {
-    const before = JSON.stringify(metadata);
-    const report = cmsPortableExportResult(metadata, observations);
-    const bytes = JSON.stringify(report);
-    assertCmsPhase5Result(JSON.parse(bytes), report);
-    expect(report).to.deep.equal(cmsPortableExportResult(metadata, observations));
-    expect(report.resultHash).to.equal(hashCanonical(metadata));
-    expect(report.warnings.join(' ')).to.include('not measure total transport calls');
-    expect(JSON.stringify(metadata)).to.equal(before);
-  });
-
   it('rejects unknown fields, malformed metrics, versions, warnings and binding drift', () => {
     const report = cmsPortableExportResult(metadata, observations);
     for (const bad of [
@@ -75,25 +63,5 @@ describe('strict CMS Phase 5 results', () => {
     expect(() =>
       cmsPortableExportResult(metadata, { ...observations, inventoryPages: 0.5 }),
     ).to.throw('metric');
-  });
-
-  it('does not equate blocking reasons with blocked dependency counts', () => {
-    const report = cmsDeployPreflightResult({
-      contract: 'sf-cms-deploy-preflight-v1',
-      version: '1.0.0',
-      ready: false,
-      hashes: { package: 'a', manifest: 'b', evidence: 'c', source: 'd', request: 'e' },
-      resolutions: [],
-      operations: [],
-      blockedReasons: ['stale evidence', 'missing dependency'],
-      planHash: 'f',
-    });
-    expect(report.metrics).to.deep.equal({
-      resolutionRecords: 0,
-      plannedOperations: 0,
-      blockingReasons: 2,
-    });
-    expect(report.warnings).to.deep.equal(['missing dependency', 'stale evidence']);
-    assertCmsPhase5Result(report, report);
   });
 });

@@ -1,4 +1,7 @@
 import { expect } from 'chai';
+import { randomUUID } from 'node:crypto';
+import sinon from 'sinon';
+import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
 import type { Connection } from '@salesforce/core';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,6 +17,7 @@ const contentId = '20Y000000000001AAA';
 const variantId = '9Ps000000000001AAA';
 export async function createFixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'cms-fragment-execute-'));
+  await writeFile(path.join(root, '.sf-cms-run-owner'), randomUUID(), { flag: 'wx' });
   const file = path.join(root, 'Welcome.cms-email-fragment.json');
   const reportFile = path.join(root, 'intent.json');
   const definition: EmailFragmentSourceDefinition = {
@@ -96,6 +100,7 @@ export async function createFixture() {
     ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Welcome' },
   });
   const rows: RecordValue[] = [];
+  const folders: Record<string, RecordValue> = {};
   let detail: RecordValue | undefined;
   let parent: RecordValue | undefined;
   const install = () => {
@@ -131,6 +136,9 @@ export async function createFixture() {
   let orgId = '00D000000000001AAA';
   let apiVersion = '67.0';
   const connection = {
+    accessToken: 'test-token',
+    instanceUrl: 'https://example.invalid',
+    version: '67.0',
     getApiVersion: () => apiVersion,
     getAuthInfoFields: () => ({ orgId }),
     request(input: { method: string; url: string; body?: string }, options?: unknown) {
@@ -140,16 +148,41 @@ export async function createFixture() {
         expect(this).to.have.property('_refreshDelegate', undefined);
       }
       const promise = (async () => {
-        if (input.method === 'POST') install();
+        if (input.method === 'POST') {
+          install();
+          const body = JSON.parse(input.body!) as RecordValue;
+          if (body.contentSpaceOrFolderId !== workspace.rootFolderId) {
+            detail!.folder = { id: body.contentSpaceOrFolderId };
+            parent!.folder = { id: body.contentSpaceOrFolderId };
+          }
+        }
+        if (input.method === 'PUT') {
+          const body = JSON.parse(input.body!) as RecordValue;
+          Object.assign(detail!, structuredClone(body));
+          detail!.title = (body.contentBody as RecordValue)['sfdc_cms:title'];
+          parent!.title = detail!.title;
+          parent!.urlName = body.urlName;
+          rows[0].Name = detail!.title;
+          rows[0].UrlName = body.urlName;
+        }
         await onRequest?.(input.method, input.url);
         if (input.method === 'POST') {
           if (postError) throw postError;
           return structuredClone(response);
         }
+        if (input.method === 'PUT')
+          return {
+            ...structuredClone(response),
+            language: 'en_US',
+            isPublished: false,
+            contentBody: structuredClone(detail!.contentBody),
+          };
         expect(input.method).to.equal('GET');
         const url = new URL(input.url, 'https://example.invalid');
         if (url.pathname === `/connect/cms/spaces/${workspaceId}`)
           return structuredClone(workspace);
+        if (url.pathname.startsWith('/connect/cms/folders/'))
+          return structuredClone(folders[url.pathname.split('/').at(-1)!]);
         if (url.pathname.includes('/ssot/data-graphs/')) return structuredClone(graph);
         if (url.pathname.includes('/connect/cms/contents/'))
           return structuredClone(url.pathname.includes('/variants/') ? detail : parent);
@@ -181,9 +214,12 @@ export async function createFixture() {
       return Object.assign(promise, { stream: () => new PassThrough() });
     },
   } as unknown as Pick<Connection, 'request' | 'getApiVersion' | 'getAuthInfoFields'>;
+  sinon.restore();
+  sinon.stub(JsforceConnection.prototype, 'request').callsFake(connection.request as never);
   let report: WorkspaceImportRunReport | undefined;
   return {
     connection,
+    folders,
     definition,
     save,
     workspace,
@@ -239,6 +275,7 @@ async function failure(operation: Promise<unknown>, pattern: RegExp): Promise<vo
 const posts = (current: Awaited<ReturnType<typeof createFixture>>) =>
   current.calls.filter((call) => call.method !== 'GET');
 describe('internal Fragment CREATE executor and unchanged', () => {
+  afterEach(() => sinon.restore());
   it('POSTs once, records destination ownership and independently reads full Draft parent/variant/siblings', async () => {
     const current = await createFixture();
     const result = await current.run();
@@ -301,7 +338,10 @@ describe('internal Fragment CREATE executor and unchanged', () => {
         current.definition.folderPath = ['Nested'];
         await current.save();
       }
-      await failure(current.run(), /UPDATE required|nonroot|Unsupported derived envelope/u);
+      await failure(
+        current.run(),
+        /UPDATE required|requires numeric CMS API 68.0|Unsupported derived envelope/u,
+      );
       expect(posts(current)).to.have.length(0);
     }
   });
@@ -430,7 +470,7 @@ describe('internal Fragment CREATE executor and unchanged', () => {
     const current = await createFixture();
     current.definition.folderPath = ['Nested'];
     await current.save();
-    await failure(current.run(), /nonroot/u);
+    await failure(current.run(), /requires numeric CMS API 68.0/u);
     expect(posts(current)).to.have.length(0);
   });
   it('retains ownership uncertainty if result persistence fails after a successful POST', async () => {

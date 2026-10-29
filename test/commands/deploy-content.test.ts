@@ -172,6 +172,92 @@ describe('cms deploy content command', () => {
     expect(apply.flags['source-dir']).to.deep.equal(['a']);
   });
 
+  it('admits repeatable folder mappings and rejects malformed, duplicate and unselected keys before org access', async () => {
+    const mapping = 'emailFragment:Welcome=9Pu000000000001AAA';
+    const parsed = await Parser.parse(
+      [
+        '-o',
+        'destination',
+        '-m',
+        'emailFragment',
+        '--destination-folder-id',
+        mapping,
+        '--destination-folder-id',
+        'emailFragment:Other=9Pu000000000002AAA',
+      ],
+      { flags: DeployContent.flags },
+    );
+    expect(parsed.flags['destination-folder-id']).to.have.length(2);
+    for (const assignments of [
+      [mapping, mapping],
+      ['email:Welcome=9Pu000000000001AAA'],
+      ['emailFragment:Welcome=bad'],
+      ['emailFragment:Other=9Pu000000000001AAA'],
+    ]) {
+      const s = command({ 'destination-folder-id': assignments });
+      const result = await s.instance.run();
+      expect(result.status).to.equal('blocked');
+      expect(s.getOrgContext.called).to.equal(false);
+    }
+  });
+
+  for (const metadata of [['emailFragment'], ['emailFragment', 'email:Welcome']]) {
+    it(`admits whole-type subset mappings but rejects unselected mappings locally for ${metadata.join(',')}`, async () => {
+      const fragment = structuredClone(source);
+      fragment.targetIdentity = {
+        contentType: 'sfdc_cms__emailFragment',
+        apiName: 'Welcome',
+        language: 'en_US',
+      };
+      const other = structuredClone(fragment);
+      other.targetIdentity.apiName = 'Other';
+      for (const items of [[fragment, other], [other]]) {
+        const s = command({
+          'source-dir': undefined,
+          metadata,
+          'destination-folder-id': ['emailFragment:Welcome=9Pu000000000001AAA'],
+        });
+        s.selectSources.resolves({ mode: 'metadata', items });
+        const result = await s.instance.run();
+        expect(result.status).to.equal(items.length === 2 ? 'success' : 'blocked');
+        expect(s.getOrgContext.called).to.equal(items.length === 2);
+        if (items.length === 2)
+          expect(s.preflightBatch.firstCall.args[1].destinationFolderIds).to.deep.equal({
+            'emailFragment:Welcome': '9Pu000000000001AAA',
+          });
+        expect(s.selectSources.firstCall.args[0]).to.deep.equal({
+          metadata: ['emailFragment'],
+          cwd: process.cwd(),
+        });
+      }
+    });
+  }
+
+  it('passes admitted mappings through mixed final selection and preview batch input', async () => {
+    const fragment = structuredClone(source);
+    fragment.targetIdentity = {
+      contentType: 'sfdc_cms__emailFragment',
+      apiName: 'Welcome',
+      language: 'en_US',
+    };
+    const s = command({
+      'source-dir': undefined,
+      metadata: ['emailFragment', 'email:Welcome'],
+      'destination-folder-id': ['emailFragment:Welcome=9Pu000000000001AAA'],
+    });
+    s.selectSources.onFirstCall().resolves({ mode: 'metadata', items: [fragment] });
+    s.selectSources.onSecondCall().resolves({ mode: 'metadata', items: [fragment, source] });
+    s.resolveDestinationWorkspace.resolves({
+      id: 'resolved-destination',
+      workspace: { apiName: 'Destination', defaultLanguage: 'en_US' },
+    });
+    await s.instance.run();
+    expect(s.preflightBatch.firstCall.args[1].destinationFolderIds).to.deep.equal({
+      'emailFragment:Welcome': '9Pu000000000001AAA',
+    });
+    expect(s.selectSources.secondCall.args[0].workspaceApiName).to.equal('Destination');
+  });
+
   it('rejects removed definition-file and mixed source/metadata parser routes', async () => {
     for (const args of [
       ['--apply'],

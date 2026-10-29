@@ -36,7 +36,6 @@ describe('public Fragment deploy pipeline', () => {
     ]) {
       const selected = await selectDeploySources({
         cwd: root,
-        workspaceApiName: 'IndependentDestination',
         metadata,
       });
       expect(selected.items).to.have.length(1);
@@ -45,6 +44,276 @@ describe('public Fragment deploy pipeline', () => {
       expect(selected.items[0].definition.identity.context.workspaceApiName).to.equal('Source');
     }
   });
+  it('requires a destination API name for non-Fragment metadata and mixed selectors', async () => {
+    for (const metadata of [['email'], ['emailFragment', 'email']]) {
+      try {
+        await selectDeploySources({ metadata });
+        expect.fail('Expected non-Fragment destination name requirement');
+      } catch (error) {
+        expect((error as Error).message).to.include('resolved destination workspace API name');
+      }
+    }
+  });
+
+  it('retains mapped folders on repeated batch calls and rejects missing contextual evidence', async () => {
+    const current = await fixture();
+    const scope = {
+      ...input(current.file),
+      destinationFolderIds: { 'emailFragment:Welcome': '9Pu000000000002AAA' },
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await executeDeployBatch(current.connection, scope);
+      expect(result.report.state).to.equal('blocked');
+      expect(
+        current.calls.some((call) =>
+          call.url.includes('/connect/cms/folders/9Pu000000000002AAA?contextContentSpaceId='),
+        ),
+      ).to.equal(true);
+    }
+    expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+  });
+
+  for (const depth of [0, 1, 2]) {
+    it(`runs explicit-ID depth ${depth} CREATE then same-folder UPDATE and GET-only unchanged`, async () => {
+      const current = await createFixture();
+      const root = {
+        id: String(current.workspace.rootFolderId),
+        name: 'Destination',
+        folderType: 'System',
+        isShared: false,
+      };
+      const child = {
+        id: '9Pu000000000002AAA',
+        name: 'Child',
+        folderType: 'Standard',
+        isShared: false,
+        parentFolderId: root.id,
+      };
+      const leaf = {
+        id: '9Pu000000000003AAA',
+        name: 'Leaf',
+        folderType: 'Standard',
+        isShared: false,
+        parentFolderId: child.id,
+      };
+      current.folders[root.id] = { ...root, folderHierarchy: [] };
+      current.folders[child.id] = { ...child, folderHierarchy: [root] };
+      current.folders[leaf.id] = { ...leaf, folderHierarchy: [root, child] };
+      const selected = [root, child, leaf][depth];
+      current.definition.folderPath = ['Child', 'Leaf'].slice(0, depth);
+      await current.save();
+      const scope = {
+        ...input(current.file),
+        destinationFolderIds: { 'emailFragment:Welcome': selected.id },
+      };
+      const created = await executeDeployBatch(current.connection, scope);
+      expect(created.report.summary.created, JSON.stringify(created.report)).to.equal(1);
+      const post = current.calls.find((call) => call.method === 'POST')!;
+      expect(JSON.parse(String(post.body)).contentSpaceOrFolderId).to.equal(selected.id);
+      current.definition.contentBody['sfdc_cms:title'] = 'Updated body';
+      await current.save();
+      const updated = await executeDeployBatch(current.connection, scope);
+      expect(updated.report.summary.updated, JSON.stringify(updated.report)).to.equal(1);
+      const put = JSON.parse(String(current.calls.find((call) => call.method === 'PUT')!.body));
+      expect(put).not.to.have.property('contentSpaceOrFolderId');
+      expect(put).not.to.have.property('folder');
+      const before = current.calls.length;
+      const repeated = await executeDeployBatch(current.connection, scope);
+      expect(repeated.report.summary.unchanged, JSON.stringify(repeated.report)).to.equal(1);
+      expect(current.calls.slice(before).every((call) => call.method === 'GET')).to.equal(true);
+      expect(current.calls.some((call) => call.url.includes('folder-items'))).to.equal(false);
+    });
+  }
+
+  it('rejects equal-name native folder ID drift before writes and after UPDATE', async () => {
+    for (const afterWrite of [false, true]) {
+      const current = await fixture();
+      const root = {
+        id: String(current.workspace.rootFolderId),
+        name: 'Destination',
+        folderType: 'System',
+        isShared: false,
+      };
+      const child = {
+        id: '9Pu000000000002AAA',
+        name: 'Child',
+        folderType: 'Standard',
+        isShared: false,
+        parentFolderId: root.id,
+      };
+      const other = { ...child, id: '9Pu000000000003AAA' };
+      current.folders[child.id] = { ...child, folderHierarchy: [root] };
+      current.folders[other.id] = { ...other, folderHierarchy: [root] };
+      current.definition.folderPath = ['Child'];
+      current.detail.folder = { id: afterWrite ? child.id : other.id };
+      current.parent.folder = structuredClone(current.detail.folder);
+      await current.save();
+      if (afterWrite)
+        current.onRequest((method) => {
+          if (method === 'PUT') {
+            current.detail.folder = { id: other.id };
+            current.parent.folder = { id: other.id };
+          }
+        });
+      const result = await executeDeployBatch(current.connection, {
+        ...input(current.file),
+        destinationFolderIds: { 'emailFragment:Welcome': child.id },
+      });
+      expect(result.report.summary.completed, JSON.stringify(result.report)).to.equal(0);
+      expect(current.calls.filter((call) => call.method !== 'GET')).to.have.length(
+        afterWrite ? 1 : 0,
+      );
+    }
+  });
+
+  it('blocks fresh ancestry drift after durable intent and rejects post-CREATE equal-name ID drift without replay', async () => {
+    for (const phase of ['before', 'after'] as const) {
+      const current = await createFixture();
+      const root = {
+        id: String(current.workspace.rootFolderId),
+        name: 'Destination',
+        folderType: 'System',
+        isShared: false,
+      };
+      const child = {
+        id: '9Pu000000000002AAA',
+        name: 'Child',
+        folderType: 'Standard',
+        isShared: false,
+        parentFolderId: root.id,
+      };
+      const other = { ...child, id: '9Pu000000000003AAA' };
+      current.folders[child.id] = { ...child, folderHierarchy: [root] };
+      current.folders[other.id] = { ...other, folderHierarchy: [root] };
+      current.definition.folderPath = ['Child'];
+      await current.save();
+      if (phase === 'after')
+        current.onRequest((method) => {
+          if (method === 'POST') {
+            current.detail.folder = { id: other.id };
+            current.parent.folder = { id: other.id };
+          }
+        });
+      let altered = false;
+      const result = await executeDeployBatch(
+        current.connection,
+        {
+          ...input(current.file),
+          reportFile: current.reportFile,
+          destinationFolderIds: { 'emailFragment:Welcome': child.id },
+        },
+        {},
+        {
+          rewrite: async (file, report) => writeFile(file, JSON.stringify(report)),
+          item: {
+            rewrite: async (file, report) => {
+              await writeFile(file, JSON.stringify(report));
+              if (phase === 'before' && !altered) {
+                altered = true;
+                current.folders[child.id].isShared = true;
+              }
+            },
+          },
+        },
+      );
+      expect(result.report.summary.completed, JSON.stringify(result.report)).to.equal(0);
+      expect(current.calls.filter((call) => call.method !== 'GET')).to.have.length(
+        phase === 'after' ? 1 : 0,
+      );
+      if (phase === 'after') expect(result.report.summary.uncertain).to.equal(1);
+      else expect(altered).to.equal(true);
+    }
+  });
+
+  it('blocks the public v68 nested investigation before intent or mutation even with one match', async () => {
+    const current = await createFixture();
+    current.api('68.0');
+    current.definition.folderPath = ['Child'];
+    await current.save();
+    const root = {
+      id: String(current.workspace.rootFolderId),
+      name: 'Root',
+      folderType: 'System',
+      isShared: false,
+    };
+    const childId = '9Pu000000000002AAA';
+    current.folders[childId] = {
+      id: childId,
+      name: 'Child',
+      folderType: 'Standard',
+      isShared: false,
+      parentFolderId: root.id,
+      folderHierarchy: [root],
+    };
+    const original = current.connection.request.bind(current.connection);
+    let pages = 0;
+    current.connection.request = ((input: { method: string; url: string }, options?: unknown) => {
+      if (input.url.includes('/folder-items')) {
+        current.calls.push(structuredClone(input));
+        const page = Number(new URL(input.url, 'https://example.invalid').searchParams.get('page'));
+        pages++;
+        return Promise.resolve({
+          folderId: root.id,
+          parentFolderId: null,
+          folderItems:
+            page === 1
+              ? []
+              : [
+                  {
+                    isFolder: true,
+                    title: page === 0 ? 'Child' : 'Other',
+                    managedContentOrFolderId: page === 0 ? childId : '9Pu000000000003AAA',
+                    folderSummary: { folderType: 'Standard', isShared: false },
+                  },
+                ],
+        });
+      }
+      return original(
+        {
+          ...input,
+          url: input.url.replace('/services/data/v68.0/query', '/services/data/v67.0/query'),
+        },
+        options as never,
+      );
+    }) as typeof current.connection.request;
+    const result = await executeDeployBatch(current.connection, input(current.file));
+    expect(result.report.state).to.equal('blocked');
+    expect(JSON.stringify(result)).to.include('no authoritative pagination completion contract');
+    expect(pages).to.equal(3);
+    expect(result.report).not.to.have.property('operations');
+    expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+  });
+
+  it('preserves optional subset mappings with unmapped root and blocks unmapped nested before any write', async () => {
+    for (const nested of [false, true]) {
+      const current = await createFixture();
+      const root = {
+        id: String(current.workspace.rootFolderId),
+        name: 'Destination',
+        folderType: 'System',
+        isShared: false,
+      };
+      current.folders[root.id] = { ...root, folderHierarchy: [] };
+      const other = structuredClone(current.definition);
+      other.identity.apiName = 'Second';
+      other.title = 'Other';
+      other.urlName = 'other';
+      other.contentBody['sfdc_cms:title'] = 'Other';
+      other.folderPath = nested ? ['Child'] : [];
+      await writeFile(
+        path.join(path.dirname(current.file), 'Second.cms-email-fragment.json'),
+        JSON.stringify(other),
+      );
+      const preview = await preflightDeployBatch(current.connection, {
+        ...input(current.file),
+        sources: { 'source-dir': [path.dirname(current.file)], 'content-type': ['emailFragment'] },
+        destinationFolderIds: { 'emailFragment:Welcome': root.id },
+      });
+      expect(preview.eligible, JSON.stringify(preview)).to.equal(!nested);
+      expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
+    }
+  });
+
   it('previews CREATE then executes once with independent readback and repeats unchanged without journals', async () => {
     const current = await createFixture();
     const scope = input(current.file);
@@ -59,7 +328,10 @@ describe('public Fragment deploy pipeline', () => {
     const repeated = await executeDeployBatch(current.connection, scope);
     expect(repeated.report.summary.unchanged, JSON.stringify(repeated.report)).to.equal(1);
     expect(current.calls.filter((call) => call.method !== 'GET')).to.have.length(1);
-    expect(await readdir(path.dirname(current.file))).to.deep.equal([path.basename(current.file)]);
+    expect(await readdir(path.dirname(current.file))).to.deep.equal([
+      '.sf-cms-run-owner',
+      path.basename(current.file),
+    ]);
   });
   it('discloses JSON-escaped derived Fragment titles in non-JSON command preview without mutations or reports', async () => {
     const current = await fixture();
@@ -159,7 +431,9 @@ describe('public Fragment deploy pipeline', () => {
       await current.save();
       const result = await executeDeployBatch(current.connection, input(current.file));
       expect(result.report.state).to.equal('blocked');
-      expect(result.report.blockedReasons.join('; ')).to.match(/variant|nonroot|reference/u);
+      expect(result.report.blockedReasons.join('; ')).to.match(
+        /variant|requires numeric CMS API 68.0|reference/u,
+      );
       expect(current.calls.every((call) => call.method === 'GET')).to.equal(true);
     });
   }

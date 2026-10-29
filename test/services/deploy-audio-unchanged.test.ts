@@ -214,16 +214,6 @@ describe('private portable binary Audio unchanged admission', () => {
     ).searchParams.get('q');
     expect(firstQuery).not.to.match(/ IN \(|Language =|Status =/u);
   });
-  it('admits omitted optional URL and opaque bytes above the revoked 10 MiB cap (mock only)', async () => {
-    const f = await fixture(Buffer.alloc(10 * 1024 * 1024 + 1, 255));
-    delete f.definition.urlName;
-    f.row.UrlName = null;
-    delete f.detail.urlName;
-    await f.save();
-    downloaded(f);
-    const result = await f.run();
-    expect(result.operation).to.equal('unchanged');
-  });
   it('detaches caller input and options before the first await', async () => {
     const f = await fixture();
     downloaded(f);

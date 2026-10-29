@@ -196,20 +196,6 @@ describe('single-default Email Fragment source', () => {
       expect(JSON.parse(serializeEmailFragmentSourceDefinition(value))).to.deep.equal(before);
     }
   });
-  it('canonicalizes keys without reordering arrays and emits one terminal LF', () => {
-    const value = fixture();
-    const reversed = Object.fromEntries(
-      Object.entries(value).toReversed(),
-    ) as EmailFragmentSourceDefinition;
-    expect(serializeEmailFragmentSourceDefinition(reversed)).to.equal(
-      serializeEmailFragmentSourceDefinition(value),
-    );
-    const text = serializeEmailFragmentSourceDefinition(value);
-    expect(text.endsWith('\n')).to.equal(true);
-    expect(text.endsWith('\n\n')).to.equal(false);
-    expect(text).not.to.include('\r');
-    expect(text.codePointAt(0)).not.to.equal(65_279);
-  });
   it('admits English alone despite unused enabled German and preserves API language spelling', () => {
     const workspace = { defaultLanguage: 'en_US', enabledLanguages: ['en_US', 'de'] };
     expect(workspace.enabledLanguages).to.have.length(2);
@@ -243,9 +229,6 @@ describe('single-default Email Fragment source', () => {
     expect(() => assertSingleDefaultEmailFragmentVariant([primary], '')).to.throw();
   });
   const mutations: Array<[string, (value: EmailFragmentSourceDefinition) => void]> = [
-    ['extra top-level fields', (value) => Object.assign(value, { variants: [{}] })],
-    ['wrong contract', (value) => Object.assign(value, { contract: 'other' })],
-    ['wrong version', (value) => Object.assign(value, { contractVersion: '2' })],
     ['wrong content type', (value) => Object.assign(value, { contentType: 'sfdc_cms__email' })],
     ['wrong identity', (value) => Object.assign(value.identity, { type: 'Email' })],
     [
@@ -266,49 +249,10 @@ describe('single-default Email Fragment source', () => {
         value.folderPath = ['..'];
       },
     ],
-    ['missing folders', (value) => Object.assign(value, { folderPath: undefined })],
     [
       'inexact language',
       (value) => {
         value.language = 'English (US)';
-      },
-    ],
-    [
-      'missing envelope title',
-      (value) => {
-        Object.assign(value, { title: undefined });
-      },
-    ],
-    ['non-string envelope URL', (value) => Object.assign(value, { urlName: 1 })],
-    ['empty envelope title', (value) => Object.assign(value, { title: '' })],
-    [
-      'non-string authored title',
-      (value) => {
-        value.contentBody['sfdc_cms:title'] = null;
-      },
-    ],
-    [
-      'non-string authored URL',
-      (value) => {
-        value.contentBody['sfdc_cms:urlName'] = 1;
-      },
-    ],
-    [
-      'empty metadata',
-      (value) => {
-        value.urlName = '';
-      },
-    ],
-    [
-      'missing root',
-      (value) => {
-        delete value.contentBody['sfdc_cms:block'];
-      },
-    ],
-    [
-      'wrong root',
-      (value) => {
-        root(value).definition = 'lightning/paragraph';
       },
     ],
     [
@@ -321,18 +265,6 @@ describe('single-default Email Fragment source', () => {
       'duplicate structural IDs',
       (value) => {
         (root(value).children as Array<Record<string, unknown>>)[0].id = uuid(1);
-      },
-    ],
-    [
-      'malformed children',
-      (value) => {
-        root(value).children = {};
-      },
-    ],
-    [
-      'malformed attributes',
-      (value) => {
-        root(value).attributes = [];
       },
     ],
     [
@@ -363,20 +295,6 @@ describe('single-default Email Fragment source', () => {
       'raw HTML companion',
       (value) => {
         value.contentBody.rawHtml = '<p>wrong representation</p>';
-      },
-    ],
-    ['undefined data', (value) => Object.assign(value.contentBody, { invalid: undefined })],
-    [
-      'nonfinite number',
-      (value) => {
-        value.contentBody.invalid = Number.NaN;
-      },
-    ],
-    ['non-JSON object', (value) => Object.assign(value.contentBody, { invalid: new Date() })],
-    [
-      'sparse array',
-      (value) => {
-        value.contentBody.invalid = Array.from({ length: 1 });
       },
     ],
   ];

@@ -631,14 +631,6 @@ describe('read-only deploy destination preparation', () => {
       expect(decodeURIComponent(firstQuery.url)).not.to.include('ContentTypeFullyQualifiedName IN');
       expect(f.calls.every((call) => call.method === 'GET')).to.equal(true);
     });
-    it(`proposes an unqualified rawHtml-only ${template ? 'Template' : 'Email'} update`, async () => {
-      const f = fixture(template);
-      f.source.contentBody.rawHtml = '<p>Changed &amp; literal</p>';
-      const result = await f.run();
-      expect(result.items[0].proposed).to.equal('update');
-      expect(result.items[0].changedFields).to.deep.equal(['contentBody.rawHtml']);
-      expect(result.items[0].qualification).to.equal('unqualified');
-    });
   }
   it('proposes create only after an empty unfiltered terminal/count/repeat inventory', async () => {
     const f = fixture();

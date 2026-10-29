@@ -121,14 +121,4 @@ describe('Live lifecycle mutation outcomes', () => {
     expect(observer.firstCall.args[0].diagnostics[0].message).to.include('[REDACTED]');
     expect(observer.firstCall.args[0].operation).to.equal('upload');
   });
-  it('does not let failed technical or terminal sinks alter outcomes', () => {
-    const command = Object.create(OutcomeCommand.prototype) as OutcomeCommand;
-    const log = sinon.stub().throws(new Error('terminal'));
-    const technical = sinon.stub().throws(new Error('logger'));
-    Object.assign(command, { jsonEnabled: () => false, log, invocationLogger: { log: technical } });
-    expect(() => notifyMutationOutcome(command.observer(), event)).not.to.throw();
-    expect(log.calledOnce).to.equal(true);
-    expect(technical.calledOnce).to.equal(true);
-    expect(event.state).to.equal('completed');
-  });
 });

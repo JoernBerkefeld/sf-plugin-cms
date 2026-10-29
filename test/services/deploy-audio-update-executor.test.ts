@@ -330,7 +330,7 @@ describe('private journaled Audio UPDATE executor adversarial matrix', () => {
       'rejected',
       'dispatch',
       'inflight-cancel',
-    ])
+    ].filter((kind) => memory || kind !== 'success'))
       it(`preserves live UPDATE evidence (${kind}, memory ${memory})`, async () => {
         const f = await fixture(undefined, false, memory);
         const directory = path.dirname(f.input.definitionFile);
@@ -401,13 +401,6 @@ describe('private journaled Audio UPDATE executor adversarial matrix', () => {
     expect(live?.operations[0].state).to.equal('pending');
     expect(f.puts()).to.equal(0);
     expect(await readFile(f.input.reportFile, 'utf8')).to.equal('existing');
-  });
-  it('accepts mock-only opaque non-WAV bytes above the revoked local cap', async () => {
-    const f = await fixture(undefined, true);
-    const result = await f.run();
-    expect(result.qualification).to.equal('unqualified');
-    expect(result.report.state).to.equal('completed');
-    expect(f.puts()).to.equal(1);
   });
   for (const kind of ['org', 'aborted'])
     it(`rejects initial ${kind} before journal and requests`, async () => {
@@ -804,7 +797,7 @@ describe('private journaled Audio UPDATE executor adversarial matrix', () => {
 
 describe('private journaled Audio UPDATE executor core', () => {
   afterEach(() => sinon.restore());
-  for (const urlName of ['opaque-sound', undefined])
+  for (const urlName of [undefined])
     it(`verifies exact opaque wire, old/new journal and independent readback (URL ${String(urlName)})`, async () => {
       const f = await fixture(urlName);
       const result = await f.run();

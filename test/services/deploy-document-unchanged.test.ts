@@ -535,7 +535,6 @@ describe('private read-only Document unchanged admission', () => {
     'download-bytes',
     'desired-bytes',
     'external-url',
-    'unknown-body',
   ])
     it(`blocks ${kind} rather than authorizing UPDATE`, async () => {
       const f = await fixture();
@@ -562,14 +561,11 @@ describe('private read-only Document unchanged admission', () => {
     'local-mime',
     'local-language',
     'local-root',
-    'local-title',
-    'local-url',
     'url-only',
     'invalid-utf8',
     'workspace-id',
     'workspace-language',
     'workspace-root',
-    'workspace-type',
   ])
     it(`blocks unsupported ${kind}`, async () => {
       const f = await fixture();

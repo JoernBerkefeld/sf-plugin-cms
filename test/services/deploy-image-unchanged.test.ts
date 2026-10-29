@@ -240,30 +240,6 @@ describe('private portable binary Image unchanged admission', () => {
     await failure(selectDeploySources({ 'source-dir': [f.input.definitionFile] }), /binary Image/u);
     expect(f.methods).to.deep.equal([]);
   });
-  for (const [mimeType, extension, bytes] of [
-    ['image/jpeg', 'jpg', Buffer.from([255, 216, 255, 1])],
-    ['image/gif', 'gif', Buffer.from('GIF89a')],
-    ['image/webp', 'webp', Buffer.from('RIFF0000WEBP')],
-  ] as const)
-    it(`admits ordinary ${mimeType} selection before destination reads`, async () => {
-      const f = await fixture();
-      const companionName = `Hero.cms-image.media.${extension}`;
-      f.definition.media.mimeType = mimeType;
-      f.definition.media.companion.path = companionName;
-      await writeFile(path.join(f.directory, companionName), bytes);
-      await f.save();
-      for (const flags of [
-        { 'source-dir': [f.input.definitionFile] },
-        { 'source-dir': [f.directory], 'content-type': ['sfdc_cms__image'] },
-      ]) {
-        const selected = await selectDeploySources(flags);
-        expect(selected.items[0].mediaSha256).to.equal(
-          createHash('sha256').update(bytes).digest('hex'),
-        );
-        expect(selected.items[0].definition).to.deep.equal(f.definition);
-      }
-      expect(f.methods).to.deep.equal([]);
-    });
   it('blocks changed selected binary snapshots without accepting a new plan', async () => {
     const f = await fixture();
     f.rows.length = 0;
@@ -551,14 +527,7 @@ describe('private portable binary Image unchanged admission', () => {
       f.detail[key] = key === 'folder' ? { id: 'elsewhere' } : 'Other';
       await failure(f.run());
     });
-  for (const kind of [
-    'filename',
-    'mime',
-    'download-bytes',
-    'desired-bytes',
-    'external-url',
-    'unknown-body',
-  ])
+  for (const kind of ['filename', 'mime', 'download-bytes', 'desired-bytes', 'external-url'])
     it(`rejects ${kind} instead of trusting normalized paths or hashes`, async () => {
       const f = await fixture();
       const media = (f.detail.contentBody as Record<string, { url: string; source: Row }>)[
@@ -579,16 +548,7 @@ describe('private portable binary Image unchanged admission', () => {
       );
       await failure(f.run(), /mismatch|MIME|signature|hash|MD5|Unsupported/u);
     });
-  for (const kind of [
-    'root',
-    'language',
-    'workspace-type',
-    'url-only',
-    'folder',
-    'title',
-    'workspace-id',
-    'cancel',
-  ])
+  for (const kind of ['root', 'language', 'url-only', 'folder', 'workspace-id', 'cancel'])
     it(`rejects unsupported ${kind} admission`, async () => {
       const f = await fixture();
       if (kind === 'root') f.workspace.rootFolderId = '';

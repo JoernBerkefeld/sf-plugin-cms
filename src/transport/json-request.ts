@@ -6,6 +6,7 @@ import { SELECTED_OPERATIONS, type SelectedOperation } from '../generated/operat
 import { redactSecrets } from './redact-secrets.js';
 import { randomUUID } from 'node:crypto';
 import { logApiEvent } from '../logging.js';
+import { getCmsApiSelection, isNumericApiVersion } from '../api-policy.js';
 
 export type OperationParameterValues = Readonly<
   Record<string, boolean | number | readonly string[] | string | undefined>
@@ -32,7 +33,7 @@ type RequestStream<T> = Promise<T> & {
 };
 
 type RequestConnection = Pick<Connection, 'request'> &
-  Partial<Pick<Connection, 'version' | 'instanceUrl'>>;
+  Partial<Pick<Connection, 'version' | 'instanceUrl' | 'getApiVersion'>>;
 type RuntimeParameter = {
   location: 'path' | 'query';
   name: string;
@@ -236,6 +237,26 @@ export async function requestJson<T>(
   }
   if (options.signal?.aborted) {
     throw new CmsRequestError(operation.localKey, 'CMS request cancelled');
+  }
+
+  const minimumApiVersion =
+    'minimumApiVersion' in operation ? operation.minimumApiVersion : undefined;
+  if (minimumApiVersion !== undefined) {
+    let effectiveApiVersion: string;
+    try {
+      effectiveApiVersion = getCmsApiSelection(connection).effectiveApiVersion;
+    } catch (error) {
+      throw new CmsRequestError(operation.localKey, safeErrorMessage(error));
+    }
+    if (
+      !isNumericApiVersion(effectiveApiVersion) ||
+      Number(effectiveApiVersion) < Number(minimumApiVersion)
+    ) {
+      throw new CmsRequestError(
+        operation.localKey,
+        `${operation.localKey} requires numeric CMS API ${minimumApiVersion} or later; effective version: ${effectiveApiVersion}`,
+      );
+    }
   }
 
   const url = buildOperationUrl(operation, values);

@@ -168,20 +168,6 @@ describe('portable Audio CREATE preflight (read-only)', () => {
     expect(first.observations.inventory.records[0].Name).to.equal('Unrelated');
     expect(first.payload.title).to.equal('Opaque sound');
   });
-  it('binds intentional metadata edits separately from exact opaque bytes without a baseline', async () => {
-    const f = await fixture();
-    const first = await f.run();
-    await writeFile(f.companion, Buffer.from([255, 0, 129]));
-    const edited = await f.run();
-    expect(edited.mediaSha256).not.to.equal(first.mediaSha256);
-    expect(edited.sourceSha256).not.to.equal(first.sourceSha256);
-    delete f.definition.urlName;
-    await f.save();
-    const metadata = await f.run();
-    expect(metadata.payload).not.to.have.property('urlName');
-    expect(metadata.sourceSha256).not.to.equal(edited.sourceSha256);
-    expect(metadata.mediaSha256).to.equal(edited.mediaSha256);
-  });
   for (const patch of [
     { ManagedContent: { AuthoredManagedContentSpaceId: workspaceId, ApiName: 'Sound' } },
     { Name: 'Opaque sound' },

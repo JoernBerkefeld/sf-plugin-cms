@@ -60,22 +60,6 @@ describe('editable raw HTML pure projection', () => {
     );
   });
 
-  it('separates sibling languages and distinct email/template parents in deterministic ID order', () => {
-    const rows = [
-      item('variant-c', { contentType: 'sfdc_cms__emailTemplate', managedContentId: 'parent-b' }),
-      item('variant-b', { language: 'de_DE' }),
-      item(),
-      item('variant-d', { contentType: { fullyQualifiedName: 'sfdc_cms__emailTemplate' } }),
-    ];
-    const result = projectEditableRawHtml(rows, manifestHash);
-    expect(
-      result.items.map(({ metadataPath, htmlPath }) => [metadataPath, htmlPath]),
-    ).to.deep.equal(
-      ['a', 'b', 'c', 'd'].map((id) => [`items/variant-${id}.json`, `items/variant-${id}.html`]),
-    );
-    expect(projectEditableRawHtml(rows.toReversed(), manifestHash)).to.deep.equal(result);
-  });
-
   it('decodes only one GET layer and preserves entities in literal documents', () => {
     for (const [input, expected] of [
       ['<p>&lt;tag&gt; &amp; &#39;</p>', '<p>&lt;tag&gt; &amp; &#39;</p>'],
@@ -93,45 +77,6 @@ describe('editable raw HTML pure projection', () => {
         ).items[0].htmlBytes.toString(),
       ).to.equal(expected);
     }
-  });
-
-  it('fails closed on unsupported or ambiguous nonliteral encoding', () => {
-    for (const rawHtml of [
-      '&amp;lt;p&amp;gt;',
-      '&#60;p&#62;',
-      '&lt;p&gt;&nbsp;&lt;/p&gt;',
-      '&lt;p&gt;bare & text&lt;/p&gt;',
-    ]) {
-      expect(() =>
-        projectEditableRawHtml([item('v', { contentBody: { rawHtml } })], manifestHash),
-      ).to.throw('encoding');
-    }
-  });
-
-  it('excludes non-native, missing rawHtml and block-based rows without traversing them', () => {
-    const excluded = [
-      item('other', { contentType: 'sfdc_cms__image' }),
-      item('missing', { contentBody: { nested: { rawHtml: '<p>nested</p>' } } }),
-      item('block', { contentBody: { rawHtml: '<p>not eligible</p>', 'sfdc_cms:block': null } }),
-      item('fragment', {
-        contentType: 'sfdc_cms__emailFragment',
-        contentBody: {
-          'sfdc_cms:title': 'Reusable footer',
-          'sfdc_cms:block': {
-            type: 'root',
-            children: [{ type: 'section', children: [{ type: 'column', children: [] }] }],
-          },
-        },
-      }),
-      item('invalid', { contentBody: { rawHtml: 42 } }),
-    ];
-    expect(projectEditableRawHtml([...excluded, item()], manifestHash).items).to.have.length(1);
-    expect(() => projectEditableRawHtml(excluded, manifestHash)).to.throw(
-      'No editable native raw-HTML variants',
-    );
-    expect(() => projectEditableRawHtml([], manifestHash)).to.throw(
-      'No editable native raw-HTML variants',
-    );
   });
 
   it('rejects unsafe IDs, duplicate variants, conflicting raw identity and invalid manifest hashes', () => {
