@@ -258,6 +258,45 @@ describe('cms deploy content command', () => {
     expect(s.selectSources.secondCall.args[0].workspaceApiName).to.equal('Destination');
   });
 
+  for (const metadata of [
+    ['emailFragment', 'emailFragment'],
+    ['emailFragment', 'emailFragment', 'email:Welcome', 'email:Welcome'],
+    ['email:Welcome', 'email:Welcome', 'emailFragment', 'emailFragment'],
+  ]) {
+    it(`preserves duplicate selector associations and mapped batch input for ${metadata.join(',')}`, async () => {
+      const fragment = structuredClone(source);
+      fragment.targetIdentity.contentType = 'sfdc_cms__emailFragment';
+      const mixed = metadata.includes('email:Welcome');
+      const s = command({
+        'source-dir': undefined,
+        metadata,
+        'destination-folder-id': ['emailFragment:Welcome=9Pu000000000001AAA'],
+      });
+      s.selectSources.onFirstCall().resolves({ mode: 'metadata', items: [fragment] });
+      if (mixed)
+        s.selectSources.onSecondCall().resolves({ mode: 'metadata', items: [fragment, source] });
+      s.resolveDestinationWorkspace.resolves({
+        id: 'resolved-destination',
+        workspace: { apiName: 'Destination', defaultLanguage: 'en_US' },
+      });
+      const result = await s.instance.run();
+      expect(result.status).to.equal('success');
+      expect(s.selectSources.firstCall.args[0]).to.deep.equal({
+        metadata: ['emailFragment', 'emailFragment'],
+        cwd: process.cwd(),
+      });
+      expect(s.selectSources.calledBefore(s.getOrgContext)).to.equal(true);
+      expect(s.selectSources.callCount).to.equal(mixed ? 2 : 1);
+      if (mixed) expect(s.selectSources.secondCall.args[0].metadata).to.deep.equal(metadata);
+      const batch = s.preflightBatch.firstCall.args[1];
+      expect(batch.sources.metadata).to.deep.equal(metadata);
+      expect(batch.expectedSelection.items).to.deep.equal(mixed ? [fragment, source] : [fragment]);
+      expect(batch.destinationFolderIds).to.deep.equal({
+        'emailFragment:Welcome': '9Pu000000000001AAA',
+      });
+    });
+  }
+
   it('rejects removed definition-file and mixed source/metadata parser routes', async () => {
     for (const args of [
       ['--apply'],

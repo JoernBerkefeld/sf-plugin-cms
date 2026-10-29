@@ -125,6 +125,55 @@ describe('public Fragment deploy pipeline', () => {
     });
   }
 
+  for (const depth of [0, 1, 2]) {
+    it(`canonicalizes 15-character mapped depth ${depth} across CREATE, UPDATE and GET-only unchanged`, async () => {
+      const current = await createFixture();
+      const root = {
+        id: '9Pu000000000001CAA',
+        name: 'Destination',
+        folderType: 'System',
+        isShared: false,
+      };
+      current.workspace.rootFolderId = root.id;
+      const child = {
+        id: '9Pu000000000002CAA',
+        name: 'Child',
+        folderType: 'Standard',
+        isShared: false,
+        parentFolderId: root.id,
+      };
+      const leaf = { ...child, id: '9Pu000000000003CAA', name: 'Leaf', parentFolderId: child.id };
+      current.folders[root.id] = { ...root, folderHierarchy: [] };
+      current.folders[child.id] = { ...child, folderHierarchy: [root] };
+      current.folders[leaf.id] = { ...leaf, folderHierarchy: [root, child] };
+      const selected = [root, child, leaf][depth];
+      current.definition.folderPath = ['Child', 'Leaf'].slice(0, depth);
+      await current.save();
+      const scope = {
+        ...input(current.file),
+        destinationFolderIds: { 'emailFragment:Welcome': selected.id.slice(0, 15) },
+      };
+      const created = await executeDeployBatch(current.connection, scope);
+      expect(created.report.summary.created, JSON.stringify(created.report)).to.equal(1);
+      const post = current.calls.find((call) => call.method === 'POST')!;
+      expect(JSON.parse(String(post.body)).contentSpaceOrFolderId).to.equal(selected.id);
+      // Independently returned native IDs may mix their 15- and 18-character forms.
+      current.detail.folder = { id: selected.id.slice(0, 15) };
+      current.parent.folder = { id: selected.id };
+      current.definition.contentBody['sfdc_cms:title'] = 'Updated body';
+      await current.save();
+      const updated = await executeDeployBatch(current.connection, scope);
+      expect(updated.report.summary.updated, JSON.stringify(updated.report)).to.equal(1);
+      const put = JSON.parse(String(current.calls.find((call) => call.method === 'PUT')!.body));
+      expect(put).not.to.have.property('contentSpaceOrFolderId');
+      expect(put).not.to.have.property('folder');
+      const before = current.calls.length;
+      const unchanged = await executeDeployBatch(current.connection, scope);
+      expect(unchanged.report.summary.unchanged, JSON.stringify(unchanged.report)).to.equal(1);
+      expect(current.calls.slice(before).every((call) => call.method === 'GET')).to.equal(true);
+    });
+  }
+
   it('rejects equal-name native folder ID drift before writes and after UPDATE', async () => {
     for (const afterWrite of [false, true]) {
       const current = await fixture();

@@ -155,6 +155,68 @@ describe('explicit Fragment destination placement', () => {
       /permission denied/u,
     );
   });
+  it('normalizes 15-character ancestry and native evidence without conflating case-sensitive IDs', async () => {
+    const canonicalRoot = { ...root, id: '9Pu000000000001CAA' };
+    const canonicalChild = {
+      ...child,
+      id: '9Pu000000000002CAA',
+      parentFolderId: canonicalRoot.id.slice(0, 15),
+    };
+    const canonicalWorkspace = { id: '0Zu000000000001CAA', rootFolderId: canonicalRoot.id };
+    const request = sinon.stub().resolves({
+      ...canonicalChild,
+      contentSpaceId: canonicalWorkspace.id.slice(0, 15),
+      contentSpace: { id: canonicalWorkspace.id },
+      folderHierarchy: [{ ...canonicalRoot, id: canonicalRoot.id.slice(0, 15) }],
+    });
+    const proof = await resolveEmailFragmentFolder(
+      { request },
+      canonicalWorkspace,
+      ['Child'],
+      canonicalChild.id.slice(0, 15),
+    );
+    expect(proof.id).to.equal(canonicalChild.id);
+    expect(request.firstCall.args[0].url).to.include(`/folders/${canonicalChild.id}?`);
+    expect(() =>
+      assertEmailFragmentNativeFolder(
+        { id: canonicalChild.id.slice(0, 15) },
+        { id: canonicalChild.id },
+        proof.id,
+        canonicalRoot.id,
+      ),
+    ).not.to.throw();
+    expect(() =>
+      assertEmailFragmentNativeFolder(null, null, canonicalRoot.id.slice(0, 15), canonicalRoot.id),
+    ).not.to.throw();
+    for (const different of ['9Pu000000000003', '9Pu00000000000A', '9Pu00000000000a']) {
+      expect(() =>
+        assertEmailFragmentNativeFolder(
+          { id: different },
+          { id: canonicalChild.id },
+          proof.id,
+          canonicalRoot.id,
+        ),
+      ).to.throw('native folder identity');
+      request.resolves({ ...canonicalChild, id: different, folderHierarchy: [canonicalRoot] });
+      await reject(
+        resolveEmailFragmentFolder(
+          { request },
+          canonicalWorkspace,
+          ['Child'],
+          canonicalChild.id.slice(0, 15),
+        ),
+      );
+    }
+    expect(() =>
+      assertEmailFragmentNativeFolder(
+        { id: '9Pu00000000000a' },
+        { id: '9Pu00000000000a' },
+        '9Pu00000000000A',
+        canonicalRoot.id,
+      ),
+    ).to.throw('native folder identity');
+  });
+
   it('requires both independent native IDs, never equal labels, and only normalizes null/null root', () => {
     expect(() => assertEmailFragmentNativeFolder(null, null, root.id, root.id)).not.to.throw();
     expect(() =>

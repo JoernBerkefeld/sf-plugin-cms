@@ -1,7 +1,10 @@
 import type { Connection } from '@salesforce/core';
 import { isDeepStrictEqual } from 'node:util';
 import type { JsonRequestOptions } from '../transport/json-request.js';
-import { acquireContextualFolderEvidence } from './acquire-folder-evidence.js';
+import {
+  acquireContextualFolderEvidence,
+  canonicalFolderEvidenceId,
+} from './acquire-folder-evidence.js';
 import { sourcePathSegment } from '../contracts/source-definition.js';
 import { investigateFolderName } from './investigate-folder-name.js';
 
@@ -28,7 +31,7 @@ export async function resolveEmailFragmentFolder(
     if (sourcePath.length > 0)
       return investigateFolderName(connection, workspace, sourcePath, options);
     return {
-      id: workspace.rootFolderId,
+      id: canonicalFolderEvidenceId(workspace.rootFolderId, '9Pu'),
       path: [] as string[],
       ancestry: [] as Record<string, unknown>[],
     };
@@ -63,7 +66,16 @@ export function assertEmailFragmentNativeFolder(
   selectedId: string,
   rootId: string,
 ): void {
+  selectedId = canonicalFolderEvidenceId(selectedId, '9Pu');
+  rootId = canonicalFolderEvidenceId(rootId, '9Pu');
   if (variantFolder === null && parentFolder === null && selectedId === rootId) return;
-  if (id(variantFolder) !== selectedId || id(parentFolder) !== selectedId)
+  const variantId = id(variantFolder);
+  const parentId = id(parentFolder);
+  if (
+    variantId === undefined ||
+    parentId === undefined ||
+    canonicalFolderEvidenceId(variantId, '9Pu') !== selectedId ||
+    canonicalFolderEvidenceId(parentId, '9Pu') !== selectedId
+  )
     throw new TypeError('Fragment native folder identity disagrees with validated destination');
 }

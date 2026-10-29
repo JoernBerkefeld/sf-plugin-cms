@@ -82,7 +82,8 @@ type Selector = { contentType: string; apiName?: string };
  * @returns {Selector[]} Canonical type and optional exact API name pairs.
  */
 export function normalizeDeployMetadataSelectors(metadata: readonly string[]): Selector[] {
-  return values(metadata)!.map((value) => metadataSelector(value, true));
+  values(metadata); // Validate without deduplicating the caller's positional selector association.
+  return metadata.map((value) => metadataSelector(value, true));
 }
 
 function values(input: readonly string[] | undefined): string[] | undefined {

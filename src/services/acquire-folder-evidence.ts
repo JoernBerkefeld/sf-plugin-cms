@@ -12,19 +12,34 @@ function record(value: unknown): value is Folder {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function identifier(value: unknown, prefix: string): string {
+/**
+ * Validate folder evidence IDs and expand case-sensitive 15-character IDs without case folding.
+ * @param {unknown} value - Salesforce identity from caller or API evidence.
+ * @param {string} prefix - Required object key prefix.
+ * @returns {string} Identity in 18-character form, retaining existing API IDs verbatim.
+ */
+export function canonicalFolderEvidenceId(value: unknown, prefix: string): string {
   if (
     typeof value !== 'string' ||
     !new RegExp(`^${prefix}[A-Za-z0-9]{12}(?:[A-Z0-5]{3})?$`, 'u').test(value)
   )
     throw new TypeError('Invalid folder evidence identity');
-  return value;
+  if (value.length === 18) return value;
+  let suffix = '';
+  for (let start = 0; start < 15; start += 5) {
+    let mask = 0;
+    for (let offset = 0; offset < 5; offset += 1) {
+      if (/[A-Z]/u.test(value[start + offset])) mask += 2 ** offset;
+    }
+    suffix += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012345'[mask];
+  }
+  return value + suffix;
 }
 
 function folderId(value: unknown): string | null {
   if (value === null) return null;
   if (!record(value)) throw new TypeError('Missing content folder evidence');
-  return identifier(value.id, '9Pu');
+  return canonicalFolderEvidenceId(value.id, '9Pu');
 }
 
 /**
@@ -45,8 +60,8 @@ export async function acquireFolderEvidence(
   parentFolder: unknown,
   options: JsonRequestOptions = {},
 ): Promise<string[]> {
-  identifier(workspace.id, '0Zu');
-  const rootId = identifier(workspace.rootFolderId, '9Pu');
+  canonicalFolderEvidenceId(workspace.id, '0Zu');
+  const rootId = canonicalFolderEvidenceId(workspace.rootFolderId, '9Pu');
   const selectedId = folderId(variantFolder);
   if (selectedId !== folderId(parentFolder))
     throw new TypeError('Variant and parent folder identities disagree');
@@ -80,9 +95,9 @@ export async function acquireContextualFolderEvidence(
   options: JsonRequestOptions = {},
   strictSharing = false,
 ): Promise<ContextualFolderEvidence> {
-  const workspaceId = identifier(workspace.id, '0Zu');
-  const rootId = identifier(workspace.rootFolderId, '9Pu');
-  identifier(selectedId, '9Pu');
+  const workspaceId = canonicalFolderEvidenceId(workspace.id, '0Zu');
+  const rootId = canonicalFolderEvidenceId(workspace.rootFolderId, '9Pu');
+  selectedId = canonicalFolderEvidenceId(selectedId, '9Pu');
   // The context parameter makes the documented ordered ancestry relative to this workspace.
   const { data } = await requestJson<unknown>(
     connection,
@@ -92,7 +107,7 @@ export async function acquireContextualFolderEvidence(
   );
   if (
     !record(data) ||
-    data.id !== selectedId ||
+    canonicalFolderEvidenceId(data.id, '9Pu') !== selectedId ||
     data.folderType !== (selectedId === rootId ? 'System' : 'Standard') ||
     data.isShared !== false ||
     !Array.isArray(data.folderHierarchy) ||
@@ -106,12 +121,14 @@ export async function acquireContextualFolderEvidence(
   let previousId: string | undefined;
   for (const [index, entry] of hierarchy.entries()) {
     if (!record(entry)) throw new TypeError('Invalid folder hierarchy entry');
-    const id = identifier(entry.id, '9Pu');
+    const id = canonicalFolderEvidenceId(entry.id, '9Pu');
     if (
       (strictSharing ? entry.isShared !== false : entry.isShared === true) ||
-      (entry.contentSpaceId !== undefined && entry.contentSpaceId !== workspaceId) ||
+      (entry.contentSpaceId !== undefined &&
+        canonicalFolderEvidenceId(entry.contentSpaceId, '0Zu') !== workspaceId) ||
       (entry.contentSpace !== undefined &&
-        (!record(entry.contentSpace) || entry.contentSpace.id !== workspaceId))
+        (!record(entry.contentSpace) ||
+          canonicalFolderEvidenceId(entry.contentSpace.id, '0Zu') !== workspaceId))
     )
       throw new TypeError('Folder sharing or workspace evidence is ambiguous');
     if (seen.has(id)) throw new TypeError('Repeated folder hierarchy identity');
@@ -124,7 +141,10 @@ export async function acquireContextualFolderEvidence(
       )
         throw new TypeError('Folder hierarchy is outside the workspace root');
     } else {
-      if (entry.parentFolderId !== previousId || entry.folderType !== 'Standard')
+      if (
+        canonicalFolderEvidenceId(entry.parentFolderId, '9Pu') !== previousId ||
+        entry.folderType !== 'Standard'
+      )
         throw new TypeError('Folder hierarchy parent identity disagreement');
       sourcePathSegment(entry.name);
       names.push(entry.name);
