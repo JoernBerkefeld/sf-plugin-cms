@@ -140,17 +140,26 @@ async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
 
 describe('image import contracts and loader', () => {
   let run: RunOwnedTemp;
+  let container: string;
   let root: string;
-  beforeEach(async () => {
+  const fixtures: string[] = [];
+  before(async () => {
     run = await createRunOwnedTemp('cms-image-import');
-    root = await createRunOwnedDirectory(run, 'fixture');
+    container = await createRunOwnedDirectory(run, 'fixtures');
   });
-  afterEach(async () => {
-    await removeRunOwnedPath(run, root);
-    await lstat(root).then(
-      () => expect.fail('Fixture child must be removed'),
-      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
-    );
+  beforeEach(async () => {
+    root = path.join(container, `fixture-${fixtures.length}`);
+    fixtures.push(root);
+    await mkdir(root);
+  });
+  after(async () => {
+    await removeRunOwnedPath(run, container);
+    for (const removed of [container, ...fixtures]) {
+      await lstat(removed).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
     const retainedRoot = await lstat(run.root);
     expect(retainedRoot.isDirectory()).to.equal(true);
   });

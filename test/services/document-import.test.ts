@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
@@ -167,13 +167,28 @@ function options(source: Awaited<ReturnType<typeof fixture>>, request = requestS
 
 describe('Document import admission and read-only preflight', () => {
   let run: RunOwnedTemp;
+  let container: string;
   let root: string;
-  beforeEach(async () => {
+  const fixtures: string[] = [];
+  before(async () => {
     run = await createRunOwnedTemp('cms-document-import-test');
-    root = await createRunOwnedDirectory(run, 'fixture');
+    container = await createRunOwnedDirectory(run, 'fixtures');
   });
-  afterEach(async () => {
-    await removeRunOwnedPath(run, root);
+  beforeEach(async () => {
+    root = path.join(container, `fixture-${fixtures.length}`);
+    fixtures.push(root);
+    await mkdir(root);
+  });
+  after(async () => {
+    await removeRunOwnedPath(run, container);
+    for (const removed of [container, ...fixtures]) {
+      await lstat(removed).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
+    const retainedRoot = await lstat(run.root);
+    expect(retainedRoot.isDirectory()).to.equal(true);
   });
 
   function applyOptions(

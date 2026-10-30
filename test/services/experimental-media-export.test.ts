@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { createHash } from 'node:crypto';
-import { access, lstat, readFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import sinon from 'sinon';
@@ -40,20 +40,33 @@ function imageDetail(modifiedAt = '2026-01-01T00:00:00.000Z') {
 
 describe('experimental workspace media export', () => {
   let run: RunOwnedTemp;
+  let container: string;
   let root: string;
+  const fixtures: string[] = [];
 
-  beforeEach(async () => {
+  before(async () => {
     run = await createRunOwnedTemp('sf-plugin-cms-media-export');
-    root = await createRunOwnedDirectory(run, 'fixture');
+    container = await createRunOwnedDirectory(run, 'fixtures');
   });
 
-  afterEach(async () => {
+  beforeEach(async () => {
+    root = path.join(container, `fixture-${fixtures.length}`);
+    fixtures.push(root);
+    await mkdir(root);
+  });
+
+  afterEach(() => {
     sinon.restore();
-    await removeRunOwnedPath(run, root);
-    await lstat(root).then(
-      () => expect.fail('Fixture child must be removed'),
-      (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
-    );
+  });
+
+  after(async () => {
+    await removeRunOwnedPath(run, container);
+    for (const removed of [container, ...fixtures]) {
+      await lstat(removed).then(
+        () => expect.fail('Fixture child must be removed'),
+        (error: NodeJS.ErrnoException) => expect(error.code).to.equal('ENOENT'),
+      );
+    }
     const retainedRoot = await lstat(run.root);
     expect(retainedRoot.isDirectory()).to.equal(true);
   });
