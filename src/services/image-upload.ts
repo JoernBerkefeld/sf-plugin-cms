@@ -17,6 +17,7 @@ import type {
   ImageUploadInput,
   ImageUploadPreparation,
   ImageUploadReadServices,
+  ImageUploadFileServices,
   ImageUploadRootEvidence,
   PlannedImageUploadFile,
 } from '../contracts/image-upload.js';
@@ -99,7 +100,7 @@ function foldPath(value: string): string {
   return process.platform === 'win32' ? value.toLowerCase() : value;
 }
 
-async function assertPlainPath(filePath: string): Promise<void> {
+async function inspectNativeReparsePath(filePath: string): Promise<void> {
   if (process.platform === 'win32') {
     // Node lstat does not expose every Windows reparse tag; inspect the native attribute bit.
     const literal = filePath.replaceAll("'", "''");
@@ -115,6 +116,13 @@ async function assertPlainPath(filePath: string): Promise<void> {
       );
     }
   }
+}
+
+async function assertPlainPath(
+  filePath: string,
+  fileServices: ImageUploadFileServices,
+): Promise<void> {
+  await (fileServices.inspectNativeReparsePath ?? inspectNativeReparsePath)(filePath);
   let current = filePath;
   for (;;) {
     const stat = await lstat(current);
@@ -144,10 +152,13 @@ function mediaType(bytes: Buffer): PlannedImageUploadFile['mediaType'] {
   return 'application/octet-stream';
 }
 
-async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
+async function readImage(
+  filePath: string,
+  fileServices: ImageUploadFileServices,
+): Promise<PlannedImageUploadFile> {
   const filename = path.basename(filePath);
   const names = imageUploadNames(filename);
-  await assertPlainPath(filePath);
+  await assertPlainPath(filePath, fileServices);
   const before = await lstat(filePath, { bigint: true });
   if (!before.isFile() || before.size <= 0n) {
     throw new TypeError('Image must be a regular nonempty file');
@@ -171,7 +182,7 @@ async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
       length += result.bytesRead;
     }
     const after = await handle.stat({ bigint: true });
-    await assertPlainPath(filePath);
+    await assertPlainPath(filePath, fileServices);
     const linked = await lstat(filePath, { bigint: true });
     if (
       !sameIdentity(before, after) ||
@@ -198,6 +209,7 @@ async function readImage(filePath: string): Promise<PlannedImageUploadFile> {
 
 export async function planImageUploadFiles(
   files: readonly string[],
+  fileServices: ImageUploadFileServices = {},
 ): Promise<PlannedImageUploadFile[]> {
   if (!Array.isArray(files) || files.length === 0)
     throw new TypeError('Specify at least one explicit image file');
@@ -211,7 +223,7 @@ export async function planImageUploadFiles(
     const key = process.platform === 'win32' ? absolute.toLowerCase() : absolute;
     if (seenPaths.has(key)) throw new TypeError('Duplicate image path');
     seenPaths.add(key);
-    const image = await readImage(absolute);
+    const image = await readImage(absolute, fileServices);
     const inode = `${image.identity.dev}:${image.identity.ino}`;
     if (seenIdentities.has(inode)) throw new TypeError('Duplicate image file identity');
     seenIdentities.add(inode);
@@ -322,14 +334,16 @@ async function collisionInventory(
  * All-or-nothing preparation; rejects rather than returning any ready intent on a failed preflight.
  * @param {ImageUploadInput} input - Explicit paths and exact workspace selector.
  * @param {ImageUploadReadServices} services - Read-only workspace and inventory services.
+ * @param {ImageUploadFileServices} fileServices - Invocation-local native path inspection dependency.
  * @returns {Promise<ImageUploadPreparation>} Complete preparation or rejection without intents.
  */
 export async function prepareImageUpload(
   input: ImageUploadInput,
   services: ImageUploadReadServices,
+  fileServices: ImageUploadFileServices = {},
 ): Promise<ImageUploadPreparation> {
   assertWorkspaceSelector(input);
-  const files = await planImageUploadFiles(input.files);
+  const files = await planImageUploadFiles(input.files, fileServices);
   const selector = { workspaceId: input.workspaceId, workspaceName: input.workspaceName };
   const resolved = await services.resolveWorkspace(selector);
   if (input.workspaceId !== undefined && resolved.id !== input.workspaceId) {
@@ -370,6 +384,7 @@ export async function prepareImageUpload(
 async function revalidateUpload(
   preparation: ImageUploadPreparation,
   services: ImageUploadReadServices,
+  fileServices: ImageUploadFileServices = {},
 ): Promise<ImageUploadPreparation> {
   const fresh = await prepareImageUpload(
     {
@@ -377,6 +392,7 @@ async function revalidateUpload(
       files: preparation.intents.map(({ file }) => file.path),
     },
     services,
+    fileServices,
   );
   if (
     JSON.stringify(fresh.root) !== JSON.stringify(preparation.root) ||
@@ -510,11 +526,11 @@ export async function applyImageUpload(
     emitted = index + 1;
   };
   try {
-    await revalidateUpload(preparation, options.services);
+    await revalidateUpload(preparation, options.services, options.fileServices);
     for (const [index, operation] of report.operations.entries()) {
       // Recheck every remaining file and complete collision scope immediately before each POST.
       const remaining = { ...preparation, intents: preparation.intents.slice(index) };
-      const fresh = await revalidateUpload(remaining, options.services);
+      const fresh = await revalidateUpload(remaining, options.services, options.fileServices);
       const intent = fresh.intents[0];
       const boundary = `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
       const createOptions: MultipartImageCreateOptions = {

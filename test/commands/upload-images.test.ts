@@ -23,7 +23,9 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
   });
   const getOrgContext = sinon.stub().resolves({ orgId: '00DControlled', connection: { request } });
   const log = sinon.stub();
+  const inspectNativeReparsePath = sinon.stub().resolves();
   Object.assign(instance, {
+    imageUploadFileServices: () => ({ inspectNativeReparsePath }),
     parse: sinon.stub().resolves({
       flags: {
         'target-org': { getUsername: () => 'unused' },
@@ -40,7 +42,7 @@ function command(files: string[], extra: Record<string, unknown> = {}) {
     jsonEnabled: sinon.stub().returns(true),
     log,
   });
-  return { instance, events, request, getOrgContext, log };
+  return { instance, events, request, getOrgContext, log, inspectNativeReparsePath };
 }
 
 describe('cms upload command', () => {
@@ -79,6 +81,25 @@ describe('cms upload command', () => {
       expect(parsed.flags).not.to.have.property('execute');
     });
   }
+
+  it('retains native guard defaults without a command override', async () => {
+    const subject = command([await image()], { preview: true });
+    Reflect.deleteProperty(subject.instance, 'imageUploadFileServices');
+    const result = await subject.instance.run();
+    expect(result.status).to.equal('success');
+    expect(subject.inspectNativeReparsePath.notCalled).to.equal(true);
+    expect(subject.events.every(({ method }) => method === 'GET')).to.equal(true);
+  });
+
+  it('blocks a rejected injected path guard before org acquisition or POST', async () => {
+    const subject = command([await image()]);
+    subject.inspectNativeReparsePath.rejects(new Error('path guard rejected'));
+    const result = await subject.instance.run();
+    expect(result.status).to.equal('blocked');
+    expect(subject.getOrgContext.notCalled).to.equal(true);
+    expect(subject.events).to.have.length(0);
+    expect(subject.inspectNativeReparsePath.calledOnce).to.equal(true);
+  });
 
   it('previews ordered names and sizes with zero mutations, no bytes, and distinct root', async () => {
     const files = [await image(), await image('Logo.jpg')];
@@ -259,6 +280,8 @@ describe('cms upload command', () => {
       'planned',
     ]);
     expect(subject.events.filter(({ method }) => method === 'POST')).to.have.length(1);
+    // Two files, before/after reads at local validation, preparation, apply and dispatch.
+    expect(subject.inspectNativeReparsePath.callCount).to.equal(16);
     expect(await readdir(directory)).to.have.members(['Banner with spaces.PNG', 'Second.png']);
     expect(JSON.stringify(result)).not.to.include('SECRET');
     expect(JSON.stringify(result)).not.to.include('bytes');

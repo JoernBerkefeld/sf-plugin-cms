@@ -191,7 +191,13 @@ export type ImageUploadReport = {
   error?: string;
 };
 
+/** Internal filesystem dependency; omitted dependencies retain native Windows inspection. */
+export type ImageUploadFileServices = {
+  readonly inspectNativeReparsePath?: (filePath: string) => Promise<void>;
+};
+
 export type ImageUploadApplyOptions = {
+  readonly fileServices?: ImageUploadFileServices;
   readonly preparation: ImageUploadPreparation;
   readonly services: ImageUploadReadServices & {
     readonly getContent: (contentId: string) => Promise<CmsRecord>;

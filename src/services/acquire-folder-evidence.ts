@@ -86,6 +86,7 @@ export type ContextualFolderEvidence = {
  * @param {string} selectedId - Exact destination-local folder identifier.
  * @param {JsonRequestOptions} options - Bounded request options.
  * @param {boolean} strictSharing - Require explicit non-sharing on every ancestor.
+ * @param {boolean} enrichAncestorSharing - Resolve omitted ancestor flags through exact contextual detail.
  * @returns {Promise<ContextualFolderEvidence>} Detached placement proof, never name lookup.
  */
 export async function acquireContextualFolderEvidence(
@@ -94,6 +95,7 @@ export async function acquireContextualFolderEvidence(
   selectedId: string,
   options: JsonRequestOptions = {},
   strictSharing = false,
+  enrichAncestorSharing = false,
 ): Promise<ContextualFolderEvidence> {
   const workspaceId = canonicalFolderEvidenceId(workspace.id, '0Zu');
   const rootId = canonicalFolderEvidenceId(workspace.rootFolderId, '9Pu');
@@ -123,7 +125,9 @@ export async function acquireContextualFolderEvidence(
     if (!record(entry)) throw new TypeError('Invalid folder hierarchy entry');
     const id = canonicalFolderEvidenceId(entry.id, '9Pu');
     if (
-      (strictSharing ? entry.isShared !== false : entry.isShared === true) ||
+      (strictSharing
+        ? entry.isShared !== false && !(enrichAncestorSharing && !Object.hasOwn(entry, 'isShared'))
+        : entry.isShared === true) ||
       (entry.contentSpaceId !== undefined &&
         canonicalFolderEvidenceId(entry.contentSpaceId, '0Zu') !== workspaceId) ||
       (entry.contentSpace !== undefined &&
@@ -151,5 +155,49 @@ export async function acquireContextualFolderEvidence(
     }
     previousId = id;
   }
-  return { id: selectedId, path: names, ancestry: structuredClone(hierarchy) as Folder[] };
+  // Finish validating the original chain before reading any omitted sharing evidence.
+  const ancestry = structuredClone(hierarchy) as Folder[];
+  if (strictSharing && enrichAncestorSharing) {
+    for (const [index, entry] of ancestry.entries()) {
+      if (Object.hasOwn(entry, 'isShared')) continue;
+      const id = canonicalFolderEvidenceId(entry.id, '9Pu');
+      const { data: ancestor } = await requestJson<unknown>(
+        connection,
+        getSelectedOperation('folder.get'),
+        { path: { folderId: id }, query: { contextContentSpaceId: workspaceId } },
+        options,
+      );
+      if (
+        !record(ancestor) ||
+        ancestor.isShared !== false ||
+        !Array.isArray(ancestor.folderHierarchy) ||
+        ancestor.folderHierarchy.length !== index
+      )
+        throw new TypeError('Incomplete ancestor folder sharing evidence');
+      const prefix: unknown[] = [...ancestor.folderHierarchy, ancestor];
+      for (const [prefixIndex, actual] of prefix.entries()) {
+        const expected = ancestry[prefixIndex];
+        if (
+          !record(actual) ||
+          canonicalFolderEvidenceId(actual.id, '9Pu') !==
+            canonicalFolderEvidenceId(expected.id, '9Pu') ||
+          actual.folderType !== expected.folderType ||
+          actual.name !== expected.name ||
+          (Object.hasOwn(actual, 'isShared') && actual.isShared !== false) ||
+          (actual.contentSpaceId !== undefined &&
+            canonicalFolderEvidenceId(actual.contentSpaceId, '0Zu') !== workspaceId) ||
+          (actual.contentSpace !== undefined &&
+            (!record(actual.contentSpace) ||
+              canonicalFolderEvidenceId(actual.contentSpace.id, '0Zu') !== workspaceId)) ||
+          (prefixIndex === 0
+            ? actual.parentFolderId !== undefined && actual.parentFolderId !== null
+            : canonicalFolderEvidenceId(actual.parentFolderId, '9Pu') !==
+              canonicalFolderEvidenceId(expected.parentFolderId, '9Pu'))
+        )
+          throw new TypeError('Ancestor folder detail disagrees with contextual hierarchy');
+      }
+      entry.isShared = false;
+    }
+  }
+  return { id: selectedId, path: names, ancestry };
 }

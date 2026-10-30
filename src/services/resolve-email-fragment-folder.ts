@@ -42,6 +42,7 @@ export async function resolveEmailFragmentFolder(
     destinationFolderId,
     options,
     true,
+    true,
   );
   if (!isDeepStrictEqual(proof.path, sourcePath))
     throw new TypeError('Explicit destination folder ID/path disagreement with source.folderPath');

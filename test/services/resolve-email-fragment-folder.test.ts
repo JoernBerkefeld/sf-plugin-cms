@@ -21,7 +21,7 @@ const leaf = {
   isShared: false,
   parentFolderId: child.id,
 };
-const detail = () => ({ ...leaf, folderHierarchy: [root, child] });
+const detail = () => structuredClone({ ...leaf, folderHierarchy: [root, child] });
 async function reject(run: Promise<unknown>, pattern: RegExp = /folder|hierarchy/iu) {
   try {
     await run;
@@ -125,6 +125,147 @@ describe('explicit Fragment destination placement', () => {
       );
     });
   }
+  it('resolves native omitted ancestor flags with exact contextual GETs and detached proof', async () => {
+    const response = detail() as Record<string, unknown>;
+    const summaries = [{ ...root, parentFolderId: null }, { ...child }] as Record<
+      string,
+      unknown
+    >[];
+    for (const summary of summaries) delete summary.isShared;
+    response.folderHierarchy = summaries;
+    const before = structuredClone(response);
+    const request = sinon.stub();
+    request.onCall(0).resolves(response);
+    request.onCall(1).resolves({ ...root, parentFolderId: null, folderHierarchy: [] });
+    request.onCall(2).resolves({ ...child, folderHierarchy: [summaries[0]] });
+    const proof = await resolveEmailFragmentFolder(
+      { request },
+      workspace,
+      ['Child', 'Leaf'],
+      leaf.id,
+    );
+    expect(proof.path).to.deep.equal(['Child', 'Leaf']);
+    expect(proof.ancestry.map((entry) => entry.isShared)).to.deep.equal([false, false, false]);
+    expect(request.args.map(([input]) => input)).to.deep.equal(
+      [leaf.id, root.id, child.id].map((folderId) => ({
+        method: 'GET',
+        url: `/connect/cms/folders/${folderId}?contextContentSpaceId=${workspace.id}`,
+      })),
+    );
+    expect(response).to.deep.equal(before);
+    summaries[0].name = 'Changed';
+    expect(proof.ancestry[0].name).to.equal('Root');
+  });
+
+  for (const [label, mutate] of Object.entries<(value: Record<string, unknown>) => void>({
+    omitted: (value) => {
+      delete value.isShared;
+    },
+    undefined: (value) => {
+      value.isShared = undefined;
+    },
+    null: (value) => {
+      value.isShared = null;
+    },
+    malformed: (value) => {
+      value.isShared = 'false';
+    },
+    shared: (value) => {
+      value.isShared = true;
+    },
+    identity: (value) => {
+      value.id = leaf.id;
+    },
+    kind: (value) => {
+      value.folderType = 'SharedWithSpace';
+    },
+    workspace: (value) => {
+      value.contentSpaceId = '0Zu000000000002AAA';
+    },
+    workspaceObject: (value) => {
+      value.contentSpace = { id: '0Zu000000000002AAA' };
+    },
+    parent: (value) => {
+      value.parentFolderId = leaf.id;
+    },
+    name: (value) => {
+      value.name = 'Other';
+    },
+    absentHierarchy: (value) => {
+      delete value.folderHierarchy;
+    },
+    prefixLength: (value) => {
+      value.folderHierarchy = [];
+    },
+    prefixRoot: (value) => {
+      value.folderHierarchy = [{ ...root, id: leaf.id }];
+    },
+    prefixName: (value) => {
+      value.folderHierarchy = [{ ...root, name: 'Other' }];
+    },
+    prefixParent: (value) => {
+      value.folderHierarchy = [{ ...root, parentFolderId: leaf.id }];
+    },
+    prefixShared: (value) => {
+      value.folderHierarchy = [{ ...root, isShared: true }];
+    },
+    prefixWorkspace: (value) => {
+      value.folderHierarchy = [{ ...root, contentSpaceId: '0Zu000000000002AAA' }];
+    },
+  })) {
+    it(`rejects ${label} ancestor detail without returning placement authority`, async () => {
+      const response = detail();
+      delete (response.folderHierarchy[1] as Record<string, unknown>).isShared;
+      const ancestor: Record<string, unknown> = { ...child, folderHierarchy: [root] };
+      mutate(ancestor);
+      const request = sinon.stub();
+      request.onCall(0).resolves(response);
+      request.onCall(1).resolves(ancestor);
+      await reject(resolveEmailFragmentFolder({ request }, workspace, ['Child', 'Leaf'], leaf.id));
+      expect(request.callCount).to.equal(2);
+      expect(request.args.every(([input]) => input.method === 'GET')).to.equal(true);
+    });
+  }
+
+  it('rejects invalid original chains before any enrichment and never overrides explicit sharing', async () => {
+    for (const value of [true, null, 'false', undefined]) {
+      const response = detail();
+      delete (response.folderHierarchy[0] as Record<string, unknown>).isShared;
+      (response.folderHierarchy[1] as Record<string, unknown>).isShared = value;
+      const request = sinon.stub().resolves(response);
+      await reject(resolveEmailFragmentFolder({ request }, workspace, ['Child', 'Leaf'], leaf.id));
+      expect(request.calledOnce).to.equal(true);
+    }
+    const response = detail();
+    delete (response.folderHierarchy[0] as Record<string, unknown>).isShared;
+    response.parentFolderId = root.id;
+    const request = sinon.stub().resolves(response);
+    await reject(resolveEmailFragmentFolder({ request }, workspace, ['Child', 'Leaf'], leaf.id));
+    expect(request.calledOnce).to.equal(true);
+  });
+
+  it('propagates ancestor read denial and rejects unavailable root sharing evidence', async () => {
+    for (const ancestor of [
+      null,
+      {},
+      { ...root, folderHierarchy: [root] },
+      { ...root, parentFolderId: child.id, folderHierarchy: [] },
+      new Error('permission denied'),
+    ]) {
+      const response = detail();
+      delete (response.folderHierarchy[0] as Record<string, unknown>).isShared;
+      const request = sinon.stub();
+      request.onCall(0).resolves(response);
+      if (ancestor instanceof Error) request.onCall(1).rejects(ancestor);
+      else request.onCall(1).resolves(ancestor);
+      await reject(
+        resolveEmailFragmentFolder({ request }, workspace, ['Child', 'Leaf'], leaf.id),
+        /folder|hierarchy|permission denied/iu,
+      );
+      expect(request.callCount).to.equal(2);
+    }
+  });
+
   it('rejects exact path disagreement, including case, and propagates permissions/absence', async () => {
     for (const names of [[], ['Child'], ['child', 'Leaf']])
       await reject(
@@ -155,6 +296,41 @@ describe('explicit Fragment destination placement', () => {
       /permission denied/u,
     );
   });
+  it('normalizes ancestor detail IDs and parent prefixes without mutating native responses', async () => {
+    const canonicalRoot = { ...root, id: '9Pu000000000001CAA', parentFolderId: null };
+    const canonicalChild = { ...child, id: '9Pu000000000002CAA', parentFolderId: canonicalRoot.id };
+    const scope = { id: '0Zu000000000001CAA', rootFolderId: canonicalRoot.id };
+    const summary: Record<string, unknown> = {
+      ...canonicalRoot,
+      id: canonicalRoot.id.slice(0, 15),
+    };
+    delete summary.isShared;
+    const response = { ...canonicalChild, folderHierarchy: [summary] };
+    const ancestor = {
+      ...canonicalRoot,
+      id: canonicalRoot.id.slice(0, 15),
+      contentSpaceId: scope.id.slice(0, 15),
+      contentSpace: { id: scope.id },
+      folderHierarchy: [],
+    };
+    const request = sinon.stub();
+    request.onCall(0).resolves(response);
+    request.onCall(1).resolves(ancestor);
+    const proof = await resolveEmailFragmentFolder(
+      { request },
+      scope,
+      ['Child'],
+      canonicalChild.id,
+    );
+    expect(proof.ancestry[0].isShared).to.equal(false);
+    expect(summary).not.to.have.property('isShared');
+    expect(request.callCount).to.equal(2);
+    expect(request.lastCall.args[0]).to.deep.equal({
+      method: 'GET',
+      url: `/connect/cms/folders/${canonicalRoot.id}?contextContentSpaceId=${scope.id}`,
+    });
+  });
+
   it('normalizes 15-character ancestry and native evidence without conflating case-sensitive IDs', async () => {
     const canonicalRoot = { ...root, id: '9Pu000000000001CAA' };
     const canonicalChild = {

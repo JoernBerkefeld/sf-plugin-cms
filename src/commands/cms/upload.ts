@@ -5,6 +5,7 @@ import { apiVersionFlag, CmsCommand, targetOrgFlag } from '../../command-base.js
 import {
   assertImageUploadCommandResult,
   type ImageUploadCommandResult,
+  type ImageUploadFileServices,
   type PlannedImageUploadFile,
 } from '../../contracts/image-upload.js';
 import { type CmsEnvelope, type CmsStatus } from '../../contracts/shared.js';
@@ -64,7 +65,12 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
     }),
   };
 
+  protected imageUploadFileServices(): ImageUploadFileServices {
+    return {};
+  }
+
   public async run(): Promise<CmsEnvelope<ImageUploadCommandResult>> {
+    const fileServices = this.imageUploadFileServices();
     const { flags } = await this.parse(UploadImages);
     const targetOrg = flags['target-org'].getUsername()!;
     const invocationCwd = process.cwd();
@@ -132,7 +138,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
         throw new TypeError('Preview forbids report and report-dir.');
       if (flags['report-dir'] !== undefined)
         await validateMutationReportDirectory(flags['report-dir']);
-      await planImageUploadFiles(flags.file);
+      await planImageUploadFiles(flags.file, fileServices);
     } catch (error) {
       this.logDiagnosticError('image upload local validation failed', error);
       return finish('blocked', 'IMAGE_UPLOAD_LOCAL_VALIDATION_FAILED');
@@ -150,6 +156,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
           files: flags.file,
         },
         services,
+        fileServices,
       );
       result = {
         ...result,
@@ -164,6 +171,7 @@ export default class UploadImages extends CmsCommand<CmsEnvelope<ImageUploadComm
         invocationCwd,
       );
       const applied = await applyImageUpload({
+        fileServices,
         preparation,
         services: { ...services, getContent: async (id) => getContent(context.connection, id) },
         connection: context.connection,

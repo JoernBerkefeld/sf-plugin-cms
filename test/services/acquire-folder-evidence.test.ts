@@ -1,6 +1,9 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { acquireFolderEvidence } from '../../src/services/acquire-folder-evidence.js';
+import {
+  acquireFolderEvidence,
+  acquireContextualFolderEvidence,
+} from '../../src/services/acquire-folder-evidence.js';
 import { buildOperationUrl, getSelectedOperation } from '../../src/transport/json-request.js';
 
 const workspace = { id: '0Zuaj000007dgL8CAI', rootFolderId: '9Pu000000000001AAA' };
@@ -69,6 +72,14 @@ describe('independent folder evidence', () => {
       method: 'GET',
       url: `/connect/cms/folders/${leaf.id}?contextContentSpaceId=${workspace.id}`,
     });
+  });
+
+  it('keeps strict ancestor enrichment disabled by default', async () => {
+    const request = sinon.stub().resolves(detail());
+    await rejected(() =>
+      acquireContextualFolderEvidence({ request }, workspace, leaf.id, {}, true),
+    );
+    expect(request.calledOnce).to.equal(true);
   });
 
   it('accepts a direct child without inventing an extra ancestor', async () => {

@@ -64,6 +64,27 @@ describe('bounded Fragment folder-name investigation', () => {
       connection.request.args.every(([input]) => !input.url.includes('/folders/' + otherId)),
     ).to.equal(true);
   });
+  it('does not enrich omitted ancestor sharing flags or expand the investigation budget', async () => {
+    const connection = fake();
+    const summary: Record<string, unknown> = { ...root };
+    delete summary.isShared;
+    connection.request.callsFake(async (input: { method: string; url: string }) => {
+      expect(input.method).to.equal('GET');
+      if (input.url.includes('/folder-items')) {
+        const pageNumber = Number(
+          new URL(input.url, 'https://example.invalid').searchParams.get('page'),
+        );
+        return [page([row()]), page([]), page([row(otherId, 'Other')])][pageNumber];
+      }
+      return { ...detail(childId), folderHierarchy: [summary] };
+    });
+    await reject(resolveEmailFragmentFolder(connection, workspace, ['Child']), /sharing/iu);
+    expect(connection.request.callCount).to.equal(4);
+    expect(
+      connection.request.args.some(([input]) => input.url.includes(`/folders/${root.id}?`)),
+    ).to.equal(false);
+  });
+
   it('rejects duplicate eligible names across different pages after contextual validation', async () => {
     const connection = fake([page([row()]), page([row(otherId)]), page([])]);
     await reject(

@@ -7,18 +7,34 @@ import path from 'node:path';
 import type { ImageUploadReadServices } from '../../src/contracts/image-upload.js';
 import type { MutationOutcome } from '../../src/mutation-outcome.js';
 import {
-  applyImageUpload,
+  applyImageUpload as applyImageUploadWithNativeGuard,
   ImageUploadApplyError,
   imageUploadNames,
   imageUploadReadServices,
   planImageUploadFiles,
-  prepareImageUpload,
+  prepareImageUpload as prepareImageUploadWithNativeGuard,
 } from '../../src/services/image-upload.js';
 import { assertImageUploadCommandResult } from '../../src/contracts/image-upload.js';
 import { rewriteAtomic } from '../../src/services/import-workspace.js';
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
 const workspace = { id: 'space', rootFolderId: 'root', isEnhancedSpace: true };
+
+// Orchestration keeps real reads and identity checks, without repeated Windows process startup.
+function prepareImageUpload(
+  ...[input, services]: Parameters<typeof prepareImageUploadWithNativeGuard>
+) {
+  return prepareImageUploadWithNativeGuard(input, services, {
+    inspectNativeReparsePath: sinon.stub().resolves(),
+  });
+}
+
+function applyImageUpload(options: Parameters<typeof applyImageUploadWithNativeGuard>[0]) {
+  return applyImageUploadWithNativeGuard({
+    ...options,
+    fileServices: { inspectNativeReparsePath: sinon.stub().resolves() },
+  });
+}
 
 async function rejected(promise: Promise<unknown>, message: string): Promise<void> {
   let failure: unknown;
@@ -70,9 +86,10 @@ async function runScenarioJobs(jobs: Array<() => Promise<void>>): Promise<void> 
   }
 }
 
-async function execution(context: Scenario) {
+async function execution(context: Scenario, nativeGuard = false) {
   const services = { ...reads(), getContent: sinon.stub() };
-  const preparation = await prepareImageUpload(
+  const prepare = nativeGuard ? prepareImageUploadWithNativeGuard : prepareImageUpload;
+  const preparation = await prepare(
     {
       workspaceId: 'space',
       files: [await context.file('first.png'), await context.file('second.png')],
@@ -109,6 +126,50 @@ async function execution(context: Scenario) {
 }
 
 describe('no-JSON image upload preparation', () => {
+  it('threads the invocation guard through every read and stops before POST on rejection', async () => {
+    const context = await createScenario();
+    try {
+      const services = { ...reads(), getContent: sinon.stub() };
+      const files = [await context.file('first.png'), await context.file('second.png')];
+      const inspectNativeReparsePath = sinon.stub().resolves();
+      const fileServices = { inspectNativeReparsePath };
+      const preparation = await prepareImageUploadWithNativeGuard(
+        { workspaceId: 'space', files },
+        services,
+        fileServices,
+      );
+      expect(inspectNativeReparsePath.callCount).to.equal(4);
+      const request = sinon.stub().rejects(new Error('controlled POST rejection'));
+      await rejected(
+        applyImageUploadWithNativeGuard({
+          preparation,
+          services,
+          connection: { request },
+          fileServices,
+        }),
+        'controlled POST rejection',
+      );
+      expect(inspectNativeReparsePath.callCount).to.equal(12);
+      expect(request.calledOnce).to.equal(true);
+      inspectNativeReparsePath.resetHistory();
+      inspectNativeReparsePath.rejects(new Error('path guard rejected'));
+      request.resetHistory();
+      await rejected(
+        applyImageUploadWithNativeGuard({
+          preparation,
+          services,
+          connection: { request },
+          fileServices,
+        }),
+        'path guard rejected',
+      );
+      expect(inspectNativeReparsePath.calledOnce).to.equal(true);
+      expect(request.notCalled).to.equal(true);
+    } finally {
+      await context.teardown();
+    }
+  });
+
   it('isolates two real workflows and drains a capped failing batch before teardown', async function () {
     this.timeout(60_000);
     const scenarios = await Promise.all([createScenario(), createScenario()]);
@@ -116,14 +177,14 @@ describe('no-JSON image upload preparation', () => {
     try {
       await runScenarioJobs(
         scenarios.map((scenario, index) => async () => {
-          const options = await execution(scenario);
+          const options = await execution(scenario, true);
           options.request.resolves({
             contentKey: 'key',
             managedContentId: 'parent',
             managedContentVariantId: 'variant',
           });
           if (index === 0) {
-            const result = await applyImageUpload({
+            const result = await applyImageUploadWithNativeGuard({
               ...options,
               preparation: {
                 ...options.preparation,
@@ -133,7 +194,7 @@ describe('no-JSON image upload preparation', () => {
             expect(result.report.state).to.equal('completed');
           } else {
             options.services.getContent.rejects(new Error('checkpoint readback failure'));
-            await rejected(applyImageUpload(options), 'readback');
+            await rejected(applyImageUploadWithNativeGuard(options), 'readback');
             const report = JSON.parse(
               await readFile(path.join(options.reportDirectory, 'image-upload-run.json'), 'utf8'),
             );
@@ -518,7 +579,13 @@ describe('no-JSON image upload preparation', () => {
     });
     options.services.getContent.callsFake(async () => detail());
     (options.services.getVariant as sinon.SinonStub).callsFake(async () => detail());
-    const result = await applyImageUpload(options);
+    const inspectNativeReparsePath = sinon.stub().resolves();
+    const result = await applyImageUploadWithNativeGuard({
+      ...options,
+      fileServices: { inspectNativeReparsePath },
+    });
+    // Apply preflight checks both files, then each remaining suffix before its POST.
+    expect(inspectNativeReparsePath.callCount).to.equal(10);
     expect(options.request.callCount).to.equal(2);
     expect(result.report.operations.map(({ state }) => state)).to.deep.equal([
       'succeeded',
