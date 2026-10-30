@@ -63,7 +63,6 @@ describe('current public documentation', () => {
     for (const claim of [
       'content.retrieve.email-fragment',
       'content.deploy.email-fragment.create',
-      'Explicit destination folder IDs are locally available (unqualified)',
       'portable name resolution is pending',
       'bounded v68+ read-only folder-items investigation',
       'short/empty pages never prove absence or uniqueness',
@@ -84,6 +83,33 @@ describe('current public documentation', () => {
       'bounded v68+ read-only folder-items investigation',
     );
     expect(DeployContent.description).to.include('automatic path resolution is unqualified');
+    for (const description of [readme, DeployContent.description]) {
+      for (const claim of [
+        'bounded installed development-artifact evidence for version 0.22.0 at revision 6c5ca07, API 67.0',
+        'same-org/same-workspace, two-level nested, single-primary default en_US unpublished Draft profile',
+        'full authored body, structural IDs/order, envelope and folder ancestry',
+        'CREATE (one observed POST)',
+        'edited same-folder UPDATE (one observed PUT)',
+        'GET-only unchanged (zero observed mutations)',
+        '15-character folder-ID invocation proved unchanged only, not CREATE or UPDATE',
+        'This evidence binds that prior artifact/profile, not the newly edited artifact',
+        'general capability flags remain unqualified',
+        'It does not qualify cross-org nested deployment, automatic folder resolution, the whole type, lifecycle, rendering or a released package',
+      ])
+        expect(description, claim).to.include(claim);
+      for (const obsolete of [
+        'Explicit destination folder IDs are locally available (unqualified)',
+        'mappings are locally available but unqualified, not installed-artifact or live-qualified',
+        'not installed-artifact or live-qualified',
+      ])
+        expect(description, obsolete).not.to.include(obsolete);
+    }
+    expect(DeployContent.description).to.include(
+      'Contextual ancestry and exact source folderPath must agree',
+    );
+    expect(DeployContent.description).to.include(
+      'existing content must already occupy that exact folder ID',
+    );
     const overview = readme.split('## Content type support')[1].split('## Installation')[0];
     const fragmentRow = overview
       .split('\n')
