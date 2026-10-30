@@ -853,6 +853,34 @@ describe('authoritative Salesforce CLI subprocess envelopes', function () {
     );
   });
 
+  it('keeps logging transport evidence owned by the originating process across inherited imports', async () => {
+    const scenario = await createScenario();
+    const script = `
+      import { spawnSync } from 'node:child_process';
+      import { pathToFileURL } from 'node:url';
+      const { CmsCommand } = await import(pathToFileURL(process.env.SF_PLUGIN_CMS_INSTALLED_ROOT + '/lib/command-base.js'));
+      const connection = await CmsCommand.prototype.getConnection();
+      await connection.request({ method: 'GET', url: '/connect/cms/spaces/space/channels?page=1&pageSize=25' });
+      const child = spawnSync(process.execPath, ['--eval', ''], { env: process.env });
+      if (child.status !== 0) throw new Error(child.stderr.toString());
+    `;
+    await execFileAsync(executable, ['--input-type=module', '--eval', script], {
+      cwd: scenario.directory,
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${harness}`.trim(),
+        SF_PLUGIN_CMS_CONTRACT_CASE: 'logging-table',
+        SF_PLUGIN_CMS_INSTALLED_ROOT: installedPluginRoot,
+      },
+      windowsHide: true,
+    });
+    expect(
+      JSON.parse(await readFile(scenario.file('logging-table-transport.json'), 'utf8')),
+    ).to.deep.equal([
+      { method: 'GET', url: '/connect/cms/spaces/space/channels?page=1&pageSize=25' },
+    ]);
+  });
+
   it('preserves packed canonical channel single-page metadata and aggregate human/logged rows', async () => {
     const common = [
       'cms',

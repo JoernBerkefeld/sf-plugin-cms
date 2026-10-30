@@ -69,7 +69,7 @@ describe('current public documentation', () => {
       'automatic path resolution is unqualified',
       'Explicit IDs bypass enumeration, not ancestry validation',
       'UPDATE never moves content',
-      'General portability, cross-workspace, cross-org, publish, rendering and current combined-artifact qualification remain outstanding',
+      'Beyond the exact installed cross-org root receipt above, general portability, other cross-workspace/cross-org profiles, publish, rendering and later combined-artifact qualification remain outstanding',
       'public re-retrieval with full canonical comparison and the expected derived envelope',
       'Distinct seed and destination identities do not prove every restore or topology profile',
       'Whole-type stable roundtrip and source-workspace-name-independent selection remain evidence-mapping checkpoints',
@@ -104,6 +104,29 @@ describe('current public documentation', () => {
       ])
         expect(description, obsolete).not.to.include(obsolete);
     }
+    for (const description of [readme, DeployContent.description]) {
+      for (const claim of [
+        'Separate installed development-artifact evidence for version 0.22.0 at revision 1f89dbef0933c35d1bf8a3cc3bf8b5476d6d2f6c, API 67.0',
+        'cross-org root, single-primary default en_US unpublished Draft profile',
+        'default Brand and ready Marketing/default graph prerequisites',
+        'Public CREATE, edited body/title UPDATE on the same parent and variant',
+        'complete authored body, structural IDs/order and effective envelope',
+        'independent full native and public canonical readbacks',
+        'unchanged recorded zero observed mutations',
+        'This receipt binds that exact installed artifact/profile, not this later documentation commit',
+        'other layouts, general references, cross-org nested deployment, lifecycle, rendering, the whole type or a released package',
+      ])
+        expect(description, claim).to.include(claim);
+      expect(description).not.to.include(
+        'not current-artifact, cross-workspace, cross-org, rendering or released-package acceptance',
+      );
+    }
+    expect(DeployContent.description).to.include(
+      'Beyond the exact installed cross-org root receipt above, general publish, declared-companion, other cross-workspace/cross-org profiles, rendering and released-package acceptance remain outstanding',
+    );
+    expect(DeployContent.description).to.include(
+      'these receipts do not qualify later combined artifacts or the whole type',
+    );
     expect(DeployContent.description).to.include(
       'Contextual ancestry and exact source folderPath must agree',
     );
@@ -165,8 +188,7 @@ describe('current public documentation', () => {
         'zero-write unchanged',
         'Separate artifact-bound evidence covers tested unpublish and exact DELETE',
         'default local preservation or explicit matching inline JSON removal',
-        'General publish, declared-companion, cross-workspace/cross-org, rendering and released-package acceptance remain outstanding',
-        'these receipts do not qualify the current combined artifact or whole type',
+        'rendering and released-package acceptance remain outstanding',
       ])
         expect(description, claim).to.include(claim);
       for (const obsolete of [
@@ -177,6 +199,12 @@ describe('current public documentation', () => {
       ])
         expect(description, obsolete).not.to.include(obsolete);
     }
+    expect(RetrieveContent.description).to.include(
+      'General publish, declared-companion, cross-workspace/cross-org, rendering and released-package acceptance remain outstanding',
+    );
+    expect(RetrieveContent.description).to.include(
+      'these receipts do not qualify the current combined artifact or whole type',
+    );
     expect(RetrieveContent.description).to.include(
       'Unused workspace-enabled languages are allowed',
     );

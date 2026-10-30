@@ -8,7 +8,14 @@ import { isMainThread } from 'node:worker_threads';
 
 const contractCase = process.env.SF_PLUGIN_CMS_CONTRACT_CASE;
 
-if (contractCase?.startsWith('logging-') && isMainThread) {
+if (
+  contractCase?.startsWith('logging-') &&
+  isMainThread &&
+  (process.env.SF_PLUGIN_CMS_LOGGING_OWNER_PID === undefined ||
+    process.env.SF_PLUGIN_CMS_LOGGING_OWNER_PID === String(process.pid))
+) {
+  // CLI update-check descendants inherit NODE_OPTIONS but do not own this fixture.
+  process.env.SF_PLUGIN_CMS_LOGGING_OWNER_PID = String(process.pid);
   const pluginRoot = process.env.SF_PLUGIN_CMS_INSTALLED_ROOT;
   if (pluginRoot === undefined) throw new Error('Installed plugin root is unavailable');
   const installedRequire = createRequire(path.join(pluginRoot, 'package.json'));
