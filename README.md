@@ -16,15 +16,14 @@ What it is not:
 
 ## Install and sign in
 
-You need Salesforce CLI, Node.js `^22.22.2 || ^24.15.0` and npm. Until this version is
-published, install it from a checkout of this repository:
+You need Salesforce CLI and Node.js `^22.22.2 || ^24.15.0`. Install the plugin from npm:
 
 ```sh
-npm ci
-npm run build
-sf plugins link .
+sf plugins install sf-plugin-cms
 sf cms --help
 ```
+
+The plugin is not signed, so Salesforce CLI asks you to confirm the installation.
 
 Sign in to the org with the usual Salesforce CLI login and pass its alias with `--target-org`
 (or `-o`):
@@ -33,7 +32,7 @@ Sign in to the org with the usual Salesforce CLI login and pass its alias with `
 sf org login web --alias source
 ```
 
-Your user needs access to the CMS workspaces you work with. Linking the plugin does not grant
+Your user needs access to the CMS workspaces you work with. Installing the plugin does not grant
 any org access.
 
 ## Quick start
