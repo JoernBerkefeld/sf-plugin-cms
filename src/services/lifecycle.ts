@@ -17,7 +17,7 @@ import {
   type JsonMutationOptions,
 } from '../transport/json-mutation.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
-import { componentOfFile, type Located } from './deploy-selection.js';
+import { componentOfFile, SELECTOR, type Located } from './deploy-selection.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { localFilePresent, removeLocalFiles, type LocalFileRemoval } from './local-file-removal.js';
 import type { Diagnostics } from './retrieve.js';
@@ -92,7 +92,6 @@ export type LifecycleOptions = {
   onPlanned?: (items: LifecycleItem[]) => void;
 };
 
-const SELECTOR = /^([\w-]+):([A-Za-z0-9][\w-]*)$/u;
 const WILDCARD = /[*?[\]{}]/u;
 
 /**

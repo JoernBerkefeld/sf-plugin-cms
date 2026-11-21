@@ -548,9 +548,10 @@ test('selection: files, companions, folders; bare types and duplicates are refus
   assert.deepEqual(await names(['email:Golden_Email_Code'], [emailDirectory], directory), [
     'email:Golden_Email_Code',
   ]);
-  await assert.rejects(selectSources(['email'], undefined, directory), {
-    code: 'INVALID_SELECTOR',
-  });
+  for (const selector of ['email', 'email:../x', 'email:a.b', 'email:*', 'email:a/b'])
+    await assert.rejects(selectSources([selector], undefined, directory), {
+      code: 'INVALID_SELECTOR',
+    });
   await assert.rejects(selectSources(['email:Nope'], undefined, directory), {
     code: 'SOURCE_NOT_FOUND',
   });

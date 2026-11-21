@@ -412,3 +412,14 @@ test('a download that does not match the stated hash is MEDIA_DOWNLOAD_FAILED', 
     undefined,
   );
 });
+
+test('a variant without a stated file size fails with a clear message', async () => {
+  const native = structuredClone(await nativeOf('image'));
+  const { source } = native.contentBody['sfdc_cms:media'];
+  delete source.size;
+  delete source.fileSize;
+  await assert.rejects(
+    mediaOf({ request: () => {}, instanceUrl: INSTANCE }, imageHandler, native),
+    { code: 'MEDIA_DOWNLOAD_FAILED', message: /states no file size/u },
+  );
+});

@@ -12,13 +12,6 @@ import { isRecord, type RequestConnection } from '../transport/json-request.js';
 export type MediaConnection = RequestConnection &
   Partial<Pick<Connection, 'accessToken' | 'instanceUrl'>>;
 
-type FileHandle =
-  NonNullable<ExperimentalMediaDownloadOptions['openFile']> extends (
-    file: string,
-  ) => Promise<infer H>
-    ? H
-    : never;
-
 /**
  * The uploaded file of a media variant, downloaded into memory through the media transport
  * (instance origin, `/cms/media/` path, file.force.com redirects only). The answer must match
@@ -44,26 +37,18 @@ export async function mediaOf(
       throw new Error('the variant has no media URL');
     const url = new URL(media.url, connection.instanceUrl);
     const fileName = url.searchParams.get('fileName') ?? '';
-    const chunks: Buffer[] = [];
-    const handle = {
-      write: async (chunk: Uint8Array) => {
-        chunks.push(Buffer.from(chunk));
-        return { bytesWritten: chunk.byteLength, buffer: chunk };
-      },
-      close: async () => {},
-    } as unknown as FileHandle;
-    await downloadExperimentalCmsMedia(url, {
+    const size = source.size ?? source.fileSize;
+    if (size === undefined || size === null || size === '')
+      throw new Error('the variant states no file size');
+    const bytes = await downloadExperimentalCmsMedia(url, {
       accessToken: connection.accessToken ?? '',
       instanceUrl: connection.instanceUrl,
       contentType: handler.apiName as ExperimentalMediaDownloadOptions['contentType'],
       expectedMd5: url.searchParams.get('fileHash') ?? '',
       expectedMimeType: String(source.mimeType),
-      expectedSize: Number(source.size ?? source.fileSize),
-      outputFile: fileName,
-      openFile: async () => handle,
-      unlinkFile: async () => {},
+      expectedSize: Number(size),
     });
-    return { fileName, bytes: new Uint8Array(Buffer.concat(chunks)) };
+    return { fileName, bytes };
   } catch (error) {
     throw new CmsError(
       'MEDIA_DOWNLOAD_FAILED',

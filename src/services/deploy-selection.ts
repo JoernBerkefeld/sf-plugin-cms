@@ -16,6 +16,9 @@ export type SelectedSource = {
   files: SourceFiles;
 };
 
+/** A `-m type:ApiName` value naming one component (no dots, paths or wildcards). */
+export const SELECTOR = /^([\w-]+):([A-Za-z0-9][\w-]*)$/u;
+
 /** Where a selected component lives on disk. */
 export type Located = {
   baseDirectory: string;
@@ -159,7 +162,7 @@ async function componentsOfPath(target: string): Promise<Located[]> {
  * @returns {Promise<Located>} Component.
  */
 async function componentOfSelector(value: string, projectDirectory: string): Promise<Located> {
-  const match = /^([\w-]+):(.+)$/u.exec(value.trim());
+  const match = SELECTOR.exec(value.trim());
   if (!match)
     throw new CmsError(
       'INVALID_SELECTOR',

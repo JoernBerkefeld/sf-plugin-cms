@@ -173,28 +173,3 @@ function isSourceDocument(value: unknown): value is SourceDocument {
     !Array.isArray(record.contentBody)
   );
 }
-
-/**
- * API names of the components of one type on disk (from `<ApiName>.<type>.json` files).
- * @param {string} baseDirectory - Project directory.
- * @param {string} workspaceFolder - Workspace folder name.
- * @param {string} type - CLI type name.
- * @returns {Promise<string[]>} Sorted API names; none if the folder does not exist.
- */
-export async function listSourceComponents(
-  baseDirectory: string,
-  workspaceFolder: string,
-  type: string,
-): Promise<string[]> {
-  const suffix = `.${type}.json`;
-  try {
-    const names = await readdir(typeDirectory(baseDirectory, workspaceFolder, type));
-    return names
-      .filter((name) => name.endsWith(suffix) && name.length > suffix.length)
-      .map((name) => name.slice(0, -suffix.length))
-      .toSorted();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-}

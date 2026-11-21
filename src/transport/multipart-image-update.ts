@@ -126,29 +126,3 @@ export async function sendVariantUpdateMultipart(
   );
   return parseUpdatedVariant(data);
 }
-
-/**
- * Replace an Image variant's bytes and metadata in one PUT, sent once.
- * @param {WriteConnection} connection - Org connection.
- * @param {string} variantId - Destination variant ID.
- * @param {VariantUpdateInput} input - JSON part.
- * @param {string} filename - Native file name.
- * @param {Uint8Array} bytes - Image bytes.
- * @param {MultipartUpdateOptions} options - MIME, boundary, timeout and cancellation.
- * @returns {Promise<UpdatedVariant>} Updated variant.
- */
-export function updateImageContent(
-  connection: WriteConnection,
-  variantId: string,
-  input: VariantUpdateInput,
-  filename: string,
-  bytes: Uint8Array,
-  options: MultipartUpdateOptions = {},
-): Promise<UpdatedVariant> {
-  return sendVariantUpdateMultipart(
-    connection,
-    variantId,
-    buildImageUpdateMultipart(input, filename, bytes, options),
-    options,
-  );
-}

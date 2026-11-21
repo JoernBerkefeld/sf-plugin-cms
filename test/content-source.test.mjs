@@ -8,11 +8,7 @@ import { emailHandler } from '../lib/content/handlers/email.js';
 import { emailTemplateHandler } from '../lib/content/handlers/email-template.js';
 import { referencedContentKeys } from '../lib/content/json-projection.js';
 import { cliTypeName, handlerOf, HANDLERS } from '../lib/content/registry.js';
-import {
-  listSourceComponents,
-  readSourceFiles,
-  writeSourceFiles,
-} from '../lib/content/source-files.js';
+import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const golden = path.join(fixtures, 'golden');
@@ -169,8 +165,6 @@ test('writer: unchanged on a second write, stale companions removed, reader retu
   assert.deepEqual([first.outcome, second.outcome], ['retrieved', 'unchanged']);
   const read = await readSourceFiles(root, 'WS', 'email', 'Golden_Email_Code');
   assert.deepEqual(read, files);
-  assert.deepEqual(await listSourceComponents(root, 'WS', 'email'), ['Golden_Email_Code']);
-  assert.deepEqual(await listSourceComponents(root, 'WS', 'image'), []);
   const withoutText = { ...files, companions: { '.html': files.companions['.html'] } };
   const written = await writeSourceFiles(root, 'WS', withoutText);
   assert.equal(written.outcome, 'retrieved');

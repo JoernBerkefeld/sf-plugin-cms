@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, unlinkSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { before, test } from 'node:test';
@@ -560,3 +560,135 @@ test('a throw during the writes keeps the outcomes already reported', async () =
     ],
   );
 });
+
+test('a delete readback that answers neither the variant nor 404 is unknown and stops', async () => {
+  const directory = await projectWith([
+    ['email', 'One'],
+    ['email', 'Two'],
+  ]);
+  const org = fakeOrg([email('One', 1), email('Two', 2)]);
+  const answer = org.answer;
+  let deleted = false;
+  org.answer = (input) => {
+    if (input.method === 'DELETE') deleted = true;
+    else if (deleted && input.url.startsWith('/connect/cms/contents/variants/'))
+      throw salesforceError(500, 'UNKNOWN_EXCEPTION');
+    return answer(input);
+  };
+  const before = await snapshot(directory);
+  const { result, writes, exitCode } = await run(
+    'delete',
+    ['-m', 'email:One', '-m', 'email:Two'],
+    org,
+    directory,
+  );
+  assert.equal(exitCode, 1);
+  assert.deepEqual(outcomes(result), [
+    ['Two', 'unknown'],
+    ['One', 'not-attempted'],
+  ]);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(codes(result.diagnostics.errors), [['email:Two', 'UNKNOWN_OUTCOME']]);
+  assert.deepEqual(await snapshot(directory), before);
+});
+
+test('a throw during the command run still reports every item through the command', async () => {
+  const directory = await projectWith([
+    ['email', 'One'],
+    ['email', 'Three'],
+    ['email', 'Two'],
+  ]);
+  const org = fakeOrg([email('One', 1), email('Three', 3), email('Two', 2)], {
+    onDelete: () => {
+      throw salesforceError(404, 'VARIANT_NOT_FOUND');
+    },
+  });
+  // Recording the first DELETE_ANSWER_IGNORED warning throws inside the run.
+  const sabotaged = class extends Delete {
+    async withOrg(command, flags, empty, body, beforeOrg) {
+      return super.withOrg(
+        command,
+        flags,
+        empty,
+        (orgContext, envelope) => {
+          envelope.diagnostics.warnings.push = () => {
+            throw new Error('unexpected');
+          };
+          return body(orgContext, envelope);
+        },
+        beforeOrg,
+      );
+    }
+  };
+  const saved = commands.delete;
+  commands.delete = sabotaged;
+  let outcome;
+  try {
+    outcome = await run(
+      'delete',
+      ['-m', 'email:One', '-m', 'email:Two', '-m', 'email:Three'],
+      org,
+      directory,
+    );
+  } finally {
+    commands.delete = saved;
+  }
+  const { result, writes, exitCode } = outcome;
+  assert.equal(exitCode, 1);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(
+    result.result.items.map((item) => [item.apiName, item.outcome, item.reason]),
+    [
+      ['Two', 'deleted', undefined],
+      ['Three', 'not-attempted', 'NOT_ATTEMPTED'],
+      ['One', 'not-attempted', 'NOT_ATTEMPTED'],
+    ],
+  );
+  assert.deepEqual(codes(result.diagnostics.errors), [[undefined, 'REQUEST_FAILED']]);
+});
+
+test(
+  'a read-only local file after a confirmed delete keeps it deleted and reports the removal',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Node removes read-only files on Windows'
+        : process.getuid?.() === 0 && 'root can remove files from a read-only folder',
+  },
+  async () => {
+    const directory = await projectWith([['email', 'One']]);
+    // Files in a read-only folder cannot be unlinked.
+    const folder = path.join(directory, 'cms', WS, 'email');
+    await chmod(folder, 0o555);
+    try {
+      const { result, writes, exitCode } = await run(
+        'delete',
+        ['-m', 'email:One'],
+        org1(),
+        directory,
+      );
+      assert.equal(exitCode, 1);
+      assert.equal(writes.length, 1);
+      assert.deepEqual(outcomes(result), [['One', 'deleted']]);
+      const removals = result.result.items[0].removedLocalFiles;
+      assert.ok(
+        removals.some((file) => file.outcome === 'failed' && /^E[A-Z]+$/u.test(file.code)),
+        JSON.stringify(removals),
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            codes(result.diagnostics.errors).map(([component, code]) => `${component} ${code}`),
+          ),
+        ],
+        ['email:One LOCAL_FILE_REMOVAL_FAILED'],
+      );
+    } finally {
+      await chmod(folder, 0o755);
+    }
+  },
+);
+
+function org1() {
+  return fakeOrg([email('One', 1)]);
+}

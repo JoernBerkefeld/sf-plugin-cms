@@ -2,13 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   buildMediaCreateMultipart,
-  createAudioContent,
-  createImageContent,
+  createMediaContent,
 } from '../lib/transport/multipart-image-create.js';
 import {
   buildImageUpdateMultipart,
   sendVariantUpdateMultipart,
-  updateImageContent,
 } from '../lib/transport/multipart-image-update.js';
 import { buildDocumentUpdateMultipart } from '../lib/transport/multipart-document-update.js';
 import { buildAudioUpdateMultipart } from '../lib/transport/multipart-audio-update.js';
@@ -116,15 +114,26 @@ test('create and update send one request each and read the identities back', asy
           managedContentVariantId: '9Ps1',
         },
   );
-  const created = await createImageContent(connection, input, 'logo.png', bytes, {
-    mimeType: 'image/png',
-  });
+  const created = await createMediaContent(
+    'sfdc_cms__image',
+    connection,
+    input,
+    'logo.png',
+    bytes,
+    {
+      mimeType: 'image/png',
+    },
+  );
   assert.deepEqual(created, {
     contentKey: 'MC1',
     managedContentId: '20Y1',
     managedContentVariantId: '9Ps1',
   });
-  const updated = await updateImageContent(connection, '9Ps1', { title: 'T' }, 'logo.png', bytes);
+  const updated = await sendVariantUpdateMultipart(
+    connection,
+    '9Ps1',
+    buildImageUpdateMultipart({ title: 'T' }, 'logo.png', bytes),
+  );
   assert.equal(updated.managedContentVariantId, '9Ps1');
   assert.equal(connection.calls.length, 2);
   assert.equal(connection.calls[0].input.url, '/connect/cms/contents');
@@ -140,7 +149,9 @@ test('create and update send one request each and read the identities back', asy
 test('an unreadable answer after sending is reported as sent, outcome unknown', async () => {
   const connection = fakeConnection(() => ({ unexpected: true }));
   await assert.rejects(
-    createAudioContent(connection, input, 'a.mp3', bytes, { mimeType: 'audio/mpeg' }),
+    createMediaContent('sfdc_cms__audio', connection, input, 'a.mp3', bytes, {
+      mimeType: 'audio/mpeg',
+    }),
     (error) => error.requestSent === true && error.statusObserved === false,
   );
   await assert.rejects(

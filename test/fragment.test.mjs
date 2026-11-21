@@ -611,3 +611,31 @@ test('a reference cycle is refused before any write, naming the components', asy
     );
   }
 });
+
+test('a folder create without an answer leaves the component unknown and writes no content', async () => {
+  const files = await goldenFragment();
+  const directory = await projectWith([files]);
+  const org = fakeOrg({ variants: [destinationImage] });
+  const answer = org.answer;
+  let folderPosts = 0;
+  org.answer = (input) => {
+    if (input.url === '/connect/cms/folders' && input.method === 'POST') {
+      folderPosts += 1;
+      if (folderPosts === 2) throw new Error('socket hang up');
+    }
+    return answer(input);
+  };
+  const { result, writes, exitCode } = await deploy(FRAGMENT, org, directory);
+  assert.equal(exitCode, 1);
+  assert.deepEqual(outcomes(result), [['Golden_Fragment', 'unknown']]);
+  assert.equal(result.result.items[0].reason, 'UNKNOWN_OUTCOME');
+  assert.deepEqual(
+    result.result.items[0].folders.map((folder) => [folder.path, folder.outcome]),
+    [['/Golden_Folder', 'created']],
+  );
+  assert.deepEqual(
+    writes.map((call) => call.input.url),
+    ['/connect/cms/folders', '/connect/cms/folders'],
+  );
+  assert.equal(result.diagnostics.errors[0].code, 'UNKNOWN_OUTCOME');
+});
