@@ -28,7 +28,8 @@ import {
 import type { MultipartBody } from '../transport/multipart.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
 import type { SelectedSource } from './deploy-selection.js';
-import { folderIdCache, folderPathCache } from './folders.js';
+import { checkDataGraphReferences, dataGraphReferences } from './data-graph-check.js';
+import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { mediaOf } from './media.js';
 import { referenceResolver, type Diagnostics } from './retrieve.js';
@@ -63,6 +64,11 @@ export type DeployedItem = {
   dependencies?: string[];
   /** Code of the reason for blocked, failed, unknown or not-attempted. */
   reason?: string;
+  /**
+   * Folders of folderPath that a create needs: `create` in preview (and in a blocked run),
+   * `created` with the new folder ID once the deploy created it.
+   */
+  folders?: Array<{ path: string; outcome: 'create' | 'created'; id?: string }>;
   /** Local `<ApiName>.<type>.json`. */
   path: string;
   managedContentId?: string;
@@ -89,8 +95,6 @@ type Planned = {
   source: SelectedSource;
   item: DeployedItem;
   payload?: DeployPayload;
-  /** Destination folder for a create. */
-  folderId?: string;
 };
 
 type UpdateBuilder = (
@@ -213,7 +217,7 @@ export async function deployComponents(
 ): Promise<DeployedItem[]> {
   const { diagnostics } = options;
   const folderPath = folderPathCache(connection, workspace);
-  const folderId = folderIdCache(connection, workspace);
+  const folders = folderPlanner(connection, workspace);
   const references = referenceResolver(connection, workspace);
   // Destination content key per `type:ApiName` (null = absent); filled by lookups and creates.
   const destinationKeys = new Map<string, string | null>();
@@ -322,7 +326,13 @@ export async function deployComponents(
         item.changes = changes;
         action = 'update';
       } else {
-        plan.folderId = await folderId(payload.folderPath);
+        const { missing } = await folders.plan(payload.folderPath);
+        const existing = payload.folderPath.length - missing.length;
+        if (missing.length > 0)
+          item.folders = missing.map((_, index) => ({
+            path: `/${payload.folderPath.slice(0, existing + index + 1).join('/')}`,
+            outcome: 'create',
+          }));
         action = 'create';
       }
       const wanted = handler.references(payload).filter((r) => referenceKey(r) !== component);
@@ -333,6 +343,15 @@ export async function deployComponents(
         throw new CmsError(
           'REFERENCE_NOT_IN_DESTINATION',
           `References ${unresolved.map((r) => referenceKey(r)).join(', ')}, which workspace ${workspace.apiName ?? workspace.id} does not have`,
+        );
+      const graphBlocks = await checkDataGraphReferences(
+        connection,
+        dataGraphReferences(payload.contentBody),
+      );
+      if (graphBlocks.length > 0)
+        throw new CmsError(
+          graphBlocks[0].code,
+          graphBlocks.map((block) => block.message).join('; '),
         );
       if (action === 'create') plannedCreates.add(component);
       if (missing.length > 0) {
@@ -357,7 +376,7 @@ export async function deployComponents(
 
   // Write.
   let stopped = false;
-  for (const { source, item, payload, folderId: createFolder } of plans) {
+  for (const { source, item, payload } of plans) {
     if (item.outcome === 'unchanged') continue;
     if (stopped) {
       Object.assign(item, { outcome: 'not-attempted', reason: 'NOT_ATTEMPTED' });
@@ -379,6 +398,17 @@ export async function deployComponents(
       }) as Record<string, unknown>;
       const envelope = envelopeOf(payload!, contentBody);
       const { file } = payload!;
+      let createFolder: string | undefined;
+      if (action === 'create') {
+        const created: CreatedFolder[] = [];
+        try {
+          createFolder = await folders.ensure(payload!.folderPath, created, options.writeOptions);
+        } finally {
+          if (created.length > 0)
+            item.folders = created.map((folder) => ({ ...folder, outcome: 'created' }));
+          else delete item.folders;
+        }
+      }
       let response: unknown;
       if (file && action === 'create') {
         response = await createMediaContent(

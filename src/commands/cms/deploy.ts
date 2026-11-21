@@ -9,7 +9,7 @@ import type { JsonMutationOptions } from '../../transport/json-mutation.js';
 
 export default class Deploy extends CmsCommand<DeployResult> {
   public static readonly summary = 'Deploy local CMS component files into one workspace.';
-  public static readonly description = `Creates each named component in the workspace, or updates its default variant when a component with the same API name exists; an unchanged component is not written. References and folders are resolved by name in the workspace. Nothing is written if a component is blocked; the deploy stops at the first failed write. Deploy never publishes. Types: ${HANDLERS.map((handler) => handler.type).join(', ')}.`;
+  public static readonly description = `Creates each named component in the workspace, or updates its default variant when a component with the same API name exists; an unchanged component is not written. References and folders are resolved by name in the workspace; missing folders of a new component's folderPath are created (preview lists them). Data graph providers must name a data space and data graph the org has. Nothing is written if a component is blocked; the deploy stops at the first failed write. Deploy never publishes. Types: ${HANDLERS.map((handler) => handler.type).join(', ')}.`;
   public static readonly examples = [
     '<%= config.bin %> <%= command.id %> -m email:Welcome_Email --workspace Default_Content_Workspace -o my-org --preview',
     '<%= config.bin %> <%= command.id %> -d cms/Default_Content_Workspace/email --workspace Cloud_Kicks -o my-org',
@@ -69,6 +69,9 @@ export default class Deploy extends CmsCommand<DeployResult> {
         item.changes?.length ? `changes: ${item.changes.join(', ')}` : undefined,
         item.dependencies?.length
           ? `${item.action} after: ${item.dependencies.join(', ')}`
+          : undefined,
+        item.folders?.length
+          ? `folder ${item.folders[0].outcome}: ${item.folders.map((folder) => (folder.id ? `${folder.path} (${folder.id})` : folder.path)).join(', ')}`
           : undefined,
       ].filter(Boolean);
       this.log(

@@ -10,8 +10,10 @@ export const hints: Readonly<Record<string, string>> = {
     'A --source-dir path must be a cms/ folder, a folder below it, or a component file cms/<workspace>/<type>/<ApiName>.<type>.json (or one of its companions).',
   REFERENCE_NOT_IN_DESTINATION:
     'The component references another component that the destination workspace does not have and this deploy does not create. Deploy that component first or add it to this deploy, then rerun.',
-  FOLDER_NOT_FOUND:
-    'The folder in folderPath does not exist in the destination workspace. Create it in the workspace (or change folderPath), then rerun.',
+  DATA_SPACE_NOT_IN_DESTINATION:
+    'A data graph provider of the component names a data space the destination org does not have. Create the data space there (or change the provider), then rerun.',
+  DATA_GRAPH_NOT_IN_DESTINATION:
+    'A data graph provider of the component names a data graph the destination data space does not have. Deploy the data graph there first (for example with sf-plugin-data), then rerun.',
   FOLDER_AMBIGUOUS:
     'Several folders in the destination have that name at the same level, so the plugin cannot tell which one to use. Rename one of them in the workspace, then rerun.',
   FOLDER_NOT_MOVED:

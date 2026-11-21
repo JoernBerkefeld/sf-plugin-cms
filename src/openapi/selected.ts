@@ -1,8 +1,42 @@
 import type { OperationDescriptor } from './generate.js';
 
-// Operations the bundled v67 schema does not contain; described by hand (folder items from the
-// v68 reference, SOQL from the REST API: the only complete content inventory).
+// Operations the bundled v67 schema does not contain; described by hand (folder items and folder
+// create from the v68 reference, SOQL from the REST API: the only complete content inventory, the
+// Data 360 data space list and data graph read for the data graph provider check).
 export const SUPPLEMENTAL_OPERATIONS: readonly OperationDescriptor[] = [
+  {
+    localKey: 'data-graph.get',
+    method: 'GET',
+    operationId: 'local:data-graph.get',
+    parameters: [{ location: 'path', name: 'dataGraphName', required: true, type: 'string' }],
+    path: '/ssot/data-graphs/{dataGraphName}',
+    requestBodyMediaTypes: [],
+    requestBodyPresent: false,
+    responses: [],
+  },
+  {
+    localKey: 'data-space.list',
+    method: 'GET',
+    operationId: 'local:data-space.list',
+    parameters: [
+      { location: 'query', name: 'batchSize', required: false, type: 'integer' },
+      { location: 'query', name: 'offset', required: false, type: 'integer' },
+    ],
+    path: '/ssot/data-spaces',
+    requestBodyMediaTypes: [],
+    requestBodyPresent: false,
+    responses: [],
+  },
+  {
+    localKey: 'folder.create',
+    method: 'POST',
+    operationId: 'local:folder.create',
+    parameters: [],
+    path: '/connect/cms/folders',
+    requestBodyMediaTypes: ['application/json'],
+    requestBodyPresent: true,
+    responses: [],
+  },
   {
     localKey: 'folder.items.list',
     method: 'GET',

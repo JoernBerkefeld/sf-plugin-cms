@@ -132,6 +132,58 @@ export const SELECTED_OPERATIONS = [
     ]
   },
   {
+    "localKey": "data-graph.get",
+    "method": "GET",
+    "operationId": "local:data-graph.get",
+    "parameters": [
+      {
+        "location": "path",
+        "name": "dataGraphName",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "path": "/ssot/data-graphs/{dataGraphName}",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": []
+  },
+  {
+    "localKey": "data-space.list",
+    "method": "GET",
+    "operationId": "local:data-space.list",
+    "parameters": [
+      {
+        "location": "query",
+        "name": "batchSize",
+        "required": false,
+        "type": "integer"
+      },
+      {
+        "location": "query",
+        "name": "offset",
+        "required": false,
+        "type": "integer"
+      }
+    ],
+    "path": "/ssot/data-spaces",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": []
+  },
+  {
+    "localKey": "folder.create",
+    "method": "POST",
+    "operationId": "local:folder.create",
+    "parameters": [],
+    "path": "/connect/cms/folders",
+    "requestBodyMediaTypes": [
+      "application/json"
+    ],
+    "requestBodyPresent": true,
+    "responses": []
+  },
+  {
     "localKey": "folder.get",
     "method": "GET",
     "operationId": "getManagedContentSpaceFolder",

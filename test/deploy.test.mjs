@@ -496,7 +496,7 @@ test('references to a component the same deploy creates: planned first, then rew
   assert.deepEqual(result.diagnostics.warnings, []);
 });
 
-test('folderPath resolves by name below the root; a missing folder blocks', async () => {
+test('folderPath resolves by name below the root; two folders of one name block', async () => {
   const code = await goldenFiles('email', 'Golden_Email_Code');
   const nested = { ...code, document: { ...code.document, folderPath: ['A', 'B'] } };
   const directory = await projectWith([nested]);
@@ -510,15 +510,22 @@ test('folderPath resolves by name below the root; a missing folder blocks', asyn
     directory,
   );
   assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].folders, undefined);
   assert.equal(JSON.parse(writes[0].input.body).contentSpaceOrFolderId, '9Pu00000000000BAAA');
-  const missing = await deploy(
+  const twice = {
+    [workspace.rootFolderId]: [
+      { id: '9Pu00000000000AAAA', name: 'A' },
+      { id: '9Pu00000000000CAAA', name: 'A' },
+    ],
+  };
+  const ambiguous = await deploy(
     ['-m', 'email:Golden_Email_Code'],
-    fakeOrg({ folders: { [workspace.rootFolderId]: [] } }),
+    fakeOrg({ folders: twice }),
     directory,
   );
-  assert.deepEqual(outcomes(missing.result), [['Golden_Email_Code', 'blocked']]);
-  assert.equal(missing.result.diagnostics.errors[0].code, 'FOLDER_NOT_FOUND');
-  assert.equal(missing.writes.length, 0);
+  assert.deepEqual(outcomes(ambiguous.result), [['Golden_Email_Code', 'blocked']]);
+  assert.equal(ambiguous.result.diagnostics.errors[0].code, 'FOLDER_AMBIGUOUS');
+  assert.equal(ambiguous.writes.length, 0);
 });
 
 test('selection: files, companions, folders; bare types and duplicates are refused', async () => {

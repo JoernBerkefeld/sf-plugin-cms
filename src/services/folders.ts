@@ -5,6 +5,8 @@ import {
   requestJson,
   type RequestConnection,
 } from '../transport/json-request.js';
+import { requestJsonMutation, type JsonMutationOptions } from '../transport/json-mutation.js';
+import type { WriteConnection } from '../transport/one-shot-connection.js';
 import type { CmsWorkspace } from './workspaces.js';
 
 /**
@@ -115,47 +117,95 @@ export async function childFolders(
   }
 }
 
+const where = (folderPath: string[], depth: number): string =>
+  `/${folderPath.slice(0, depth + 1).join('/')}`;
+
+/** Where a logical folder path stands in the destination: the deepest existing folder and the names below it that do not exist yet ([] = the path exists; `folderId` is its folder). */
+export type FolderPlan = { folderId: string; missing: string[] };
+
+/** A folder a deploy created: its logical path (`/A/B`) and ID. */
+export type CreatedFolder = { path: string; id: string };
+
+/** Plans and creates the folders of logical folder paths in one workspace, cached per run. */
+export type FolderPlanner = {
+  /** Walk the path by name; FOLDER_AMBIGUOUS when a name matches several folders. */
+  plan(folderPath: string[]): Promise<FolderPlan>;
+  /**
+   * The folder ID of the path, creating each missing folder (`POST /connect/cms/folders`); every
+   * folder created is pushed to `created` as soon as Salesforce answered.
+   */
+  ensure(
+    folderPath: string[],
+    created: CreatedFolder[],
+    options?: JsonMutationOptions,
+  ): Promise<string>;
+};
+
 /**
- * Folder ID of a logical folder path in a workspace, found by walking the tree from the root by
- * name. Cached per run.
- * @param {RequestConnection} connection - Org connection.
+ * Folder planner of a workspace: walks the destination tree from the root by name (exact names,
+ * System folders skipped) and creates missing folders one level at a time. A folder created in
+ * the run is found by later lookups of the same run.
+ * @param {RequestConnection & WriteConnection} connection - Org connection.
  * @param {CmsWorkspace} workspace - Destination workspace.
- * @returns {(folderPath: string[]) => Promise<string>} Lookup; FOLDER_NOT_FOUND or
- *   FOLDER_AMBIGUOUS when a name does not match exactly one folder.
+ * @returns {FolderPlanner} Planner.
  */
-export function folderIdCache(
-  connection: RequestConnection,
+export function folderPlanner(
+  connection: RequestConnection & WriteConnection,
   workspace: CmsWorkspace,
-): (folderPath: string[]) => Promise<string> {
+): FolderPlanner {
   const children = new Map<string, Promise<ChildFolder[]>>();
-  return async (folderPath) => {
+  const listOf = (folderId: string): Promise<ChildFolder[]> => {
+    const key = folderId.slice(0, 15);
+    let list = children.get(key);
+    if (!list) {
+      list = childFolders(connection, folderId);
+      children.set(key, list);
+    }
+    return list;
+  };
+  const plan = async (folderPath: string[]): Promise<FolderPlan> => {
     if (!workspace.rootFolderId)
       throw new CmsError('UNEXPECTED_RESPONSE', `Workspace ${workspace.id} has no root folder`);
     let current = workspace.rootFolderId;
     for (const [depth, name] of folderPath.entries()) {
-      const key = current.slice(0, 15);
-      let list = children.get(key);
-      if (!list) {
-        list = childFolders(connection, current);
-        children.set(key, list);
-      }
-      const listed = await list;
+      const listed = await listOf(current);
       const matches = listed.filter(
         (folder) => folder.name === name && folder.folderType !== 'System',
       );
-      const where = `/${folderPath.slice(0, depth + 1).join('/')}`;
-      if (matches.length === 0)
-        throw new CmsError(
-          'FOLDER_NOT_FOUND',
-          `Folder ${where} does not exist in workspace ${workspace.apiName ?? workspace.id}`,
-        );
+      if (matches.length === 0) return { folderId: current, missing: folderPath.slice(depth) };
       if (matches.length > 1)
         throw new CmsError(
           'FOLDER_AMBIGUOUS',
-          `${matches.length} folders are named ${where} in workspace ${workspace.apiName ?? workspace.id}`,
+          `${matches.length} folders are named ${where(folderPath, depth)} in workspace ${workspace.apiName ?? workspace.id}`,
         );
       current = matches[0].id;
     }
+    return { folderId: current, missing: [] };
+  };
+  const ensure: FolderPlanner['ensure'] = async (folderPath, created, options = {}) => {
+    const planned = await plan(folderPath);
+    let current = planned.folderId;
+    const existing = folderPath.length - planned.missing.length;
+    for (const [index, name] of planned.missing.entries()) {
+      const { data } = await requestJsonMutation<unknown>(
+        connection,
+        getSelectedOperation('folder.create'),
+        { name, parentFolderId: current },
+        {},
+        options,
+      );
+      if (!isRecord(data) || typeof data.id !== 'string')
+        throw new CmsError('UNEXPECTED_RESPONSE', `Folder ${name} was created without an ID`);
+      const listed = await listOf(current);
+      children.set(
+        current.slice(0, 15),
+        Promise.resolve([...listed, { id: data.id, name, folderType: 'Standard' }]),
+      );
+      children.set(data.id.slice(0, 15), Promise.resolve([]));
+      created.push({ path: where(folderPath, existing + index), id: data.id });
+      current = data.id;
+    }
     return current;
   };
+  return { plan, ensure };
 }

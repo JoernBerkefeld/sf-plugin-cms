@@ -56,7 +56,7 @@ before(async () => {
 test('media types are registered after brand, before the email types', () => {
   assert.deepEqual(
     HANDLERS.map((handler) => handler.type),
-    ['brand', 'image', 'document', 'audio', 'email-template', 'email'],
+    ['brand', 'image', 'document', 'audio', 'email-fragment', 'email-template', 'email'],
   );
   for (const [, handler] of CASES) assert.equal(handler.transport, 'multipart');
 });

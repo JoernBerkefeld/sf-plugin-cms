@@ -1,0 +1,164 @@
+{
+  "apiName": "Golden_Fragment",
+  "contentBody": {
+    "backgroundColor": "#f3f3f3",
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:colorScheme": "{!$brand.colorScheme}",
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "lightning:padding": "{!$brand.spacing.none}",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "654e5469-b08b-4039-af42-63200975beb0",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "24de09c8-8740-4f2e-923f-89213d94dda5",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "fae3ad79-b8a4-4fda-a008-c71543a0f005",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 50
+                      }
+                    },
+                    "imageInfo": {
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENIAAAAAAAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENIAAAAAAAAAAAAAAAAAAA?fileName=golden-image.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "4c2c7c7a-d0fb-4ca6-b91a-941c12ad1f27",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "start",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}",
+                    "text": "Golden fragment paragraph"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "9dad018e-2fab-4264-bdd0-951d97372601",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:title": "Golden Fragment",
+    "sfdc_cms:urlName": "golden-fragment",
+    "sfdc_cms:variants": []
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__emailFragment--Golden_Fragment",
+  "contentKey": "MCGOLDENFAAAAAAAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__emailFragment"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-11-21T12:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-11-21T12:00:00.000Z",
+  "managedContentId": "20Y000000000020AAA",
+  "managedContentVariantId": "9Ps000000000020AAA",
+  "managedContentVersionId": "5OU000000000020AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden Fragment",
+  "urlName": "golden-fragment"
+}

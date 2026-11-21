@@ -1,5 +1,6 @@
 import { CmsError } from '../errors/registry.js';
 import { brandHandler } from './handlers/brand.js';
+import { emailFragmentHandler } from './handlers/email-fragment.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
 import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
@@ -11,6 +12,7 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   imageHandler,
   documentHandler,
   audioHandler,
+  emailFragmentHandler,
   emailTemplateHandler,
   emailHandler,
 ];
