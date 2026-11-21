@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+node scripts/check-temporary.mjs
+if ! git diff --quiet ORIG_HEAD HEAD -- package-lock.json; then
+  npm install --no-workspaces
+fi

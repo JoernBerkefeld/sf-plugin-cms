@@ -1,0 +1,88 @@
+{
+  "name": "sf-plugin-cms",
+  "version": "0.23.0-dev",
+  "description": "Salesforce CLI plugin to retrieve and deploy Marketing Cloud CMS content",
+  "author": {
+    "name": "Jörn Berkefeld",
+    "email": "joern.berkefeld@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoernBerkefeld/sf-plugin-cms.git"
+  },
+  "homepage": "https://github.com/JoernBerkefeld/sf-plugin-cms#readme",
+  "bugs": {
+    "url": "https://github.com/JoernBerkefeld/sf-plugin-cms/issues"
+  },
+  "keywords": [
+    "salesforce",
+    "salesforcedx",
+    "sf",
+    "sf-plugin",
+    "marketing-cloud",
+    "cms"
+  ],
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "oclif": {
+    "bin": "sf",
+    "commands": "./lib/commands",
+    "topicSeparator": " ",
+    "topics": {
+      "cms": {
+        "description": "Marketing Cloud CMS content: list workspaces and channels, retrieve and deploy components."
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run compile",
+    "compile": "tsc -p tsconfig.json",
+    "lint": "eslint src test scripts bin eslint.config.js --max-warnings 0",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "generate": "npm run compile && node scripts/generate-openapi.mjs",
+    "generate:check": "npm run compile && node scripts/generate-openapi.mjs --check",
+    "test": "npm run compile && node scripts/run-tests.mjs",
+    "prepare": "husky || true",
+    "prepack": "npm run compile"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@jsforce/jsforce-node": "3.10.16",
+    "@oclif/core": "4.13.2",
+    "@salesforce/core": "8.31.3",
+    "@salesforce/sf-plugins-core": "12.2.0",
+    "winston": "3.19.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@types/node": "22.19.0",
+    "eslint": "9.39.4",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-jsdoc": "54.7.0",
+    "eslint-plugin-prettier": "5.5.6",
+    "eslint-plugin-unicorn": "64.0.0",
+    "globals": "17.9.0",
+    "husky": "9.1.7",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "yaml": "2.9.0"
+  }
+}

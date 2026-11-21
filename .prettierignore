@@ -1,0 +1,7 @@
+node_modules
+lib
+coverage
+logs
+package-lock.json
+resources
+src/generated

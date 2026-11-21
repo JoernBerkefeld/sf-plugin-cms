@@ -1,0 +1,22 @@
+name: Code test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.22.2', '24.21.0']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-workspaces
+      - run: npm run lint
+      - run: npm test
+      - run: npm run generate:check
+      - run: npm pack --dry-run --json
