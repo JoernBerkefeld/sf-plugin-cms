@@ -196,7 +196,7 @@ test('registry: CLI names follow the content type; unknown types are refused', (
   assert.equal(cliTypeName('sfdc_cms__image'), 'image');
   assert.equal(cliTypeName('custom__thing'), 'custom__thing');
   for (const handler of HANDLERS) assert.equal(cliTypeName(handler.apiName), handler.type);
-  assert.throws(() => handlerOf('landing-page'), { code: 'UNKNOWN_TYPE' });
+  assert.throws(() => handlerOf('fragment'), { code: 'UNKNOWN_TYPE' });
 });
 
 test('title and urlName live once: an envelope copy of the body value is refused', async () => {
