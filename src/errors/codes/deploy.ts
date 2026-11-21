@@ -10,6 +10,10 @@ export const hints: Readonly<Record<string, string>> = {
     'A --source-dir path must be a cms/ folder, a folder below it, or a component file cms/<workspace>/<type>/<ApiName>.<type>.json (or one of its companions).',
   REFERENCE_NOT_IN_DESTINATION:
     'The component references another component that the destination workspace does not have and this deploy does not create. Deploy that component first or add it to this deploy, then rerun.',
+  RECORD_REFERENCE_NOT_FOUND:
+    'The component points to a Salesforce record (such as a Campaign) by name, and the destination org has no record of that name. Create the record there, or change the name in the file, then rerun.',
+  RECORD_REFERENCE_AMBIGUOUS:
+    'The component points to a Salesforce record (such as a Campaign) by name, and the destination org has more than one record of that name. Rename the extra records so the name is unique, then rerun.',
   DEPENDENCY_CYCLE:
     'The components named in the message reference each other in a circle, so none of them can be created first. Remove one of the references, deploy, then add it back with a second deploy.',
   DATA_SPACE_NOT_IN_DESTINATION:

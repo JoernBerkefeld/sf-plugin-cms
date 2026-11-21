@@ -12,6 +12,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Only the default variant is retrieved, deployed, published or unpublished; the other variants named in the message stay as they are in the org.',
   REFERENCE_UNRESOLVED:
     'The body references a content key that is not a component of this workspace; it was kept as the native content key. A deploy into another workspace cannot resolve it.',
+  RECORD_REFERENCE_UNRESOLVED:
+    'The body holds a Salesforce record ID (such as a Campaign) that was not found in the org; it was kept as the ID. A deploy into another org cannot resolve it.',
   INVALID_FILE_NAME:
     'The API name cannot be used as a file name. Rename the component in the CMS workspace to letters, digits, underscores or hyphens, then rerun.',
   MEDIA_FILE_MISSING:

@@ -602,3 +602,9 @@ Links behind it: everything may reference Brand and Image (`contentKey`); landin
 3. **Data graph provider without `dataspace` (Expression).** `data-graph-check.ts` skips such providers today, so a missing graph is not caught. Smallest change: check the graph by name when `dataspace` is absent (or treat it as `default`, after a live check of what Salesforce assumes).
 
 Not K4 (handler-level or checkpoints): VCF `vcfData` versus file (X1); Form Handler mapping outside the body (K5); preference page create publishing (K1); messaging publish side effects (K2); the four blocked types (K3).
+
+### 21.9 K4 implemented (2026-11-21)
+
+- **Reference forms.** Besides `contentKey`, every type now recognises `definition: "@cms/<key>"` anywhere and the bare key in `sfdc_cms:template.definition`. The file holds `{ type, apiName, format }` (`format` `@cms/<contentKey>` or `<contentKey>`); deploy writes the destination key back in that format. They count for references, deploy order and `REFERENCE_NOT_IN_DESTINATION`. A handler adds forms with `referenceDeclarations.forms`.
+- **Record references.** A handler declares body paths holding record IDs (`referenceDeclarations.records`, such as `{ path: ['campaign'], sobject: 'Campaign' }`). Retrieve reads the name by ID (`SELECT Id, Name FROM Campaign WHERE Id IN (…)`) and writes `{ sobject, name }`; deploy reads the ID by name (`… WHERE Name = '…' LIMIT 2`) and refuses before any write: none `RECORD_REFERENCE_NOT_FOUND`, several `RECORD_REFERENCE_AMBIGUOUS`. An ID without a record stays and warns `RECORD_REFERENCE_UNRESOLVED`. Live, read-only: the source tracked link's Campaign `701aj…` is "All Email Marketing"; by name it is one record in each org (source `701aj…`, target `701fj…`, different IDs); the source ID does not exist in the target. SOQL `Name =` is case-insensitive.
+- **Data graph without `dataspace`** (Expression) is checked by graph name in `default`.

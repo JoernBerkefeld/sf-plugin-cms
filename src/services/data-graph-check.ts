@@ -9,7 +9,8 @@ import {
 
 /**
  * A data graph provider of a body (`sfdc_cms__dataGraphDataProvider`): the names exactly as
- * Salesforce stores them (a data graph outside `default` carries the data space prefix).
+ * Salesforce stores them (a data graph outside `default` carries the data space prefix). A
+ * provider without `dataspace` (Expression) counts as `default`.
  */
 export type DataGraphReference = { dataGraphApiName: string; dataspace: string };
 
@@ -20,12 +21,14 @@ export type DataGraphBlock = {
 };
 
 const PROVIDER = 'sfdc_cms__dataGraphDataProvider';
+const DEFAULT_DATA_SPACE = 'default';
 // Data spaces per page of `GET /ssot/data-spaces`; the list ends when `totalSize` names are read.
 const DATA_SPACE_PAGE_SIZE = 50;
 
 /**
  * Every data graph provider in a body (`definition: sfdc_cms__dataGraphDataProvider` with
- * `attributes.dataGraphApiName` and `attributes.dataspace`), distinct, in document order.
+ * `attributes.dataGraphApiName` and `attributes.dataspace`, or no `dataspace`, which means
+ * `default`), distinct, in document order.
  * @param {unknown} body - Payload body.
  * @returns {DataGraphReference[]} References.
  */
@@ -42,9 +45,10 @@ export function dataGraphReferences(body: unknown): DataGraphReference[] {
       value.definition === PROVIDER &&
       isRecord(attributes) &&
       typeof attributes.dataGraphApiName === 'string' &&
-      typeof attributes.dataspace === 'string'
+      (typeof attributes.dataspace === 'string' || attributes.dataspace === undefined)
     ) {
-      const { dataGraphApiName, dataspace } = attributes;
+      const { dataGraphApiName } = attributes;
+      const dataspace = (attributes.dataspace as string | undefined) ?? DEFAULT_DATA_SPACE;
       found.set(`${dataspace}/${dataGraphApiName}`, { dataGraphApiName, dataspace });
     }
     for (const child of Object.values(value)) visit(child);

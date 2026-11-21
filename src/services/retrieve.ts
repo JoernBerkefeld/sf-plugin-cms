@@ -1,4 +1,8 @@
-import { referencedContentKeys } from '../content/json-projection.js';
+import {
+  recordIdsOf,
+  referencedContentKeys,
+  referenceFormsOf,
+} from '../content/json-projection.js';
 import { cliTypeName, handlerOf, HANDLERS } from '../content/registry.js';
 import { writeSourceFiles } from '../content/source-files.js';
 import type { ContentTypeHandler, LogicalReference, NativeVariant } from '../content/types.js';
@@ -12,6 +16,7 @@ import {
 import { folderPathCache, sameId } from './folders.js';
 import { inventoryOf, variantsByContentKey, type InventoryItem } from './inventory.js';
 import { mediaOf, type MediaConnection } from './media.js';
+import { recordResolver } from './record-references.js';
 import type { CmsWorkspace } from './workspaces.js';
 
 // Variant reads in flight at once.
@@ -151,6 +156,7 @@ export async function retrieveComponents(
   const workspaceFolder = workspace.apiName ?? workspace.id;
   const folderPath = folderPathCache(connection, workspace);
   const references = referenceResolver(connection, workspace);
+  const records = recordResolver(connection);
   const items: RetrievedItem[] = [];
   for (const { handler, apiNames } of selection) {
     let inventory: InventoryItem[];
@@ -213,7 +219,11 @@ export async function retrieveComponents(
               `Variant ${item.defaultVariant.id} is not an object`,
             );
           const native = data as NativeVariant;
-          await references.load(referencedContentKeys(native.contentBody));
+          const declarations = handler.referenceDeclarations;
+          await references.load(
+            referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
+          );
+          await records.loadNames(recordIdsOf(native.contentBody, declarations?.records ?? []));
           const media = await mediaOf(connection, handler, native);
           const files = handler.toSource(native, {
             ...(media ? { media } : {}),
@@ -222,6 +232,7 @@ export async function retrieveComponents(
               isRecord(native.folder) ? String(native.folder.id) : undefined,
             ),
             referenceOf: references.referenceOf,
+            recordNameOf: records.nameOf,
             warn: (warning) =>
               warnings.push({
                 ...toDiagnostic(new CmsError(warning.code, warning.message)),

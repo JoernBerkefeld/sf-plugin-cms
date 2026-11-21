@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto';
-import { BODY_ENVELOPE_FIELDS, referencedContentKeys } from '../content/json-projection.js';
-import { resolveReferences } from '../content/json-source.js';
+import {
+  BODY_ENVELOPE_FIELDS,
+  recordIdsOf,
+  referencedContentKeys,
+  referenceFormsOf,
+} from '../content/json-projection.js';
+import {
+  recordReferences,
+  resolveRecordReferences,
+  resolveReferences,
+} from '../content/json-source.js';
 import { contentTypeOf } from '../content/registry.js';
 import type {
   ContentTypeHandler,
@@ -32,6 +41,7 @@ import { checkDataGraphReferences, dataGraphReferences } from './data-graph-chec
 import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { mediaOf } from './media.js';
+import { recordResolver } from './record-references.js';
 import { referenceResolver, type Diagnostics } from './retrieve.js';
 import type { CmsWorkspace } from './workspaces.js';
 
@@ -222,6 +232,9 @@ export async function deployComponents(
   const folderPath = folderPathCache(connection, workspace);
   const folders = folderPlanner(connection, workspace);
   const references = referenceResolver(connection, workspace);
+  const records = recordResolver(connection);
+  // Destination record ID per `sobject:name`, filled while planning.
+  const recordIds = new Map<string, string>();
   // Destination content key per `type:ApiName` (null = absent); filled by lookups and creates.
   const destinationKeys = new Map<string, string | null>();
   const inventories = new Map<ContentTypeHandler, Map<string, InventoryItem>>();
@@ -242,7 +255,11 @@ export async function deployComponents(
     handler: ContentTypeHandler,
     native: NativeVariant,
   ): Promise<{ files: SourceFiles; folderPath: string[] }> => {
-    await references.load(referencedContentKeys(native.contentBody));
+    const declarations = handler.referenceDeclarations;
+    await references.load(
+      referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
+    );
+    await records.loadNames(recordIdsOf(native.contentBody, declarations?.records ?? []));
     const path = await folderPath(isRecord(native.folder) ? String(native.folder.id) : undefined);
     const media = await mediaOf(connection, handler, native);
     // Keys outside the workspace stay native keys; the comparison shows them as changes.
@@ -251,6 +268,7 @@ export async function deployComponents(
       workspace,
       folderPath: path,
       referenceOf: references.referenceOf,
+      recordNameOf: records.nameOf,
       warn: () => {},
     });
     return { files, folderPath: path };
@@ -347,6 +365,24 @@ export async function deployComponents(
           'REFERENCE_NOT_IN_DESTINATION',
           `References ${unresolved.map((r) => referenceKey(r)).join(', ')}, which workspace ${workspace.apiName ?? workspace.id} does not have`,
         );
+      for (const reference of recordReferences(
+        payload.contentBody,
+        handler.referenceDeclarations?.records ?? [],
+      )) {
+        const label = `${reference.sobject} "${reference.name}" (contentBody.${reference.path.join('.')})`;
+        const found = await records.idsOf(reference);
+        if (found.length === 0)
+          throw new CmsError(
+            'RECORD_REFERENCE_NOT_FOUND',
+            `References ${label}, which the destination org does not have`,
+          );
+        if (found.length > 1)
+          throw new CmsError(
+            'RECORD_REFERENCE_AMBIGUOUS',
+            `References ${label}, which matches more than one record in the destination org`,
+          );
+        recordIds.set(`${reference.sobject}:${reference.name}`, found[0]);
+      }
       const graphBlocks = await checkDataGraphReferences(
         connection,
         dataGraphReferences(payload.contentBody),
@@ -390,15 +426,24 @@ export async function deployComponents(
     const action = item.outcome === 'planned-dependencies' ? item.action! : item.outcome;
     let written = false;
     try {
-      const contentBody = resolveReferences(payload!.contentBody, (reference) => {
-        const key = destinationKeys.get(referenceKey(reference));
-        if (!key)
-          throw new CmsError(
-            'REFERENCE_NOT_IN_DESTINATION',
-            `${referenceKey(reference)} was not created before ${component}`,
-          );
-        return key;
-      }) as Record<string, unknown>;
+      const declarations = handler.referenceDeclarations;
+      const contentBody = resolveRecordReferences(
+        resolveReferences(
+          payload!.contentBody,
+          (reference) => {
+            const key = destinationKeys.get(referenceKey(reference));
+            if (!key)
+              throw new CmsError(
+                'REFERENCE_NOT_IN_DESTINATION',
+                `${referenceKey(reference)} was not created before ${component}`,
+              );
+            return key;
+          },
+          referenceFormsOf(declarations),
+        ) as Record<string, unknown>,
+        declarations?.records ?? [],
+        (reference) => recordIds.get(`${reference.sobject}:${reference.name}`)!,
+      );
       const envelope = envelopeOf(payload!, contentBody);
       const { file } = payload!;
       let createFolder: string | undefined;

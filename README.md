@@ -256,6 +256,23 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - If retrieve finds a reference to something that is not in the same workspace, it keeps the
   original key and warns `REFERENCE_UNRESOLVED`. Such a file can only be deployed back into
   the same workspace.
+- Some bodies hold the key in another form: a reusable block on a landing page says
+  `"definition": "@cms/<key>"`, and a landing page names its template with the bare key in
+  `sfdc_cms:template.definition`. The file keeps the form as well, for example
+  `"definition": { "type": "web-fragment", "apiName": "Header", "format": "@cms/<contentKey>" }`,
+  and deploy writes the destination key back in that form. These references are checked and
+  ordered like any other.
+
+### References to Salesforce records
+
+- Some types point to a Salesforce record instead of a CMS component, such as the Campaign of a
+  tracked link. The file names the record by name, for example
+  `"campaign": { "sobject": "Campaign", "name": "Spring Launch" }`.
+- On deploy, the plugin looks the name up in the destination org (read-only). No record of that
+  name is refused before any write (`RECORD_REFERENCE_NOT_FOUND`), and so are several
+  (`RECORD_REFERENCE_AMBIGUOUS`). The plugin never creates or changes such records.
+- If retrieve cannot find the record of an ID, it keeps the ID and warns
+  `RECORD_REFERENCE_UNRESOLVED`.
 
 ### Data graph references
 
@@ -264,6 +281,7 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Before writing, deploy checks that the destination org has that data space and that the data
   graph exists in it. If not, the deploy is refused (`DATA_SPACE_NOT_IN_DESTINATION`,
   `DATA_GRAPH_NOT_IN_DESTINATION`).
+- A provider without a data space (as in an expression) is checked in `default`.
 - Names are compared exactly. In data spaces other than `default`, Salesforce gives data graph
   names a prefix; the file holds that prefixed name, and the plugin does not change it.
 - This plugin never creates data spaces or data graphs. Deploy data graphs with

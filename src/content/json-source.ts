@@ -1,6 +1,19 @@
 import { CmsError } from '../errors/registry.js';
-import { BODY_ENVELOPE_FIELDS, type CompanionFields } from './json-projection.js';
-import type { DeployPayload, LogicalReference, SourceFiles } from './types.js';
+import {
+  BODY_ENVELOPE_FIELDS,
+  DEFAULT_REFERENCE_FORMS,
+  formsAt,
+  valueAt,
+  type CompanionFields,
+} from './json-projection.js';
+import type {
+  DeployPayload,
+  LogicalReference,
+  RecordReference,
+  RecordReferencePath,
+  ReferenceForm,
+  SourceFiles,
+} from './types.js';
 
 /** Envelope fields a JSON source document may hold besides `contentBody`. */
 const ENVELOPE_FIELDS: ReadonlySet<string> = new Set([
@@ -30,6 +43,39 @@ export function isLogicalReference(value: unknown): value is LogicalReference {
     typeof value.type === 'string' &&
     typeof value.apiName === 'string'
   );
+}
+
+/**
+ * Whether a value is a logical reference in another form: `{ type, apiName, format }`.
+ * @param {unknown} value - Property value.
+ * @returns {boolean} Logical reference with its native format.
+ */
+export function isFormReference(value: unknown): value is LogicalReference & { format: string } {
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).length === 3 &&
+    typeof value.type === 'string' &&
+    typeof value.apiName === 'string' &&
+    typeof value.format === 'string'
+  );
+}
+
+/**
+ * The form a file value is written in, if the property takes it.
+ * @param {readonly ReferenceForm[]} forms - Forms.
+ * @param {string | undefined} parent - Property the holding object sits under.
+ * @param {string} key - Property name.
+ * @param {unknown} value - File value.
+ * @returns {ReferenceForm | undefined} Form of a `{ type, apiName, format }` value.
+ */
+function formOfValue(
+  forms: readonly ReferenceForm[],
+  parent: string | undefined,
+  key: string,
+  value: unknown,
+): ReferenceForm | undefined {
+  if (!isFormReference(value)) return undefined;
+  return formsAt(forms, parent, key).find((form) => form.format === value.format);
 }
 
 /**
@@ -85,21 +131,29 @@ export function jsonPayloadFromSource(
 }
 
 /**
- * Every logical reference in a body (`contentKey: { type, apiName }` anywhere), distinct, in
- * document order.
+ * Every logical reference in a body (`contentKey: { type, apiName }` anywhere, and
+ * `{ type, apiName, format }` where a reference form applies), distinct, in document order.
  * @param {unknown} body - Payload body.
+ * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (see `referenceFormsOf`).
  * @returns {LogicalReference[]} References.
  */
-export function logicalReferences(body: unknown): LogicalReference[] {
+export function logicalReferences(
+  body: unknown,
+  forms: readonly ReferenceForm[] = DEFAULT_REFERENCE_FORMS,
+): LogicalReference[] {
   const found = new Map<string, LogicalReference>();
-  const visit = (value: unknown): void => {
+  const visit = (value: unknown, parent?: string): void => {
     if (Array.isArray(value)) {
-      for (const item of value) visit(item);
+      for (const item of value) visit(item, parent);
     } else if (isPlainObject(value)) {
       for (const [key, child] of Object.entries(value)) {
-        if (key === 'contentKey' && isLogicalReference(child))
-          found.set(`${child.type}:${child.apiName}`, { type: child.type, apiName: child.apiName });
-        else visit(child);
+        if (
+          (key === 'contentKey' && isLogicalReference(child)) ||
+          formOfValue(forms, parent, key, child)
+        ) {
+          const { type, apiName } = child as LogicalReference;
+          found.set(`${type}:${apiName}`, { type, apiName });
+        } else visit(child, key);
       }
     }
   };
@@ -108,22 +162,85 @@ export function logicalReferences(body: unknown): LogicalReference[] {
 }
 
 /**
- * Copy of a body with each logical reference replaced by the destination content key.
+ * Copy of a body with each logical reference replaced by the destination content key, written
+ * in the reference's format (`@cms/<key>`, the bare key, …).
  * @param {unknown} body - Payload body.
  * @param {(reference: LogicalReference) => string} keyOf - Destination key of a reference.
+ * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (see `referenceFormsOf`).
+ * @param {string} [parent] - Property the body sits under (recursion).
  * @returns {unknown} Native body.
  */
 export function resolveReferences(
   body: unknown,
   keyOf: (reference: LogicalReference) => string,
+  forms: readonly ReferenceForm[] = DEFAULT_REFERENCE_FORMS,
+  parent?: string,
 ): unknown {
-  if (Array.isArray(body)) return body.map((item) => resolveReferences(item, keyOf));
+  if (Array.isArray(body)) return body.map((item) => resolveReferences(item, keyOf, forms, parent));
   if (!isPlainObject(body)) return body;
   const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(body))
-    result[key] =
-      key === 'contentKey' && isLogicalReference(child)
-        ? keyOf(child)
-        : resolveReferences(child, keyOf);
+  for (const [key, child] of Object.entries(body)) {
+    const form = formOfValue(forms, parent, key, child);
+    if (key === 'contentKey' && isLogicalReference(child)) result[key] = keyOf(child);
+    else if (form) {
+      const { type, apiName } = child as LogicalReference;
+      result[key] = form.format.replace('<contentKey>', keyOf({ type, apiName }));
+    } else result[key] = resolveReferences(child, keyOf, forms, key);
+  }
+  return result;
+}
+
+/** A record reference of a payload body and where it sits. */
+export type LocatedRecordReference = RecordReference & { path: readonly string[] };
+
+/**
+ * The record references `{ sobject, name }` at the declared paths of a payload body. A path
+ * holding a plain value (an ID kept as it was) is left to Salesforce. Strict: an object of
+ * another shape or sObject is refused (UNKNOWN_SETTING).
+ * @param {unknown} body - Payload body.
+ * @param {readonly RecordReferencePath[]} paths - Declared paths.
+ * @returns {LocatedRecordReference[]} References, in declaration order.
+ */
+export function recordReferences(
+  body: unknown,
+  paths: readonly RecordReferencePath[],
+): LocatedRecordReference[] {
+  const found: LocatedRecordReference[] = [];
+  for (const { path, sobject } of paths) {
+    const value = valueAt(body, path);
+    if (!isPlainObject(value)) continue;
+    if (
+      Object.keys(value).length !== 2 ||
+      value.sobject !== sobject ||
+      typeof value.name !== 'string'
+    )
+      throw new CmsError(
+        'UNKNOWN_SETTING',
+        `contentBody.${path.join('.')} must be { "sobject": "${sobject}", "name": "<record name>" } or a record ID`,
+      );
+    found.push({ path, sobject, name: value.name });
+  }
+  return found;
+}
+
+/**
+ * Copy of a body with each record reference replaced by the destination record ID.
+ * @param {Record<string, unknown>} body - Payload body.
+ * @param {readonly RecordReferencePath[]} paths - Declared paths.
+ * @param {(reference: RecordReference) => string} idOf - Destination ID of a record.
+ * @returns {Record<string, unknown>} Native body.
+ */
+export function resolveRecordReferences(
+  body: Record<string, unknown>,
+  paths: readonly RecordReferencePath[],
+  idOf: (reference: RecordReference) => string,
+): Record<string, unknown> {
+  const references = recordReferences(body, paths);
+  if (references.length === 0) return body;
+  const result = structuredClone(body);
+  for (const { path, sobject, name } of references) {
+    const holder = valueAt(result, path.slice(0, -1)) as Record<string, unknown>;
+    holder[path.at(-1)!] = idOf({ sobject, name });
+  }
   return result;
 }

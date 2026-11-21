@@ -5,6 +5,37 @@ import type { CmsWorkspace } from '../services/workspaces.js';
 export type LogicalReference = { type: string; apiName: string };
 
 /**
+ * A content key held in another form than `contentKey: "MC…"`, such as a block's
+ * `definition: "@cms/MC…"`. Retrieve writes it as `{ type, apiName, format }`; deploy writes the
+ * destination key back in `format`.
+ */
+export type ReferenceForm = {
+  /** Property whose string value holds the key, such as `definition`. */
+  readonly key: string;
+  /** Only when the object holding `key` sits under this property, such as `sfdc_cms:template`. */
+  readonly parent?: string;
+  /** Native value with `<contentKey>` where the key goes, such as `@cms/<contentKey>`. */
+  readonly format: string;
+};
+
+/** A body path that holds a record ID, kept in the file as `{ sobject, name }`. */
+export type RecordReferencePath = {
+  /** Property names from the body root, such as `['campaign']`. */
+  readonly path: readonly string[];
+  /** sObject the ID belongs to, such as `Campaign`. */
+  readonly sobject: string;
+};
+
+/** A record a body points to, by name: resolved by SOQL in the destination org. */
+export type RecordReference = { sobject: string; name: string };
+
+/** What a handler adds to the built-in reference forms (see `json-projection.ts`). */
+export type ReferenceDeclarations = {
+  readonly forms?: readonly ReferenceForm[];
+  readonly records?: readonly RecordReferencePath[];
+};
+
+/**
  * The component JSON, `<ApiName>.<type>.json`. It holds what is needed to recreate the default
  * variant: no record IDs, generated values or status. Native fields the plugin does not know
  * stay as top-level keys.
@@ -51,6 +82,8 @@ export type RetrieveContext = {
   warn: (warning: Omit<Diagnostic, 'component'>) => void;
   /** Media types: the uploaded file, downloaded by the pipeline beforehand. */
   media?: MediaFile;
+  /** Name of a record at a declared record path, read by the pipeline beforehand. */
+  recordNameOf?: (sobject: string, id: string) => string | undefined;
 };
 
 /** The binary of a media component: its native file name and bytes. */
@@ -87,6 +120,8 @@ export interface ContentTypeHandler {
   /** Salesforce content type, such as `sfdc_cms__email`. */
   readonly apiName: string;
   readonly transport: 'json' | 'multipart';
+  /** Extra reference forms and record paths; the pipeline reads them for lookups and deploy. */
+  readonly referenceDeclarations?: ReferenceDeclarations;
   /** Retrieve projection: native default variant -> files. Pure; no I/O. */
   toSource(native: NativeVariant, context: RetrieveContext): SourceFiles;
   /**

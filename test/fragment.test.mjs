@@ -16,29 +16,19 @@ import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.j
 import { checkDataGraphReferences, dataGraphReferences } from '../lib/services/data-graph-check.js';
 import { envelopeOf } from '../lib/services/deploy.js';
 import { fakeConnection } from './support/fake-connection.mjs';
+import { fakeOrg, salesforceError, workspace } from './support/fake-org.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const golden = path.join(here, 'fixtures', 'golden');
 const WS = 'Default_Content_Workspace';
 const IMAGE_KEY = 'MCGOLDENIAAAAAAAAAAAAAAAAAAA';
-const workspace = {
-  apiName: WS,
-  id: '0Zu000000000001AAA',
-  isEnhancedSpace: true,
-  name: 'Workspace',
-  defaultLanguage: 'en_US',
-  rootFolderId: '9Pu000000000001AAA',
-  spaceType: { apiName: 'marketing' },
-};
 const nativeFragment = async () =>
   JSON.parse(
     await readFile(path.join(here, 'fixtures', 'native', 'email-fragment.variant.json'), 'utf8'),
   );
 const goldenFragment = () => readSourceFiles(golden, WS, 'email-fragment', 'Golden_Fragment');
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'sf-plugin-cms-v1-fragment-'));
-const salesforceError = (statusCode, errorCode, message = errorCode) =>
-  Object.assign(new Error(message), { statusCode, data: [{ errorCode, message }] });
 
 /**
  * Every block ID of a body in document order.
@@ -114,140 +104,6 @@ test('golden fromSource: files give back the native body; image and data graph r
   delete withoutUrl['sfdc_cms:block'].children[0].children[0].children[0].attributes.imageInfo.url;
   assert.deepEqual(body, withoutUrl);
 });
-
-/**
- * An in-memory org: one workspace with folders, variants, folder create, content create and
- * update, publish/unpublish, delete, and the Data 360 data space list and data graph read.
- * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object }} state
- *   Stored variants, child folders by parent ID, data space names, data graph -> data space.
- * @returns {{ answer: Function; variants: Map; folders: object }} Answer function and stores.
- */
-function fakeOrg(state = {}) {
-  const variants = new Map();
-  const folders = structuredClone(state.folders ?? {});
-  const dataSpaces = state.dataSpaces ?? ['default'];
-  const graphs = state.graphs ?? { Marketing: 'default' };
-  let counter = 0;
-  const store = (native) => {
-    variants.set(native.managedContentVariantId, structuredClone(native));
-    return structuredClone(native);
-  };
-  for (const native of state.variants ?? []) store(native);
-  const answer = (input) => {
-    const url = decodeURIComponent(input.url.replaceAll('+', ' '));
-    const body = input.body === undefined ? undefined : JSON.parse(input.body);
-    if (url.startsWith('/connect/cms/spaces?'))
-      return { spaces: url.includes('page=0') ? [workspace] : [] };
-    if (url.startsWith('/ssot/data-spaces?')) {
-      const offset = Number(/offset=(\d+)/u.exec(url)[1]);
-      // One data space per page, to cover paging.
-      return {
-        dataSpaces: dataSpaces.slice(offset, offset + 1).map((name) => ({ name })),
-        totalSize: dataSpaces.length,
-      };
-    }
-    const graph = /^\/ssot\/data-graphs\/(\w+)$/u.exec(url)?.[1];
-    if (graph) {
-      if (graphs[graph]) return { name: graph, dataspaceName: graphs[graph], status: 'ready' };
-      throw salesforceError(400, 'INTERNAL_ERROR', `Data Graph not found with name ${graph}`);
-    }
-    if (url.startsWith('/query?')) {
-      const type = /ContentTypeFullyQualifiedName = '(\w+)'/u.exec(url)?.[1];
-      const names = /ApiName IN \(([^)]*)\)/u.exec(url)?.[1] ?? '';
-      const keys = /ManagedContentKey IN \(([^)]*)\)/u.exec(url)?.[1];
-      return {
-        records: [...variants.values()]
-          .filter((v) =>
-            keys
-              ? keys.includes(`'${v.contentKey}'`)
-              : v.contentType.fullyQualifiedName === type && names.includes(`'${v.apiName}'`),
-          )
-          .map((v) => ({
-            Id: v.managedContentVariantId,
-            ManagedContentId: v.managedContentId,
-            Language: 'en_US',
-            IsPrimary: true,
-            Name: v.title,
-            ManagedContentKey: v.contentKey,
-            ContentTypeFullyQualifiedName: v.contentType.fullyQualifiedName,
-            ManagedContent: { ApiName: v.apiName, AuthoredManagedContentSpaceId: workspace.id },
-          })),
-      };
-    }
-    const items = /^\/connect\/cms\/folders\/(\w+)\/folder-items\?.*page=(\d+)/u.exec(url);
-    if (items)
-      return {
-        folderItems:
-          items[2] === '0'
-            ? (folders[items[1]] ?? []).map((f) => ({
-                isFolder: true,
-                managedContentOrFolderId: f.id,
-                title: f.name,
-                folderSummary: { folderType: 'Standard' },
-              }))
-            : [],
-      };
-    if (url === '/connect/cms/folders' && input.method === 'POST') {
-      counter += 1;
-      const id = `9Pu0000000NEW${counter}AAA`;
-      folders[body.parentFolderId] = [
-        ...(folders[body.parentFolderId] ?? []),
-        { id, name: body.name },
-      ];
-      return { id, name: body.name, parentFolderId: body.parentFolderId, folderType: 'Standard' };
-    }
-    const folder = /^\/connect\/cms\/folders\/(\w+)\?/u.exec(url)?.[1];
-    if (folder) {
-      const chain = [];
-      for (let current = folder; current !== workspace.rootFolderId;) {
-        const parent = Object.keys(folders).find((p) => folders[p].some((f) => f.id === current));
-        chain.unshift({ name: folders[parent].find((f) => f.id === current).name, id: current });
-        current = parent;
-      }
-      return {
-        name: chain.at(-1).name,
-        folderType: 'Standard',
-        folderHierarchy: [
-          { folderType: 'System', name: 'Root' },
-          ...chain.slice(0, -1).map((f) => ({ folderType: 'Standard', name: f.name })),
-        ],
-      };
-    }
-    if (url === '/connect/cms/contents' && input.method === 'POST') {
-      counter += 1;
-      return store({
-        apiName: body.apiName,
-        title: body.title,
-        urlName: body.urlName,
-        contentBody: body.contentBody,
-        contentKey: `MC${'Z'.repeat(25)}${String.fromCodePoint(65 + counter)}`,
-        contentType: { fullyQualifiedName: body.contentType },
-        folder: { id: body.contentSpaceOrFolderId },
-        language: 'en_US',
-        managedContentId: `20Y00000000000${counter}AAA`,
-        managedContentVariantId: `9Ps00000000000${counter}AAA`,
-        isPublished: false,
-      });
-    }
-    const action = /^\/connect\/cms\/contents\/(publish|unpublish)$/u.exec(url)?.[1];
-    if (action) {
-      for (const id of body.variantIds) variants.get(id).isPublished = action === 'publish';
-      return { deploymentId: '0jk000000000001AAA', description: '#DEPLOYED' };
-    }
-    const variant = /^\/connect\/cms\/contents\/variants\/(\w+)$/u.exec(url)?.[1];
-    if (variant && variants.has(variant)) {
-      if (input.method === 'DELETE') {
-        variants.delete(variant);
-        return;
-      }
-      if (input.method === 'PUT')
-        return store({ ...variants.get(variant), ...body, contentBody: body.contentBody });
-      return structuredClone(variants.get(variant));
-    }
-    throw salesforceError(404, 'NOT_FOUND');
-  };
-  return { answer, variants, folders };
-}
 
 /** The Golden_Image the fragment references, stored in the destination root. */
 const destinationImage = {
