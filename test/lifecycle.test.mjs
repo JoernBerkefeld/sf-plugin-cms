@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, unlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import { Config } from '@oclif/core';
 import Delete from '../lib/commands/cms/delete.js';
 import Publish from '../lib/commands/cms/publish.js';
 import Unpublish from '../lib/commands/cms/unpublish.js';
+import { parseExactSelection, runLifecycle } from '../lib/services/lifecycle.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -424,4 +426,137 @@ test('publish of a component the workspace does not have is blocked and sends no
   assert.deepEqual(outcomes(result), [['Absent', 'blocked']]);
   assert.deepEqual(codes(result.diagnostics.errors), [['email:Absent', 'COMPONENT_NOT_FOUND']]);
   assert.equal(writes.length, 0);
+});
+
+test('a workspace folder that is no safe file name is refused in preview and run alike', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-plugin-cms-v1-lifecycle-'));
+  const folder = path.join(directory, 'cms', 'My Workspace.v2', 'email');
+  await mkdir(folder, { recursive: true });
+  const file = path.join(folder, 'Foo.email.json');
+  await writeFile(file, '{}\n');
+  const before = await snapshot(directory);
+  const org = fakeOrg([email('Foo', 1)]);
+  for (const extra of [['--preview'], []]) {
+    const { result, writes, exitCode } = await run(
+      'delete',
+      ['-d', file, ...extra],
+      org,
+      directory,
+    );
+    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 1);
+    assert.deepEqual(codes(result.diagnostics.errors), [[undefined, 'INVALID_FILE_NAME']]);
+    assert.equal(writes.length, 0);
+  }
+  assert.equal(org.rows.length, 1);
+  assert.deepEqual(await snapshot(directory), before);
+});
+
+test('local files that cannot be listed block the delete before any write', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-plugin-cms-v1-lifecycle-'));
+  await mkdir(path.join(directory, 'cms', WS), { recursive: true });
+  // A file where the type folder belongs: listing it fails with ENOTDIR.
+  await writeFile(path.join(directory, 'cms', WS, 'email'), 'not a folder\n');
+  const org = fakeOrg([email('One', 1)]);
+  for (const extra of [['--preview'], []]) {
+    const { result, writes } = await run('delete', ['-m', 'email:One', ...extra], org, directory);
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(outcomes(result), [['One', 'blocked']]);
+    assert.equal(writes.length, 0);
+  }
+  assert.equal(org.rows.length, 1);
+});
+
+test('a local removal failure after a confirmed delete keeps it deleted; later items still run', async () => {
+  const directory = await projectWith([
+    ['email', 'One'],
+    ['email', 'Two'],
+  ]);
+  const twoJson = path.join(directory, 'cms', WS, 'email', 'Two.email.json');
+  const org = fakeOrg([email('One', 1), email('Two', 2)]);
+  const answer = org.answer;
+  org.answer = (input) => {
+    // While Two is deleted in the org, its JSON file turns into a folder (unsafe to remove).
+    if (input.method === 'DELETE' && input.url.endsWith('9Ps000000000002AAA')) {
+      unlinkSync(twoJson);
+      mkdirSync(twoJson);
+    }
+    return answer(input);
+  };
+  const { result, writes, exitCode } = await run(
+    'delete',
+    ['-m', 'email:One', '-m', 'email:Two'],
+    org,
+    directory,
+  );
+  assert.equal(exitCode, 1);
+  assert.deepEqual(outcomes(result), [
+    ['Two', 'deleted'],
+    ['One', 'deleted'],
+  ]);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(codes(result.diagnostics.errors), [['email:Two', 'LOCAL_FILE_REMOVAL_FAILED']]);
+  assert.deepEqual(
+    result.result.items[0].removedLocalFiles.map((file) => [
+      path.basename(file.path),
+      file.outcome,
+    ]),
+    [
+      ['Two.email.html', 'removed'],
+      ['Two.email.json', 'failed'],
+    ],
+  );
+  assert.deepEqual(await readdir(path.join(directory, 'cms', WS, 'email')), ['Two.email.json']);
+});
+
+test('a throw during the writes keeps the outcomes already reported', async () => {
+  const directory = await projectWith([]);
+  const org = fakeOrg([email('One', 1), email('Three', 3), email('Two', 2)]);
+  const answer = org.answer;
+  org.answer = (input) => {
+    if (input.method === 'DELETE' && input.url.endsWith('9Ps000000000003AAA')) {
+      answer(input);
+      throw salesforceError(404, 'VARIANT_NOT_FOUND');
+    }
+    return answer(input);
+  };
+  const connection = fakeConnection(org.answer);
+  const targets = await parseExactSelection(
+    ['email:One', 'email:Two', 'email:Three'],
+    [],
+    'delete',
+  );
+  // Recording the DELETE_ANSWER_IGNORED warning of Three throws.
+  const warnings = [];
+  warnings.push = () => {
+    throw new Error('unexpected');
+  };
+  let reported = [];
+  await assert.rejects(
+    runLifecycle(
+      connection,
+      { ...workspace, enhanced: true, type: 'marketing' },
+      'delete',
+      targets,
+      {
+        preview: false,
+        diagnostics: { warnings, errors: [] },
+        keepLocalFiles: true,
+        projectDirectory: directory,
+        writeOptions: { allowCallerConnection: true },
+        onPlanned: (items) => {
+          reported = items;
+        },
+      },
+    ),
+    /unexpected/u,
+  );
+  assert.deepEqual(
+    reported.map((item) => [item.apiName, item.outcome, item.reason]),
+    [
+      ['Two', 'deleted', undefined],
+      ['Three', 'deleted', undefined],
+      ['One', 'not-attempted', 'NOT_ATTEMPTED'],
+    ],
+  );
 });

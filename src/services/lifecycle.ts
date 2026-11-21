@@ -85,6 +85,11 @@ export type LifecycleOptions = {
   /** Directory holding `cms/` for `-m` components. */
   projectDirectory: string;
   writeOptions?: JsonMutationOptions;
+  /**
+   * Receives the items once planned, before anything is written; the run updates them in
+   * place, so a caller that keeps them still reports every outcome if the run throws later.
+   */
+  onPlanned?: (items: LifecycleItem[]) => void;
 };
 
 const SELECTOR = /^([\w-]+):([A-Za-z0-9][\w-]*)$/u;
@@ -190,7 +195,12 @@ async function localFilesOf(
   };
 }
 
-type Planned = { target: LifecycleTarget; item: LifecycleItem };
+type Planned = {
+  target: LifecycleTarget;
+  item: LifecycleItem;
+  /** Delete: the local files, listed while planning. */
+  local?: { boundary: string; files: string[] };
+};
 
 function componentDiagnostic(error: unknown, component: string): Diagnostic {
   return { ...toDiagnostic(error), component };
@@ -236,7 +246,8 @@ export async function runLifecycle(
     const { handler, apiName } = target;
     const component = `${handler.type}:${apiName}`;
     const item: LifecycleItem = { type: handler.type, apiName, outcome: 'blocked' };
-    plans.push({ target, item });
+    const plan: Planned = { target, item };
+    plans.push(plan);
     try {
       let inventory = inventories.get(handler);
       if (!inventory) {
@@ -282,14 +293,17 @@ export async function runLifecycle(
           ),
           component,
         });
+      // Listed while planning, for preview and run alike: an unusable path blocks before any write.
+      if (action === 'delete') {
+        plan.local = await localFilesOf(target, workspace, options.projectDirectory);
+        if (options.preview) {
+          item.localFiles = [];
+          for (const file of plan.local.files)
+            item.localFiles.push({ path: file, exists: await localFilePresent(file) });
+        }
+      }
       item.variantId = found.defaultVariant.id;
       item.outcome = action;
-      if (action === 'delete' && options.preview) {
-        const local = await localFilesOf(target, workspace, options.projectDirectory);
-        item.localFiles = [];
-        for (const file of local.files)
-          item.localFiles.push({ path: file, exists: await localFilePresent(file) });
-      }
     } catch (error) {
       item.outcome = 'blocked';
       item.reason = toDiagnostic(error).code;
@@ -297,6 +311,7 @@ export async function runLifecycle(
     }
   }
   const items = plans.map((plan) => plan.item);
+  options.onPlanned?.(items);
   if (options.preview) return items;
   if (items.some((item) => item.outcome === 'blocked')) {
     for (const item of items)
@@ -315,139 +330,171 @@ export async function runLifecycle(
   };
 
   let stopped = false;
-  for (const { target, item } of plans) {
-    if (item.outcome !== action) continue;
-    if (stopped) {
-      Object.assign(item, { outcome: 'not-attempted', reason: 'NOT_ATTEMPTED' });
-      continue;
-    }
-    const component = `${target.handler.type}:${target.apiName}`;
-    const fail = (outcome: 'failed' | 'unknown', diagnostic: Diagnostic): void => {
-      stopped = true;
-      item.outcome = outcome;
-      item.reason = diagnostic.code;
-      diagnostics.errors.push({ ...diagnostic, component });
-    };
-    const variantId = item.variantId!;
+  let current: LifecycleItem | undefined;
+  try {
+    await writeAll();
+  } catch (error) {
+    // Something unexpected: the component in progress may have been changed, the rest were not.
+    for (const item of items)
+      if (item.outcome === action)
+        Object.assign(
+          item,
+          item === current
+            ? { outcome: 'unknown', reason: 'UNKNOWN_OUTCOME' }
+            : { outcome: 'not-attempted', reason: 'NOT_ATTEMPTED' },
+        );
+    throw error;
+  }
+  return items;
 
-    if (action === 'delete') {
-      // The DELETE answer does not decide: a successful delete has answered 404.
-      let answer: unknown;
-      try {
-        await requestEmptyMutation(
-          connection,
-          getSelectedOperation('variant.delete'),
-          { path: { variantId } },
-          options.writeOptions,
-        );
-      } catch (error) {
-        if (error instanceof CmsRequestError && !error.requestSent) {
-          fail('failed', toDiagnostic(error));
-          continue;
-        }
-        answer = error;
-      }
-      let gone: boolean;
-      try {
-        await readVariant(variantId);
-        gone = false;
-      } catch (error) {
-        if (error instanceof CmsRequestError && error.status === 404) gone = true;
-        else {
-          fail('unknown', unknown(error));
-          continue;
-        }
-      }
-      if (!gone) {
-        fail(
-          'failed',
-          answer === undefined || isUnknownOutcome(answer)
-            ? toDiagnostic(
-                new CmsError(
-                  'DELETE_NOT_CONFIRMED',
-                  `Variant ${variantId} is still there after the delete`,
-                ),
-              )
-            : toDiagnostic(answer),
-        );
+  async function writeAll(): Promise<void> {
+    for (const { target, item, local } of plans) {
+      if (item.outcome !== action) continue;
+      current = item;
+      if (stopped) {
+        Object.assign(item, { outcome: 'not-attempted', reason: 'NOT_ATTEMPTED' });
         continue;
       }
-      item.outcome = 'deleted';
-      if (answer !== undefined)
-        diagnostics.warnings.push({
-          ...toDiagnostic(
-            new CmsError(
-              'DELETE_ANSWER_IGNORED',
-              `Salesforce answered ${toDiagnostic(answer).message}; the readback shows the component is gone`,
-            ),
-          ),
-          component,
-        });
-      const local = await localFilesOf(target, workspace, options.projectDirectory);
-      item.removedLocalFiles = await removeLocalFiles(
-        local.files.map((file) => ({ path: file, boundary: local.boundary })),
-        options.keepLocalFiles === true,
-      );
-      for (const removal of item.removedLocalFiles)
-        if (removal.outcome === 'failed')
-          diagnostics.errors.push({
+      const component = `${target.handler.type}:${target.apiName}`;
+      const fail = (outcome: 'failed' | 'unknown', diagnostic: Diagnostic): void => {
+        stopped = true;
+        item.outcome = outcome;
+        item.reason = diagnostic.code;
+        diagnostics.errors.push({ ...diagnostic, component });
+      };
+      const variantId = item.variantId!;
+
+      if (action === 'delete') {
+        // The DELETE answer does not decide: a successful delete has answered 404.
+        let answer: unknown;
+        try {
+          await requestEmptyMutation(
+            connection,
+            getSelectedOperation('variant.delete'),
+            { path: { variantId } },
+            options.writeOptions,
+          );
+        } catch (error) {
+          if (error instanceof CmsRequestError && !error.requestSent) {
+            fail('failed', toDiagnostic(error));
+            continue;
+          }
+          answer = error;
+        }
+        let gone: boolean;
+        try {
+          await readVariant(variantId);
+          gone = false;
+        } catch (error) {
+          if (error instanceof CmsRequestError && error.status === 404) gone = true;
+          else {
+            fail('unknown', unknown(error));
+            continue;
+          }
+        }
+        if (!gone) {
+          fail(
+            'failed',
+            answer === undefined || isUnknownOutcome(answer)
+              ? toDiagnostic(
+                  new CmsError(
+                    'DELETE_NOT_CONFIRMED',
+                    `Variant ${variantId} is still there after the delete`,
+                  ),
+                )
+              : toDiagnostic(answer),
+          );
+          continue;
+        }
+        item.outcome = 'deleted';
+        if (answer !== undefined)
+          diagnostics.warnings.push({
             ...toDiagnostic(
               new CmsError(
-                'LOCAL_FILE_REMOVAL_FAILED',
-                `${removal.path}: ${removal.code ?? 'REMOVE_FAILED'}`,
+                'DELETE_ANSWER_IGNORED',
+                `Salesforce answered ${toDiagnostic(answer).message}; the readback shows the component is gone`,
               ),
             ),
             component,
           });
-      continue;
-    }
+        try {
+          item.removedLocalFiles = await removeLocalFiles(
+            local!.files.map((file) => ({ path: file, boundary: local!.boundary })),
+            options.keepLocalFiles === true,
+          );
+        } catch (error) {
+          // The org delete is done and stays reported; only the local cleanup failed.
+          item.removedLocalFiles = [];
+          diagnostics.errors.push({
+            ...toDiagnostic(
+              new CmsError(
+                'LOCAL_FILE_REMOVAL_FAILED',
+                toDiagnostic(error, 'REMOVE_FAILED').message,
+              ),
+            ),
+            component,
+          });
+        }
+        for (const removal of item.removedLocalFiles)
+          if (removal.outcome === 'failed')
+            diagnostics.errors.push({
+              ...toDiagnostic(
+                new CmsError(
+                  'LOCAL_FILE_REMOVAL_FAILED',
+                  `${removal.path}: ${removal.code ?? 'REMOVE_FAILED'}`,
+                ),
+              ),
+              component,
+            });
+        continue;
+      }
 
-    // Publish / unpublish: the default variant only, in the workspace's context.
-    const body =
-      action === 'publish'
-        ? {
-            variantIds: [variantId],
-            contextContentSpaceId: workspace.id,
-            includeContentReferences: false,
-          }
-        : { variantIds: [variantId], contextContentSpaceId: workspace.id };
-    try {
-      const { data } = await requestJsonMutation<unknown>(
-        connection,
-        getSelectedOperation(action === 'publish' ? 'content.publish' : 'content.unpublish'),
-        body,
-        {},
-        options.writeOptions,
-      );
-      if (isRecord(data)) item.answer = data;
-    } catch (error) {
-      if (isUnknownOutcome(error)) fail('unknown', unknown(error));
-      else fail('failed', toDiagnostic(error));
-      continue;
-    }
-    item.outcome = action === 'publish' ? 'published' : 'unpublished';
-    try {
-      const readback = await readVariant(variantId);
-      item.isPublished = readback.isPublished === true;
-    } catch (error) {
-      diagnostics.warnings.push({
-        ...toDiagnostic(
-          new CmsError('STATE_NOT_CONFIRMED', `Readback failed: ${toDiagnostic(error).message}`),
-        ),
-        component,
-      });
-      continue;
-    }
-    if (item.isPublished !== (action === 'publish'))
-      diagnostics.warnings.push({
-        ...toDiagnostic(
-          new CmsError(
-            'STATE_NOT_CONFIRMED',
-            `After the ${action}, the default variant reads isPublished=${String(item.isPublished)}`,
+      // Publish / unpublish: the default variant only, in the workspace's context.
+      const body =
+        action === 'publish'
+          ? {
+              variantIds: [variantId],
+              contextContentSpaceId: workspace.id,
+              includeContentReferences: false,
+            }
+          : { variantIds: [variantId], contextContentSpaceId: workspace.id };
+      try {
+        const { data } = await requestJsonMutation<unknown>(
+          connection,
+          getSelectedOperation(action === 'publish' ? 'content.publish' : 'content.unpublish'),
+          body,
+          {},
+          options.writeOptions,
+        );
+        if (isRecord(data)) item.answer = data;
+      } catch (error) {
+        if (isUnknownOutcome(error)) fail('unknown', unknown(error));
+        else fail('failed', toDiagnostic(error));
+        continue;
+      }
+      item.outcome = action === 'publish' ? 'published' : 'unpublished';
+      try {
+        const readback = await readVariant(variantId);
+        item.isPublished = readback.isPublished === true;
+      } catch (error) {
+        diagnostics.warnings.push({
+          ...toDiagnostic(
+            new CmsError('STATE_NOT_CONFIRMED', `Readback failed: ${toDiagnostic(error).message}`),
           ),
-        ),
-        component,
-      });
+          component,
+        });
+        continue;
+      }
+      if (item.isPublished !== (action === 'publish'))
+        diagnostics.warnings.push({
+          ...toDiagnostic(
+            new CmsError(
+              'STATE_NOT_CONFIRMED',
+              `After the ${action}, the default variant reads isPublished=${String(item.isPublished)}`,
+            ),
+          ),
+          component,
+        });
+    }
   }
-  return items;
 }

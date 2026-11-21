@@ -505,3 +505,109 @@ test('fragment lifecycle: publish, unpublish and delete through the W3 commands'
   assert.equal(org.variants.has(id), false);
   assert.deepEqual(await snapshot(directory), []);
 });
+
+const GOLDEN_FOLDERS = {
+  [workspace.rootFolderId]: [{ id: '9Pu000000000050AAA', name: 'Golden_Folder' }],
+  '9Pu000000000050AAA': [{ id: '9Pu000000000051AAA', name: 'Golden_Subfolder' }],
+};
+
+/**
+ * The golden fragment under another API name, referencing the given fragments.
+ * @param {string} apiName API name.
+ * @param {string[]} references API names of referenced fragments.
+ * @returns {Promise<object>} Source files.
+ */
+async function fragmentNamed(apiName, references = []) {
+  const files = structuredClone(await goldenFragment());
+  files.document.apiName = apiName;
+  for (const [index, name] of references.entries())
+    files.document.contentBody[`test:nested${index}`] = {
+      contentKey: { type: 'email-fragment', apiName: name },
+    };
+  return files;
+}
+
+const createdNames = (writes) =>
+  writes
+    .filter((call) => call.input.url === '/connect/cms/contents')
+    .map((call) => JSON.parse(call.input.body).apiName);
+
+test('deploy order follows references: an inner fragment named later is created first', async () => {
+  const directory = await projectWith([
+    await fragmentNamed('A_Main', ['B_Inner']),
+    await fragmentNamed('B_Inner'),
+  ]);
+  const argv = ['-d', path.join(directory, 'cms')];
+  const preview = await deploy(
+    [...argv, '--preview'],
+    fakeOrg({ variants: [destinationImage], folders: GOLDEN_FOLDERS }),
+    directory,
+  );
+  assert.equal(preview.result.status, 'success');
+  assert.deepEqual(outcomes(preview.result), [
+    ['B_Inner', 'create'],
+    ['A_Main', 'planned-dependencies'],
+  ]);
+  assert.deepEqual(preview.result.result.items[1].dependencies, ['email-fragment:B_Inner']);
+  const { result, writes } = await deploy(
+    argv,
+    fakeOrg({ variants: [destinationImage], folders: GOLDEN_FOLDERS }),
+    directory,
+  );
+  assert.equal(result.status, 'success');
+  assert.deepEqual(outcomes(result), [
+    ['B_Inner', 'created'],
+    ['A_Main', 'created'],
+  ]);
+  assert.deepEqual(createdNames(writes), ['B_Inner', 'A_Main']);
+  const main = JSON.parse(writes.at(-1).input.body).contentBody;
+  assert.equal(main['test:nested0'].contentKey, result.result.items[0].contentKey);
+});
+
+test('deploy order follows references against registry order (brand referencing a fragment)', async () => {
+  const brand = await readSourceFiles(golden, WS, 'brand', 'Golden_Brand');
+  brand.document.contentBody['test:fragment'] = {
+    contentKey: { type: 'email-fragment', apiName: 'Golden_Fragment' },
+  };
+  const directory = await projectWith([brand, await goldenFragment()]);
+  const { result, writes } = await deploy(
+    ['-d', path.join(directory, 'cms')],
+    fakeOrg({ variants: [destinationImage], folders: GOLDEN_FOLDERS }),
+    directory,
+  );
+  assert.equal(result.status, 'success');
+  assert.deepEqual(outcomes(result), [
+    ['Golden_Fragment', 'created'],
+    ['Golden_Brand', 'created'],
+  ]);
+  assert.deepEqual(createdNames(writes), ['Golden_Fragment', 'Golden_Brand']);
+  const body = JSON.parse(writes.at(-1).input.body).contentBody;
+  assert.equal(body['test:fragment'].contentKey, result.result.items[0].contentKey);
+});
+
+test('a reference cycle is refused before any write, naming the components', async () => {
+  const directory = await projectWith([
+    await fragmentNamed('A_Main', ['B_Inner']),
+    await fragmentNamed('B_Inner', ['A_Main']),
+  ]);
+  for (const extra of [['--preview'], []]) {
+    const { result, writes, exitCode } = await deploy(
+      ['-d', path.join(directory, 'cms'), ...extra],
+      fakeOrg({ variants: [destinationImage], folders: GOLDEN_FOLDERS }),
+      directory,
+    );
+    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 1);
+    assert.equal(writes.length, 0);
+    assert.deepEqual(result.result.items, []);
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => [error.code, error.message]),
+      [
+        [
+          'DEPENDENCY_CYCLE',
+          'Components reference each other in a cycle: email-fragment:A_Main -> email-fragment:B_Inner -> email-fragment:A_Main',
+        ],
+      ],
+    );
+  }
+});

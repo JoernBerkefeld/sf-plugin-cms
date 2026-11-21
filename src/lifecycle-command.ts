@@ -73,6 +73,9 @@ export abstract class LifecycleCommand extends CmsCommand<LifecycleResult> {
           keepLocalFiles: flags['keep-local-files'],
           projectDirectory,
           writeOptions: this.writeOptions,
+          onPlanned: (items) => {
+            outcome.items = items;
+          },
         });
         return outcome;
       },

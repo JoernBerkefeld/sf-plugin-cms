@@ -1,8 +1,8 @@
 import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { handlerOf, HANDLERS } from '../content/registry.js';
-import { readSourceFiles, SOURCE_ROOT } from '../content/source-files.js';
-import type { ContentTypeHandler, SourceFiles } from '../content/types.js';
+import { assertFileName, readSourceFiles, SOURCE_ROOT } from '../content/source-files.js';
+import type { ContentTypeHandler, DeployContext, SourceFiles } from '../content/types.js';
 import { CmsError } from '../errors/registry.js';
 
 /** One component chosen for deploy, read from disk. */
@@ -83,6 +83,7 @@ function componentOfFilePath(target: string, absolute: string): Located {
   if (cmsIndex === -1 || cmsIndex !== parts.length - 4)
     throw new CmsError('INVALID_SOURCE_PATH', `${target} is not cms/<workspace>/<type>/<file>`);
   const [workspaceFolder, type, name] = parts.slice(cmsIndex + 1);
+  assertFileName(workspaceFolder, 'Workspace');
   const apiName = name.split('.')[0];
   if (!name.startsWith(`${apiName}.${type}.`))
     throw new CmsError('INVALID_SOURCE_PATH', `${target} is not a file of a ${type} component`);
@@ -198,7 +199,8 @@ async function componentOfSelector(value: string, projectDirectory: string): Pro
 
 /**
  * Read the components named by `-m type:ApiName` (looked up under `projectDirectory`) and by
- * `--source-dir` paths, in deploy order (registry order, then API name). Strict: an unknown
+ * `--source-dir` paths, in registry order, then API name (deploy puts referenced components first
+ * with `dependencyOrder`). Strict: an unknown
  * type, a missing file or the same component in two workspace folders stops the deploy.
  * @param {string[] | undefined} selectors - `-m` values.
  * @param {string[] | undefined} sourcePaths - `-d` values.
@@ -259,4 +261,71 @@ export async function selectSources(
     });
   }
   return sources;
+}
+
+const registryIndex = (source: SelectedSource): number =>
+  HANDLERS.findIndex((handler) => handler.type === source.handler.type);
+
+/**
+ * The sources in dependency order: a component another selected component references comes
+ * first. Ties keep registry order, then API name. References to components outside the
+ * selection are left to the plan. A source whose files do not parse counts as having no
+ * references (the plan reports it). A cycle is refused before anything is written.
+ * @param {SelectedSource[]} sources - Selected components.
+ * @param {DeployContext} context - Destination workspace.
+ * @returns {SelectedSource[]} Same sources, referenced ones first.
+ */
+export function dependencyOrder(
+  sources: SelectedSource[],
+  context: DeployContext,
+): SelectedSource[] {
+  const keyOf = (source: SelectedSource): string => `${source.handler.type}:${source.apiName}`;
+  const byKey = new Map(sources.map((source) => [keyOf(source), source]));
+  const dependencies = new Map<string, Set<string>>();
+  for (const source of sources) {
+    let wanted: string[] = [];
+    try {
+      wanted = source.handler
+        .references(source.handler.fromSource(source.files, context))
+        .map((reference) => `${reference.type}:${reference.apiName}`);
+    } catch {
+      // Planning blocks this source with the parse error.
+    }
+    dependencies.set(
+      keyOf(source),
+      new Set(wanted.filter((key) => key !== keyOf(source) && byKey.has(key))),
+    );
+  }
+  const rank = (left: SelectedSource, right: SelectedSource): number =>
+    registryIndex(left) - registryIndex(right) || left.apiName.localeCompare(right.apiName);
+  const ordered: SelectedSource[] = [];
+  const done = new Set<string>();
+  let pending = sources.toSorted(rank);
+  while (pending.length > 0) {
+    const next = pending.find((source) =>
+      [...dependencies.get(keyOf(source))!].every((key) => done.has(key)),
+    );
+    if (!next) {
+      // Every pending component waits for another pending one: follow the edges to a cycle.
+      const path = [keyOf(pending[0])];
+      for (;;) {
+        const waitsFor = [...dependencies.get(path.at(-1)!)!]
+          .filter((key) => !done.has(key))
+          .toSorted((left, right) => rank(byKey.get(left)!, byKey.get(right)!))[0];
+        const seen = path.indexOf(waitsFor);
+        if (seen !== -1) {
+          const cycle = [...path.slice(seen), waitsFor];
+          throw new CmsError(
+            'DEPENDENCY_CYCLE',
+            `Components reference each other in a cycle: ${cycle.join(' -> ')}`,
+          );
+        }
+        path.push(waitsFor);
+      }
+    }
+    ordered.push(next);
+    done.add(keyOf(next));
+    pending = pending.filter((source) => source !== next);
+  }
+  return ordered;
 }

@@ -27,7 +27,7 @@ import {
 } from '../transport/multipart-image-update.js';
 import type { MultipartBody } from '../transport/multipart.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
-import type { SelectedSource } from './deploy-selection.js';
+import { dependencyOrder, type SelectedSource } from './deploy-selection.js';
 import { checkDataGraphReferences, dataGraphReferences } from './data-graph-check.js';
 import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
@@ -202,20 +202,23 @@ function warning(code: string, message: string, component: string): Diagnostic {
  * destination, compare, resolve folders and references), stop before any write if one is
  * blocked, then write in order, read each written component back once and compare. Stops on
  * the first failure; a write whose answer never came is `unknown` and never repeated. Only the
- * destination's default variant is written. `preview` stops after the plan.
+ * destination's default variant is written. `preview` stops after the plan. Components are
+ * planned and written referenced-first (`dependencyOrder`); a reference cycle is refused
+ * (`DEPENDENCY_CYCLE`) before any write.
  * @param {RequestConnection & WriteConnection} connection - Org connection.
  * @param {CmsWorkspace} workspace - Destination workspace.
- * @param {SelectedSource[]} sources - Components in deploy order.
+ * @param {SelectedSource[]} selected - Selected components.
  * @param {DeployOptions} options - Preview flag, diagnostics, write options.
  * @returns {Promise<DeployedItem[]>} One item per component, in order.
  */
 export async function deployComponents(
   connection: RequestConnection & WriteConnection,
   workspace: CmsWorkspace,
-  sources: SelectedSource[],
+  selected: SelectedSource[],
   options: DeployOptions,
 ): Promise<DeployedItem[]> {
   const { diagnostics } = options;
+  const sources = dependencyOrder(selected, { workspace });
   const folderPath = folderPathCache(connection, workspace);
   const folders = folderPlanner(connection, workspace);
   const references = referenceResolver(connection, workspace);
