@@ -10,6 +10,7 @@ import {
   type JsonRequestOptions,
   type JsonRequestValues,
   type OperationKey,
+  RAW_TEXT_HEADERS,
 } from './json-request.js';
 import { oneShotConnection, type WriteConnection } from './one-shot-connection.js';
 import { logApiEvent } from '../logging.js';
@@ -71,7 +72,8 @@ async function sendMutation<T>(
   const input = {
     method: operation.method,
     url: buildOperationUrl(operation, values),
-    headers: { 'content-type': 'application/json' },
+    // Salesforce stores the body as sent either way; the header keeps the answer raw too.
+    headers: { 'content-type': 'application/json', ...RAW_TEXT_HEADERS },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
   const event = {

@@ -53,7 +53,8 @@ export type RetrievedItem = {
   companionPaths: string[];
 };
 
-type ReferenceResolver = {
+/** Content key <-> logical reference lookup of one workspace. */
+export type ReferenceResolver = {
   load: (keys: string[]) => Promise<void>;
   referenceOf: (key: string) => LogicalReference | undefined;
 };
@@ -105,7 +106,7 @@ async function inPool<T, R>(
  * @param {CmsWorkspace} workspace - Workspace.
  * @returns {ReferenceResolver} `load(keys)` and `referenceOf(key)`.
  */
-function referenceResolver(
+export function referenceResolver(
   connection: RequestConnection,
   workspace: CmsWorkspace,
 ): ReferenceResolver {

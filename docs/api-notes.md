@@ -218,7 +218,7 @@ Fields of a variant from `GET /connect/cms/contents/variants/{id}` [LIVE Audio 2
 - **Update** [LIVE 2026-10-18T00:51:43Z, HTTP 200, `PUT …/variants/<9Ps…>`, 667-byte body, P4 L1680]:
   - JSON part, exactly: `{"apiName","title","urlName","contentBody":{"sfdc_cms:media":{"source":{"type":"file"}}}}`.
   - File part `contentData`, `text/plain`.
-  - The response had a new `source.ref` (`0sNaj00000f1tSf`), size 62, media version 1.2. Identity, key, language and Draft state were kept.
+  - The response had a new `source.ref` (`<0sN…>`), size 62, media version 1.2. Identity, key, language and Draft state were kept.
 - **CONTRADICTION (type name):** `sfdc_cms__doc` (7F L1644, quoting the spec) versus `sfdc_cms__document` (FIN L63, the code, and live traffic). Live traffic used `sfdc_cms__document`.
 - PDF and non-text MIME types, and documents over 10 MiB: **MOCK only.** The "native 415" in tests was mocked (P4 L123).
 
@@ -444,3 +444,13 @@ All [LIVE vdb:variant.retrieve-raw-text-and-email-bodies-api68].
 - **SOQL filters that work:** `ManagedContent.AuthoredManagedContentSpaceId = '<18-char>'`, `ContentTypeFullyQualifiedName = …`, `ManagedContent.ApiName IN (…)`, `ManagedContentKey IN (…) AND IsPrimary = true`, keyset `Id > …`. `ManagedContent` exposes `ContentKey`, `ApiName`, `AuthoredManagedContentSpaceId`.
 - **Folder detail:** `folderHierarchy` lists the ancestors from the root (`folderType: System`, `parentFolderId: null`) down to the parent, without the folder itself; the root's own hierarchy is `[]`. The root folder's name is `<workspace name>_marketing`.
 - Inventory: whole Email type retrieved without errors.
+
+## 15. Deploy findings (W2b, 2026-11-21, API 68.0, live on both orgs)
+
+All [LIVE vdb:content.deploy-email-and-template-api68]. Writes were agent-owned `CMSV1_*` fixtures only.
+
+- **Writes and `X-Chatter-Entity-Encoding`.** A JSON create (`POST /connect/cms/contents`) or variant PUT stores the body exactly as sent, with or without the header: `<`, `>`, `&`, quotes and an already-encoded `&amp;` all read back unchanged through a raw GET. The header only changes the **response**: without it the write answer is entity-encoded like a GET; with it the answer is raw. v1 sends the header on every JSON write too.
+- **Create response** is a full variant representation (`managedContentVariantId`, `managedContentId`, `contentKey`, `folder {id, name, path}`, `status`, `contentBody`, …), not just IDs.
+- **Checkpoint C3 (identity on create):** create keeps the given `apiName` and `urlName` and assigns a new `contentKey` (none sent). The same `apiName` and `urlName` were accepted in a second workspace of the same org and in a workspace of the other org; each copy got its own content key. So identity across workspaces and orgs = `{ type, apiName }` per destination workspace; content keys are never authored.
+- **Update:** `PUT /connect/cms/contents/variants/{id}` with `{apiName, title, urlName, contentBody}` changed `subjectLine` / `preheader` and `rawHtml` of a code email and a template; identity, content key, language and Draft state stayed; re-retrieve was byte-identical to the edited files; the next deploy found nothing to write.
+- **Folder listing works on v68** (resolves section 6.2 / open question 8): `GET /connect/cms/folders/{folderId}/folder-items?itemType=Folders&page=&pageSize=` answers `{folderId, folderItems[], parentFolderId}`; each item has `isFolder`, `managedContentOrFolderId`, `title`, `folderSummary.folderType` (`SharedWithSpace` for "Shared with Workspace", `Standard` otherwise, sometimes `hasChildFolders`). There is no next-page field; with `pageSize=1` each child came exactly once and later pages were empty, so the end is the first short or empty page. Without `itemType` the list also holds content items (`contentSummary`). Works on the root folders of all three designated workspaces and on a nested folder; the v67 path answers 404 `NOT_FOUND`. The earlier 404 was not reproduced on v68. v1 resolves `folderPath` by walking this list by name; folder **creation** is not built yet (W5).

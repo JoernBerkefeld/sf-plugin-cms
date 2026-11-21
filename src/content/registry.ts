@@ -19,6 +19,16 @@ export function cliTypeName(contentType: string): string {
 }
 
 /**
+ * Salesforce content type of a CLI type name, the reverse of `cliTypeName`.
+ * @param {string} type - CLI type name, such as `email-template`.
+ * @returns {string} Fully qualified content type, such as `sfdc_cms__emailTemplate`.
+ */
+export function contentTypeOf(type: string): string {
+  if (type.includes('__')) return type;
+  return `sfdc_cms__${type.replaceAll(/-([a-z])/gu, (_, c: string) => c.toUpperCase())}`;
+}
+
+/**
  * The handler of a CLI type name.
  * @param {string} type - CLI type name, such as `email`.
  * @returns {ContentTypeHandler} Handler.

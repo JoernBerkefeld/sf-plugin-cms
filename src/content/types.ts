@@ -50,12 +50,21 @@ export type RetrieveContext = {
 };
 
 /**
- * Deploy payload of one component (W2b): the create/update body with logical references and
- * the folder path still unresolved. Shape decided by W2b.
+ * Deploy payload of one component, as the files say: the create/update fields with logical
+ * references (`contentKey: { type, apiName }`) and the folder path still unresolved.
  */
-export type DeployPayload = Record<string, unknown>;
+export type DeployPayload = {
+  apiName: string;
+  title?: string;
+  urlName?: string;
+  folderPath: string[];
+  /** Native body with companions put back; references are still logical. */
+  contentBody: Record<string, unknown>;
+  /** Other envelope fields of the file (`externalId`, `externalSource`), sent on create. */
+  createOnly: Record<string, unknown>;
+};
 
-/** Deploy-side context (W2b). */
+/** Deploy-side context: the destination workspace. */
 export type DeployContext = { workspace: CmsWorkspace };
 
 /**
@@ -71,8 +80,11 @@ export interface ContentTypeHandler {
   readonly transport: 'json' | 'multipart';
   /** Retrieve projection: native default variant -> files. Pure; no I/O. */
   toSource(native: NativeVariant, context: RetrieveContext): SourceFiles;
-  /** Deploy payload from files, references unresolved (W2b makes this required). */
-  fromSource?(files: SourceFiles, context: DeployContext): DeployPayload;
-  /** What must exist in the destination for the payload (W2b makes this required). */
-  references?(payload: DeployPayload): LogicalReference[];
+  /**
+   * Deploy payload from files, references unresolved. Pure. Throws UNKNOWN_SETTING for a field
+   * or companion file the type does not have.
+   */
+  fromSource(files: SourceFiles, context: DeployContext): DeployPayload;
+  /** What must exist in the destination for the payload, distinct, in body order. */
+  references(payload: DeployPayload): LogicalReference[];
 }
