@@ -1,5 +1,5 @@
 import { CmsError } from '../errors/registry.js';
-import type { CompanionFields } from './json-projection.js';
+import { BODY_ENVELOPE_FIELDS, type CompanionFields } from './json-projection.js';
 import type { DeployPayload, LogicalReference, SourceFiles } from './types.js';
 
 /** Envelope fields a JSON source document may hold besides `contentBody`. */
@@ -61,9 +61,12 @@ export function jsonPayloadFromSource(
     if (field in contentBody) unknown.push(`contentBody.${field} (also in ${suffix})`);
     contentBody[field] = content;
   }
-  for (const key of ['title', 'urlName'] as const)
-    if (key in document && typeof document[key] !== 'string')
-      unknown.push(`${key} (must be a string)`);
+  for (const key of ['title', 'urlName'] as const) {
+    if (!(key in document)) continue;
+    if (typeof document[key] !== 'string') unknown.push(`${key} (must be a string)`);
+    else if (BODY_ENVELOPE_FIELDS[key] in contentBody)
+      unknown.push(`${key} (held in contentBody.${BODY_ENVELOPE_FIELDS[key]})`);
+  }
   if (unknown.length > 0)
     throw new CmsError(
       'UNKNOWN_SETTING',

@@ -11,6 +11,7 @@ import {
 } from '../transport/json-request.js';
 import { folderPathCache, sameId } from './folders.js';
 import { inventoryOf, variantsByContentKey, type InventoryItem } from './inventory.js';
+import { mediaOf, type MediaConnection } from './media.js';
 import type { CmsWorkspace } from './workspaces.js';
 
 // Variant reads in flight at once.
@@ -133,7 +134,7 @@ export function referenceResolver(
  * Retrieve the selected components of one workspace into `cms/<workspace>/<type>/`. Lenient:
  * a component that fails is reported and the others continue. Only the default variant is
  * written; other variants give OTHER_VARIANTS_SKIPPED.
- * @param {RequestConnection} connection - Org connection.
+ * @param {MediaConnection} connection - Org connection.
  * @param {CmsWorkspace} workspace - Source workspace.
  * @param {TypeSelection[]} selection - Parsed `-m`.
  * @param {string} outputDirectory - Project directory.
@@ -141,7 +142,7 @@ export function referenceResolver(
  * @returns {Promise<RetrievedItem[]>} Written components, in selection order.
  */
 export async function retrieveComponents(
-  connection: RequestConnection,
+  connection: MediaConnection,
   workspace: CmsWorkspace,
   selection: TypeSelection[],
   outputDirectory: string,
@@ -213,7 +214,9 @@ export async function retrieveComponents(
             );
           const native = data as NativeVariant;
           await references.load(referencedContentKeys(native.contentBody));
+          const media = await mediaOf(connection, handler, native);
           const files = handler.toSource(native, {
+            ...(media ? { media } : {}),
             workspace,
             folderPath: await folderPath(
               isRecord(native.folder) ? String(native.folder.id) : undefined,

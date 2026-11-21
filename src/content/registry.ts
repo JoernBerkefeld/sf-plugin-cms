@@ -2,11 +2,15 @@ import { CmsError } from '../errors/registry.js';
 import { brandHandler } from './handlers/brand.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
+import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
 import type { ContentTypeHandler } from './types.js';
 
 /** Every supported type, in deploy order (dependencies first). One line per new type. */
 export const HANDLERS: readonly ContentTypeHandler[] = [
   brandHandler,
+  imageHandler,
+  documentHandler,
+  audioHandler,
   emailTemplateHandler,
   emailHandler,
 ];

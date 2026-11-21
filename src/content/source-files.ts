@@ -88,7 +88,7 @@ export async function writeSourceFiles(
     [`${stem}.json`, Buffer.from(jsonText(files.document), 'utf8')],
   ]);
   for (const [suffix, content] of Object.entries(files.companions)) {
-    if (!/^\.[\w.-]+$/u.test(suffix) || suffix === '.json')
+    if (!/^\.[\w.() +-]*[\w()+-]$/u.test(suffix) || suffix === '.json')
       throw new CmsError(
         'INVALID_FILE_NAME',
         `Companion suffix ${JSON.stringify(suffix)} is not usable`,

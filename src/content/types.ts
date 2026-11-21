@@ -11,7 +11,9 @@ export type LogicalReference = { type: string; apiName: string };
  */
 export type SourceDocument = {
   apiName: string;
+  /** Left out when the body holds it as `sfdc_cms:title` (the body wins on create). */
   title?: string;
+  /** Left out when the body holds it as `sfdc_cms:urlName`. */
   urlName?: string;
   /** Folder names from below the workspace root down to the component's folder; [] = root. */
   folderPath: string[];
@@ -47,7 +49,12 @@ export type RetrieveContext = {
   referenceOf: (contentKey: string) => LogicalReference | undefined;
   /** Record a warning for this component (the pipeline adds the component name). */
   warn: (warning: Omit<Diagnostic, 'component'>) => void;
+  /** Media types: the uploaded file, downloaded by the pipeline beforehand. */
+  media?: MediaFile;
 };
+
+/** The binary of a media component: its native file name and bytes. */
+export type MediaFile = { fileName: string; bytes: Uint8Array };
 
 /**
  * Deploy payload of one component, as the files say: the create/update fields with logical
@@ -62,6 +69,8 @@ export type DeployPayload = {
   contentBody: Record<string, unknown>;
   /** Other envelope fields of the file (`externalId`, `externalSource`), sent on create. */
   createOnly: Record<string, unknown>;
+  /** Media types: the file to upload (multipart create/update) and its part MIME type. */
+  file?: MediaFile & { mimeType?: string };
 };
 
 /** Deploy-side context: the destination workspace. */

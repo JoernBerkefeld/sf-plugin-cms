@@ -1,0 +1,52 @@
+{
+  "apiName": "Golden_Audio",
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "fileSize": 444,
+        "mimeType": "audio/x-wav",
+        "ref": "0sN000000000001AAA",
+        "type": "file",
+        "size": 444
+      },
+      "url": "/cms/media/MCGOLDENAUDIOAAAAAAAAAAAAAAA?version=1.1&fileHash=246d49fb0181f5392049efc0d68d8053&fileName=golden-tone.wav"
+    }
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__audio--Golden_Audio",
+  "contentKey": "MCGOLDENAUDIOAAAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__audio"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000005AAA",
+  "managedContentVariantId": "9Ps000000000005AAA",
+  "managedContentVersionId": "5OU000000000005AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden Audio",
+  "urlName": "golden-audio"
+}

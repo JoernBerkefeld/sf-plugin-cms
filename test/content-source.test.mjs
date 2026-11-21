@@ -127,11 +127,16 @@ test('unknown native fields are kept; runtime fields and null externalId are dro
     'externalId',
   ])
     assert.equal(key in document, false, key);
-  assert.deepEqual(Object.keys(document).slice(0, 4), [
+  // title and urlName live in the body (sfdc_cms:title / sfdc_cms:urlName), once.
+  assert.deepEqual(Object.keys(document).slice(0, 3), ['apiName', 'folderPath', 'futureField']);
+  assert.equal(document.contentBody['sfdc_cms:title'], variant.title);
+  const template = { ...variant, contentBody: { 'sfdc_cms:title': 'T' } };
+  assert.deepEqual(Object.keys(emailHandler.toSource(template, context().context).document), [
     'apiName',
-    'title',
     'urlName',
     'folderPath',
+    'futureField',
+    'contentBody',
   ]);
   const withId = emailHandler.toSource({ ...variant, externalId: 'ext-1' }, context().context);
   assert.equal(withId.document.externalId, 'ext-1');
@@ -198,4 +203,23 @@ test('registry: CLI names follow the content type; unknown types are refused', (
   assert.equal(cliTypeName('custom__thing'), 'custom__thing');
   for (const handler of HANDLERS) assert.equal(cliTypeName(handler.apiName), handler.type);
   assert.throws(() => handlerOf('landing-page'), { code: 'UNKNOWN_TYPE' });
+});
+
+test('title and urlName live once: an envelope copy of the body value is refused', async () => {
+  const files = await readSourceFiles(
+    golden,
+    'Default_Content_Workspace',
+    'email',
+    'Golden_Email_Code',
+  );
+  assert.equal('title' in files.document, false);
+  assert.equal(emailHandler.fromSource(files, { workspace }).title, undefined);
+  assert.throws(
+    () =>
+      emailHandler.fromSource(
+        { ...files, document: { ...files.document, title: 'Other' } },
+        { workspace },
+      ),
+    { code: 'UNKNOWN_SETTING', message: /title \(held in contentBody\.sfdc_cms:title\)/u },
+  );
 });

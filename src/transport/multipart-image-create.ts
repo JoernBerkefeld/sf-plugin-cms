@@ -35,7 +35,7 @@ export type MultipartCreateOptions = JsonRequestOptions &
     mimeType?: string;
   };
 
-type MediaContentType = 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
+export type MediaContentType = 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
 
 const OPERATION_KEY = 'content.create';
 const DEFAULT_MIME: Record<MediaContentType, string | undefined> = {
@@ -105,7 +105,17 @@ function parseBinding(value: unknown): ManagedContentDocumentBinding {
   };
 }
 
-async function createMedia(
+/**
+ * Create one media item from its bytes (POST /connect/cms/contents, multipart), sent once.
+ * @param {MediaContentType} contentType - Native content type.
+ * @param {WriteConnection} connection - Org connection.
+ * @param {MediaCreateInput} input - JSON part.
+ * @param {string} filename - Native file name.
+ * @param {Uint8Array} bytes - File bytes.
+ * @param {MultipartCreateOptions} options - MIME, boundary, timeout and cancellation.
+ * @returns {Promise<ManagedContentDocumentBinding>} New identities.
+ */
+export async function createMediaContent(
   contentType: MediaContentType,
   connection: WriteConnection,
   input: MediaCreateInput,
@@ -141,7 +151,7 @@ export function createImageContent(
   bytes: Uint8Array,
   options: MultipartCreateOptions = {},
 ): Promise<ManagedContentDocumentBinding> {
-  return createMedia('sfdc_cms__image', connection, input, filename, bytes, options);
+  return createMediaContent('sfdc_cms__image', connection, input, filename, bytes, options);
 }
 
 /**
@@ -160,7 +170,7 @@ export function createDocumentContent(
   bytes: Uint8Array,
   options: MultipartCreateOptions = {},
 ): Promise<ManagedContentDocumentBinding> {
-  return createMedia('sfdc_cms__document', connection, input, filename, bytes, options);
+  return createMediaContent('sfdc_cms__document', connection, input, filename, bytes, options);
 }
 
 /**
@@ -179,5 +189,5 @@ export function createAudioContent(
   bytes: Uint8Array,
   options: MultipartCreateOptions & { mimeType: string },
 ): Promise<ManagedContentDocumentBinding> {
-  return createMedia('sfdc_cms__audio', connection, input, filename, bytes, options);
+  return createMediaContent('sfdc_cms__audio', connection, input, filename, bytes, options);
 }

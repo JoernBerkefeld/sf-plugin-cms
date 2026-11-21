@@ -1,0 +1,51 @@
+{
+  "apiName": "Golden_Image_Url",
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "fileSize": null,
+        "mimeType": null,
+        "type": "url",
+        "url": "https://example.com/golden.png"
+      },
+      "url": "https://example.com/golden.png"
+    }
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__image--Golden_Image_Url",
+  "contentKey": "MCGOLDENIMAGEURLAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__image"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000006AAA",
+  "managedContentVariantId": "9Ps000000000006AAA",
+  "managedContentVersionId": "5OU000000000006AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Image_Url",
+  "urlName": "golden-image-url"
+}

@@ -9,6 +9,7 @@ import Deploy from '../lib/commands/cms/deploy.js';
 import { brandHandler } from '../lib/content/handlers/brand.js';
 import { HANDLERS, handlerOf } from '../lib/content/registry.js';
 import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.js';
+import { envelopeOf } from '../lib/services/deploy.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -63,8 +64,12 @@ test('golden fromSource: brand files give back the native envelope and body', as
   const native = await nativeBrand();
   const payload = brandHandler.fromSource(await goldenBrand(), { workspace });
   assert.equal(payload.apiName, native.apiName);
-  assert.equal(payload.title, native.title);
-  assert.equal(payload.urlName, native.urlName);
+  assert.equal(payload.title, undefined);
+  assert.deepEqual(envelopeOf(payload, payload.contentBody), {
+    apiName: native.apiName,
+    title: native.title,
+    urlName: native.urlName,
+  });
   assert.deepEqual(payload.folderPath, []);
   assert.deepEqual(payload.createOnly, {});
   assert.deepEqual(payload.contentBody, native.contentBody);

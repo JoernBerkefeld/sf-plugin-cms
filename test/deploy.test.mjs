@@ -10,7 +10,7 @@ import { referencedContentKeys } from '../lib/content/json-projection.js';
 import { resolveReferences } from '../lib/content/json-source.js';
 import { handlerOf } from '../lib/content/registry.js';
 import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.js';
-import { sourceDifferences } from '../lib/services/deploy.js';
+import { envelopeOf, sourceDifferences } from '../lib/services/deploy.js';
 import { selectSources } from '../lib/services/deploy-selection.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 
@@ -63,8 +63,13 @@ test('golden fromSource: files give back the native envelope and body', async ()
     const handler = handlerOf(type);
     const payload = handler.fromSource(await goldenFiles(type, apiName), { workspace });
     assert.equal(payload.apiName, native.apiName);
-    assert.equal(payload.title, native.title);
-    assert.equal(payload.urlName, native.urlName);
+    assert.deepEqual(envelopeOf(payload, payload.contentBody), {
+      apiName: native.apiName,
+      title: native.title,
+      ...(native.contentBody['sfdc_cms:urlName'] || payload.urlName
+        ? { urlName: native.urlName }
+        : {}),
+    });
     assert.deepEqual(payload.folderPath, []);
     assert.deepEqual(payload.createOnly, {});
     const keys = referencedContentKeys(native.contentBody);

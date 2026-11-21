@@ -14,6 +14,10 @@ export const hints: Readonly<Record<string, string>> = {
     'The body references a content key that is not a component of this workspace; it was kept as the native content key. A deploy into another workspace cannot resolve it.',
   INVALID_FILE_NAME:
     'The API name cannot be used as a file name. Rename the component in the CMS workspace to letters, digits, underscores or hyphens, then rerun.',
+  MEDIA_FILE_MISSING:
+    'A media component needs its file next to the JSON, named <ApiName>.<type>.<file name>. Add the file (or retrieve the component again), then rerun.',
+  MEDIA_DOWNLOAD_FAILED:
+    'The file of a media component could not be downloaded from Salesforce, or it did not match its size, MIME type or hash. The message names the reason; rerun, or check the component in the CMS workspace.',
   INVALID_SOURCE_FILE:
     'A local source file is not a valid component file. Fix or remove the file named in the message, then rerun.',
 };

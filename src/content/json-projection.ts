@@ -25,6 +25,12 @@ export const RUNTIME_FIELDS: ReadonlySet<string> = new Set([
 
 const CONTENT_KEY = /^MC[A-Z2-7]{26}$/u;
 
+/** Body keys that hold the envelope's title and urlName; the body value wins on create. */
+export const BODY_ENVELOPE_FIELDS = {
+  title: 'sfdc_cms:title',
+  urlName: 'sfdc_cms:urlName',
+} as const;
+
 /** Top-level body keys of a JSON type that become companion files, by file suffix. */
 export type CompanionFields = Readonly<Record<string, string>>;
 
@@ -119,10 +125,16 @@ export function projectJsonVariant(
     if (key === 'externalId' && native[key] === null) continue;
     extra[key] = projectValue(native[key], context);
   }
+  // Each value once, where it wins on create: the body's `sfdc_cms:title` / `sfdc_cms:urlName`
+  // over the envelope's; the deploy fills the envelope from the body.
+  const envelope = (key: 'title' | 'urlName'): Record<string, string> =>
+    typeof native[key] === 'string' && typeof body[BODY_ENVELOPE_FIELDS[key]] !== 'string'
+      ? { [key]: native[key] }
+      : {};
   const document: SourceDocument = {
     apiName: String(native.apiName),
-    ...(typeof native.title === 'string' ? { title: native.title } : {}),
-    ...(typeof native.urlName === 'string' ? { urlName: native.urlName } : {}),
+    ...envelope('title'),
+    ...envelope('urlName'),
     folderPath: [...context.folderPath],
     ...extra,
     contentBody: projectValue(body, context) as Record<string, unknown>,

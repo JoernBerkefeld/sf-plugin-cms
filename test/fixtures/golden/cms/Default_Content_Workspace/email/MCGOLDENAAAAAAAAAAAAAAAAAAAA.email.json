@@ -1,7 +1,5 @@
 {
   "apiName": "MCGOLDENAAAAAAAAAAAAAAAAAAAA",
-  "title": "Annual Promo Email",
-  "urlName": "annual-promo-email",
   "folderPath": [],
   "contentBody": {
     "backgroundColor": "{!$brand.colorScheme.root}",

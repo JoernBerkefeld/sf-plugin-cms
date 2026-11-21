@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { referencedContentKeys } from '../content/json-projection.js';
+import { BODY_ENVELOPE_FIELDS, referencedContentKeys } from '../content/json-projection.js';
 import { resolveReferences } from '../content/json-source.js';
 import { contentTypeOf } from '../content/registry.js';
 import type {
@@ -18,10 +18,19 @@ import {
   type RequestConnection,
 } from '../transport/json-request.js';
 import { requestJsonMutation, type JsonMutationOptions } from '../transport/json-mutation.js';
+import { buildAudioUpdateMultipart } from '../transport/multipart-audio-update.js';
+import { buildDocumentUpdateMultipart } from '../transport/multipart-document-update.js';
+import { createMediaContent, type MediaContentType } from '../transport/multipart-image-create.js';
+import {
+  buildImageUpdateMultipart,
+  sendVariantUpdateMultipart,
+} from '../transport/multipart-image-update.js';
+import type { MultipartBody } from '../transport/multipart.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
 import type { SelectedSource } from './deploy-selection.js';
 import { folderIdCache, folderPathCache } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
+import { mediaOf } from './media.js';
 import { referenceResolver, type Diagnostics } from './retrieve.js';
 import type { CmsWorkspace } from './workspaces.js';
 
@@ -83,6 +92,39 @@ type Planned = {
   /** Destination folder for a create. */
   folderId?: string;
 };
+
+type UpdateBuilder = (
+  input: Record<string, unknown>,
+  filename: string,
+  bytes: Uint8Array,
+  options: { mimeType?: string },
+) => MultipartBody;
+
+/** Multipart variant-update body per media type (per-type default part MIME type). */
+const MEDIA_UPDATE_BUILDERS: Readonly<Record<string, UpdateBuilder>> = {
+  sfdc_cms__image: buildImageUpdateMultipart,
+  sfdc_cms__document: buildDocumentUpdateMultipart,
+  sfdc_cms__audio: buildAudioUpdateMultipart as UpdateBuilder,
+};
+
+/**
+ * The envelope of a create/update. A title or urlName the file holds only in the body
+ * (`sfdc_cms:title`, `sfdc_cms:urlName`, which win on create) is filled from there.
+ * @param {DeployPayload} payload - Payload as the files say.
+ * @param {Record<string, unknown>} contentBody - Body to send.
+ * @returns {Record<string, string>} apiName, title, urlName.
+ */
+export function envelopeOf(
+  payload: DeployPayload,
+  contentBody: Record<string, unknown>,
+): Record<string, string> {
+  const envelope: Record<string, string> = { apiName: payload.apiName };
+  for (const key of ['title', 'urlName'] as const) {
+    const value = payload[key] ?? contentBody[BODY_ENVELOPE_FIELDS[key]];
+    if (typeof value === 'string') envelope[key] = value;
+  }
+  return envelope;
+}
 
 const referenceKey = (reference: LogicalReference): string =>
   `${reference.type}:${reference.apiName}`;
@@ -195,8 +237,10 @@ export async function deployComponents(
   ): Promise<{ files: SourceFiles; folderPath: string[] }> => {
     await references.load(referencedContentKeys(native.contentBody));
     const path = await folderPath(isRecord(native.folder) ? String(native.folder.id) : undefined);
+    const media = await mediaOf(connection, handler, native);
     // Keys outside the workspace stay native keys; the comparison shows them as changes.
     const files = handler.toSource(native, {
+      ...(media ? { media } : {}),
       workspace,
       folderPath: path,
       referenceOf: references.referenceOf,
@@ -333,13 +377,36 @@ export async function deployComponents(
           );
         return key;
       }) as Record<string, unknown>;
-      const envelope = {
-        apiName: payload!.apiName,
-        ...(payload!.title === undefined ? {} : { title: payload!.title }),
-        ...(payload!.urlName === undefined ? {} : { urlName: payload!.urlName }),
-      };
+      const envelope = envelopeOf(payload!, contentBody);
+      const { file } = payload!;
       let response: unknown;
-      if (action === 'create') {
+      if (file && action === 'create') {
+        response = await createMediaContent(
+          handler.apiName as MediaContentType,
+          connection,
+          {
+            contentSpaceOrFolderId: createFolder!,
+            ...envelope,
+            contentBody,
+            ...payload!.createOnly,
+          },
+          file.fileName,
+          file.bytes,
+          file.mimeType === undefined ? {} : { mimeType: file.mimeType },
+        );
+      } else if (file) {
+        const build = MEDIA_UPDATE_BUILDERS[handler.apiName] ?? buildImageUpdateMultipart;
+        response = await sendVariantUpdateMultipart(
+          connection,
+          item.variantId!,
+          build(
+            { ...envelope, contentBody },
+            file.fileName,
+            file.bytes,
+            file.mimeType === undefined ? {} : { mimeType: file.mimeType },
+          ),
+        );
+      } else if (action === 'create') {
         ({ data: response } = await requestJsonMutation<unknown>(
           connection,
           getSelectedOperation('content.create'),
