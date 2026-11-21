@@ -50,7 +50,7 @@ function isFileSource(body: Record<string, unknown>): boolean {
  * @param {string} apiName - Salesforce content type.
  * @returns {ContentTypeHandler} Handler.
  */
-function mediaHandler(type: string, apiName: string): ContentTypeHandler {
+export function mediaHandler(type: string, apiName: string): ContentTypeHandler {
   return {
     type,
     apiName,

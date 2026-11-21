@@ -9,8 +9,11 @@ import { Config } from '@oclif/core';
 import Delete from '../lib/commands/cms/delete.js';
 import Deploy from '../lib/commands/cms/deploy.js';
 import Retrieve from '../lib/commands/cms/retrieve.js';
+import { customFontHandler } from '../lib/content/handlers/custom-font.js';
 import { audioHandler, documentHandler, imageHandler } from '../lib/content/handlers/media.js';
-import { HANDLERS } from '../lib/content/registry.js';
+import { vcfHandler } from '../lib/content/handlers/vcf.js';
+import { videoHandler } from '../lib/content/handlers/video.js';
+import { contentTypeOf, HANDLERS } from '../lib/content/registry.js';
 import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.js';
 import { mediaOf } from '../lib/services/media.js';
 import { fakeConnection } from './support/fake-connection.mjs';
@@ -33,6 +36,9 @@ const CASES = [
   ['image', imageHandler, 'Golden_Image', 'golden-image.png'],
   ['document', documentHandler, 'Golden_Document', 'golden-notes.txt'],
   ['audio', audioHandler, 'Golden_Audio', 'golden-tone.wav'],
+  ['video', videoHandler, 'Golden_Video', 'golden.mp4'],
+  ['custom-font', customFontHandler, 'Golden_Custom_Font', 'golden.ttf'],
+  ['vcf', vcfHandler, 'Golden_Vcf', 'golden.vcf'],
 ];
 const md5 = (bytes) => createHash('md5').update(bytes).digest('hex');
 const nativeOf = async (name) =>
@@ -56,7 +62,18 @@ before(async () => {
 test('media types are registered after brand, before the email types', () => {
   assert.deepEqual(
     HANDLERS.map((handler) => handler.type),
-    ['brand', 'image', 'document', 'audio', 'email-fragment', 'email-template', 'email'],
+    [
+      'brand',
+      'image',
+      'document',
+      'audio',
+      'video',
+      'custom-font',
+      'vcf',
+      'email-fragment',
+      'email-template',
+      'email',
+    ],
   );
   for (const [, handler] of CASES) assert.equal(handler.transport, 'multipart');
 });
@@ -321,13 +338,16 @@ for (const [type, , apiName, fileName] of CASES) {
     assert.deepEqual(created.result.diagnostics, { warnings: [], errors: [] });
     assert.equal(created.writes.length, 1);
     const create = parseMultipart(created.writes[0].input);
-    assert.equal(create.json.contentType, `sfdc_cms__${type}`);
+    assert.equal(create.json.contentType, contentTypeOf(type));
     assert.equal(create.json.contentSpaceOrFolderId, workspace.rootFolderId);
     assert.equal(create.json.title, files.document.title);
     assert.deepEqual(create.json.contentBody['sfdc_cms:media'], { source: { type: 'file' } });
     assert.equal(create.fileName, fileName);
     assert.equal(create.mimeType, files.document.contentBody['sfdc_cms:media'].source.mimeType);
     assert.deepEqual(create.bytes, Buffer.from(files.companions[`.${fileName}`]));
+    // A Contact Card's required vcfData is filled from the file.
+    if (type === 'vcf')
+      assert.equal(create.json.contentBody.vcfData, create.bytes.toString('utf8'));
 
     const unchanged = await run(Deploy, selector, org, directory);
     assert.deepEqual(outcomes(unchanged.result), [[apiName, 'unchanged']]);

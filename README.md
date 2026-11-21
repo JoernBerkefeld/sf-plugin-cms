@@ -81,15 +81,18 @@ Each row is one content type. The second column is the name you use with `-m`. *
 means the plugin has that operation. For every operation the plugin sends the request and shows
 Salesforce's answer; if Salesforce refuses an operation for a type, you see its error.
 
-| Type           | `-m` name        | Salesforce name           | Retrieve  | Create and update | Delete    | Publish and unpublish |
-| -------------- | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
-| Email          | `email`          | `sfdc_cms__email`         | Available | Available         | Available | Available             |
-| Email template | `email-template` | `sfdc_cms__emailTemplate` | Available | Available         | Available | Available             |
-| Email fragment | `email-fragment` | `sfdc_cms__emailFragment` | Available | Available         | Available | Available             |
-| Image          | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
-| Document       | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
-| Audio          | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
-| Brand          | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
+| Type               | `-m` name        | Salesforce name           | Retrieve  | Create and update | Delete    | Publish and unpublish |
+| ------------------ | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
+| Email              | `email`          | `sfdc_cms__email`         | Available | Available         | Available | Available             |
+| Email template     | `email-template` | `sfdc_cms__emailTemplate` | Available | Available         | Available | Available             |
+| Email fragment     | `email-fragment` | `sfdc_cms__emailFragment` | Available | Available         | Available | Available             |
+| Image              | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
+| Document           | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
+| Audio              | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
+| Video              | `video`          | `sfdc_cms__video`         | Available | Available         | Available | Available             |
+| Custom font        | `custom-font`    | `sfdc_cms__customFont`    | Available | Available         | Available | Available             |
+| Contact card (VCF) | `vcf`            | `sfdc_cms__vcf`           | Available | Available         | Available | Available             |
+| Brand              | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
 
 Other CMS types (landing pages, SMS, push and more) are not handled yet.
 
@@ -101,15 +104,18 @@ Retrieve writes one folder per workspace and type under `cms/` in the current di
 `--output-dir`). Each component is one JSON file named after its API name. Some types keep
 parts of the component in files next to the JSON:
 
-| Type           | Files                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------------- |
-| Email          | `cms/<workspace>/email/<ApiName>.email.json`, plus `.email.html` and `.email.txt`           |
-| Email template | `cms/<workspace>/email-template/<ApiName>.email-template.json`, plus `.html` and `.txt`     |
-| Email fragment | `cms/<workspace>/email-fragment/<ApiName>.email-fragment.json`                              |
-| Image          | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
-| Document       | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
-| Audio          | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
-| Brand          | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
+| Type               | Files                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| Email              | `cms/<workspace>/email/<ApiName>.email.json`, plus `.email.html` and `.email.txt`           |
+| Email template     | `cms/<workspace>/email-template/<ApiName>.email-template.json`, plus `.html` and `.txt`     |
+| Email fragment     | `cms/<workspace>/email-fragment/<ApiName>.email-fragment.json`                              |
+| Image              | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
+| Document           | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
+| Audio              | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
+| Video              | `cms/<workspace>/video/<ApiName>.video.json`, plus the file                                 |
+| Custom font        | `cms/<workspace>/custom-font/<ApiName>.custom-font.json`, plus the font file                |
+| Contact card (VCF) | `cms/<workspace>/vcf/<ApiName>.vcf.json`, plus the `.vcf` file                              |
+| Brand              | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
 
 - `<workspace>` is the API name of the workspace you retrieved from (its ID if it has no API
   name). It tells you where the files came from; `--workspace` on deploy says where they go. So

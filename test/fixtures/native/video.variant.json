@@ -3,13 +3,13 @@
   "contentBody": {
     "sfdc_cms:media": {
       "source": {
-        "fileSize": 1046987,
+        "fileSize": 1054,
         "mimeType": "video/mp4",
         "ref": "0sN000000000101AAA",
         "type": "file",
-        "size": 1046987
+        "size": 1054
       },
-      "url": "/cms/media/MCGOLDENXZEROAAAAAAAAAAAAAAA?version=1.1&fileHash=00000000000000000000000000000000&fileName=golden.mp4"
+      "url": "/cms/media/MCGOLDENXZEROAAAAAAAAAAAAAAA?version=1.1&fileHash=a44efba0dd354dc83c832b357375d9b9&fileName=golden.mp4"
     }
   },
   "contentFqn": null,
