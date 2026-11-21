@@ -11,10 +11,10 @@ const outputDirectory = path.resolve('src', 'generated');
 try {
   if (process.argv.includes('--check')) {
     await checkSelectedOpenApi(sourcePath, outputDirectory);
-    process.stdout.write('selected OpenAPI generation is deterministic and current\n');
+    process.stdout.write('src/generated/operations.ts is current\n');
   } else {
     await writeSelectedOpenApi(sourcePath, outputDirectory);
-    process.stdout.write('generated selected Stage 1 OpenAPI read descriptors\n');
+    process.stdout.write('generated src/generated/operations.ts\n');
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

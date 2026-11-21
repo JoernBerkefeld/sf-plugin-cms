@@ -1,0 +1,52 @@
+{
+  "apiName": "Golden_Document",
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "fileSize": 61,
+        "mimeType": "text/plain",
+        "ref": "0sN000000000001AAA",
+        "type": "file",
+        "size": 61
+      },
+      "url": "/cms/media/MCGOLDENDOCUMENTAAAAAAAAAAAA?version=1.1&fileHash=8a75d8eebe6afc2fe93c1ee9c1699d83&fileName=golden-notes.txt"
+    }
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__document--Golden_Document",
+  "contentKey": "MCGOLDENDOCUMENTAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__document"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000004AAA",
+  "managedContentVariantId": "9Ps000000000004AAA",
+  "managedContentVersionId": "5OU000000000004AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden Document",
+  "urlName": "golden-document"
+}

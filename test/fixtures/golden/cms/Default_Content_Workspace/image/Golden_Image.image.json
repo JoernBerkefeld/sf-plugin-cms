@@ -1,0 +1,15 @@
+{
+  "apiName": "Golden_Image",
+  "title": "Golden Image",
+  "urlName": "golden-image",
+  "folderPath": [],
+  "contentBody": {
+    "altText": "Golden fixture image",
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "image/png",
+        "type": "file"
+      }
+    }
+  }
+}

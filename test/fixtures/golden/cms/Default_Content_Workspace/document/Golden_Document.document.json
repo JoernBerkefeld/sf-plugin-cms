@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Document",
+  "title": "Golden Document",
+  "urlName": "golden-document",
+  "folderPath": [],
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "text/plain",
+        "type": "file"
+      }
+    }
+  }
+}

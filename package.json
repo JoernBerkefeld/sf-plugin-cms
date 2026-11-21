@@ -1,7 +1,7 @@
 {
   "name": "sf-plugin-cms",
-  "version": "0.22.0",
-  "description": "Salesforce CLI plugin for bounded CMS retrieve, deploy, image upload, and Email lifecycle operations",
+  "version": "0.23.0-dev",
+  "description": "Salesforce CLI plugin to retrieve and deploy Marketing Cloud CMS content",
   "author": {
     "name": "Jörn Berkefeld",
     "email": "joern.berkefeld@gmail.com"
@@ -11,21 +11,10 @@
     "type": "git",
     "url": "git+https://github.com/JoernBerkefeld/sf-plugin-cms.git"
   },
+  "homepage": "https://github.com/JoernBerkefeld/sf-plugin-cms#readme",
   "bugs": {
     "url": "https://github.com/JoernBerkefeld/sf-plugin-cms/issues"
   },
-  "homepage": "https://github.com/JoernBerkefeld/sf-plugin-cms#readme",
-  "type": "module",
-  "exports": "./lib/index.js",
-  "engines": {
-    "node": ">=22.19 <25"
-  },
-  "files": [
-    "lib",
-    "messages",
-    "LICENSE",
-    "README.md"
-  ],
   "keywords": [
     "salesforce",
     "salesforcedx",
@@ -34,35 +23,49 @@
     "marketing-cloud",
     "cms"
   ],
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
   "oclif": {
     "bin": "sf",
     "commands": "./lib/commands",
     "topicSeparator": " ",
-    "flexibleTaxonomy": true,
     "topics": {
       "cms": {
-        "description": "Marketing Cloud CMS commands."
+        "description": "Marketing Cloud CMS content: list workspaces and channels; retrieve, deploy, delete, publish and unpublish components."
+      },
+      "cms:list": {
+        "description": "List CMS workspaces and the channels of a workspace."
       }
     }
   },
   "scripts": {
-    "build": "npm run compile",
     "clean": "node -e \"import('node:fs').then(({rmSync}) => rmSync('lib', {recursive:true, force:true}))\"",
+    "build": "npm run compile",
     "compile": "tsc -p tsconfig.json",
+    "lint": "eslint src test scripts bin eslint.config.js --max-warnings 0",
+    "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate": "npm run compile && node scripts/generate-openapi.mjs",
     "generate:check": "npm run compile && node scripts/generate-openapi.mjs --check",
-    "intake:canonical": "npm run compile && node scripts/intake-openapi.mjs resources/openapi/connect-rest-api-cms-v67.yaml --canonical",
-    "lint": "eslint src test eslint.config.js",
-    "lint:fix": "eslint src test eslint.config.js --fix",
-    "intake:check": "npm run compile && node scripts/intake-openapi.mjs resources/openapi/connect-rest-api-cms-v67.yaml --canonical",
+    "test": "npm run compile && node scripts/run-tests.mjs",
     "prepare": "husky || true",
-    "test": "npm run compile && node scripts/test-coverage.mjs",
-    "validate:package": "node scripts/validate-package.mjs"
+    "prepack": "npm run clean && npm run compile"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
     "@jsforce/jsforce-node": "3.10.16",
@@ -73,16 +76,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
-    "@oclif/plugin-command-snapshot": "5.3.33",
-    "@salesforce/cli": "2.140.0",
-    "@salesforce/cli-plugins-testkit": "5.3.64",
-    "@salesforce/dev-config": "4.3.3",
-    "@types/chai": "4.3.20",
-    "@types/mocha": "10.0.10",
-    "@types/node": "24.10.1",
-    "@types/sinon": "17.0.4",
-    "c8": "12.0.0",
-    "chai": "4.5.0",
+    "@types/node": "22.19.0",
     "eslint": "9.39.4",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-jsdoc": "54.7.0",
@@ -90,21 +84,9 @@
     "eslint-plugin-unicorn": "64.0.0",
     "globals": "17.9.0",
     "husky": "9.1.7",
-    "mocha": "11.8.0",
     "prettier": "3.9.6",
-    "semver": "7.8.5",
-    "sinon": "18.0.1",
-    "ts-node": "10.9.2",
     "typescript": "5.9.3",
     "typescript-eslint": "8.67.0",
     "yaml": "2.9.0"
-  },
-  "optionalDependencies": {
-    "@skill-steward/rename-noreplace-darwin-arm64": "0.5.0-beta.1",
-    "@skill-steward/rename-noreplace-darwin-x64": "0.5.0-beta.1",
-    "@skill-steward/rename-noreplace-linux-arm64-gnu": "0.5.0-beta.1",
-    "@skill-steward/rename-noreplace-linux-arm64-musl": "0.5.0-beta.1",
-    "@skill-steward/rename-noreplace-linux-x64-gnu": "0.5.0-beta.1",
-    "@skill-steward/rename-noreplace-linux-x64-musl": "0.5.0-beta.1"
   }
 }

@@ -1,12 +1,15 @@
 {
-  "extends": "@salesforce/dev-config/tsconfig-strict-esm",
   "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "lib",
     "rootDir": "src",
+    "outDir": "lib",
+    "strict": true,
+    "declaration": true,
     "skipLibCheck": true,
-    "strict": true
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*.ts"]
 }

@@ -1,81 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { logApiEvent } from '../logging.js';
 import { constants as bufferConstants } from 'node:buffer';
-import { assertMediaMimeType } from '../services/editable-media-source.js';
+import { assertMediaMimeType } from './multipart.js';
 import { domainToASCII } from 'node:url';
-import { open, unlink } from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import { redactSecrets } from './redact-secrets.js';
 
 const MEDIA_SUFFIX = 'file.force.com';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export const EXPERIMENTAL_MEDIA_POLICY = {
   approvedRedirectSuffix: MEDIA_SUFFIX,
   maxRedirects: 3,
-  perImageBytes: 10 * 1024 * 1024,
-  totalBytes: 50 * 1024 * 1024,
 } as const;
-
-export type ExperimentalMediaDownload = {
-  readonly bytes: number;
-  readonly contentLength?: number;
-  readonly md5: string;
-  readonly mimeType: string;
-  readonly sha256: string;
-};
-
-type ExperimentalMediaFileHandle = Pick<FileHandle, 'close' | 'write'>;
 
 export type ExperimentalMediaDownloadOptions = {
   readonly accessToken: string;
-  readonly contentType?:
-    'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio' | 'sfdc_cms__video';
+  readonly contentType?: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
   readonly expectedMd5: string;
   readonly expectedMimeType: string;
   readonly expectedSize: number;
   readonly fetch?: typeof fetch;
   readonly instanceUrl: string;
   readonly maxBytes?: number;
-  readonly openFile?: (file: string) => Promise<ExperimentalMediaFileHandle>;
-  readonly outputFile: string;
-  readonly unlinkFile?: (file: string) => Promise<void>;
 };
-
-function safeSecondaryDiagnostic(error: unknown): string {
-  const message = redactSecrets(error instanceof Error ? error.message : String(error));
-  return message.slice(0, 256);
-}
-
-async function cleanupFailedDownload(
-  handle: ExperimentalMediaFileHandle,
-  outputFile: string,
-  primary: unknown,
-  unlinkFile: (file: string) => Promise<void>,
-  closeAttempted: boolean,
-): Promise<never> {
-  const secondary: string[] = [];
-  if (!closeAttempted) {
-    try {
-      await handle.close();
-    } catch (error) {
-      secondary.push(`close: ${safeSecondaryDiagnostic(error)}`);
-    }
-  }
-  try {
-    await unlinkFile(outputFile);
-  } catch (error) {
-    secondary.push(`unlink: ${safeSecondaryDiagnostic(error)}`);
-  }
-  if (primary instanceof Error && secondary.length > 0) {
-    Object.defineProperty(primary, 'cleanupDiagnostics', {
-      configurable: true,
-      enumerable: false,
-      value: secondary,
-    });
-  }
-  throw primary;
-}
 
 function normalizedHost(url: URL): string {
   const host = domainToASCII(url.hostname.toLowerCase().replace(/\.$/u, ''));
@@ -110,7 +56,7 @@ function sameOrigin(left: URL, right: URL): boolean {
 export async function downloadExperimentalCmsMedia(
   source: URL,
   options: ExperimentalMediaDownloadOptions,
-): Promise<ExperimentalMediaDownload> {
+): Promise<Uint8Array> {
   const contentType = options.contentType ?? 'sfdc_cms__image';
   assertMediaMimeType(options.expectedMimeType);
   if (
@@ -119,14 +65,6 @@ export async function downloadExperimentalCmsMedia(
     options.expectedSize > bufferConstants.MAX_LENGTH
   ) {
     throw new TypeError('Experimental media expected size must be a positive safe Buffer length');
-  }
-  if (
-    contentType !== 'sfdc_cms__image' &&
-    contentType !== 'sfdc_cms__document' &&
-    contentType !== 'sfdc_cms__audio' &&
-    contentType !== 'sfdc_cms__video'
-  ) {
-    throw new TypeError(`Experimental media MIME type is unsupported: ${options.expectedMimeType}`);
   }
   const instance = new URL(options.instanceUrl);
   assertSafeHttps(instance);
@@ -224,7 +162,7 @@ export async function downloadExperimentalCmsMedia(
     }
     const sameMime = responseType.toLowerCase() === options.expectedMimeType.toLowerCase();
     if (!sameMime && (responseType === 'text/html' || responseType.includes('json'))) {
-      throw new TypeError('Experimental media response is not binary image content');
+      throw new TypeError('Experimental media response is not binary content');
     }
     if (
       !sameMime &&
@@ -259,63 +197,39 @@ export async function downloadExperimentalCmsMedia(
       throw new TypeError('Experimental media filename is invalid');
     }
     const md5 = createHash('md5');
-    const sha256 = createHash('sha256');
-    const handle = await (options.openFile ?? (async (file) => open(file, 'wx')))(
-      options.outputFile,
-    );
-    const unlinkFile = options.unlinkFile ?? unlink;
-    let closeAttempted = false;
-    try {
-      for await (const chunkValue of Readable.fromWeb(response.body as never)) {
-        const chunk = Buffer.isBuffer(chunkValue)
-          ? chunkValue
-          : Buffer.from(chunkValue as Uint8Array);
-        if (chunk.length > limit - bytes) {
-          throw new TypeError('Experimental media response exceeds the byte cap');
-        }
-        bytes += chunk.length;
-        md5.update(chunk);
-        sha256.update(chunk);
-        await handle.write(chunk);
+    const chunks: Buffer[] = [];
+    for await (const chunkValue of Readable.fromWeb(response.body as never)) {
+      const chunk = Buffer.isBuffer(chunkValue)
+        ? chunkValue
+        : Buffer.from(chunkValue as Uint8Array);
+      if (chunk.length > limit - bytes) {
+        throw new TypeError('Experimental media response exceeds the byte cap');
       }
-      if (declaredLength !== undefined && bytes !== declaredLength) {
-        throw new TypeError('Experimental media byte count differs from Content-Length');
-      }
-      if (bytes !== options.expectedSize) {
-        throw new TypeError('Experimental media byte count differs from authoring metadata');
-      }
-      const actualMd5 = md5.digest('hex');
-      if (actualMd5 !== options.expectedMd5.toLowerCase()) {
-        throw new TypeError('Experimental media MD5 differs from the authoring URL');
-      }
-      // Format admission belongs to the API; preserve opaque bytes and native MIME.
-      closeAttempted = true;
-      await handle.close();
-      logApiEvent('response', {
-        ...details,
-        responseMetadata: {
-          stage: 'complete',
-          bytes,
-          mimeType: options.expectedMimeType,
-          md5: actualMd5,
-        },
-      });
-      return {
-        bytes,
-        ...(declaredLength === undefined ? {} : { contentLength: declaredLength }),
-        md5: actualMd5,
-        mimeType: options.expectedMimeType,
-        sha256: sha256.digest('hex'),
-      };
-    } catch (error) {
-      return await cleanupFailedDownload(
-        handle,
-        options.outputFile,
-        error,
-        unlinkFile,
-        closeAttempted,
-      );
+      bytes += chunk.length;
+      md5.update(chunk);
+      chunks.push(chunk);
     }
+    if (declaredLength !== undefined && bytes !== declaredLength) {
+      throw new TypeError('Experimental media byte count differs from Content-Length');
+    }
+    if (bytes !== options.expectedSize) {
+      throw new TypeError('Experimental media byte count differs from authoring metadata');
+    }
+    const actualMd5 = md5.digest('hex');
+    if (actualMd5 !== options.expectedMd5.toLowerCase()) {
+      throw new TypeError('Experimental media MD5 differs from the authoring URL');
+    }
+    // Format admission belongs to the API; preserve opaque bytes and native MIME.
+    logApiEvent('response', {
+      ...details,
+      responseMetadata: {
+        stage: 'complete',
+        bytes,
+        mimeType: options.expectedMimeType,
+        md5: actualMd5,
+      },
+    });
+    return new Uint8Array(Buffer.concat(chunks, bytes));
   } catch (error) {
     logApiEvent('error', { ...details, responseMetadata: { stage: 'failed', bytes } }, error);
     throw error;

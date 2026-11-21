@@ -1,10 +1,8 @@
 node_modules
 lib
 coverage
-.nyc_output
-.eslintcache
+logs
 *.tsbuildinfo
 *.tgz
 .env
 .env.*
-/logs/

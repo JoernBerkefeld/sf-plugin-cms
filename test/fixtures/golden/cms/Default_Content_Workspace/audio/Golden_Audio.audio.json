@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Audio",
+  "title": "Golden Audio",
+  "urlName": "golden-audio",
+  "folderPath": [],
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "audio/x-wav",
+        "type": "file"
+      }
+    }
+  }
+}

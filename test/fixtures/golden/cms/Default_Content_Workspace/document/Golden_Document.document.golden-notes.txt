@@ -1,0 +1,2 @@
+CMSV1 test document, version 0.
+Plain text, LF line endings.

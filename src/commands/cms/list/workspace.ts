@@ -1,81 +1,33 @@
-import { Flags } from '@salesforce/sf-plugins-core';
-import { listAllWorkspaces, listWorkspaces, type CmsPage } from '../../../services/read.js';
-import {
-  apiVersionFlag,
-  CmsCommand,
-  pageFlag,
-  pageSizeFlag,
-  targetOrgFlag,
-} from '../../../command-base.js';
+import { CmsCommand, orgFlags, type CmsResult } from '../../../command-base.js';
+import { listWorkspaces, type CmsWorkspace } from '../../../services/workspaces.js';
 
-export default class ListWorkspace extends CmsCommand<CmsPage> {
-  public static readonly aliases = ['content:list:workspace'];
-  public static readonly summary = 'List Marketing Cloud CMS workspaces.';
+export type ListWorkspaceResult = { workspaces: CmsWorkspace[] };
+
+export default class ListWorkspace extends CmsCommand<ListWorkspaceResult> {
+  public static readonly summary = 'List the CMS workspaces of an org.';
   public static readonly description =
-    'Lists all CMS workspaces by default. Supply --page or --page-size to select one page.';
-  public static readonly examples = ['<%= config.bin %> cms list workspace --target-org my-org'];
-  public static readonly flags = {
-    'target-org': targetOrgFlag,
-    'api-version': apiVersionFlag,
-    'name-fragment': Flags.string({ summary: 'Return workspaces whose names contain this value.' }),
-    page: pageFlag,
-    'page-size': pageSizeFlag,
-  };
+    'Lists every CMS workspace the user can see, with its API name, ID, display name, type and default language. Use the API name or the ID as --workspace in the other cms commands.';
+  public static readonly examples = ['<%= config.bin %> <%= command.id %> --target-org my-org'];
+  public static readonly flags = { ...orgFlags };
 
-  public async run(): Promise<CmsPage> {
+  public async run(): Promise<CmsResult<ListWorkspaceResult>> {
     const { flags } = await this.parse(ListWorkspace);
-    const targetOrg = flags['target-org'].getUsername()!;
-    const connection = await this.getConnection(targetOrg, flags['api-version']);
-    const query = { nameFragment: flags['name-fragment'] };
-    const result =
-      flags.page === undefined && flags['page-size'] === undefined
-        ? await listAllWorkspaces(connection, query)
-        : await listWorkspaces(connection, {
-            ...query,
-            page: (flags.page ?? 1) - 1,
-            pageSize: flags['page-size'],
-          });
-    this.table({
-      title: 'CMS workspaces',
-      data: result.items.map((item) => {
-        const spaceType = item.spaceType;
-        const apiName =
-          spaceType !== null && typeof spaceType === 'object' && !Array.isArray(spaceType)
-            ? spaceType.apiName
-            : undefined;
-        let type = 'Unknown';
-        if (typeof apiName === 'string' && apiName.trim().length > 0) {
-          switch (apiName) {
-            case 'marketing': {
-              type = 'Marketing';
-              break;
-            }
-            case 'content': {
-              type = 'Content';
-              break;
-            }
-            case 'enablement': {
-              type = 'Enablement';
-              break;
-            }
-            default: {
-              type = apiName;
-            }
-          }
-        }
-        const title = typeof item.title === 'string' ? item.title : '';
-        const name = typeof item.name === 'string' && item.name.length > 0 ? item.name : title;
-        let enhanced = 'Unknown';
-        if (item.isEnhancedSpace === true) enhanced = 'Yes';
-        else if (item.isEnhancedSpace === false) enhanced = 'No';
-        return {
-          id: typeof item.id === 'string' ? item.id : '',
-          name,
-          type,
-          enhanced,
-        };
+    const envelope = await this.withOrg(
+      'cms list workspace',
+      flags,
+      { workspaces: [] },
+      async (org) => ({
+        workspaces: await listWorkspaces(org.connection),
       }),
-    });
-    return result;
+    );
+    if (envelope.status === 'success') {
+      const { workspaces } = envelope.result;
+      this.log(`Workspaces: ${workspaces.length}.`);
+      for (const workspace of workspaces)
+        this.log(
+          `${workspace.apiName ?? '(no API name)'} (${workspace.id}): ${workspace.name}; type ${workspace.type || 'unknown'}; ${workspace.enhanced === false ? 'not enhanced' : 'enhanced'}${workspace.defaultLanguage ? `; default language ${workspace.defaultLanguage}` : ''}.`,
+        );
+    }
+    return envelope;
   }
 }

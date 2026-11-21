@@ -1,10 +1,6 @@
 #!/bin/sh
-
-if [ "${SKIP_HOOKS:-0}" -gt 0 ] 2>/dev/null; then
-  exit 0
-fi
-
-if git diff --name-only HEAD^1 HEAD | grep -q '^package-lock.json$'; then
+set -eu
+node scripts/check-temporary.mjs
+if ! git diff --quiet ORIG_HEAD HEAD -- package-lock.json; then
   npm install --no-workspaces
-  npm run lint:fix
 fi

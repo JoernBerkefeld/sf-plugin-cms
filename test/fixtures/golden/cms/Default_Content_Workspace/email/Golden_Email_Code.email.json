@@ -1,0 +1,22 @@
+{
+  "apiName": "Golden_Email_Code",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "messagePurpose": "promotional",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:title": "Golden_Email_Code",
+    "sfdc_cms:urlName": "golden-email-code",
+    "sfdc_cms:variants": [],
+    "subjectLine": "Golden fixture subject"
+  }
+}

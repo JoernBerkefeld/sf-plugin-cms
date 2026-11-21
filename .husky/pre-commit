@@ -1,2 +1,1 @@
-npm run lint
-npm test
+node scripts/check-temporary.mjs && node scripts/check-lockfile-registry-only.mjs && npm run lint && npm test

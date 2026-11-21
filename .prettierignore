@@ -1,7 +1,8 @@
 node_modules
 lib
 coverage
-.nyc_output
+logs
 package-lock.json
 resources
-src/generated/operations.ts
+src/generated
+test/fixtures

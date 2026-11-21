@@ -1,0 +1,76 @@
+# Error codes
+
+Every problem the plugin reports has one of these codes. The human output prints the code, the message and the hint; with `--json` each diagnostic has `code`, `message` and `hint`, and, when Salesforce answered, `status`, `salesforceErrorCode` and `requestId`.
+
+Codes marked **warning** do not fail the command; all others do and set exit code 1.
+
+## General
+
+Sign-in, API version and Salesforce answers.
+
+| Code                    | Hint                                                                                                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTHENTICATION_FAILED` | Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.                           |
+| `INVALID_API_VERSION`   | --api-version must be a numeric version such as 68.0. Pass a version the org supports, then rerun.                                                                                     |
+| `REQUEST_FAILED`        | Salesforce rejected or did not complete a request. Read the HTTP status, Salesforce error code and request ID in the message, fix the cause such as permissions or limits, then rerun. |
+| `TARGET_ORG_REQUIRED`   | No usable target org was found. Pass --target-org <alias or username>, or set a default with sf config set target-org, then rerun.                                                     |
+| `UNEXPECTED_RESPONSE`   | Salesforce answered with a shape the plugin does not read. Rerun with --api log and report the log file named on stderr.                                                               |
+
+## Workspaces
+
+Finding the workspace named by `--workspace`.
+
+| Code                  | Hint                                                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WORKSPACE_NOT_FOUND` | No CMS workspace with that API name or ID is visible to this user. Run sf cms list workspace to see the API names and IDs, then rerun with one of them. |
+| `WORKSPACE_AMBIGUOUS` | More than one workspace matches that value. Pass the workspace ID (0Zu...) instead, as shown by sf cms list workspace.                                  |
+
+## Content and files
+
+Selecting types and components, retrieve, and the local files.
+
+| Code                               | Hint                                                                                                                                                                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_TYPE`                     | The -m value names a type the plugin does not handle. Use one of the types listed in the error message, as type or type:ApiName, then rerun.                                                              |
+| `INVALID_SELECTOR`                 | A -m value must be type or type:ApiName, such as email or email:Welcome_Email. Fix the value, then rerun.                                                                                                 |
+| `COMPONENT_NOT_FOUND`              | No component of that type and API name exists in the workspace. Check the API name (case-sensitive) and --workspace, then rerun.                                                                          |
+| `NO_DEFAULT_VARIANT`               | The component has no primary variant and none in the workspace default language, so the plugin cannot tell which one to write. Check the component in the CMS workspace.                                  |
+| `OTHER_VARIANTS_SKIPPED` (warning) | Only the default variant is retrieved, deployed, published or unpublished; the other variants named in the message stay as they are in the org.                                                           |
+| `REFERENCE_UNRESOLVED` (warning)   | The body references a content key that is not a component of this workspace; it was kept as the native content key. A deploy into another workspace cannot resolve it.                                    |
+| `INVALID_FILE_NAME`                | The API name cannot be used as a file name. Rename the component in the CMS workspace to letters, digits, underscores or hyphens, then rerun.                                                             |
+| `MEDIA_FILE_MISSING`               | A media component needs its file next to the JSON, named <ApiName>.<type>.<file name>. Add the file (or retrieve the component again), then rerun.                                                        |
+| `MEDIA_DOWNLOAD_FAILED`            | The file of a media component could not be downloaded from Salesforce, or it did not match its size, MIME type or hash. The message names the reason; rerun, or check the component in the CMS workspace. |
+| `INVALID_SOURCE_FILE`              | A local source file is not a valid component file. Fix or remove the file named in the message, then rerun.                                                                                               |
+
+## Deploy
+
+Reading source files, references, folders and data graphs, and writing.
+
+| Code                            | Hint                                                                                                                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_SETTING`               | The source file has a field or companion file this type does not have. Remove or rename the setting named in the message, then rerun.                                                                                              |
+| `SOURCE_NOT_FOUND`              | No local file matches the -m value or --source-dir path. Check the name (case-sensitive) and that the file is under cms/<workspace>/<type>/, then rerun.                                                                           |
+| `SOURCE_AMBIGUOUS`              | The same component exists in more than one workspace folder under cms/. Pick one with --source-dir, then rerun.                                                                                                                    |
+| `INVALID_SOURCE_PATH`           | A --source-dir path must be a cms/ folder, a folder below it, or a component file cms/<workspace>/<type>/<ApiName>.<type>.json (or one of its companions).                                                                         |
+| `REFERENCE_NOT_IN_DESTINATION`  | The component references another component that the destination workspace does not have and this deploy does not create. Deploy that component first or add it to this deploy, then rerun.                                         |
+| `DEPENDENCY_CYCLE`              | The components named in the message reference each other in a circle, so none of them can be created first. Remove one of the references, deploy, then add it back with a second deploy.                                           |
+| `DATA_SPACE_NOT_IN_DESTINATION` | A data graph provider of the component names a data space the destination org does not have. Create the data space there (or change the provider), then rerun.                                                                     |
+| `DATA_GRAPH_NOT_IN_DESTINATION` | A data graph provider of the component names a data graph the destination data space does not have. Deploy the data graph there first (for example with sf-plugin-data), then rerun.                                               |
+| `FOLDER_AMBIGUOUS`              | Several folders in the destination have that name at the same level, so the plugin cannot tell which one to use. Rename one of them in the workspace, then rerun.                                                                  |
+| `FOLDER_NOT_MOVED` (warning)    | Deploy does not move existing components between folders; the component stays in the folder named in the message.                                                                                                                  |
+| `READBACK_DIFFERS` (warning)    | Salesforce stored the component differently from the file in the fields named in the message. Retrieve it to see what was stored.                                                                                                  |
+| `DEPLOY_BLOCKED`                | Another component of this deploy was blocked, so nothing was written. Fix the blocked component, then rerun.                                                                                                                       |
+| `NOT_ATTEMPTED`                 | An earlier component failed or its outcome is unknown, so this one was not written. Fix the earlier problem, then rerun.                                                                                                           |
+| `UNKNOWN_OUTCOME`               | The request was sent but no answer came back, so the plugin cannot tell whether Salesforce applied it. Check the component in the org (sf cms retrieve) before running the command again; the plugin never repeats such a request. |
+
+## Delete, publish and unpublish
+
+| Code                              | Hint                                                                                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EXACT_SELECTOR_REQUIRED`         | Delete, publish and unpublish take exact components only: -m type:ApiName or --source-dir with a component file. A bare type, a wildcard or a folder is refused. Name each component, then rerun. |
+| `HAS_OTHER_VARIANTS`              | The component has variants besides the default one, and deleting it would delete them too. Remove the other variants in the CMS workspace first, then rerun.                                      |
+| `LIFECYCLE_BLOCKED`               | Another component of this run was blocked, so nothing was sent. Fix the blocked component, then rerun.                                                                                            |
+| `DELETE_NOT_CONFIRMED`            | Salesforce still returns the component after the delete. Check it in the CMS workspace before running the delete again.                                                                           |
+| `DELETE_ANSWER_IGNORED` (warning) | Salesforce answered the delete with an error, but reading the component back shows it is gone, so it counts as deleted.                                                                           |
+| `STATE_NOT_CONFIRMED` (warning)   | Salesforce accepted the request, but reading the component back does not show the expected publish state yet. Check it in the CMS workspace.                                                      |
+| `LOCAL_FILE_REMOVAL_FAILED`       | The component was deleted in the org, but a local file could not be removed. Remove the file named in the message by hand; do not repeat the delete.                                              |

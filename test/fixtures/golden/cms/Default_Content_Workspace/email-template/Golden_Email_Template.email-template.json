@@ -1,0 +1,20 @@
+{
+  "apiName": "Golden_Email_Template",
+  "urlName": "golden-email-template",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "messagePurpose": "promotional",
+    "preheader": "Golden fixture preheader",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:title": "Golden_Email_Template",
+    "sfdc_cms:variants": [],
+    "subjectLine": "Golden fixture subject"
+  }
+}

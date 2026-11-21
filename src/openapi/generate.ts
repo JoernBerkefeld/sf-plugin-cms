@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { intakeOpenApi, OpenApiIntakeError } from './intake.js';
+import { parseDocument } from 'yaml';
 import {
   SELECTED_OPERATION_CONFIG,
   SUPPLEMENTAL_OPERATIONS,
@@ -21,13 +21,7 @@ export type OperationDescriptor = {
   localKey: string;
   method: string;
   operationId: string;
-  minimumApiVersion?: string;
-  provenance?: {
-    sourceUrl: string;
-    documentedApiVersion: string;
-    sourceKind: 'rendered-excerpt';
-    operationIdentity: 'local-descriptor';
-  };
+
   parameters: ParameterDescriptor[];
   path: string;
   requestBodyMediaTypes: string[];
@@ -38,6 +32,28 @@ export type OperationDescriptor = {
 export type GeneratedOpenApiFiles = {
   operations: string;
 };
+
+export class OpenApiIntakeError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'OpenApiIntakeError';
+  }
+}
+
+/**
+ * Parse the bundled OpenAPI YAML; duplicate keys or YAML errors stop generation.
+ * @param {string} sourcePath - YAML file.
+ * @returns {Promise<RecordValue>} Document.
+ */
+async function loadOpenApi(sourcePath: string): Promise<RecordValue> {
+  const document = parseDocument(await readFile(sourcePath, 'utf8'), { uniqueKeys: true });
+  const problems = [...document.errors, ...document.warnings];
+  if (problems.length > 0)
+    throw new OpenApiIntakeError(problems.map((problem) => problem.message).join('\n'));
+  const value: unknown = document.toJS({ maxAliasCount: 100 });
+  if (!isRecord(value)) throw new OpenApiIntakeError('OpenAPI document root must be an object');
+  return value;
+}
 
 function isRecord(value: unknown): value is RecordValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -188,14 +204,11 @@ function emitOperations(descriptors: OperationDescriptor[]): string {
 }
 
 export async function generateSelectedOpenApi(sourcePath: string): Promise<GeneratedOpenApiFiles> {
-  const intake = await intakeOpenApi(sourcePath);
+  const document = await loadOpenApi(sourcePath);
   return {
     operations: emitOperations(
       [
-        ...buildSelectedOperationDescriptors(
-          intake.document as RecordValue,
-          SELECTED_OPERATION_CONFIG,
-        ),
+        ...buildSelectedOperationDescriptors(document, SELECTED_OPERATION_CONFIG),
         ...SUPPLEMENTAL_OPERATIONS,
       ].toSorted((left, right) => left.localKey.localeCompare(right.localKey)),
     ),

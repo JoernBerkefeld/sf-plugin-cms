@@ -1,297 +1,102 @@
-import { Connection as JsforceConnection } from '@jsforce/jsforce-node';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { logApiEvent } from '../logging.js';
-import { constants as bufferConstants } from 'node:buffer';
-import { assertMediaMimeType } from '../services/editable-media-source.js';
-import type { Connection } from '@salesforce/core';
-import type { Duplex } from 'node:stream';
-import { CmsRequestError, type JsonRequestOptions } from './json-request.js';
-import { redactSecrets } from './redact-secrets.js';
-import { inheritCmsApiSelection } from '../api-policy.js';
+import { CmsRequestError, isRecord, type JsonRequestOptions } from './json-request.js';
+import {
+  assertMediaMimeType,
+  buildMultipart,
+  sendMultipart,
+  withFileSource,
+  type BoundaryOptions,
+  type MultipartBody,
+} from './multipart.js';
+import type { WriteConnection } from './one-shot-connection.js';
 
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
-export type ImageCreateInput = {
+/**
+ * JSON part of a media create. `contentSpaceOrFolderId` is required; every other key is sent as
+ * the caller gives it. `contentType` is set by the builder.
+ */
+export type MediaCreateInput = Readonly<Record<string, unknown>> & {
+  contentSpaceOrFolderId: string;
+  title?: string;
   apiName?: string;
   contentKey?: string;
-  contentSpaceOrFolderId: string;
-  title: string;
   urlName?: string;
+  contentBody?: Readonly<Record<string, unknown>>;
 };
 
+/** What a create answers: the identities of the new content and its default variant. */
 export type ManagedContentDocumentBinding = {
   contentKey: string;
   managedContentId: string;
   managedContentVariantId: string;
 };
 
-export type MultipartImageCreateOptions = JsonRequestOptions & {
-  /** Explicit native MIME for the binary part; omitted callers retain the legacy envelope. */
-  mimeType?: string;
-  boundaryFactory?: () => string;
-  maxBoundaryAttempts?: number;
-};
+export type MultipartCreateOptions = JsonRequestOptions &
+  BoundaryOptions & {
+    /** Content-Type of the binary part; a per-type default applies when omitted. */
+    mimeType?: string;
+  };
 
-type RequestStream<T> = Promise<T> & {
-  stream(): Duplex;
-};
-
-type RequestConnection = Pick<Connection, 'request'> &
-  Partial<Pick<Connection, 'accessToken' | 'instanceUrl' | 'version'>>;
-
-type MultipartParts = {
-  body: Buffer;
-  boundary: string;
-  input: Readonly<Record<string, unknown>>;
-  file: { name: string; mimeType: string; byteLength: number };
-};
+export type MediaContentType = 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
 
 const OPERATION_KEY = 'content.create';
-const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_BOUNDARY_ATTEMPTS = 8;
-const ALLOWED_INPUT_KEYS = new Set([
-  'apiName',
-  'contentKey',
-  'contentSpaceOrFolderId',
-  'title',
-  'urlName',
-]);
-const REQUIRED_RESPONSE_KEYS = [
-  'contentKey',
-  'managedContentId',
-  'managedContentVariantId',
-] as const;
+const DEFAULT_MIME: Record<MediaContentType, string | undefined> = {
+  sfdc_cms__image: 'application/octet-stream; charset=ISO-8859-1',
+  sfdc_cms__document: 'text/plain',
+  sfdc_cms__audio: undefined,
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorStatus(error: unknown): number | undefined {
-  if (!isRecord(error)) return undefined;
-  for (const key of ['statusCode', 'status']) {
-    const value = error[key];
-    if (typeof value === 'number' && Number.isInteger(value)) return value;
+/**
+ * Build a media create body without sending it.
+ * @param {MediaContentType} contentType - Native content type.
+ * @param {MediaCreateInput} input - JSON part.
+ * @param {string} filename - Native file name.
+ * @param {Uint8Array} bytes - File bytes.
+ * @param {MultipartCreateOptions} options - MIME and boundary controls.
+ * @returns {MultipartBody} Built body.
+ */
+export function buildMediaCreateMultipart(
+  contentType: MediaContentType,
+  input: MediaCreateInput,
+  filename: string,
+  bytes: Uint8Array,
+  options: Pick<
+    MultipartCreateOptions,
+    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
+  > = {},
+): MultipartBody {
+  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
+  const mimeType = options.mimeType ?? DEFAULT_MIME[contentType];
+  if (mimeType === undefined) {
+    throw new CmsRequestError(OPERATION_KEY, `A MIME type is required for ${contentType}`);
   }
-  return undefined;
-}
-
-function safeErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return redactSecrets(message || 'CMS image create failed').slice(0, 1024);
-}
-
-function withoutRefreshReplay(connection: RequestConnection): Pick<Connection, 'request'> {
-  if (!connection.accessToken || !connection.instanceUrl) return connection;
-  const fresh = new JsforceConnection({
-    accessToken: connection.accessToken,
-    instanceUrl: connection.instanceUrl,
-    version: connection.version,
-  });
-  inheritCmsApiSelection(connection.version ? connection : fresh, fresh);
-  return fresh;
-}
-
-function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 31 || codePoint === 127;
-  });
-}
-
-function assertPlainNonemptyString(value: unknown, name: string): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0 || hasControlCharacter(value)) {
-    throw new CmsRequestError(OPERATION_KEY, `Invalid image create field: ${name}`);
-  }
-}
-
-function validateInput(input: ImageCreateInput): void {
-  if (!isRecord(input)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Image create input must be an object');
-  }
-  for (const key of Object.keys(input)) {
-    if (!ALLOWED_INPUT_KEYS.has(key)) {
-      throw new CmsRequestError(OPERATION_KEY, `Unsupported image create field: ${key}`);
-    }
-  }
-  assertPlainNonemptyString(input.contentSpaceOrFolderId, 'contentSpaceOrFolderId');
-  assertPlainNonemptyString(input.title, 'title');
-  for (const key of ['apiName', 'contentKey', 'urlName'] as const) {
-    if (input[key] !== undefined) assertPlainNonemptyString(input[key], key);
-  }
-}
-
-function validateFilename(filename: string): void {
   if (
-    typeof filename !== 'string' ||
-    filename.length === 0 ||
-    filename.length > bufferConstants.MAX_LENGTH ||
-    filename === '.' ||
-    filename === '..' ||
-    filename.includes('/') ||
-    filename.includes('\\') ||
-    filename.includes('"') ||
-    hasControlCharacter(filename)
+    !isRecord(input) ||
+    typeof input.contentSpaceOrFolderId !== 'string' ||
+    input.contentSpaceOrFolderId.length === 0
   ) {
-    throw new CmsRequestError(OPERATION_KEY, 'Invalid image filename');
+    throw new CmsRequestError(OPERATION_KEY, 'Media create needs contentSpaceOrFolderId');
   }
-}
-
-function defaultBoundaryFactory(): string {
-  return `sf-plugin-cms-${randomBytes(24).toString('hex')}`;
-}
-
-function validateBoundary(boundary: string): void {
-  if (!/^[A-Za-z0-9'()+_,./:=?-]{1,70}$/u.test(boundary)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Invalid multipart boundary');
-  }
-}
-
-function containsBoundary(buffer: Buffer, boundary: string): boolean {
-  return buffer.includes(Buffer.from(boundary, 'ascii'));
-}
-
-function selectBoundary(
-  json: Buffer,
-  image: Buffer,
-  factory: () => string,
-  maxAttempts: number,
-): string {
-  if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) {
-    throw new CmsRequestError(OPERATION_KEY, 'Boundary attempt limit must be a positive integer');
-  }
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const boundary = factory();
-    validateBoundary(boundary);
-    if (!containsBoundary(json, boundary) && !containsBoundary(image, boundary)) return boundary;
-  }
-  throw new CmsRequestError(OPERATION_KEY, 'Unable to generate collision-free multipart boundary');
-}
-
-export function buildImageCreateMultipart(
-  input: ImageCreateInput,
-  filename: string,
-  image: Uint8Array,
-  options: Pick<
-    MultipartImageCreateOptions,
-    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
-  > = {},
-): MultipartParts {
-  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
-  validateFilename(filename);
-  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Image filename must contain only ASCII characters');
-  }
-  return buildFileCreateMultipart(input, filename, image, 'sfdc_cms__image', options);
-}
-
-export function buildAudioCreateMultipart(
-  input: ImageCreateInput,
-  filename: string,
-  audio: Uint8Array,
-  options: Pick<MultipartImageCreateOptions, 'boundaryFactory' | 'maxBoundaryAttempts'> & {
-    mimeType: string;
-  },
-): MultipartParts {
-  assertMediaMimeType(options.mimeType);
-  validateFilename(filename);
-  // Reject Unicode before ASCII framing can introduce header delimiters.
-  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Audio filename must contain only ASCII characters');
-  }
-  return buildFileCreateMultipart(input, filename, audio, 'sfdc_cms__audio', options);
-}
-
-export function buildDocumentCreateMultipart(
-  input: ImageCreateInput,
-  filename: string,
-  document: Uint8Array,
-  options: Pick<
-    MultipartImageCreateOptions,
-    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
-  > = {},
-): MultipartParts {
-  if (options.mimeType !== undefined) assertMediaMimeType(options.mimeType);
-  validateFilename(filename);
-  // ASCII framing truncates Unicode code points, potentially introducing header delimiters.
-  if ([...filename].some((character) => character.codePointAt(0)! > 127)) {
-    throw new CmsRequestError(
-      OPERATION_KEY,
-      'Document filename must contain only ASCII characters',
-    );
-  }
-  return buildFileCreateMultipart(input, filename, document, 'sfdc_cms__document', options);
-}
-
-function buildFileCreateMultipart(
-  input: ImageCreateInput,
-  filename: string,
-  image: Uint8Array,
-  contentType: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio',
-  options: Pick<
-    MultipartImageCreateOptions,
-    'boundaryFactory' | 'maxBoundaryAttempts' | 'mimeType'
-  >,
-): MultipartParts {
-  validateInput(input);
-  validateFilename(filename);
-  if (!(image instanceof Uint8Array)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Image data must be binary');
-  }
-  if (image.byteLength === 0) {
-    throw new CmsRequestError(OPERATION_KEY, 'Image data must not be empty');
-  }
-  if (!Number.isSafeInteger(image.byteLength) || image.byteLength > bufferConstants.MAX_LENGTH) {
-    throw new CmsRequestError(OPERATION_KEY, 'Binary size cannot be represented by a Buffer');
-  }
-  const managedContentInput = {
-    ...input,
-    contentType,
-    contentBody: { 'sfdc_cms:media': { source: { type: 'file' } } },
-  } as const;
-  const json = Buffer.from(JSON.stringify(managedContentInput), 'utf8');
-  const binary = Buffer.from(image.buffer, image.byteOffset, image.byteLength);
-  const boundary = selectBoundary(
-    json,
-    binary,
-    options.boundaryFactory ?? defaultBoundaryFactory,
-    options.maxBoundaryAttempts ?? DEFAULT_BOUNDARY_ATTEMPTS,
+  return buildMultipart(
+    OPERATION_KEY,
+    'ManagedContentInputParam',
+    withFileSource({ ...input, contentType }),
+    filename,
+    bytes,
+    mimeType,
+    options,
   );
-  const firstHeader = Buffer.from(
-    `--${boundary}\r\nContent-Disposition: form-data; name="ManagedContentInputParam"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
-    'ascii',
-  );
-  const binaryContentType =
-    options.mimeType ??
-    (contentType === 'sfdc_cms__document'
-      ? 'text/plain'
-      : 'application/octet-stream; charset=ISO-8859-1');
-  const secondHeader = Buffer.from(
-    `\r\n--${boundary}\r\nContent-Disposition: form-data; name="contentData"; filename="${filename}"\r\nContent-Type: ${binaryContentType}\r\n\r\n`,
-    'ascii',
-  );
-  const closing = Buffer.from(`\r\n--${boundary}--\r\n`, 'ascii');
-
-  const parts = [firstHeader, json, secondHeader, binary, closing];
-  const length = parts.reduce((total, part) => total + part.byteLength, 0);
-  if (!Number.isSafeInteger(length) || length > bufferConstants.MAX_LENGTH) {
-    throw new CmsRequestError(OPERATION_KEY, 'Multipart size cannot be represented by a Buffer');
-  }
-  return {
-    body: Buffer.concat(parts, length),
-    boundary,
-    input: managedContentInput,
-    file: { name: filename, mimeType: binaryContentType, byteLength: image.byteLength },
-  };
 }
 
-function parseManagedContentDocument(value: unknown): ManagedContentDocumentBinding {
-  if (!isRecord(value)) {
-    throw new CmsRequestError(OPERATION_KEY, 'Malformed CMS image create response');
-  }
-  for (const key of REQUIRED_RESPONSE_KEYS) {
-    if (typeof value[key] !== 'string' || value[key].length === 0) {
-      throw new CmsRequestError(OPERATION_KEY, 'Malformed CMS image create response');
-    }
+function parseBinding(value: unknown): ManagedContentDocumentBinding {
+  if (
+    !isRecord(value) ||
+    !['contentKey', 'managedContentId', 'managedContentVariantId'].every(
+      (key) => typeof value[key] === 'string' && (value[key] as string).length > 0,
+    )
+  ) {
+    throw new CmsRequestError(OPERATION_KEY, 'Unexpected content.create response shape', 200, {
+      requestSent: true,
+      statusObserved: false,
+    });
   }
   return {
     contentKey: value.contentKey as string,
@@ -300,110 +105,32 @@ function parseManagedContentDocument(value: unknown): ManagedContentDocumentBind
   };
 }
 
-export async function createImageContent(
-  connection: RequestConnection,
-  input: ImageCreateInput,
+/**
+ * Create one media item from its bytes (POST /connect/cms/contents, multipart), sent once.
+ * @param {MediaContentType} contentType - Native content type.
+ * @param {WriteConnection} connection - Org connection.
+ * @param {MediaCreateInput} input - JSON part.
+ * @param {string} filename - Native file name.
+ * @param {Uint8Array} bytes - File bytes.
+ * @param {MultipartCreateOptions} options - MIME, boundary, timeout and cancellation.
+ * @returns {Promise<ManagedContentDocumentBinding>} New identities.
+ */
+export async function createMediaContent(
+  contentType: MediaContentType,
+  connection: WriteConnection,
+  input: MediaCreateInput,
   filename: string,
-  image: Uint8Array,
-  options: MultipartImageCreateOptions = {},
-  observeResponse?: (data: unknown) => Promise<void>,
+  bytes: Uint8Array,
+  options: MultipartCreateOptions,
 ): Promise<ManagedContentDocumentBinding> {
-  return sendFileCreateMultipart(
+  const multipart = buildMediaCreateMultipart(contentType, input, filename, bytes, options);
+  const data = await sendMultipart(
     connection,
-    buildImageCreateMultipart(input, filename, image, options),
-    options,
-    observeResponse,
-  );
-}
-
-export async function createAudioContent(
-  connection: RequestConnection,
-  input: ImageCreateInput,
-  filename: string,
-  audio: Uint8Array,
-  options: MultipartImageCreateOptions & { mimeType: string },
-): Promise<ManagedContentDocumentBinding> {
-  return sendFileCreateMultipart(
-    connection,
-    buildAudioCreateMultipart(input, filename, audio, options),
-    options,
-  );
-}
-
-export async function createDocumentContent(
-  connection: RequestConnection,
-  input: ImageCreateInput,
-  filename: string,
-  document: Uint8Array,
-  options: MultipartImageCreateOptions = {},
-): Promise<ManagedContentDocumentBinding> {
-  return sendFileCreateMultipart(
-    connection,
-    buildDocumentCreateMultipart(input, filename, document, options),
+    OPERATION_KEY,
+    'POST',
+    '/connect/cms/contents',
+    multipart,
     options,
   );
-}
-
-async function sendFileCreateMultipart(
-  connection: RequestConnection,
-  multipart: MultipartParts,
-  options: MultipartImageCreateOptions,
-  observeResponse?: (data: unknown) => Promise<void>,
-): Promise<ManagedContentDocumentBinding> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new CmsRequestError(OPERATION_KEY, 'Request timeout must be a positive number');
-  }
-  if (options.signal?.aborted) {
-    throw new CmsRequestError(OPERATION_KEY, 'CMS image create cancelled');
-  }
-
-  const details = {
-    requestId: randomUUID(),
-    method: 'POST' as const,
-    url: '/connect/cms/contents',
-    operationKey: OPERATION_KEY,
-    startedAt: Date.now(),
-    transport: 'multipart' as const,
-  };
-  const headers = {
-    'content-length': String(multipart.body.byteLength),
-    'content-type': `multipart/form-data; boundary=${multipart.boundary}`,
-  };
-  logApiEvent('request', details, {
-    headers,
-    json: multipart.input,
-    file: multipart.file,
-    binary: 'omitted: multipart binary bytes',
-  });
-  let request: RequestStream<unknown>;
-  try {
-    request = withoutRefreshReplay(connection).request<unknown>(
-      { body: multipart.body, headers, method: details.method, url: details.url },
-      { retry: { maxRetries: 0 }, timeout: timeoutMs },
-    ) as RequestStream<unknown>;
-  } catch (error) {
-    logApiEvent('error', details, error);
-    throw error;
-  }
-  const cancel = (): void => {
-    request.stream().destroy(new Error('CMS image create cancelled'));
-  };
-  options.signal?.addEventListener('abort', cancel, { once: true });
-
-  try {
-    const data = await request;
-    logApiEvent('response', details, data);
-    await observeResponse?.(data);
-    return parseManagedContentDocument(data);
-  } catch (error) {
-    logApiEvent('error', details, error);
-    if (error instanceof CmsRequestError) throw error;
-    const message = options.signal?.aborted
-      ? 'CMS image create cancelled'
-      : safeErrorMessage(error);
-    throw new CmsRequestError(OPERATION_KEY, message, errorStatus(error));
-  } finally {
-    options.signal?.removeEventListener('abort', cancel);
-  }
+  return parseBinding(data);
 }
