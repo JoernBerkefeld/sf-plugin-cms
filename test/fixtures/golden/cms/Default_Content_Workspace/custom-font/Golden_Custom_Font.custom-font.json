@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Custom_Font",
+  "title": "Golden_Custom_Font",
+  "urlName": "golden-custom-font",
+  "folderPath": [],
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "font/ttf",
+        "type": "file"
+      }
+    }
+  }
+}

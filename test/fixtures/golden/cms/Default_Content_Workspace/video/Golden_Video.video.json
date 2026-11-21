@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Video",
+  "title": "Golden_Video",
+  "urlName": "golden-video",
+  "folderPath": [],
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "video/mp4",
+        "type": "file"
+      }
+    }
+  }
+}

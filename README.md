@@ -89,12 +89,14 @@ Salesforce's answer; if Salesforce refuses an operation for a type, you see its 
 | Image                       | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
 | Document                    | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
 | Audio                       | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
+| Video                       | `video`          | `sfdc_cms__video`         | Available | Available         | Available | Available             |
+| Custom font                 | `custom-font`    | `sfdc_cms__customFont`    | Available | Available         | Available | Available             |
+| Contact card (VCF)          | `vcf`            | `sfdc_cms__vcf`           | Available | Available         | Available | Available             |
 | Brand                       | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
 | Content block: landing page | `web-fragment`   | `sfdc_cms__webFragment`   | Available | Available         | Available | Available             |
 | Consent banner              | `consent-banner` | `sfdc_cms__consentBanner` | Available | Available         | Available | Available             |
 | Form handler                | `form-handler`   | `sfdc_cms__formHandler`   | Available | Available         | Available | Available             |
 | Form                        | `form`           | `sfdc_cms__form`          | Available | Available         | Available | Available             |
-| --------------              | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
 | Expression                  | `expression`     | `sfdc_cms__expression`    | Available | Available         | Available | Available             |
 | Tracked link                | `tracked-link`   | `sfdc_cms__trackedLink`   | Available | Available         | Available | Available             |
 
@@ -119,12 +121,14 @@ parts of the component in files next to the JSON:
 | Image                       | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
 | Document                    | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
 | Audio                       | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
+| Video                       | `cms/<workspace>/video/<ApiName>.video.json`, plus the file                                 |
+| Custom font                 | `cms/<workspace>/custom-font/<ApiName>.custom-font.json`, plus the font file                |
+| Contact card (VCF)          | `cms/<workspace>/vcf/<ApiName>.vcf.json`, plus the `.vcf` file                              |
 | Brand                       | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
 | Content block: landing page | `cms/<workspace>/web-fragment/<ApiName>.web-fragment.json`                                  |
 | Consent banner              | `cms/<workspace>/consent-banner/<ApiName>.consent-banner.json`                              |
 | Form handler                | `cms/<workspace>/form-handler/<ApiName>.form-handler.json`                                  |
 | Form                        | `cms/<workspace>/form/<ApiName>.form.json`                                                  |
-| --------------              | ------------------------------------------------------------------------------------------- |
 | Expression                  | `cms/<workspace>/expression/<ApiName>.expression.json`                                      |
 | Tracked link                | `cms/<workspace>/tracked-link/<ApiName>.tracked-link.json`                                  |
 

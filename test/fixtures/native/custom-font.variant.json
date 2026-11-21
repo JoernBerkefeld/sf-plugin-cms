@@ -3,13 +3,13 @@
   "contentBody": {
     "sfdc_cms:media": {
       "source": {
-        "fileSize": 165548,
+        "fileSize": 800,
         "mimeType": "font/ttf",
         "ref": "0sN000000000102AAA",
         "type": "file",
-        "size": 165548
+        "size": 800
       },
-      "url": "/cms/media/MCGOLDENXZEROABAAAAAAAAAAAAA?version=1.1&fileHash=00000000000000000000000000000000&fileName=golden.ttf"
+      "url": "/cms/media/MCGOLDENXZEROABAAAAAAAAAAAAA?version=1.1&fileHash=38c132febce3d1f1c727b04b693c7162&fileName=golden.ttf"
     }
   },
   "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__customFont--Golden_Custom_Font",

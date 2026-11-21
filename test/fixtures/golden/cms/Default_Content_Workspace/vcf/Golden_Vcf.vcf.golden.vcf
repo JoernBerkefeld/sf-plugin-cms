@@ -1,0 +1,8 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Doe;John;;;
+FN:John Doe
+TITLE:Imaginary test person
+TEL;TYPE=CELL:+1 781 555 1212
+EMAIL:johnDoe@example.org
+END:VCARD

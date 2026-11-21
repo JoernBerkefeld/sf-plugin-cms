@@ -8,7 +8,7 @@
         "size": 143,
         "type": "file"
       },
-      "url": "/cms/media/MCGOLDENXZEROACAAAAAAAAAAAAA?version=1.1&fileHash=00000000000000000000000000000000&fileName=golden.vcf"
+      "url": "/cms/media/MCGOLDENXZEROACAAAAAAAAAAAAA?version=1.1&fileHash=bee419a1a2be335afd056a482a2dc6a5&fileName=golden.vcf"
     },
     "vcfData": "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nFN:John Doe\nTITLE:Imaginary test person\nTEL;TYPE=CELL:+1 781 555 1212\nEMAIL:johnDoe@example.org\nEND:VCARD"
   },

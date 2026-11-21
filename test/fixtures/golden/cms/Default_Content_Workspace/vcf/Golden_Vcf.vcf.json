@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Vcf",
+  "title": "Golden_Vcf",
+  "urlName": "golden-vcf",
+  "folderPath": [],
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "text/vcard",
+        "type": "file"
+      }
+    }
+  }
+}

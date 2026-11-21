@@ -54,7 +54,7 @@ test('email-fragment is registered after media, before the email types', () => {
   assert.equal(emailFragmentHandler.apiName, 'sfdc_cms__emailFragment');
   assert.equal(emailFragmentHandler.transport, 'json');
   const types = HANDLERS.map((handler) => handler.type);
-  assert.equal(types.indexOf('email-fragment'), types.indexOf('audio') + 1);
+  assert.ok(types.indexOf('email-fragment') > types.indexOf('audio'));
   assert.equal(types.indexOf('email-template'), types.indexOf('email-fragment') + 1);
 });
 
