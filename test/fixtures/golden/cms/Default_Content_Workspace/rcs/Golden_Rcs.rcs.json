@@ -1,0 +1,40 @@
+{
+  "apiName": "Golden_Rcs",
+  "urlName": "golden-rcs",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "messagePurpose": "TRANSACTIONAL",
+    "rcsBlock": {
+      "attributes": {
+        "message": "my Golden_ text",
+        "quickReplies": [
+          {
+            "actionUrl": "https://example.com",
+            "id": "60cd80ab-6667-4d5d-a059-6ed59f7042c3",
+            "passbackValue": "guide",
+            "text": "example.com",
+            "type": "OPEN_URL"
+          }
+        ],
+        "type": "Text"
+      },
+      "definition": "sfdc_cms__rcsTypeText",
+      "id": "1168a199-a8db-4a2c-97de-724c651eec30",
+      "type": "block"
+    },
+    "rcsType": "Text",
+    "sfdc_cms:title": "Golden_Rcs",
+    "sfdc_cms:variants": []
+  }
+}

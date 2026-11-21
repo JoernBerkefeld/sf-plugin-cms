@@ -3,7 +3,12 @@ import { brandHandler } from './handlers/brand.js';
 import { emailFragmentHandler } from './handlers/email-fragment.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
+import { inAppHandler } from './handlers/in-app.js';
 import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
+import { pushNotificationHandler } from './handlers/push-notification.js';
+import { rcsHandler } from './handlers/rcs.js';
+import { smsHandler } from './handlers/sms.js';
+import { whatsappSessionHandler } from './handlers/whatsapp-session.js';
 import type { ContentTypeHandler } from './types.js';
 
 /** Every supported type, in deploy order (dependencies first). One line per new type. */
@@ -15,6 +20,11 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   emailFragmentHandler,
   emailTemplateHandler,
   emailHandler,
+  smsHandler,
+  pushNotificationHandler,
+  inAppHandler,
+  rcsHandler,
+  whatsappSessionHandler,
 ];
 
 /**

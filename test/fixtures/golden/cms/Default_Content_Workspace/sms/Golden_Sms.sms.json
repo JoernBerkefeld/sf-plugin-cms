@@ -1,0 +1,24 @@
+{
+  "apiName": "Golden_Sms",
+  "urlName": "golden-sms",
+  "folderPath": [],
+  "contentBody": {
+    "enableMmsMedia": false,
+    "enableUrlShortening": true,
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "messageContent": "my Golden_ sms text",
+    "messagePurpose": "promotional",
+    "sfdc_cms:title": "Golden_Sms",
+    "sfdc_cms:variants": []
+  }
+}
