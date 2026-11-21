@@ -90,8 +90,13 @@ Salesforce's answer; if Salesforce refuses an operation for a type, you see its 
 | Document       | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
 | Audio          | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
 | Brand          | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
+| Expression     | `expression`     | `sfdc_cms__expression`    | Available | Available         | Available | Available             |
+| Tracked link   | `tracked-link`   | `sfdc_cms__trackedLink`   | Available | Available         | Available | Available             |
 
 Other CMS types (landing pages, SMS, push and more) are not handled yet.
+
+Universal fragment (`sfdc_cms__fragment`) is not handled: its CMS editor never finishes
+loading, so no item exists to model it on.
 
 ## How it works
 
@@ -110,6 +115,8 @@ parts of the component in files next to the JSON:
 | Document       | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
 | Audio          | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
 | Brand          | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
+| Expression     | `cms/<workspace>/expression/<ApiName>.expression.json`                                      |
+| Tracked link   | `cms/<workspace>/tracked-link/<ApiName>.tracked-link.json`                                  |
 
 - `<workspace>` is the API name of the workspace you retrieved from (its ID if it has no API
   name). It tells you where the files came from; `--workspace` on deploy says where they go. So
@@ -120,6 +127,14 @@ parts of the component in files next to the JSON:
   and content. It has no record IDs, no content keys, no values Salesforce generates and no
   status.
 - Retrieve replaces an existing file with what the org has.
+
+- A tracked link keeps its Campaign by name, as `{ "sobject": "Campaign", "name": "…" }`. Deploy
+  looks the name up in the destination org and writes that org's Campaign ID; it stops before any
+  write if no Campaign or more than one has that name. It never creates Campaigns. The short link,
+  its ID and its expiry that Salesforce adds when you publish a tracked link are not kept in the
+  file: a create drops them, and Salesforce adds them again on publish.
+- An expression names a data graph without a data space; deploy checks that the graph exists in
+  the `default` data space of the destination.
 
 ### Selecting components
 

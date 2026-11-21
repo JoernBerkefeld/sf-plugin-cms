@@ -3,7 +3,9 @@ import { brandHandler } from './handlers/brand.js';
 import { emailFragmentHandler } from './handlers/email-fragment.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
+import { expressionHandler } from './handlers/expression.js';
 import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
+import { trackedLinkHandler } from './handlers/tracked-link.js';
 import type { ContentTypeHandler } from './types.js';
 
 /** Every supported type, in deploy order (dependencies first). One line per new type. */
@@ -15,6 +17,8 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   emailFragmentHandler,
   emailTemplateHandler,
   emailHandler,
+  expressionHandler,
+  trackedLinkHandler,
 ];
 
 /**

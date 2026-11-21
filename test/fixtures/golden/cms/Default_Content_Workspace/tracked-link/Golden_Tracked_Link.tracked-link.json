@@ -1,0 +1,14 @@
+{
+  "apiName": "Golden_Tracked_Link",
+  "title": "Golden_Tracked_Link",
+  "urlName": "golden-tracked-link",
+  "folderPath": [],
+  "contentBody": {
+    "campaign": {
+      "name": "Golden Campaign",
+      "sobject": "Campaign"
+    },
+    "destinationUrl": "https://example.com",
+    "utmSource": "golden"
+  }
+}

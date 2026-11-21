@@ -1,0 +1,25 @@
+{
+  "apiName": "MCGOLDENXZEROAOAAAAAAAAAAAAA",
+  "title": "Golden_Expression",
+  "urlName": "golden-expression",
+  "folderPath": [],
+  "contentBody": {
+    "expression": {
+      "expressionGroups": [
+        {
+          "name": "group0",
+          "resource": "{!$dataGraph.ssot__CreatedDate__c}"
+        }
+      ]
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ]
+  }
+}
