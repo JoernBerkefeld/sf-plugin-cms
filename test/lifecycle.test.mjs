@@ -36,7 +36,7 @@ const salesforceError = (statusCode, errorCode, message = errorCode) =>
 
 /**
  * An in-memory workspace of variants. `variants` rows: { id, mc, apiName, type, language,
- * primary, published }. Hooks may replace the answer of DELETE, publish and unpublish.
+ * primary, published, key?, body? }. Hooks may replace the answer of DELETE, publish and unpublish.
  * @param {object[]} rows Stored variants.
  * @param {{ onDelete?: Function; onPublish?: Function; keepAfterDelete?: boolean }} [hooks]
  *   Answer overrides.
@@ -60,7 +60,7 @@ function fakeOrg(rows, hooks = {}) {
             Language: v.language,
             IsPrimary: v.primary,
             Name: v.apiName,
-            ManagedContentKey: `MC${v.mc}`,
+            ManagedContentKey: v.key ?? `MC${v.mc}`,
             ContentTypeFullyQualifiedName: v.type,
             ManagedContent: { ApiName: v.apiName, AuthoredManagedContentSpaceId: workspace.id },
           })),
@@ -83,6 +83,7 @@ function fakeOrg(rows, hooks = {}) {
         apiName: row.apiName,
         language: row.language,
         isPublished: row.published,
+        contentBody: row.body ?? {},
       };
     }
     const action = /^\/connect\/cms\/contents\/(publish|unpublish)$/u.exec(url)?.[1];
@@ -785,4 +786,112 @@ test('publish of a landing page notes the public URL, in preview, run and human 
     'published landing-page:Page',
     `  note: ${PUBLIC_URL_NOTE}`,
   ]);
+});
+
+const lifeKey = (n) => `MCLIFE${'A'.repeat(21)}${String.fromCodePoint(65 + n)}`;
+/**
+ * A component whose default variant references the components numbered `uses`.
+ * @param {string} type Content type.
+ * @param {string} apiName API name.
+ * @param {number} n Number (IDs and content key).
+ * @param {number[]} [uses] Numbers of the referenced components.
+ * @returns {object} Row.
+ */
+const linked = (type, apiName, n, uses = []) => ({
+  id: `9Ps00000000000${n}AAA`,
+  mc: `20Y00000000000${n}AAA`,
+  key: lifeKey(n),
+  apiName,
+  type,
+  body: { blocks: uses.map((used) => ({ contentKey: lifeKey(used) })) },
+});
+
+/**
+ * The order each action handles the components in.
+ * @param {object[]} rows Stored variants (see linked).
+ * @param {string[]} selectors `-m` values.
+ * @returns {Promise<object>} API names per action, in handled order.
+ */
+async function orderPerAction(rows, selectors) {
+  const directory = await projectWith([]);
+  const argv = selectors.flatMap((selector) => ['-m', selector]);
+  const orders = {};
+  for (const action of ['publish', 'unpublish', 'delete']) {
+    const org = fakeOrg(rows.map((row) => ({ ...row, published: action === 'unpublish' })));
+    const { result, writes } = await run(action, argv, org, directory);
+    assert.deepEqual(result.diagnostics.errors, [], action);
+    orders[action] = result.result.items.map((item) => item.apiName);
+    // The writes went out in that order too.
+    assert.deepEqual(
+      writes.map((write) =>
+        write.input.method === 'DELETE'
+          ? /variants\/(\w+)$/u.exec(write.input.url)[1]
+          : JSON.parse(write.input.body).variantIds[0],
+      ),
+      orders[action].map((name) => rows.find((row) => row.apiName === name).id),
+      action,
+    );
+  }
+  return orders;
+}
+
+test('lifecycle order follows references across types: an email and the tracked link it uses', async () => {
+  const emailUsesLink = await orderPerAction(
+    [linked('sfdc_cms__email', 'Mail', 1, [2]), linked('sfdc_cms__trackedLink', 'Link', 2)],
+    ['email:Mail', 'tracked-link:Link'],
+  );
+  assert.deepEqual(emailUsesLink, {
+    publish: ['Link', 'Mail'],
+    unpublish: ['Mail', 'Link'],
+    delete: ['Mail', 'Link'],
+  });
+  // References win over the registry order (tracked-link before email).
+  const linkUsesEmail = await orderPerAction(
+    [linked('sfdc_cms__email', 'Mail', 1), linked('sfdc_cms__trackedLink', 'Link', 2, [1])],
+    ['email:Mail', 'tracked-link:Link'],
+  );
+  assert.deepEqual(linkUsesEmail, {
+    publish: ['Mail', 'Link'],
+    unpublish: ['Link', 'Mail'],
+    delete: ['Link', 'Mail'],
+  });
+});
+
+test('lifecycle order follows references within one type: a web fragment in another', async () => {
+  const orders = await orderPerAction(
+    [
+      linked('sfdc_cms__webFragment', 'A_Outer', 1, [2]),
+      linked('sfdc_cms__webFragment', 'B_Inner', 2),
+      linked('sfdc_cms__webFragment', 'C_Alone', 3),
+    ],
+    ['web-fragment:A_Outer', 'web-fragment:B_Inner', 'web-fragment:C_Alone'],
+  );
+  assert.deepEqual(orders, {
+    publish: ['B_Inner', 'A_Outer', 'C_Alone'],
+    unpublish: ['C_Alone', 'A_Outer', 'B_Inner'],
+    delete: ['C_Alone', 'A_Outer', 'B_Inner'],
+  });
+});
+
+test('a reference cycle between lifecycle targets is refused before any write', async () => {
+  const directory = await projectWith([]);
+  for (const action of ['publish', 'unpublish', 'delete']) {
+    const org = fakeOrg([
+      linked('sfdc_cms__webFragment', 'A_Frag', 1, [2]),
+      linked('sfdc_cms__webFragment', 'B_Frag', 2, [1]),
+    ]);
+    const { result, writes, exitCode } = await run(
+      action,
+      ['-m', 'web-fragment:A_Frag', '-m', 'web-fragment:B_Frag'],
+      org,
+      directory,
+    );
+    assert.equal(exitCode, 1, action);
+    assert.equal(writes.length, 0, action);
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => error.code),
+      ['DEPENDENCY_CYCLE'],
+      action,
+    );
+  }
 });

@@ -1,8 +1,4 @@
-import {
-  recordIdsOf,
-  referencedContentKeys,
-  referenceFormsOf,
-} from '../content/json-projection.js';
+import { recordIdsOf, referencedContentKeys } from '../content/json-projection.js';
 import { cliTypeName, handlerOf, HANDLERS } from '../content/registry.js';
 import { writeSourceFiles } from '../content/source-files.js';
 import type { ContentTypeHandler, LogicalReference, NativeVariant } from '../content/types.js';
@@ -116,22 +112,35 @@ export function referenceResolver(
   connection: RequestConnection,
   workspace: CmsWorkspace,
 ): ReferenceResolver {
-  const known = new Map<string, LogicalReference | null>();
+  const known = new Map<string, LogicalReference>();
+  // One read per key, shared by every caller that names it (concurrent items wait for it).
+  const reads = new Map<string, Promise<void>>();
   return {
     async load(keys: string[]): Promise<void> {
-      const missing = keys.filter((key) => !known.has(key));
-      if (missing.length === 0) return;
-      for (const key of missing) known.set(key, null);
-      for (const row of await variantsByContentKey(connection, missing))
-        if (
-          row.contentKey &&
-          row.apiName &&
-          row.contentType &&
-          sameId(row.workspaceId, workspace.id)
-        )
-          known.set(row.contentKey, { type: cliTypeName(row.contentType), apiName: row.apiName });
+      const missing = [...new Set(keys)].filter((key) => !reads.has(key));
+      if (missing.length > 0) {
+        const read = (async (): Promise<void> => {
+          for (const row of await variantsByContentKey(connection, missing))
+            if (
+              row.contentKey &&
+              row.apiName &&
+              row.contentType &&
+              sameId(row.workspaceId, workspace.id)
+            )
+              known.set(row.contentKey, {
+                type: cliTypeName(row.contentType),
+                apiName: row.apiName,
+              });
+        })();
+        for (const key of missing) reads.set(key, read);
+        // A failed read is not cached: a later load asks again.
+        read.catch(() => {
+          for (const key of missing) if (reads.get(key) === read) reads.delete(key);
+        });
+      }
+      await Promise.all(new Set(keys.map((key) => reads.get(key))));
     },
-    referenceOf: (key: string): LogicalReference | undefined => known.get(key) ?? undefined,
+    referenceOf: (key: string): LogicalReference | undefined => known.get(key),
   };
 }
 
@@ -220,9 +229,7 @@ export async function retrieveComponents(
             );
           const native = data as NativeVariant;
           const declarations = handler.referenceDeclarations;
-          await references.load(
-            referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
-          );
+          await references.load(referencedContentKeys(native.contentBody));
           await records.load(recordIdsOf(native.contentBody, declarations?.records ?? []));
           const media = await mediaOf(connection, handler, native);
           const files = handler.toSource(native, {

@@ -3,7 +3,6 @@ import {
   BODY_ENVELOPE_FIELDS,
   recordIdsOf,
   referencedContentKeys,
-  referenceFormsOf,
 } from '../content/json-projection.js';
 import {
   recordReferences,
@@ -256,9 +255,7 @@ export async function deployComponents(
     native: NativeVariant,
   ): Promise<{ files: SourceFiles; folderPath: string[] }> => {
     const declarations = handler.referenceDeclarations;
-    await references.load(
-      referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
-    );
+    await references.load(referencedContentKeys(native.contentBody));
     await records.load(recordIdsOf(native.contentBody, declarations?.records ?? []));
     const path = await folderPath(isRecord(native.folder) ? String(native.folder.id) : undefined);
     const media = await mediaOf(connection, handler, native);
@@ -428,19 +425,15 @@ export async function deployComponents(
     try {
       const declarations = handler.referenceDeclarations;
       const contentBody = resolveRecordReferences(
-        resolveReferences(
-          payload!.contentBody,
-          (reference) => {
-            const key = destinationKeys.get(referenceKey(reference));
-            if (!key)
-              throw new CmsError(
-                'REFERENCE_NOT_IN_DESTINATION',
-                `${referenceKey(reference)} was not created before ${component}`,
-              );
-            return key;
-          },
-          referenceFormsOf(declarations),
-        ) as Record<string, unknown>,
+        resolveReferences(payload!.contentBody, (reference) => {
+          const key = destinationKeys.get(referenceKey(reference));
+          if (!key)
+            throw new CmsError(
+              'REFERENCE_NOT_IN_DESTINATION',
+              `${referenceKey(reference)} was not created before ${component}`,
+            );
+          return key;
+        }) as Record<string, unknown>,
         declarations?.records ?? [],
         (reference) => recordIds.get(recordKey(reference))!,
       );

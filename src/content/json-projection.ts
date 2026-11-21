@@ -36,8 +36,7 @@ export const CONTENT_KEY = /^MC[A-Z2-7]{26}$/u;
 /**
  * Content keys outside `contentKey` that every type recognises: a block's
  * `definition: "@cms/<key>"` (reusable content block) and the bare key in
- * `sfdc_cms:template.definition` (landing page). A handler adds more with
- * `referenceDeclarations.forms`.
+ * `sfdc_cms:template.definition` (landing page).
  */
 export const DEFAULT_REFERENCE_FORMS: readonly ReferenceForm[] = [
   { key: 'definition', format: '@cms/<contentKey>' },
@@ -49,17 +48,6 @@ export const RECORD_ID = /^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * The built-in forms plus a handler's own.
- * @param {ReferenceDeclarations | undefined} declarations - Handler declarations.
- * @returns {readonly ReferenceForm[]} Forms to recognise.
- */
-export function referenceFormsOf(
-  declarations: ReferenceDeclarations | undefined,
-): readonly ReferenceForm[] {
-  return [...DEFAULT_REFERENCE_FORMS, ...(declarations?.forms ?? [])];
 }
 
 /**
@@ -184,7 +172,7 @@ export type CompanionFields = Readonly<Record<string, string>>;
  * Every content key a body references: `contentKey` properties anywhere in it and values in one
  * of the reference forms.
  * @param {unknown} body - Native contentBody.
- * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (see `referenceFormsOf`).
+ * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (default: `DEFAULT_REFERENCE_FORMS`).
  * @returns {string[]} Distinct keys in document order.
  */
 export function referencedContentKeys(
@@ -325,8 +313,8 @@ function projectRecords(
  * @param {NativeVariant} native - Default variant as read.
  * @param {RetrieveContext} context - Folder path, reference lookup, warnings.
  * @param {CompanionFields} companionFields - Body key -> file suffix, such as rawHtml -> .html.
- * @param {ReferenceDeclarations} declarations - The handler's `referenceDeclarations` (extra
- *   reference forms and record paths).
+ * @param {ReferenceDeclarations} declarations - The handler's `referenceDeclarations` (record
+ *   paths).
  * @returns {SourceFiles} Files of the component.
  */
 export function projectJsonVariant(
@@ -336,7 +324,7 @@ export function projectJsonVariant(
   companionFields: CompanionFields,
   declarations: ReferenceDeclarations = {},
 ): SourceFiles {
-  const forms = referenceFormsOf(declarations);
+  const forms = DEFAULT_REFERENCE_FORMS;
   const body = isPlainObject(native.contentBody)
     ? projectRecords(structuredClone(native.contentBody), declarations.records ?? [], context)
     : {};

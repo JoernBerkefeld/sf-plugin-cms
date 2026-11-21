@@ -43,9 +43,8 @@ export type RecordReference = {
   values: Readonly<Record<string, string>>;
 };
 
-/** What a handler adds to the built-in reference forms (see `json-projection.ts`). */
+/** References a handler declares besides the built-in content key forms (see `json-projection.ts`). */
 export type ReferenceDeclarations = {
-  readonly forms?: readonly ReferenceForm[];
   readonly records?: readonly RecordReferencePath[];
 };
 

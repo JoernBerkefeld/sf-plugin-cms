@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -19,6 +19,7 @@ import { dataGraphReferences } from '../lib/services/data-graph-check.js';
 import { deployComponents } from '../lib/services/deploy.js';
 import { formHandler } from '../lib/content/handlers/form.js';
 import { recordResolver } from '../lib/services/record-references.js';
+import { retrieveComponents } from '../lib/services/retrieve.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 import { fakeOrg, workspace } from './support/fake-org.mjs';
 
@@ -466,4 +467,204 @@ test('form RecordType: unknown ID warns on retrieve; missing, ambiguous or malfo
     ['UNKNOWN_SETTING'],
   );
   assert.equal(refused.writes.length, 0);
+});
+
+/**
+ * The org's answer, with the SOQL a test names held back so concurrent items overlap.
+ * @param {object} org fakeOrg.
+ * @param {RegExp} held Decoded URL pattern of the SOQL to hold back.
+ * @returns {Function} Answer function.
+ */
+const deferring = (org, held) => (input) => {
+  if (!held.test(decodeURIComponent(input.url.replaceAll('+', ' ')))) return org.answer(input);
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      try {
+        resolve(org.answer(input));
+      } catch (error) {
+        reject(error);
+      }
+    }, 20);
+  });
+};
+
+/**
+ * Retrieve the named components of one handler through the pipeline.
+ * @param {Function} answer Org answer.
+ * @param {object} handler Handler.
+ * @param {string[]} apiNames Components.
+ * @returns {Promise<object>} Bodies by API name, diagnostics and calls.
+ */
+async function retrieveFrom(answer, handler, apiNames) {
+  const connection = fakeConnection(answer);
+  const directory = await scratch();
+  const diagnostics = { warnings: [], errors: [] };
+  const items = await retrieveComponents(
+    connection,
+    workspace,
+    [{ handler, apiNames }],
+    directory,
+    diagnostics,
+  );
+  const bodies = {};
+  for (const item of items)
+    bodies[item.apiName] = JSON.parse(await readFile(item.path, 'utf8')).contentBody;
+  return { bodies, diagnostics, calls: connection.calls };
+}
+
+const copyOf = (variant, apiName, n) => ({
+  ...structuredClone(variant),
+  apiName,
+  title: apiName,
+  urlName: apiName.toLowerCase(),
+  contentKey: `MCCOPY${'A'.repeat(21)}${String.fromCodePoint(65 + n)}`,
+  folder: { id: workspace.rootFolderId },
+  managedContentId: `20Y00000000020${n}AAA`,
+  managedContentVariantId: `9Ps00000000020${n}AAA`,
+});
+
+const contactType = (Id) => ({ Id, SobjectType: 'Contact', DeveloperName: 'Contact_Std' });
+const decoded = (call) => decodeURIComponent(call.input.url.replaceAll('+', ' '));
+
+test('retrieve: two forms read at once that share a RecordType both get the logical reference', async () => {
+  const form = await formWithRecordSource();
+  const org = fakeOrg({
+    variants: [copyOf(form, 'Form_A', 1), copyOf(form, 'Form_B', 2)],
+    recordTypes: [leadRecordType(SOURCE_RECORD_TYPE)],
+  });
+  const { bodies, diagnostics, calls } = await retrieveFrom(
+    deferring(org, /FROM RecordType /u),
+    formHandler,
+    ['Form_A', 'Form_B'],
+  );
+  assert.deepEqual(diagnostics, { warnings: [], errors: [] });
+  for (const name of ['Form_A', 'Form_B'])
+    assert.deepEqual(
+      bodies[name]['lightning:dataProviders'][1].attributes.recordTypeId,
+      RECORD_TYPE_FILE,
+      name,
+    );
+  assert.equal(calls.filter((call) => decoded(call).includes('FROM RecordType ')).length, 1);
+});
+
+test('retrieve: two components read at once that share an image key both get the logical reference', async () => {
+  const imageKey = `MCIMAGE${'A'.repeat(21)}`;
+  const image = {
+    apiName: 'Shared_Image',
+    contentKey: imageKey,
+    contentType: { fullyQualifiedName: 'sfdc_cms__image' },
+    managedContentId: '20Y000000000301AAA',
+    managedContentVariantId: '9Ps000000000301AAA',
+    contentBody: {},
+  };
+  const withImage = {
+    contentType: { fullyQualifiedName: 'sfdc_cms__expression' },
+    contentBody: { picture: { contentKey: imageKey } },
+  };
+  const org = fakeOrg({
+    variants: [image, copyOf(withImage, 'Uses_A', 1), copyOf(withImage, 'Uses_B', 2)],
+  });
+  const { bodies, diagnostics, calls } = await retrieveFrom(
+    deferring(org, /ManagedContentKey IN/u),
+    expression,
+    ['Uses_A', 'Uses_B'],
+  );
+  assert.deepEqual(diagnostics, { warnings: [], errors: [] });
+  for (const name of ['Uses_A', 'Uses_B'])
+    assert.deepEqual(
+      bodies[name].picture.contentKey,
+      { type: 'image', apiName: 'Shared_Image' },
+      name,
+    );
+  assert.equal(calls.filter((call) => decoded(call).includes('ManagedContentKey IN')).length, 1);
+});
+
+test('form with two record data sources: each RecordType is kept and written by its own lookup', async () => {
+  const form = await formWithRecordSource();
+  const OTHER = '012000000000102AAA';
+  const TARGET_OTHER = '012000000000998AAA';
+  form.contentBody['lightning:dataProviders'].push({
+    attributes: { objectApiName: 'Contact', recordTypeId: OTHER },
+    definition: 'sfdc_cms__recordDataProvider',
+    sfdcExpressionKey: 'Contact_Source',
+  });
+  const source = fakeOrg({
+    variants: [copyOf(form, 'Two_Sources', 1)],
+    recordTypes: [leadRecordType(SOURCE_RECORD_TYPE), contactType(OTHER)],
+  });
+  const { bodies, diagnostics } = await retrieveFrom(source.answer, formHandler, ['Two_Sources']);
+  assert.deepEqual(diagnostics, { warnings: [], errors: [] });
+  const providers = bodies.Two_Sources['lightning:dataProviders'];
+  assert.deepEqual(providers[1].attributes.recordTypeId, RECORD_TYPE_FILE);
+  assert.deepEqual(providers[2].attributes.recordTypeId, {
+    developerName: 'Contact_Std',
+    sobject: 'RecordType',
+    sobjectType: 'Contact',
+  });
+
+  const directory = await scratch();
+  const resolver = recordResolver(fakeConnection(source.answer));
+  await resolver.load(recordIdsOf(form.contentBody, formHandler.referenceDeclarations.records));
+  const files = formHandler.toSource(
+    copyOf(form, 'Two_Sources', 1),
+    retrieveContext({ recordOf: resolver.recordOf }),
+  );
+  await writeSourceFiles(directory, WS, files);
+  const target = fakeOrg({
+    recordTypes: [leadRecordType(TARGET_RECORD_TYPE), contactType(TARGET_OTHER)],
+  });
+  const created = await deployTo(target, [
+    [formHandler, await readSourceFiles(directory, WS, 'form', 'Two_Sources')],
+  ]);
+  assert.deepEqual(created.diagnostics, { warnings: [], errors: [] });
+  const written = JSON.parse(created.writes.at(-1).input.body).contentBody[
+    'lightning:dataProviders'
+  ];
+  assert.equal(written[1].attributes.recordTypeId, TARGET_RECORD_TYPE);
+  assert.equal(written[2].attributes.recordTypeId, TARGET_OTHER);
+});
+
+test('deploy --preview with record references and planned dependencies writes nothing, in the org or on disk', async () => {
+  const directory = await scratch();
+  const fragment = jsonHandler('email-fragment', 'sfdc_cms__emailFragment', {
+    records: [{ path: ['campaign'], sobject: 'Campaign' }],
+  });
+  const page = fragmentEmbedding('A_Page', ['B_Block']);
+  page.document.contentBody.campaign = { sobject: 'Campaign', name: 'Golden Campaign' };
+  for (const files of [
+    linkFiles({ sobject: 'Campaign', name: 'Golden Campaign' }),
+    page,
+    fragmentEmbedding('B_Block'),
+  ])
+    await writeSourceFiles(directory, WS, files);
+  const listing = async () => {
+    const entries = [];
+    for (const entry of await readdir(directory, { recursive: true, withFileTypes: true }))
+      if (entry.isFile()) {
+        const full = path.join(entry.parentPath, entry.name);
+        entries.push([full, await readFile(full, 'utf8')]);
+      }
+    return entries.toSorted();
+  };
+  const before = await listing();
+  const read = (handler, apiName) => readSourceFiles(directory, WS, handler.type, apiName);
+  const org = fakeOrg({ campaigns: [{ Id: '701000000000999AAA', Name: 'Golden Campaign' }] });
+  const { items, writes, diagnostics } = await deployTo(
+    org,
+    [
+      [trackedLink, await read(trackedLink, 'Golden_Tracked_Link')],
+      [fragment, await read(fragment, 'A_Page')],
+      [fragment, await read(fragment, 'B_Block')],
+    ],
+    true,
+  );
+  assert.deepEqual(diagnostics.errors, []);
+  assert.deepEqual(items.map((item) => [item.apiName, item.outcome]).toSorted(), [
+    ['A_Page', 'planned-dependencies'],
+    ['B_Block', 'create'],
+    ['Golden_Tracked_Link', 'create'],
+  ]);
+  assert.equal(writes.length, 0);
+  assert.equal(org.variants.size, 0);
+  assert.deepEqual(await listing(), before);
 });

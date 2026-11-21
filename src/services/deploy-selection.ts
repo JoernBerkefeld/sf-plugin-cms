@@ -266,50 +266,38 @@ export async function selectSources(
   return sources;
 }
 
-const registryIndex = (source: SelectedSource): number =>
-  HANDLERS.findIndex((handler) => handler.type === source.handler.type);
-
 /**
- * The sources in dependency order: a component another selected component references comes
- * first. Ties keep registry order, then API name. References to components outside the
- * selection are left to the plan. A source whose files do not parse counts as having no
- * references (the plan reports it). A cycle is refused before anything is written.
- * @param {SelectedSource[]} sources - Selected components.
- * @param {DeployContext} context - Destination workspace.
- * @returns {SelectedSource[]} Same sources, referenced ones first.
+ * Items in reference order: an item another item references comes first. Ties keep `rank`.
+ * References to keys outside `items` are ignored. A cycle is refused (DEPENDENCY_CYCLE).
+ * @template T
+ * @param {T[]} items - Items.
+ * @param {(item: T) => string} keyOf - Key of an item (`type:ApiName`).
+ * @param {(item: T) => Iterable<string>} referencesOf - Keys an item references.
+ * @param {(left: T, right: T) => number} rank - Tie-break.
+ * @returns {T[]} Same items, referenced ones first.
  */
-export function dependencyOrder(
-  sources: SelectedSource[],
-  context: DeployContext,
-): SelectedSource[] {
-  const keyOf = (source: SelectedSource): string => `${source.handler.type}:${source.apiName}`;
-  const byKey = new Map(sources.map((source) => [keyOf(source), source]));
+export function referenceOrder<T>(
+  items: T[],
+  keyOf: (item: T) => string,
+  referencesOf: (item: T) => Iterable<string>,
+  rank: (left: T, right: T) => number,
+): T[] {
+  const byKey = new Map(items.map((item) => [keyOf(item), item]));
   const dependencies = new Map<string, Set<string>>();
-  for (const source of sources) {
-    let wanted: string[] = [];
-    try {
-      wanted = source.handler
-        .references(source.handler.fromSource(source.files, context))
-        .map((reference) => `${reference.type}:${reference.apiName}`);
-    } catch {
-      // Planning blocks this source with the parse error.
-    }
+  for (const item of items)
     dependencies.set(
-      keyOf(source),
-      new Set(wanted.filter((key) => key !== keyOf(source) && byKey.has(key))),
+      keyOf(item),
+      new Set([...referencesOf(item)].filter((key) => key !== keyOf(item) && byKey.has(key))),
     );
-  }
-  const rank = (left: SelectedSource, right: SelectedSource): number =>
-    registryIndex(left) - registryIndex(right) || left.apiName.localeCompare(right.apiName);
-  const ordered: SelectedSource[] = [];
+  const ordered: T[] = [];
   const done = new Set<string>();
-  let pending = sources.toSorted(rank);
+  let pending = items.toSorted(rank);
   while (pending.length > 0) {
-    const next = pending.find((source) =>
-      [...dependencies.get(keyOf(source))!].every((key) => done.has(key)),
+    const next = pending.find((item) =>
+      [...dependencies.get(keyOf(item))!].every((key) => done.has(key)),
     );
     if (!next) {
-      // Every pending component waits for another pending one: follow the edges to a cycle.
+      // Every pending item waits for another pending one: follow the edges to a cycle.
       const path = [keyOf(pending[0])];
       for (;;) {
         const waitsFor = [...dependencies.get(path.at(-1)!)!]
@@ -328,7 +316,50 @@ export function dependencyOrder(
     }
     ordered.push(next);
     done.add(keyOf(next));
-    pending = pending.filter((source) => source !== next);
+    pending = pending.filter((item) => item !== next);
   }
   return ordered;
+}
+
+/** A component as orderings see it. */
+type Ranked = { handler: ContentTypeHandler; apiName: string };
+
+/**
+ * Registry order of two components, then API name: the tie-break of every ordering.
+ * @param {Ranked} left - Component.
+ * @param {Ranked} right - Component.
+ * @returns {number} Comparison.
+ */
+export const registryRank = (left: Ranked, right: Ranked): number =>
+  HANDLERS.indexOf(left.handler) - HANDLERS.indexOf(right.handler) ||
+  left.apiName.localeCompare(right.apiName);
+
+/**
+ * The sources in dependency order: a component another selected component references comes
+ * first. Ties keep registry order, then API name. References to components outside the
+ * selection are left to the plan. A source whose files do not parse counts as having no
+ * references (the plan reports it). A cycle is refused before anything is written.
+ * @param {SelectedSource[]} sources - Selected components.
+ * @param {DeployContext} context - Destination workspace.
+ * @returns {SelectedSource[]} Same sources, referenced ones first.
+ */
+export function dependencyOrder(
+  sources: SelectedSource[],
+  context: DeployContext,
+): SelectedSource[] {
+  return referenceOrder(
+    sources,
+    (source) => `${source.handler.type}:${source.apiName}`,
+    (source) => {
+      try {
+        return source.handler
+          .references(source.handler.fromSource(source.files, context))
+          .map((reference) => `${reference.type}:${reference.apiName}`);
+      } catch {
+        // Planning blocks this source with the parse error.
+        return [];
+      }
+    },
+    registryRank,
+  );
 }

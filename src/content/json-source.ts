@@ -136,7 +136,7 @@ export function jsonPayloadFromSource(
  * Every logical reference in a body (`contentKey: { type, apiName }` anywhere, and
  * `{ type, apiName, format }` where a reference form applies), distinct, in document order.
  * @param {unknown} body - Payload body.
- * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (see `referenceFormsOf`).
+ * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (default: `DEFAULT_REFERENCE_FORMS`).
  * @returns {LogicalReference[]} References.
  */
 export function logicalReferences(
@@ -168,7 +168,7 @@ export function logicalReferences(
  * in the reference's format (`@cms/<key>`, the bare key, …).
  * @param {unknown} body - Payload body.
  * @param {(reference: LogicalReference) => string} keyOf - Destination key of a reference.
- * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (see `referenceFormsOf`).
+ * @param {readonly ReferenceForm[]} forms - Forms besides `contentKey` (default: `DEFAULT_REFERENCE_FORMS`).
  * @param {string} [parent] - Property the body sits under (recursion).
  * @returns {unknown} Native body.
  */

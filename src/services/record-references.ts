@@ -75,42 +75,62 @@ function assertName(name: string): void {
  * @returns {RecordResolver} Lookups.
  */
 export function recordResolver(connection: RequestConnection): RecordResolver {
-  const rows = new Map<string, Readonly<Record<string, string>> | null>();
+  const rows = new Map<string, Readonly<Record<string, string>>>();
+  // One read per record, shared by every caller that names it (concurrent items wait for it).
+  const reads = new Map<string, Promise<void>>();
   const ids = new Map<string, Promise<string[]>>();
+  const read = async (
+    wanted: Map<string, { sobject: string; fields: readonly string[]; ids: string[] }>,
+  ): Promise<void> => {
+    for (const { sobject, fields, ids: list } of wanted.values()) {
+      for (const name of [sobject, ...fields]) assertName(name);
+      for (let index = 0; index < list.length; index += IDS_PER_QUERY) {
+        const chunk = list.slice(index, index + IDS_PER_QUERY);
+        const found = await query(
+          connection,
+          `SELECT Id, ${fields.join(', ')} FROM ${sobject} WHERE Id IN (${chunk.map((id) => soqlString(id)).join(', ')})`,
+        );
+        for (const row of found) {
+          if (typeof row.Id !== 'string') continue;
+          const values = Object.fromEntries(fields.map((field) => [field, row[field]]));
+          if (!Object.values(values).every((value) => typeof value === 'string')) continue;
+          for (const id of chunk)
+            if (sameId(id, row.Id))
+              rows.set(rowKey(sobject, fields, id), values as Record<string, string>);
+        }
+      }
+    }
+  };
   return {
     async load(records): Promise<void> {
+      const named = records.filter(({ id }) => RECORD_ID.test(id));
       const wanted = new Map<
         string,
         { sobject: string; fields: readonly string[]; ids: string[] }
       >();
-      for (const { sobject, fields, id } of records)
-        if (RECORD_ID.test(id) && !rows.has(rowKey(sobject, fields, id))) {
-          rows.set(rowKey(sobject, fields, id), null);
-          const group = `${sobject}:${fields.join(',')}`;
-          const entry = wanted.get(group) ?? { sobject, fields, ids: [] };
-          entry.ids.push(id);
-          wanted.set(group, entry);
-        }
-      for (const { sobject, fields, ids: list } of wanted.values()) {
-        for (const name of [sobject, ...fields]) assertName(name);
-        for (let index = 0; index < list.length; index += IDS_PER_QUERY) {
-          const chunk = list.slice(index, index + IDS_PER_QUERY);
-          const found = await query(
-            connection,
-            `SELECT Id, ${fields.join(', ')} FROM ${sobject} WHERE Id IN (${chunk.map((id) => soqlString(id)).join(', ')})`,
-          );
-          for (const row of found) {
-            if (typeof row.Id !== 'string') continue;
-            const values = Object.fromEntries(fields.map((field) => [field, row[field]]));
-            if (!Object.values(values).every((value) => typeof value === 'string')) continue;
-            for (const id of chunk)
-              if (sameId(id, row.Id))
-                rows.set(rowKey(sobject, fields, id), values as Record<string, string>);
-          }
-        }
+      const keys: string[] = [];
+      for (const { sobject, fields, id } of named) {
+        const key = rowKey(sobject, fields, id);
+        if (reads.has(key) || keys.includes(key)) continue;
+        keys.push(key);
+        const group = `${sobject}:${fields.join(',')}`;
+        const entry = wanted.get(group) ?? { sobject, fields, ids: [] };
+        entry.ids.push(id);
+        wanted.set(group, entry);
       }
+      if (keys.length > 0) {
+        const pending = read(wanted);
+        for (const key of keys) reads.set(key, pending);
+        // A failed read is not cached: a later load asks again.
+        pending.catch(() => {
+          for (const key of keys) if (reads.get(key) === pending) reads.delete(key);
+        });
+      }
+      await Promise.all(
+        new Set(named.map(({ sobject, fields, id }) => reads.get(rowKey(sobject, fields, id)))),
+      );
     },
-    recordOf: (sobject, fields, id) => rows.get(rowKey(sobject, fields, id)) ?? undefined,
+    recordOf: (sobject, fields, id) => rows.get(rowKey(sobject, fields, id)),
     idsOf(reference): Promise<string[]> {
       const key = recordKey(reference);
       let found = ids.get(key);

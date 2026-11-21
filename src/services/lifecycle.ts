@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { handlerOf, HANDLERS } from '../content/registry.js';
+import { referencedContentKeys } from '../content/json-projection.js';
+import { handlerOf } from '../content/registry.js';
 import { SOURCE_ROOT, typeDirectory } from '../content/source-files.js';
 import type { ContentTypeHandler } from '../content/types.js';
 import { CmsError, toDiagnostic, type Diagnostic } from '../errors/registry.js';
@@ -17,7 +18,13 @@ import {
   type JsonMutationOptions,
 } from '../transport/json-mutation.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
-import { componentOfFile, SELECTOR, type Located } from './deploy-selection.js';
+import {
+  componentOfFile,
+  referenceOrder,
+  registryRank,
+  SELECTOR,
+  type Located,
+} from './deploy-selection.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { localFilePresent, removeLocalFiles, type LocalFileRemoval } from './local-file-removal.js';
 import type { Diagnostics } from './retrieve.js';
@@ -157,10 +164,7 @@ export async function parseExactSelection(
     });
   }
   if (targets.size === 0) throw refuse('an empty selection');
-  const order = (target: LifecycleTarget): number => HANDLERS.indexOf(target.handler);
-  return [...targets.values()].toSorted(
-    (left, right) => order(left) - order(right) || left.apiName.localeCompare(right.apiName),
-  );
+  return [...targets.values()].toSorted(registryRank);
 }
 
 /**
@@ -201,6 +205,8 @@ type Planned = {
   item: LifecycleItem;
   /** Delete: the local files, listed while planning. */
   local?: { boundary: string; files: string[] };
+  /** Content keys the default variant's body references (read when the order depends on it). */
+  references?: string[];
 };
 
 function componentDiagnostic(error: unknown, component: string): Diagnostic {
@@ -220,7 +226,10 @@ const isUnknownOutcome = (error: unknown): boolean =>
  * Delete, publish or unpublish the named components in one workspace. Plans every component
  * first (inventory by API name); if one is blocked nothing is sent. Then one request per
  * component, each followed by one readback; stops on the first failure and never repeats a
- * request. Only the default variant is acted on (`variantIds`): publish/unpublish leave other
+ * request. Several components are handled in reference order, read from their default variants:
+ * publish puts what is referenced first, unpublish and delete put dependants first; registry
+ * order and API name only break ties, and a reference cycle is refused before any write. Only
+ * the default variant is acted on (`variantIds`): publish/unpublish leave other
  * variants as they are and warn; delete refuses a component with other variants, because
  * deleting it would delete them too.
  * @param {RequestConnection & WriteConnection} connection - Org connection.
@@ -238,12 +247,10 @@ export async function runLifecycle(
   options: LifecycleOptions,
 ): Promise<LifecycleItem[]> {
   const { diagnostics } = options;
-  // Publish what is referenced first; delete and unpublish dependants first.
-  const ordered = action === 'publish' ? targets : targets.toReversed();
   const inventories = new Map<ContentTypeHandler, Map<string, InventoryItem>>();
   const plans: Planned[] = [];
 
-  for (const target of ordered) {
+  for (const target of targets) {
     const { handler, apiName } = target;
     const component = `${handler.type}:${apiName}`;
     const item: LifecycleItem = { type: handler.type, apiName, outcome: 'blocked' };
@@ -252,7 +259,7 @@ export async function runLifecycle(
     try {
       let inventory = inventories.get(handler);
       if (!inventory) {
-        const names = ordered.filter((t) => t.handler === handler).map((t) => t.apiName);
+        const names = targets.filter((t) => t.handler === handler).map((t) => t.apiName);
         const found = await inventoryOf(connection, workspace, handler.apiName, names);
         inventory = new Map(found.map((entry) => [entry.apiName, entry]));
         inventories.set(handler, inventory);
@@ -312,6 +319,38 @@ export async function runLifecycle(
       diagnostics.errors.push(componentDiagnostic(error, component));
     }
   }
+  const readVariant = async (variantId: string): Promise<Record<string, unknown>> => {
+    const { data } = await requestJson<unknown>(connection, getSelectedOperation('variant.get'), {
+      path: { variantId },
+    });
+    if (!isRecord(data))
+      throw new CmsError('UNEXPECTED_RESPONSE', `Variant ${variantId} is not an object`);
+    return data;
+  };
+
+  // The order depends on references only when several components are acted on.
+  const acting = plans.filter((plan) => plan.item.outcome === action);
+  if (acting.length > 1 && !plans.some((plan) => plan.item.outcome === 'blocked'))
+    for (const plan of acting)
+      try {
+        const native = await readVariant(plan.item.variantId!);
+        plan.references = referencedContentKeys(native.contentBody);
+      } catch (error) {
+        Object.assign(plan.item, { outcome: 'blocked', reason: toDiagnostic(error).code });
+        diagnostics.errors.push(
+          componentDiagnostic(error, `${plan.target.handler.type}:${plan.target.apiName}`),
+        );
+      }
+  const keyOf = (plan: Planned): string =>
+    plan.item.contentKey ?? `${plan.target.handler.type}:${plan.target.apiName}`;
+  const referenced = referenceOrder(
+    plans,
+    keyOf,
+    (plan) => plan.references ?? [],
+    (left, right) => registryRank(left.target, right.target),
+  );
+  // Publish what is referenced first; delete and unpublish dependants first.
+  plans.splice(0, plans.length, ...(action === 'publish' ? referenced : referenced.toReversed()));
   const items = plans.map((plan) => plan.item);
   options.onPlanned?.(items);
   if (options.preview) return items;
@@ -321,15 +360,6 @@ export async function runLifecycle(
         Object.assign(item, { outcome: 'not-attempted', reason: 'LIFECYCLE_BLOCKED' });
     return items;
   }
-
-  const readVariant = async (variantId: string): Promise<Record<string, unknown>> => {
-    const { data } = await requestJson<unknown>(connection, getSelectedOperation('variant.get'), {
-      path: { variantId },
-    });
-    if (!isRecord(data))
-      throw new CmsError('UNEXPECTED_RESPONSE', `Variant ${variantId} is not an object`);
-    return data;
-  };
 
   let stopped = false;
   let current: LifecycleItem | undefined;
