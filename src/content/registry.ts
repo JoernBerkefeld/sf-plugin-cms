@@ -3,6 +3,10 @@ import { brandHandler } from './handlers/brand.js';
 import { emailFragmentHandler } from './handlers/email-fragment.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
+import { consentBannerHandler } from './handlers/consent-banner.js';
+import { formHandlerHandler } from './handlers/form-handler.js';
+import { formHandler } from './handlers/form.js';
+import { webFragmentHandler } from './handlers/web-fragment.js';
 import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
 import type { ContentTypeHandler } from './types.js';
 
@@ -15,6 +19,10 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   emailFragmentHandler,
   emailTemplateHandler,
   emailHandler,
+  webFragmentHandler,
+  consentBannerHandler,
+  formHandlerHandler,
+  formHandler,
 ];
 
 /**

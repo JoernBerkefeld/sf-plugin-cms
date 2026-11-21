@@ -1,0 +1,18 @@
+{
+  "apiName": "Golden_Form_Handler",
+  "urlName": "golden-form-handler",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [],
+    "sfdc_cms:block": {
+      "children": [],
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "09b8497e-9308-45e2-943e-00185bfb10a9",
+      "type": "block"
+    },
+    "sfdc_cms:title": "Golden_Form_Handler"
+  }
+}

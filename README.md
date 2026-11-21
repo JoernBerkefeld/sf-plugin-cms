@@ -81,15 +81,19 @@ Each row is one content type. The second column is the name you use with `-m`. *
 means the plugin has that operation. For every operation the plugin sends the request and shows
 Salesforce's answer; if Salesforce refuses an operation for a type, you see its error.
 
-| Type           | `-m` name        | Salesforce name           | Retrieve  | Create and update | Delete    | Publish and unpublish |
-| -------------- | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
-| Email          | `email`          | `sfdc_cms__email`         | Available | Available         | Available | Available             |
-| Email template | `email-template` | `sfdc_cms__emailTemplate` | Available | Available         | Available | Available             |
-| Email fragment | `email-fragment` | `sfdc_cms__emailFragment` | Available | Available         | Available | Available             |
-| Image          | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
-| Document       | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
-| Audio          | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
-| Brand          | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
+| Type                        | `-m` name        | Salesforce name           | Retrieve  | Create and update | Delete    | Publish and unpublish |
+| --------------------------- | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
+| Email                       | `email`          | `sfdc_cms__email`         | Available | Available         | Available | Available             |
+| Email template              | `email-template` | `sfdc_cms__emailTemplate` | Available | Available         | Available | Available             |
+| Email fragment              | `email-fragment` | `sfdc_cms__emailFragment` | Available | Available         | Available | Available             |
+| Image                       | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
+| Document                    | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
+| Audio                       | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
+| Brand                       | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
+| Content block: landing page | `web-fragment`   | `sfdc_cms__webFragment`   | Available | Available         | Available | Available             |
+| Consent banner              | `consent-banner` | `sfdc_cms__consentBanner` | Available | Available         | Available | Available             |
+| Form handler                | `form-handler`   | `sfdc_cms__formHandler`   | Available | Available         | Available | Available             |
+| Form                        | `form`           | `sfdc_cms__form`          | Available | Available         | Available | Available             |
 
 Other CMS types (landing pages, SMS, push and more) are not handled yet.
 
@@ -101,15 +105,19 @@ Retrieve writes one folder per workspace and type under `cms/` in the current di
 `--output-dir`). Each component is one JSON file named after its API name. Some types keep
 parts of the component in files next to the JSON:
 
-| Type           | Files                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------------- |
-| Email          | `cms/<workspace>/email/<ApiName>.email.json`, plus `.email.html` and `.email.txt`           |
-| Email template | `cms/<workspace>/email-template/<ApiName>.email-template.json`, plus `.html` and `.txt`     |
-| Email fragment | `cms/<workspace>/email-fragment/<ApiName>.email-fragment.json`                              |
-| Image          | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
-| Document       | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
-| Audio          | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
-| Brand          | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
+| Type                        | Files                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| Email                       | `cms/<workspace>/email/<ApiName>.email.json`, plus `.email.html` and `.email.txt`           |
+| Email template              | `cms/<workspace>/email-template/<ApiName>.email-template.json`, plus `.html` and `.txt`     |
+| Email fragment              | `cms/<workspace>/email-fragment/<ApiName>.email-fragment.json`                              |
+| Image                       | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
+| Document                    | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
+| Audio                       | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
+| Brand                       | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
+| Content block: landing page | `cms/<workspace>/web-fragment/<ApiName>.web-fragment.json`                                  |
+| Consent banner              | `cms/<workspace>/consent-banner/<ApiName>.consent-banner.json`                              |
+| Form handler                | `cms/<workspace>/form-handler/<ApiName>.form-handler.json`                                  |
+| Form                        | `cms/<workspace>/form/<ApiName>.form.json`                                                  |
 
 - `<workspace>` is the API name of the workspace you retrieved from (its ID if it has no API
   name). It tells you where the files came from; `--workspace` on deploy says where they go. So
@@ -328,6 +336,17 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - The whole brand (colors, fonts, spacing, buttons) is in the JSON. Values such as
   `{!$brand.spacing.none}` are part of the brand, not references.
 - Brands deploy first, so emails and fragments in the same deploy can use them.
+
+### Content block: landing page, consent banner, form handler and form
+
+- The whole component, including its blocks, is in the JSON. Block IDs and their order are
+  kept exactly, like an email fragment.
+- An image in a landing page content block is a reference: deploy the image in the same run, or
+  make sure the destination workspace has an image with that API name.
+- A form handler's JSON holds only its blocks. The flow that processes submissions is not part
+  of the component and is not retrieved or deployed.
+- Salesforce publishes a form or a form handler only when it has at least one input field; for
+  an empty one, publish shows Salesforce's error.
 
 ## Safety and limits
 
