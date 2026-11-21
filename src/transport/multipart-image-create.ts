@@ -35,14 +35,40 @@ export type MultipartCreateOptions = JsonRequestOptions &
     mimeType?: string;
   };
 
-export type MediaContentType = 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
+export type MediaContentType =
+  | 'sfdc_cms__image'
+  | 'sfdc_cms__document'
+  | 'sfdc_cms__audio'
+  | 'sfdc_cms__video'
+  | 'sfdc_cms__customFont'
+  | 'sfdc_cms__vcf';
 
 const OPERATION_KEY = 'content.create';
+// Default part MIME type per media type; undefined = the file must name its MIME type.
 const DEFAULT_MIME: Record<MediaContentType, string | undefined> = {
   sfdc_cms__image: 'application/octet-stream; charset=ISO-8859-1',
   sfdc_cms__document: 'text/plain',
   sfdc_cms__audio: undefined,
+  sfdc_cms__video: undefined,
+  sfdc_cms__customFont: undefined,
+  sfdc_cms__vcf: undefined,
 };
+
+/**
+ * Whether a content type is one of the media types (multipart create and update).
+ * @param {string} contentType - Native content type.
+ * @returns {boolean} True for a media type.
+ */
+export const isMediaContentType = (contentType: string): contentType is MediaContentType =>
+  Object.hasOwn(DEFAULT_MIME, contentType);
+
+/**
+ * Whether a media type needs the file's MIME type from the source (it has no default).
+ * @param {MediaContentType} contentType - Native media type.
+ * @returns {boolean} True when the MIME type is required.
+ */
+export const mediaMimeTypeRequired = (contentType: MediaContentType): boolean =>
+  DEFAULT_MIME[contentType] === undefined;
 
 /**
  * Build a media create body without sending it.

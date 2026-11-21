@@ -12,6 +12,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The component references another component that the destination workspace does not have and this deploy does not create. Deploy that component first or add it to this deploy, then rerun.',
   RECORD_REFERENCE_NOT_FOUND:
     'The component points to a Salesforce record by name (such as a Campaign; a record type by object and developer name), and the destination org has no such record. Create the record there, or change the name in the file, then rerun.',
+  RECORD_REFERENCE_RAW_ID:
+    'A record reference in the file holds a record ID instead of the name form (such as { "sobject": "Campaign", "name": "…" }). It is sent as it is, but IDs differ between orgs. Replace it with the name form, or retrieve the component again from an org that has the record.',
   RECORD_REFERENCE_AMBIGUOUS:
     'The component points to a Salesforce record by name (such as a Campaign; a record type by object and developer name), and the destination org has more than one such record. Rename the extra records so the name is unique, then rerun.',
   DEPENDENCY_CYCLE:

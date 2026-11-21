@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { logApiEvent } from '../logging.js';
 import { constants as bufferConstants } from 'node:buffer';
 import { assertMediaMimeType } from './multipart.js';
+import type { MediaContentType } from './multipart-image-create.js';
 import { domainToASCII } from 'node:url';
 import { Readable } from 'node:stream';
 
@@ -14,7 +15,7 @@ export const EXPERIMENTAL_MEDIA_POLICY = {
 
 export type ExperimentalMediaDownloadOptions = {
   readonly accessToken: string;
-  readonly contentType?: 'sfdc_cms__image' | 'sfdc_cms__document' | 'sfdc_cms__audio';
+  readonly contentType?: MediaContentType;
   readonly expectedMd5: string;
   readonly expectedMimeType: string;
   readonly expectedSize: number;

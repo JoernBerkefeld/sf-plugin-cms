@@ -137,6 +137,35 @@ test('media fromSource: one file exactly; an external URL image needs none', asy
   assert.equal(imageHandler.fromSource(external, { workspace }).file, undefined);
 });
 
+test('media fromSource without a MIME type: a plugin error naming the field, unless the type has a default', async () => {
+  for (const [type, handler, apiName] of CASES) {
+    const files = await readSourceFiles(golden, WS, type, apiName);
+    const { mimeType, ...source } = files.document.contentBody['sfdc_cms:media'].source;
+    assert.ok(mimeType, `${type} golden file has a MIME type`);
+    const withoutMime = structuredClone(files);
+    withoutMime.document.contentBody['sfdc_cms:media'].source = source;
+    if (type === 'image' || type === 'document') {
+      assert.equal(handler.fromSource(withoutMime, { workspace }).file.mimeType, undefined, type);
+      continue;
+    }
+    assert.throws(() => handler.fromSource(withoutMime, { workspace }), {
+      code: 'MEDIA_MIME_TYPE_MISSING',
+      message: /contentBody."sfdc_cms:media".source.mimeType/u,
+    });
+  }
+});
+
+test('a video without a MIME type is blocked before any write', async () => {
+  const directory = await scratch();
+  const files = await readSourceFiles(golden, WS, 'video', 'Golden_Video');
+  delete files.document.contentBody['sfdc_cms:media'].source.mimeType;
+  await writeSourceFiles(directory, WS, files);
+  const deployed = await run(Deploy, ['-m', 'video:Golden_Video'], fakeOrg(), directory);
+  assert.deepEqual(outcomes(deployed.result), [['Golden_Video', 'blocked']]);
+  assert.equal(deployed.result.diagnostics.errors[0].code, 'MEDIA_MIME_TYPE_MISSING');
+  assert.equal(deployed.writes.length, 0);
+});
+
 /**
  * Serve stored media like `/cms/media/…` (301 to file.force.com, then the bytes).
  * @param {Map<string, { bytes: Buffer; mimeType: string }>} media Stored files by content key.
@@ -364,7 +393,9 @@ for (const [type, , apiName, fileName] of CASES) {
     assert.deepEqual(bytesUpdate.result.result.items[0].changes, [`.${fileName}`]);
     assert.deepEqual(bytesUpdate.result.diagnostics.warnings, []);
     assert.equal(bytesUpdate.writes[0].input.method, 'PUT');
-    assert.deepEqual(parseMultipart(bytesUpdate.writes[0].input).bytes, newBytes);
+    const bytesPart = parseMultipart(bytesUpdate.writes[0].input);
+    assert.deepEqual(bytesPart.bytes, newBytes);
+    assert.equal(bytesPart.mimeType, files.document.contentBody['sfdc_cms:media'].source.mimeType);
 
     const edited = await readSourceFiles(directory, WS, type, apiName);
     edited.document.title = `${files.document.title} 2`;

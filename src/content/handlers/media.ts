@@ -1,4 +1,8 @@
 import { CmsError } from '../../errors/registry.js';
+import {
+  isMediaContentType,
+  mediaMimeTypeRequired,
+} from '../../transport/multipart-image-create.js';
 import { projectJsonVariant } from '../json-projection.js';
 import { jsonPayloadFromSource, logicalReferences } from '../json-source.js';
 import type { ContentTypeHandler, DeployPayload, NativeVariant, SourceFiles } from '../types.js';
@@ -93,6 +97,14 @@ export function mediaHandler(type: string, apiName: string): ContentTypeHandler 
       const media = payload.contentBody[MEDIA_FIELD];
       const mimeType =
         isPlainObject(media) && isPlainObject(media.source) ? media.source.mimeType : undefined;
+      if (
+        typeof mimeType !== 'string' &&
+        (!isMediaContentType(apiName) || mediaMimeTypeRequired(apiName))
+      )
+        throw new CmsError(
+          'MEDIA_MIME_TYPE_MISSING',
+          `${type}:${files.document.apiName} has no contentBody."${MEDIA_FIELD}".source.mimeType, the file type of ${suffix.slice(1)}`,
+        );
       return {
         ...payload,
         file: {

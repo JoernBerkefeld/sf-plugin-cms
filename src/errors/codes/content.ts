@@ -16,6 +16,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The body holds a Salesforce record ID (such as a Campaign or a record type) that was not found in the org; it was kept as the ID. A deploy into another org cannot resolve it.',
   INVALID_FILE_NAME:
     'The API name cannot be used as a file name. Rename the component in the CMS workspace to letters, digits, underscores or hyphens, then rerun.',
+  MEDIA_MIME_TYPE_MISSING:
+    'The JSON of this media component has no file type in contentBody."sfdc_cms:media".source.mimeType, and this type has no default. Add the MIME type of the file (such as video/mp4, font/ttf or text/vcard), then rerun.',
   MEDIA_FILE_MISSING:
     'A media component needs its file next to the JSON, named <ApiName>.<type>.<file name>. Add the file (or retrieve the component again), then rerun.',
   MEDIA_DOWNLOAD_FAILED:

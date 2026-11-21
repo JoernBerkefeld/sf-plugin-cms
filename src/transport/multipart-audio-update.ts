@@ -25,3 +25,10 @@ export function buildAudioUpdateMultipart(
   assertMediaMimeType(options?.mimeType);
   return buildVariantUpdateMultipart(input, filename, bytes, options);
 }
+
+/** Video update body: the MIME type is required, as for Audio. */
+export const buildVideoUpdateMultipart = buildAudioUpdateMultipart;
+/** Custom Font update body: the MIME type is required, as for Audio. */
+export const buildCustomFontUpdateMultipart = buildAudioUpdateMultipart;
+/** Contact Card (VCF) update body: the MIME type is required, as for Audio. */
+export const buildVcfUpdateMultipart = buildAudioUpdateMultipart;

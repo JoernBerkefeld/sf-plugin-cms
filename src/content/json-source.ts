@@ -4,6 +4,7 @@ import {
   DEFAULT_REFERENCE_FORMS,
   formsAt,
   pathsAt,
+  RECORD_ID,
   recordFieldsOf,
   valueAt,
   type CompanionFields,
@@ -234,6 +235,25 @@ export function recordReferences(
     }
   }
   return found;
+}
+
+/**
+ * The declared record paths of a payload body that hold a raw record ID instead of the
+ * `{ sobject, <lookup fields> }` form (`*` steps expanded).
+ * @param {unknown} body - Payload body.
+ * @param {readonly RecordReferencePath[]} paths - Declared paths.
+ * @returns {Array<{ path: string[]; sobject: string }>} Raw IDs, in declaration order.
+ */
+export function rawRecordIds(
+  body: unknown,
+  paths: readonly RecordReferencePath[],
+): Array<{ path: string[]; sobject: string }> {
+  return paths.flatMap(({ path: declared, sobject }) =>
+    pathsAt(body, declared).flatMap((path) => {
+      const value = valueAt(body, path);
+      return typeof value === 'string' && RECORD_ID.test(value) ? [{ path, sobject }] : [];
+    }),
+  );
 }
 
 /**

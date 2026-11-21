@@ -335,6 +335,60 @@ test('tracked link deploy: a missing or ambiguous Campaign blocks before any wri
   assert.equal(wrongShape.items[0].reason, 'UNKNOWN_SETTING');
 });
 
+test('tracked link deploy: a raw Campaign ID is sent as it is, with RECORD_REFERENCE_RAW_ID in preview and run', async () => {
+  const org = fakeOrg();
+  const files = linkFiles(CAMPAIGN_ID);
+  for (const preview of [true, false]) {
+    const { items, writes, diagnostics } = await deployTo(org, [[trackedLink, files]], preview);
+    assert.deepEqual(
+      items.map((item) => item.outcome),
+      [preview ? 'create' : 'created'],
+    );
+    assert.deepEqual(
+      diagnostics.warnings.map((w) => [w.code, w.component, w.message]),
+      [
+        [
+          'RECORD_REFERENCE_RAW_ID',
+          'tracked-link:Golden_Tracked_Link',
+          'contentBody.campaign holds a raw Campaign ID; it may not exist in the target org',
+        ],
+      ],
+    );
+    if (!preview)
+      assert.equal(JSON.parse(writes.at(-1).input.body).contentBody.campaign, CAMPAIGN_ID);
+  }
+});
+
+test('tracked link deploy: a Campaign name in other letter case is unchanged, as the lookup matches it', async () => {
+  const org = fakeOrg({
+    campaigns: [
+      { Id: '701000000000999AAA', Name: 'Golden Campaign' },
+      { Id: '701000000000998AAA', Name: 'Silver Campaign' },
+    ],
+  });
+  const lower = linkFiles({ sobject: 'Campaign', name: 'golden campaign' });
+  const created = await deployTo(org, [[trackedLink, lower]]);
+  assert.deepEqual(created.diagnostics, { warnings: [], errors: [] });
+  assert.deepEqual(
+    created.items.map((item) => item.outcome),
+    ['created'],
+  );
+  const again = await deployTo(org, [[trackedLink, lower]]);
+  assert.deepEqual(
+    again.items.map((item) => item.outcome),
+    ['unchanged'],
+  );
+  assert.equal(again.writes.length, 0);
+  const other = await deployTo(org, [
+    [trackedLink, linkFiles({ sobject: 'Campaign', name: 'Silver Campaign' })],
+  ]);
+  assert.deepEqual(other.items[0].changes, ['contentBody.campaign']);
+  assert.equal(
+    JSON.parse(other.writes.at(-1).input.body).contentBody.campaign,
+    '701000000000998AAA',
+  );
+});
+
 test('expression: a data graph provider without data space is checked in default', async () => {
   const { contentBody: body } = await native('expression');
   assert.deepEqual(dataGraphReferences(body), [

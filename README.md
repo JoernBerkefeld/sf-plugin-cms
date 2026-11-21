@@ -321,8 +321,13 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - On deploy, the plugin looks the name up in the destination org (read-only). No record of that
   name is refused before any write (`RECORD_REFERENCE_NOT_FOUND`), and so are several
   (`RECORD_REFERENCE_AMBIGUOUS`). The plugin never creates or changes such records.
+- The lookup ignores upper and lower case, like Salesforce does. So `"golden campaign"` in the
+  file finds `Golden Campaign`, and the component counts as unchanged. Retrieve writes the
+  org's exact spelling.
 - If retrieve cannot find the record of an ID, it keeps the ID and warns
   `RECORD_REFERENCE_UNRESOLVED`.
+- A record ID left in the file is sent as it is, with the warning `RECORD_REFERENCE_RAW_ID`
+  (in preview too): the ID may not exist in the destination org.
 
 ### Data graph references
 
@@ -372,6 +377,10 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Like images: metadata in the JSON, the file next to it with its original name.
 - File names may contain letters, digits, spaces, dots, parentheses, `+`, `_` and `-`. A file
   name with other characters cannot be retrieved (`INVALID_FILE_NAME`).
+- Audio, video, custom fonts and contact cards need the file type in the JSON
+  (`"sfdc_cms:media": { "source": { "mimeType": "audio/x-wav" } }`; retrieve writes it).
+  Without it, deploy stops before any write with `MEDIA_MIME_TYPE_MISSING`. Images and
+  documents fall back to a default type.
 
 ### Video, custom font and contact card
 

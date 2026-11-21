@@ -5,6 +5,7 @@ import {
   referencedContentKeys,
 } from '../content/json-projection.js';
 import {
+  rawRecordIds,
   recordReferences,
   resolveRecordReferences,
   resolveReferences,
@@ -15,6 +16,7 @@ import type {
   DeployPayload,
   LogicalReference,
   NativeVariant,
+  RecordReferencePath,
   SourceFiles,
 } from '../content/types.js';
 import { CmsError, toDiagnostic, type Diagnostic } from '../errors/registry.js';
@@ -26,9 +28,18 @@ import {
   type RequestConnection,
 } from '../transport/json-request.js';
 import { requestJsonMutation, type JsonMutationOptions } from '../transport/json-mutation.js';
-import { buildAudioUpdateMultipart } from '../transport/multipart-audio-update.js';
+import {
+  buildAudioUpdateMultipart,
+  buildCustomFontUpdateMultipart,
+  buildVcfUpdateMultipart,
+  buildVideoUpdateMultipart,
+} from '../transport/multipart-audio-update.js';
 import { buildDocumentUpdateMultipart } from '../transport/multipart-document-update.js';
-import { createMediaContent, type MediaContentType } from '../transport/multipart-image-create.js';
+import {
+  createMediaContent,
+  isMediaContentType,
+  type MediaContentType,
+} from '../transport/multipart-image-create.js';
 import {
   buildImageUpdateMultipart,
   sendVariantUpdateMultipart,
@@ -114,10 +125,13 @@ type UpdateBuilder = (
 ) => MultipartBody;
 
 /** Multipart variant-update body per media type (per-type default part MIME type). */
-const MEDIA_UPDATE_BUILDERS: Readonly<Record<string, UpdateBuilder>> = {
+const MEDIA_UPDATE_BUILDERS: Readonly<Record<MediaContentType, UpdateBuilder>> = {
   sfdc_cms__image: buildImageUpdateMultipart,
   sfdc_cms__document: buildDocumentUpdateMultipart,
   sfdc_cms__audio: buildAudioUpdateMultipart as UpdateBuilder,
+  sfdc_cms__video: buildVideoUpdateMultipart as UpdateBuilder,
+  sfdc_cms__customFont: buildCustomFontUpdateMultipart as UpdateBuilder,
+  sfdc_cms__vcf: buildVcfUpdateMultipart as UpdateBuilder,
 };
 
 /**
@@ -161,13 +175,29 @@ function digest(content: string | Uint8Array): string {
 /**
  * Fields in which two component file sets differ: envelope keys, body keys as
  * `contentBody.<key>`, companions by suffix (byte hash). The folder path is not compared:
- * deploy does not move components.
+ * deploy does not move components. Record references at the declared paths compare their
+ * lookup values case-insensitively, as the SOQL lookup matches them.
  * @param {SourceFiles} local - Files on disk.
  * @param {SourceFiles} destination - Destination projected through `toSource`.
+ * @param {readonly RecordReferencePath[]} [recordPaths] - Declared record paths of the type.
  * @returns {string[]} Differing fields, sorted; [] = unchanged.
  */
-export function sourceDifferences(local: SourceFiles, destination: SourceFiles): string[] {
+export function sourceDifferences(
+  local: SourceFiles,
+  destination: SourceFiles,
+  recordPaths: readonly RecordReferencePath[] = [],
+): string[] {
   const changes: string[] = [];
+  // A record reference stands for its lookup: same sObject and case-folded values = same record.
+  const comparable = (body: Record<string, unknown>): Record<string, unknown> =>
+    resolveRecordReferences(body, recordPaths, (reference) =>
+      recordKey({
+        ...reference,
+        values: Object.fromEntries(
+          Object.entries(reference.values).map(([key, value]) => [key, value.toLowerCase()]),
+        ),
+      }),
+    );
   const compare = (
     prefix: string,
     left: Record<string, unknown>,
@@ -180,8 +210,8 @@ export function sourceDifferences(local: SourceFiles, destination: SourceFiles):
     Object.fromEntries(
       Object.entries(document).filter(([key]) => key !== 'contentBody' && key !== 'folderPath'),
     );
-  const localBody = local.document.contentBody;
-  const destinationBody = destination.document.contentBody;
+  const localBody = comparable(local.document.contentBody);
+  const destinationBody = comparable(destination.document.contentBody);
   const localEnvelope = envelopeOf(local.document);
   const destinationEnvelope = envelopeOf(destination.document);
   compare('', localEnvelope, destinationEnvelope);
@@ -297,6 +327,8 @@ export async function deployComponents(
     try {
       const payload = handler.fromSource(files, { workspace });
       plan.payload = payload;
+      if (payload.file && !isMediaContentType(handler.apiName))
+        throw new CmsError('UNKNOWN_TYPE', `${handler.apiName} is not a media type`);
       let inventory = inventories.get(handler);
       if (!inventory) {
         const names = sources.filter((s) => s.handler === handler).map((s) => s.apiName);
@@ -336,7 +368,11 @@ export async function deployComponents(
               component,
             ),
           );
-        const changes = sourceDifferences(files, destination.files);
+        const changes = sourceDifferences(
+          files,
+          destination.files,
+          handler.referenceDeclarations?.records,
+        );
         if (changes.length === 0) {
           item.outcome = 'unchanged';
           continue;
@@ -380,6 +416,17 @@ export async function deployComponents(
           );
         recordIds.set(recordKey(reference), found[0]);
       }
+      for (const { path, sobject } of rawRecordIds(
+        payload.contentBody,
+        handler.referenceDeclarations?.records ?? [],
+      ))
+        diagnostics.warnings.push(
+          warning(
+            'RECORD_REFERENCE_RAW_ID',
+            `contentBody.${path.join('.')} holds a raw ${sobject} ID; it may not exist in the target org`,
+            component,
+          ),
+        );
       const graphBlocks = await checkDataGraphReferences(
         connection,
         dataGraphReferences(payload.contentBody),
@@ -466,7 +513,7 @@ export async function deployComponents(
           file.mimeType === undefined ? {} : { mimeType: file.mimeType },
         );
       } else if (file) {
-        const build = MEDIA_UPDATE_BUILDERS[handler.apiName] ?? buildImageUpdateMultipart;
+        const build = MEDIA_UPDATE_BUILDERS[handler.apiName as MediaContentType];
         response = await sendVariantUpdateMultipart(
           connection,
           item.variantId!,
@@ -516,7 +563,11 @@ export async function deployComponents(
       if (typeof response.contentKey === 'string')
         destinationKeys.set(component, response.contentKey);
       const readback = await project(handler, await readVariant(item.variantId!));
-      const differences = sourceDifferences(source.files, readback.files);
+      const differences = sourceDifferences(
+        source.files,
+        readback.files,
+        handler.referenceDeclarations?.records,
+      );
       if (differences.length > 0)
         diagnostics.warnings.push(
           warning(

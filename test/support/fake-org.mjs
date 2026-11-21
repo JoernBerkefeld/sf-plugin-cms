@@ -22,7 +22,7 @@ export const salesforceError = (statusCode, errorCode, message = errorCode) =>
 /**
  * An in-memory org: one workspace with folders, variants, folder create, content create and
  * update, publish/unpublish, delete, the Data 360 data space list and data graph read, and
- * Campaign and RecordType SOQL by ID and by lookup fields.
+ * Campaign and RecordType SOQL by ID and by lookup fields (case-insensitive, as SOQL compares).
  * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
  *   Stored variants, child folders by parent ID, data space names, data graph -> data space,
  *   Campaign rows `{ Id, Name }`, RecordType rows `{ Id, SobjectType, DeveloperName }`.
@@ -67,7 +67,7 @@ export function fakeOrg(state = {}) {
           .filter((row) =>
             ids
               ? ids.includes(`'${row.Id}'`)
-              : where.every(([, field, value]) => row[field] === value),
+              : where.every(([, field, value]) => row[field].toLowerCase() === value.toLowerCase()),
           )
           .slice(0, ids ? undefined : 2),
       };
