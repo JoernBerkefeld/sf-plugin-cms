@@ -81,26 +81,31 @@ Each row is one content type. The second column is the name you use with `-m`. *
 means the plugin has that operation. For every operation the plugin sends the request and shows
 Salesforce's answer; if Salesforce refuses an operation for a type, you see its error.
 
-| Type                        | `-m` name        | Salesforce name           | Retrieve  | Create and update | Delete    | Publish and unpublish |
-| --------------------------- | ---------------- | ------------------------- | --------- | ----------------- | --------- | --------------------- |
-| Email                       | `email`          | `sfdc_cms__email`         | Available | Available         | Available | Available             |
-| Email template              | `email-template` | `sfdc_cms__emailTemplate` | Available | Available         | Available | Available             |
-| Email fragment              | `email-fragment` | `sfdc_cms__emailFragment` | Available | Available         | Available | Available             |
-| Image                       | `image`          | `sfdc_cms__image`         | Available | Available         | Available | Available             |
-| Document                    | `document`       | `sfdc_cms__document`      | Available | Available         | Available | Available             |
-| Audio                       | `audio`          | `sfdc_cms__audio`         | Available | Available         | Available | Available             |
-| Video                       | `video`          | `sfdc_cms__video`         | Available | Available         | Available | Available             |
-| Custom font                 | `custom-font`    | `sfdc_cms__customFont`    | Available | Available         | Available | Available             |
-| Contact card (VCF)          | `vcf`            | `sfdc_cms__vcf`           | Available | Available         | Available | Available             |
-| Brand                       | `brand`          | `sfdc_cms__brand`         | Available | Available         | Available | Available             |
-| Content block: landing page | `web-fragment`   | `sfdc_cms__webFragment`   | Available | Available         | Available | Available             |
-| Consent banner              | `consent-banner` | `sfdc_cms__consentBanner` | Available | Available         | Available | Available             |
-| Form handler                | `form-handler`   | `sfdc_cms__formHandler`   | Available | Available         | Available | Available             |
-| Form                        | `form`           | `sfdc_cms__form`          | Available | Available         | Available | Available             |
-| Expression                  | `expression`     | `sfdc_cms__expression`    | Available | Available         | Available | Available             |
-| Tracked link                | `tracked-link`   | `sfdc_cms__trackedLink`   | Available | Available         | Available | Available             |
+| Type                        | `-m` name           | Salesforce name              | Retrieve  | Create and update | Delete    | Publish and unpublish |
+| --------------------------- | ------------------- | ---------------------------- | --------- | ----------------- | --------- | --------------------- |
+| Email                       | `email`             | `sfdc_cms__email`            | Available | Available         | Available | Available             |
+| Email template              | `email-template`    | `sfdc_cms__emailTemplate`    | Available | Available         | Available | Available             |
+| Email fragment              | `email-fragment`    | `sfdc_cms__emailFragment`    | Available | Available         | Available | Available             |
+| Image                       | `image`             | `sfdc_cms__image`            | Available | Available         | Available | Available             |
+| Document                    | `document`          | `sfdc_cms__document`         | Available | Available         | Available | Available             |
+| Audio                       | `audio`             | `sfdc_cms__audio`            | Available | Available         | Available | Available             |
+| Brand                       | `brand`             | `sfdc_cms__brand`            | Available | Available         | Available | Available             |
+| SMS and MMS                 | `sms`               | `sfdc_cms__sms`              | Available | Available         | Available | Available             |
+| Push notification           | `push-notification` | `sfdc_cms__pushNotification` | Available | Available         | Available | Available             |
+| In-app message              | `in-app`            | `sfdc_cms__inApp`            | Available | Available         | Available | Available             |
+| RCS message                 | `rcs`               | `sfdc_cms__rcs`              | Available | Available         | Available | Available             |
+| WhatsApp session message    | `whatsapp-session`  | `sfdc_cms__whatsappSession`  | Available | Available         | Available | Available             |
+| Video                       | `video`             | `sfdc_cms__video`            | Available | Available         | Available | Available             |
+| Custom font                 | `custom-font`       | `sfdc_cms__customFont`       | Available | Available         | Available | Available             |
+| Contact card (VCF)          | `vcf`               | `sfdc_cms__vcf`              | Available | Available         | Available | Available             |
+| Content block: landing page | `web-fragment`      | `sfdc_cms__webFragment`      | Available | Available         | Available | Available             |
+| Consent banner              | `consent-banner`    | `sfdc_cms__consentBanner`    | Available | Available         | Available | Available             |
+| Form handler                | `form-handler`      | `sfdc_cms__formHandler`      | Available | Available         | Available | Available             |
+| Form                        | `form`              | `sfdc_cms__form`             | Available | Available         | Available | Available             |
+| Expression                  | `expression`        | `sfdc_cms__expression`       | Available | Available         | Available | Available             |
+| Tracked link                | `tracked-link`      | `sfdc_cms__trackedLink`      | Available | Available         | Available | Available             |
 
-Other CMS types (landing pages, SMS, push and more) are not handled yet.
+Other CMS types (landing pages and more) are not handled yet.
 
 Universal fragment (`sfdc_cms__fragment`) is not handled: its CMS editor never finishes
 loading, so no item exists to model it on.
@@ -121,10 +126,15 @@ parts of the component in files next to the JSON:
 | Image                       | `cms/<workspace>/image/<ApiName>.image.json`, plus the image, such as `Logo.image.logo.png` |
 | Document                    | `cms/<workspace>/document/<ApiName>.document.json`, plus the file                           |
 | Audio                       | `cms/<workspace>/audio/<ApiName>.audio.json`, plus the file                                 |
+| Brand                       | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
+| SMS and MMS                 | `cms/<workspace>/sms/<ApiName>.sms.json`                                                    |
+| Push notification           | `cms/<workspace>/push-notification/<ApiName>.push-notification.json`                        |
+| In-app message              | `cms/<workspace>/in-app/<ApiName>.in-app.json`                                              |
+| RCS message                 | `cms/<workspace>/rcs/<ApiName>.rcs.json`                                                    |
+| WhatsApp session message    | `cms/<workspace>/whatsapp-session/<ApiName>.whatsapp-session.json`                          |
 | Video                       | `cms/<workspace>/video/<ApiName>.video.json`, plus the file                                 |
 | Custom font                 | `cms/<workspace>/custom-font/<ApiName>.custom-font.json`, plus the font file                |
 | Contact card (VCF)          | `cms/<workspace>/vcf/<ApiName>.vcf.json`, plus the `.vcf` file                              |
-| Brand                       | `cms/<workspace>/brand/<ApiName>.brand.json`                                                |
 | Content block: landing page | `cms/<workspace>/web-fragment/<ApiName>.web-fragment.json`                                  |
 | Consent banner              | `cms/<workspace>/consent-banner/<ApiName>.consent-banner.json`                              |
 | Form handler                | `cms/<workspace>/form-handler/<ApiName>.form-handler.json`                                  |
@@ -368,6 +378,16 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   of the component and is not retrieved or deployed.
 - Salesforce publishes a form or a form handler only when it has at least one input field; for
   an empty one, publish shows Salesforce's error.
+
+### SMS, push, in-app, RCS and WhatsApp session messages
+
+- The whole message (text, blocks, buttons, quick replies, data providers) is in the JSON. No
+  sender, channel, app or WhatsApp account is stored in the message, so nothing has to exist in
+  the destination besides the data graph and, for in-app messages, the image.
+- An in-app message's image is a reference; deploy the image in the same run or before.
+- Publishing changes the content status only; the plugin never sends, schedules or activates
+  a message.
+- Mobile inbox messages, SMS DLT templates and WhatsApp template messages are not handled.
 
 ## Safety and limits
 

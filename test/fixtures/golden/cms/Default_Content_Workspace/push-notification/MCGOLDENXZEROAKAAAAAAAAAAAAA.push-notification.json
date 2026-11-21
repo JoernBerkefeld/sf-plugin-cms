@@ -1,0 +1,41 @@
+{
+  "apiName": "MCGOLDENXZEROAKAAAAAAAAAAAAA",
+  "urlName": "golden-push-notification",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "notificationBlock": {
+      "attributes": {
+        "actions": {
+          "attributes": {
+            "action": "2",
+            "actionUrl": "https://example.com"
+          },
+          "definition": "sfdc_cms__pushNotificationActions",
+          "id": "ce9cd5d1-b30d-4011-8f6f-d98c642d1d3c",
+          "type": "block"
+        },
+        "sfdc_cms:pushNotificationContentMessage": "my push text",
+        "type": "Basic"
+      },
+      "definition": "sfdc_cms__pushNotificationBasic",
+      "id": "49a2cefe-5a1d-49fc-91fa-aa9bea2b8086",
+      "type": "block"
+    },
+    "notificationType": "Basic",
+    "sfdc_cms:title": "Golden_Push_Notification",
+    "sfdc_cms:variants": [],
+    "totalBytes": "4096",
+    "usedBytes": "31"
+  }
+}

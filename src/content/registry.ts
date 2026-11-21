@@ -13,6 +13,11 @@ import { audioHandler, documentHandler, imageHandler } from './handlers/media.js
 import { trackedLinkHandler } from './handlers/tracked-link.js';
 import { vcfHandler } from './handlers/vcf.js';
 import { videoHandler } from './handlers/video.js';
+import { inAppHandler } from './handlers/in-app.js';
+import { pushNotificationHandler } from './handlers/push-notification.js';
+import { rcsHandler } from './handlers/rcs.js';
+import { smsHandler } from './handlers/sms.js';
+import { whatsappSessionHandler } from './handlers/whatsapp-session.js';
 import type { ContentTypeHandler } from './types.js';
 
 /** Every supported type, in deploy order (dependencies first). One line per new type. */
@@ -33,6 +38,11 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   consentBannerHandler,
   formHandlerHandler,
   formHandler,
+  smsHandler,
+  pushNotificationHandler,
+  inAppHandler,
+  rcsHandler,
+  whatsappSessionHandler,
 ];
 
 /**

@@ -1,0 +1,30 @@
+{
+  "apiName": "MCGOLDENXZEROANAAAAAAAAAAAAA",
+  "urlName": "golden-whatsapp-session",
+  "folderPath": [],
+  "contentBody": {
+    "contentBlock": {
+      "attributes": {
+        "sfdc_cms:whatsappMessageBody": "whats up?",
+        "type": "Text"
+      },
+      "definition": "sfdc_cms__whatsappMessageTypeText",
+      "id": "6a965f98-6535-4faf-ad1c-fbf9bfcee6f2",
+      "type": "block"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "messageType": "Text",
+    "sfdc_cms:title": "Golden_Whatsapp_Session",
+    "sfdc_cms:variants": []
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "apiName": "Golden_In_App",
+  "urlName": "golden-in-app",
+  "folderPath": [],
+  "contentBody": {
+    "inAppBlock": {
+      "attributes": {
+        "actionButtons": {
+          "attributes": {
+            "actions": [
+              {
+                "attributes": {
+                  "content": {
+                    "action": "1",
+                    "actionUrl": "https://example.com",
+                    "id": "d4b2d4f5-7d19-4ee5-817a-504cccb54a06",
+                    "label": "Golden_Button 1",
+                    "passbackValue": "btn1"
+                  },
+                  "style": {
+                    "androidFont": "",
+                    "buttonColor": "#F5F5F5",
+                    "cornerRadius": "m",
+                    "fontSize": "s",
+                    "fontStyle": "regular",
+                    "iosFont": "",
+                    "textAlignment": "center",
+                    "textColor": "#000000"
+                  }
+                },
+                "definition": "sfdc_cms__inAppActionButton",
+                "id": "d4b2d4f5-7d19-4ee5-817a-504cccb54a06",
+                "type": "block"
+              }
+            ]
+          },
+          "definition": "sfdc_cms__inAppActionButtons",
+          "id": "3ee56581-b741-45f3-89a8-a1b4c9c5141e",
+          "type": "block"
+        },
+        "containerStyle": {
+          "attributes": {
+            "background": {
+              "color": "#FFFFFF",
+              "opacity": "100"
+            },
+            "cornerRadius": "m",
+            "dismissIcon": {
+              "backgroundColor": "#F3F3F3",
+              "iconColor": "#000000"
+            },
+            "modalOrientation": "top",
+            "overlay": {
+              "color": "#000000",
+              "opacity": "50"
+            }
+          },
+          "definition": "sfdc_cms__inAppContainerStyle",
+          "id": "12358146-9b0a-474b-9250-3567f00491fd",
+          "type": "block"
+        },
+        "media": {
+          "attributes": {
+            "content": {
+              "attributes": {
+                "link": {
+                  "source": {
+                    "mimeType": "image/png",
+                    "ref": {
+                      "contentKey": {
+                        "type": "image",
+                        "apiName": "Golden_Image"
+                      }
+                    },
+                    "size": 215958,
+                    "type": "imageReference"
+                  }
+                },
+                "mediaType": "Image",
+                "mimeType": "image/png",
+                "type": "mediaUrl"
+              }
+            },
+            "style": {
+              "cornerRadius": "s"
+            }
+          },
+          "definition": "sfdc_cms__inAppMedia",
+          "id": "7e1575be-37bc-494a-a204-089101a3042a",
+          "type": "block"
+        },
+        "message": {
+          "attributes": {
+            "content": {
+              "message": "Get the latest updates, feature highlights, and announcements."
+            },
+            "style": {
+              "androidFont": "",
+              "fontSize": "s",
+              "fontStyle": "regular",
+              "iosFont": "",
+              "textAlignment": "beginning",
+              "textColor": "#000000"
+            }
+          },
+          "definition": "sfdc_cms__inAppMessage",
+          "id": "71322b8a-bd09-4de5-a04c-44c5a4d15928",
+          "type": "block"
+        },
+        "title": {
+          "attributes": {
+            "content": {
+              "title": "Golden_In_App"
+            },
+            "style": {
+              "androidFont": "",
+              "fontSize": "l",
+              "fontStyle": "regular",
+              "iosFont": "",
+              "textAlignment": "beginning",
+              "textColor": "#000000"
+            }
+          },
+          "definition": "sfdc_cms__inAppTitle",
+          "id": "4bff85bd-5ba5-49a0-8219-e34301ea7504",
+          "type": "block"
+        },
+        "type": "Banner"
+      },
+      "definition": "sfdc_cms__inAppTypeBanner",
+      "id": "1847f3a6-c6b4-4ab0-8e1d-040af52bbbb7",
+      "type": "block"
+    },
+    "inAppImageLayoutType": "1x1",
+    "inAppType": "Banner",
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "sfdc_cms:title": "Golden_In_App",
+    "sfdc_cms:variants": []
+  }
+}
