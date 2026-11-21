@@ -236,7 +236,7 @@ Fields of a variant from `GET /connect/cms/contents/variants/{id}` [LIVE Audio 2
   - Readback equals the source except `sfdc_cms:title`.
   - The body has sections for typography, color, spacing, button, provider, title, Einstein brand and variants. `dataProviders` and variants were empty (7F L1710; P4 L2934). A full synthetic body is in `test/fixtures/brand.ts:22-149`.
 - **The same `apiName`, title and urlName can be created in a second workspace of the same org.** Both copies stay as Drafts (`Phase_5_Discovery_Brand`: `<20Y…>` in Default_Content_Workspace, copy `<20Y…>` in Cloud_Kicks), so **`apiName` is unique per workspace only** [LIVE ~2026-10-01/02, P4 L3396, 7F L1165].
-- **Not tested:** Brand update, delete, publish and unpublish, and setting a brand as the workspace default (7F L1710).
+- **Update works on v68** (section 17). **Not tested:** Brand delete, publish and unpublish, and setting a brand as the workspace default (7F L1710).
 
 ### 3.8 Other types (context only)
 
@@ -468,3 +468,14 @@ All [LIVE vdb:content.lifecycle-publish-unpublish-delete-api68]. Writes were age
 - **Translation variant create** (`POST /contents/variants`, used only for the C5 probe): `managedContentKeyOrId` needs the content key (an 18-character `20Y…` ID was refused with 400 `ILLEGAL_QUERY_PARAMETER_VALUE`, "18 vs 15"); the body accepts only translatable fields (`subjectLine`, `preheader`, `rawHtml`, `textContent` worked; `lightning:*`, `messagePurpose` and `sfdc_cms:*` were refused with 400 `INVALID_FIELD`).
 - **Create: body `sfdc_cms:title` / `sfdc_cms:urlName` win over the envelope.** A create whose envelope said a new title/urlName but whose body still held the old `sfdc_cms:title` / `sfdc_cms:urlName` stored the body values (plugin readback warned `READBACK_DIFFERS title, urlName`). Relevant for deploy (W2b area): a copied file must change both.
 - Independent checks: SOQL on `ManagedContentVariant` and the `content_readonly` / `sobjects` MCP servers after each step; Chrome CMS workspace list showed Published after publish and Draft after unpublish, and no CMSV1 email/template after delete.
+
+## 17. Brand findings (W6, 2026-11-21, API 68.0, live on both orgs)
+
+All [LIVE vdb:content.deploy-brand-api68]. Writes were agent-owned `CMSV1_*` fixtures only.
+
+- **Shape.** A Brand variant body is plain JSON: `baseFontFamily`, `baseFontSize`, `borderRadius`, `borderWeight`, `buttonStyleGroup` (primary/secondary/tertiary), `colorScheme`, `fontFamily`, `fontSize`, `fontWeight`, `letterSpacing`, `shadows` (newer brands only), `spacing`, `typography`, `lightning:dataProviders` (empty), `sfdc_cms:einsteinBrandProperties`, `sfdc_cms:title`, `sfdc_cms:variants` (empty). Values reference other brand tokens as `{!$brand.<path>}` strings, which are content, not component references. None of the four brands in the designated source workspace held a `contentKey` (no logo or image reference), so the handler has no companions and, in practice, no references. Newer brands carry more `colorScheme`, `borderRadius` and `fontWeight` keys than older ones; both shapes round-trip unchanged.
+- **Envelope:** no fields beyond apiName, title, urlName and the runtime fields; `contentFqn` is `marketing--<workspace>.sfdc_cms__brand--<apiName>`.
+- **Create** (`POST /connect/cms/contents`, `contentType: sfdc_cms__brand`, root folder, body taken from an existing brand) works in a second workspace of the same org and in the other org; each copy is a Draft with its own content key; readback equals the file.
+- **Unchanged:** the redeploy read 8 GETs and sent no write.
+- **Update** (`PUT /connect/cms/contents/variants/{id}` with `{apiName, title, urlName, contentBody}`) is accepted: a changed `colorScheme.primaryAccent` and `baseFontSize` were stored, identity, content key and Draft state stayed, re-retrieve equals the edited file, the next deploy found nothing to write. Checkpoint C4 did not fire for update.
+- **UI:** the CMS workspace lists the brand as type Brand, English (default), Draft; its preview renders the changed primary color. The UI also offers a "German" entry in the language list of the item although only the `en_US` variant exists (workspace-enabled language, no variant).

@@ -1,10 +1,15 @@
 import { CmsError } from '../errors/registry.js';
+import { brandHandler } from './handlers/brand.js';
 import { emailTemplateHandler } from './handlers/email-template.js';
 import { emailHandler } from './handlers/email.js';
 import type { ContentTypeHandler } from './types.js';
 
 /** Every supported type, in deploy order (dependencies first). One line per new type. */
-export const HANDLERS: readonly ContentTypeHandler[] = [emailTemplateHandler, emailHandler];
+export const HANDLERS: readonly ContentTypeHandler[] = [
+  brandHandler,
+  emailTemplateHandler,
+  emailHandler,
+];
 
 /**
  * CLI name of a Salesforce content type: `sfdc_cms__` dropped, camelCase to kebab-case

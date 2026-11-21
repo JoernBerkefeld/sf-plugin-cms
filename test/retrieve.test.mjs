@@ -6,6 +6,7 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Config } from '@oclif/core';
 import Retrieve from '../lib/commands/cms/retrieve.js';
+import { HANDLERS } from '../lib/content/registry.js';
 import { folderPathOf } from '../lib/services/folders.js';
 import { groupInventory, queryVariants, soqlString } from '../lib/services/inventory.js';
 import { parseSelection } from '../lib/services/retrieve.js';
@@ -106,8 +107,8 @@ test('selection: bare type means all, names collect per type, unknown types are 
       ['email', ['A', 'B']],
     ],
   );
-  assert.equal(parseSelection().length, 2);
-  assert.throws(() => parseSelection(['brand']), { code: 'UNKNOWN_TYPE' });
+  assert.equal(parseSelection().length, HANDLERS.length);
+  assert.throws(() => parseSelection(['no-such-type']), { code: 'UNKNOWN_TYPE' });
   assert.throws(() => parseSelection(['email:']), { code: 'INVALID_SELECTOR' });
 });
 
@@ -289,7 +290,7 @@ test('retrieve is lenient: a failing read and a missing name do not stop the oth
 
 test('retrieve refuses an unknown type before reading content', async () => {
   const { result, calls, exitCode } = await run(
-    ['-m', 'brand', '--workspace', 'Default_Content_Workspace'],
+    ['-m', 'no-such-type', '--workspace', 'Default_Content_Workspace'],
     org({}),
   );
   assert.equal(exitCode, 1);
