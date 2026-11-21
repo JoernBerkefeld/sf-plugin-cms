@@ -68,7 +68,7 @@ export default class Deploy extends CmsCommand<DeployResult> {
         item.reason,
         item.changes?.length ? `changes: ${item.changes.join(', ')}` : undefined,
         item.dependencies?.length
-          ? `${item.action} after: ${item.dependencies.join(', ')}`
+          ? `${item.action ? `${item.action} ` : ''}after: ${item.dependencies.join(', ')}`
           : undefined,
         item.folders?.length
           ? `folder ${item.folders[0].outcome}: ${item.folders.map((folder) => (folder.id ? `${folder.path} (${folder.id})` : folder.path)).join(', ')}`

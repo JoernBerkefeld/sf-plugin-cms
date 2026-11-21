@@ -8,6 +8,9 @@ import { expressionHandler } from './handlers/expression.js';
 import { consentBannerHandler } from './handlers/consent-banner.js';
 import { formHandlerHandler } from './handlers/form-handler.js';
 import { formHandler } from './handlers/form.js';
+import { landingPageTemplateHandler } from './handlers/landing-page-template.js';
+import { landingPageHandler } from './handlers/landing-page.js';
+import { preferencePageHandler } from './handlers/preference-page.js';
 import { webFragmentHandler } from './handlers/web-fragment.js';
 import { audioHandler, documentHandler, imageHandler } from './handlers/media.js';
 import { trackedLinkHandler } from './handlers/tracked-link.js';
@@ -38,6 +41,9 @@ export const HANDLERS: readonly ContentTypeHandler[] = [
   consentBannerHandler,
   formHandlerHandler,
   formHandler,
+  landingPageTemplateHandler,
+  landingPageHandler,
+  preferencePageHandler,
   smsHandler,
   pushNotificationHandler,
   inAppHandler,
