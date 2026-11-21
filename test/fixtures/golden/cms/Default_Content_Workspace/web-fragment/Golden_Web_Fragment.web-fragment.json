@@ -1,0 +1,76 @@
+{
+  "apiName": "Golden_Web_Fragment",
+  "urlName": "golden-web-fragment",
+  "folderPath": [],
+  "contentBody": {
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "sfdc_cms:block": {
+      "children": [
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "children": [],
+              "definition": "lightning/column",
+              "id": "ef47575c-6783-4926-b2d9-c9ae30702d7b",
+              "type": "block"
+            }
+          ],
+          "definition": "lightning/section",
+          "id": "66b486d3-df02-4032-8693-bb2d5d50df26",
+          "type": "block"
+        }
+      ],
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "e6854e9d-54c0-4e06-aa23-55fbf2cd606a",
+      "type": "block"
+    },
+    "sfdc_cms:title": "Golden_Web_Fragment",
+    "sfdc_cms:variants": []
+  }
+}

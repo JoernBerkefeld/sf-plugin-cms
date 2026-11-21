@@ -1,0 +1,161 @@
+{
+  "apiName": "Golden_Form",
+  "urlName": "golden-form",
+  "folderPath": [],
+  "contentBody": {
+    "formsubmission": {
+      "actions": [
+        {
+          "attributes": {
+            "formData": "{!$form.fields}",
+            "formId": "{!$form.id}",
+            "formVersion": "{!$form.version}",
+            "pageReferenceId": "{!$page.id}"
+          },
+          "definition": "sfdc_cms/umaFormSubmissionAction"
+        },
+        {
+          "attributes": {
+            "message": "Thank you for your submission."
+          },
+          "definition": "sfdc_cms/showThankYouAction"
+        }
+      ]
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "sfdc_cms:block": {
+      "children": [
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "children": [],
+              "definition": "lightning/column",
+              "id": "a7257805-6783-4e17-ad8b-0c3b3e78b968",
+              "type": "block"
+            }
+          ],
+          "definition": "lightning/section",
+          "id": "0b77401a-77de-4e24-b230-de7201558ae7",
+          "type": "block"
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "children": [
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.buttonStyleGroup.primary.lightning:borderRadius}",
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.primary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": "{!$brand.buttonStyleGroup.primary.lightning:buttonColorGroup}",
+                    "lightning:click": {
+                      "actions": [
+                        {
+                          "attributes": {
+                            "options": {
+                              "bubbles": true
+                            },
+                            "type": "formsubmit"
+                          },
+                          "definition": "sfdc_cms/customEventAction"
+                        }
+                      ]
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.primary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.primary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.primary}",
+                    "text": "Submit",
+                    "width": "auto"
+                  },
+                  "definition": "lightning/actionButton",
+                  "id": "399a1447-1466-4235-9d40-6e38cbceafa5",
+                  "type": "block"
+                }
+              ],
+              "definition": "lightning/column",
+              "id": "7c1c70aa-8c8c-4800-95eb-fdce12d679cc",
+              "type": "block"
+            }
+          ],
+          "definition": "lightning/section",
+          "id": "53833e9d-d5d3-4d64-ba7e-994dfe8c56bb",
+          "type": "block"
+        }
+      ],
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "b338c459-3a92-4b04-871f-ebcb8f7cf8d2",
+      "type": "block"
+    },
+    "sfdc_cms:title": "Golden_Form"
+  }
+}
