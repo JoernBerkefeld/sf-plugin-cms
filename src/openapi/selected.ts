@@ -1,6 +1,7 @@
 import type { OperationDescriptor } from './generate.js';
 
-// Operations the bundled v67 schema does not contain; described by hand from the v68 reference.
+// Operations the bundled v67 schema does not contain; described by hand (folder items from the
+// v68 reference, SOQL from the REST API: the only complete content inventory).
 export const SUPPLEMENTAL_OPERATIONS: readonly OperationDescriptor[] = [
   {
     localKey: 'folder.items.list',
@@ -14,6 +15,16 @@ export const SUPPLEMENTAL_OPERATIONS: readonly OperationDescriptor[] = [
       { location: 'query', name: 'pageSize', required: false, type: 'integer' },
     ],
     path: '/connect/cms/folders/{folderId}/folder-items',
+    requestBodyMediaTypes: [],
+    requestBodyPresent: false,
+    responses: [],
+  },
+  {
+    localKey: 'soql.query',
+    method: 'GET',
+    operationId: 'local:soql.query',
+    parameters: [{ location: 'query', name: 'q', required: true, type: 'string' }],
+    path: '/query',
     requestBodyMediaTypes: [],
     requestBodyPresent: false,
     responses: [],

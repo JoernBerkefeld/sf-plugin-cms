@@ -127,7 +127,8 @@ export abstract class CmsCommand<R> extends SfCommand<CmsResult<R>> {
       envelope.metadata.orgId = org.orgId;
       this.logToStderr(`Org: ${org.username} (${org.orgId})`);
       envelope.result = await body(org, envelope);
-      envelope.status = 'success';
+      // A body may record per-component errors and still finish (lenient retrieve).
+      envelope.status = envelope.diagnostics.errors.length === 0 ? 'success' : 'failed';
     } catch (error) {
       envelope.diagnostics.errors.push(toDiagnostic(error));
     }

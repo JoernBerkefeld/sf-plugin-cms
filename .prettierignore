@@ -5,3 +5,4 @@ logs
 package-lock.json
 resources
 src/generated
+test/fixtures

@@ -44,6 +44,14 @@ type RuntimeParameter = {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * Connect REST HTML-encodes `<`, `>`, `&`, `"` and `'` in every string of a response unless this
+ * header turns it off; with it, bodies such as `rawHtml` come back exactly as stored.
+ */
+export const RAW_TEXT_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'X-Chatter-Entity-Encoding': 'false',
+});
+
 /** What Salesforce answered for a failed request, plus whether the request left the plugin. */
 export type ErrorDetails = {
   errorCode?: string;
@@ -364,10 +372,13 @@ export async function requestJson<T>(
   const recorder = statusRecorder(connection);
   let request: RequestStream<T>;
   try {
-    request = connection.request<T>({ method: operation.method, url }, {
-      timeout: timeoutMs,
-      ...recorder.options,
-    } as unknown as Parameters<Connection['request']>[1]) as RequestStream<T>;
+    request = connection.request<T>(
+      { method: operation.method, url, headers: { ...RAW_TEXT_HEADERS } },
+      {
+        timeout: timeoutMs,
+        ...recorder.options,
+      } as unknown as Parameters<Connection['request']>[1],
+    ) as RequestStream<T>;
   } catch (error) {
     logApiEvent('error', event, error);
     throw error;

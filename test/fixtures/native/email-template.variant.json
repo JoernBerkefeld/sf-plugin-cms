@@ -1,0 +1,57 @@
+{
+  "apiName": "Golden_Email_Template",
+  "contentBody": {
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:dataProviders": [],
+    "lightning:expressions": [],
+    "messagePurpose": "promotional",
+    "preheader": "Golden fixture preheader",
+    "rawHtml": "<!doctype html><html><body><p>Golden fixture body.</p></body></html>\n",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:title": "Golden_Email_Template",
+    "sfdc_cms:variants": [],
+    "subjectLine": "Golden fixture subject",
+    "textContent": "Golden fixture plain text.\n"
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__emailTemplate--Golden_Email_Template",
+  "contentKey": "MCGOLDENEAAAAAAAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__emailTemplate"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-10-16T02:54:57.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-10-16T02:58:54.000Z",
+  "managedContentId": "20Y000000000003AAA",
+  "managedContentVariantId": "9Ps000000000003AAA",
+  "managedContentVersionId": "5OU000000000003AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Email_Template",
+  "urlName": "golden-email-template"
+}

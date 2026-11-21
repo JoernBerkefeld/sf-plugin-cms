@@ -203,6 +203,23 @@ export const SELECTED_OPERATIONS = [
     "responses": []
   },
   {
+    "localKey": "soql.query",
+    "method": "GET",
+    "operationId": "local:soql.query",
+    "parameters": [
+      {
+        "location": "query",
+        "name": "q",
+        "required": true,
+        "type": "string"
+      }
+    ],
+    "path": "/query",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": []
+  },
+  {
     "localKey": "variant.create",
     "method": "POST",
     "operationId": "postManagedContentVariantCreate",

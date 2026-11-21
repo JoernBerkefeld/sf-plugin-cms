@@ -1,0 +1,377 @@
+{
+  "apiName": "MCGOLDENAAAAAAAAAAAAAAAAAAAA",
+  "contentBody": {
+    "backgroundColor": "{!$brand.colorScheme.root}",
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "objectApiName": "UnifiedssotIndividualMce__dlm"
+        },
+        "definition": "sfdc_cms__unifiedIndividualDataProvider",
+        "sfdcExpressionKey": "$unifiedIndividual"
+      }
+    ],
+    "lightning:expressions": [],
+    "messagePurpose": "promotional",
+    "preheader": "Golden fixture preheader",
+    "sfdc_cms:attachments": [],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "bf27cb7b-8cf5-46c2-b753-b0a734aa22b7",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.none}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "0f91224d-7153-473e-be26-4b54d2fb0d01",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.none}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "738ac81b-74ea-4954-8004-009a43250d85",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 45
+                      }
+                    },
+                    "imageInfo": {
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENBAAAAAAAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENBAAAAAAAAAAAAAAAAAAA?fileName=Golden_Image&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 32
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 32
+                      }
+                    },
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "da4c8336-47cd-4770-989c-df81558264c7",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 100
+                      }
+                    },
+                    "imageInfo": {
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENCAAAAAAAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENCAAAAAAAAAAAAAAAAAAA?fileName=Golden_Image&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "e6ce8f47-b047-4c45-b4aa-bd60efa5b3a8",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "center",
+                    "level": 3,
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.heading.heading2}",
+                    "text": "<p>Golden fixture text.</p>"
+                  },
+                  "definition": "lightning/heading",
+                  "id": "d5eea57b-4757-4783-9815-bf09c850b9c5",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "center",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}",
+                    "text": "<p>Golden fixture text.</p>"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "31e13c11-6124-4fb1-bf14-f92e848ca2a2",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.buttonStyleGroup.primary.lightning:borderRadius}",
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.primary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": "{!$brand.buttonStyleGroup.primary.lightning:buttonColorGroup}",
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.primary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.primary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.primary}",
+                    "text": "<p>Golden fixture text.</p>",
+                    "uri": "https://example.com/",
+                    "width": "auto"
+                  },
+                  "definition": "lightning/button",
+                  "id": "1fdfebf8-de04-4d97-9196-9fe6332b96ba",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "rawHtml": "<!doctype html><html><body><p>Golden fixture body.</p></body></html>\n"
+                  },
+                  "definition": "lightning/html",
+                  "id": "9d2fdd55-f666-494e-a008-cdf8451b03f7",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "center",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.xLarge}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}",
+                    "text": "<p>Golden fixture text.</p>"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "e8b440a8-578d-4ef8-9de5-95df6a58f3ce",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "center",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 54
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 16
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 54
+                      }
+                    },
+                    "lightning:typography": {
+                      "fontFamily": "{!$brand.fontFamily.arial}",
+                      "fontSize": "{!$brand.fontSize.xSmall}",
+                      "fontWeight": "{!$brand.fontWeight.normal}",
+                      "letterSpacing": "normal",
+                      "lineHeight": 1.5,
+                      "textTransform": "none"
+                    },
+                    "text": "<p>Golden fixture text.</p>"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "bf6a3a4a-0944-467d-923b-34fe73ad9a67",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:title": "Annual Promo Email",
+    "sfdc_cms:urlName": "annual-promo-email",
+    "subjectLine": "Golden fixture subject",
+    "sfdc_cms:variants": []
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__email--MCGOLDENAAAAAAAAAAAAAAAAAAAA",
+  "contentKey": "MCGOLDENAAAAAAAAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000001"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__email"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "createdDate": "2026-09-12T07:11:59.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000001"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000001AAA"
+  },
+  "lastModifiedDate": "2026-09-12T07:51:31.000Z",
+  "managedContentId": "20Y000000000001AAA",
+  "managedContentVariantId": "9Ps000000000001AAA",
+  "managedContentVersionId": "5OU000000000001AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Annual Promo Email",
+  "urlName": "annual-promo-email"
+}

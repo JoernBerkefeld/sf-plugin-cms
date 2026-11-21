@@ -1,10 +1,11 @@
 import { hints as general } from './codes/general.js';
 import { hints as workspace } from './codes/workspace.js';
+import { hints as content } from './codes/content.js';
 import { CmsRequestError } from '../transport/json-request.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 
 /** One entry per family; a new family adds one import and one key. */
-export const errorFamilies = { general, workspace } as const;
+export const errorFamilies = { general, workspace, content } as const;
 
 export type ErrorFamily = keyof typeof errorFamilies;
 
@@ -13,6 +14,8 @@ export type ErrorCodeInfo = Readonly<{ family: ErrorFamily; hint: string }>;
 /** A plugin diagnostic: a registered code, a message and, from Salesforce, what it answered. */
 export type Diagnostic = {
   code: string;
+  /** The component it is about, as `type:ApiName`. */
+  component?: string;
   message: string;
   hint?: string;
   status?: number;
@@ -97,7 +100,10 @@ function withHint(diagnostic: Diagnostic): Diagnostic {
  * @param {string} [prefix] - Text before the code, such as `email:Welcome: `.
  * @returns {string} One or two lines.
  */
-export function formatDiagnostic(diagnostic: Readonly<Diagnostic>, prefix = ''): string {
+export function formatDiagnostic(
+  diagnostic: Readonly<Diagnostic>,
+  prefix = diagnostic.component ? `${diagnostic.component}: ` : '',
+): string {
   const lines = [`${prefix}${diagnostic.code}: ${diagnostic.message}`];
   const hint = diagnostic.hint ?? registry.get(diagnostic.code)?.hint;
   if (hint && !diagnostic.message.includes(hint)) lines.push(`Hint: ${hint}`);

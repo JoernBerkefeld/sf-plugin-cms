@@ -420,10 +420,27 @@ Kept outside this repository (org and record IDs).
 10. **Landing Page template.** The GUI requires a published template; the old code required a Draft one; the API rule is unknown.
 11. **Workspace list pagination.** The spec has no `nextPageUrl`; the code expected one.
 12. **Fragment family counts drift between runs:** 6/8 with 2 bilingual (2026-10-28), 7/8 with 1 bilingual (2026-10-31), 13/16 with 3 bilingual across two workspaces. The workspace for each count is not stated.
-13. **The 7F L1163 "apiName" `MC3I6LC7…`** looks like a contentKey.
-14. **Email Template body keys** and the reason templates were treated as immutable: not recorded.
+13. **The 7F L1163 "apiName" `MC3I6LC7…`** looks like a contentKey. Resolved in section 14: UI-created items have the content key as apiName.
+14. **Email Template body keys** and the reason templates were treated as immutable: body keys resolved in section 14; immutability still unrecorded.
 15. **Custom Brand reference JSON** and nested-fragment references: not captured.
 16. **Channel IDs** and channel pagination end: not recorded.
 17. **v68 writes**, and the `/cms/deployments` route: untested.
 18. **Spec size:** 243152 versus 243608 bytes.
 19. **Where `CMSF_1015_nested_document` lives** (which org), and IDs for the other name-only `CMSF_1015_*` fixtures. These need a read-only lookup in W1/W2.
+
+---
+
+## 14. Retrieve findings (W2a, 2026-11-21, API 68.0, read-only on `isolated-source`)
+
+All [LIVE vdb:variant.retrieve-raw-text-and-email-bodies-api68].
+
+- **Connect REST HTML-encodes response strings.** Without a header, `<`, `>`, `&`, `"` and `'` come back as `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&#39;` in every string of a variant GET (`rawHtml`, block `text` attributes). With the request header **`X-Chatter-Entity-Encoding: false`** the same GET returns the stored text unchanged. v1 sends it on every read. The `content_readonly` MCP server returns the encoded form. Writes and write responses with this header: not yet tried (W2b). The old plugin's heuristic decoding (`editable-raw-html.ts`, `import-identities.ts`) was a workaround for this. Items written by that plugin store the encoded text itself (the header then still shows `&lt;`), so it is content, not transport.
+- **Email body, two shapes.** A code email has top-level `rawHtml`, `textContent`, `subjectLine`, `preheader?`, `messagePurpose`, `sfdc_cms:title`, `sfdc_cms:urlName`, `lightning:brandSource`, `lightning:dataProviders`, `lightning:expressions`, `lightning:backgroundImage`, `sfdc_cms:attachments`, `sfdc_cms:variants`. A block email (created in the UI) has no top-level `rawHtml`; it has `backgroundColor` and a `sfdc_cms:block` tree (`lightning/section` > `lightning/column` > `lightning/image|heading|paragraph|button|html`), where `lightning/html` carries `rawHtml` as an attribute and images carry `imageInfo.source = {type:'imageReference', ref:{contentKey}}` plus a derived `imageInfo.url` (`/cms/media/<key>?fileName=&fileHash=`). Its data provider was `sfdc_cms__unifiedIndividualDataProvider` with `attributes.objectApiName`.
+- **Email Template body keys** (resolves question 14): `rawHtml`, `textContent?`, `subjectLine?`, `preheader?`, `messagePurpose`, `sfdc_cms:title`, `sfdc_cms:description?`, `lightning:dataProviders`, `lightning:expressions`, `lightning:backgroundImage`, `sfdc_cms:attachments`, `sfdc_cms:variants`. No `sfdc_cms:urlName` and, in the samples, no `lightning:brandSource`. Templates with `subjectLine` exist, so it is not create-forbidden.
+- **`apiName` equals the content key for UI-created items** (`ManagedContent.ApiName` = `ManagedContentKey`, `MC…`). This explains question 13: such an apiName is real, not a mislabel.
+- **`contentFqn` is filled on v68 variant GETs**: `marketing--<workspaceApiName>.<contentType>--<apiName>` (section 2 said null).
+- **Variant GET `contentType`** has only `fullyQualifiedName`; the parent GET adds `name` (`Email`).
+- **Second-language variants:** the `de` variant of a bilingual item has `VariantType = Content` (not `Translation`) and `IsPrimary = false`; the `en_US` one is `IsPrimary = true`. v1 takes `IsPrimary` as the default variant.
+- **SOQL filters that work:** `ManagedContent.AuthoredManagedContentSpaceId = '<18-char>'`, `ContentTypeFullyQualifiedName = …`, `ManagedContent.ApiName IN (…)`, `ManagedContentKey IN (…) AND IsPrimary = true`, keyset `Id > …`. `ManagedContent` exposes `ContentKey`, `ApiName`, `AuthoredManagedContentSpaceId`.
+- **Folder detail:** `folderHierarchy` lists the ancestors from the root (`folderType: System`, `parentFolderId: null`) down to the parent, without the folder itself; the root's own hierarchy is `[]`. The root folder's name is `<workspace name>_marketing`.
+- Inventory: whole Email type retrieved without errors.
