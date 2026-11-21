@@ -1,0 +1,53 @@
+{
+  "apiName": "Golden_Form_Handler",
+  "contentBody": {
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "09b8497e-9308-45e2-943e-00185bfb10a9",
+      "type": "block",
+      "children": []
+    },
+    "sfdc_cms:title": "Golden_Form_Handler"
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__formHandler--Golden_Form_Handler",
+  "contentKey": "MCGOLDENXZEROAFAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__formHandler"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000106AAA",
+  "managedContentVariantId": "9Ps000000000106AAA",
+  "managedContentVersionId": "5OU000000000106AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Form_Handler",
+  "urlName": "golden-form-handler"
+}

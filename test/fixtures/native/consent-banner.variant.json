@@ -1,0 +1,225 @@
+{
+  "apiName": "Golden_Consent_Banner",
+  "contentBody": {
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:colorScheme": "{!$brand.colorScheme}",
+    "lightning:dataProviders": [],
+    "lightning:horizontalAlignment": "center",
+    "lightning:padding": "{!$brand.spacing.none}",
+    "lightning:verticalAlignment": "bottom",
+    "maxWidth": {
+      "unit": "%",
+      "value": 70
+    },
+    "minWidth": {
+      "unit": "px",
+      "value": 200
+    },
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "b218887a-46ea-4a29-9952-f9a4df682216",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.thin}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.small}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "stackOnMobile": true,
+            "reverseOrderOnMobile": false,
+            "lightning:backgroundImage": {
+              "repeat": "no-repeat",
+              "position": "center center",
+              "size": "cover"
+            }
+          },
+          "definition": "lightning/section",
+          "id": "cd071cda-1b6e-43b1-8337-ebaceb7fcd9f",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 8,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "f68c4268-9655-456f-b4eb-53455f107918",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "align": "left",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "d03fe40a-2fd1-4176-b9c6-5fd677c47d37",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 2,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "2da96421-2cef-4d2b-9245-ed7b148aca9b",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.buttonStyleGroup.secondary.lightning:borderRadius}",
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.secondary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": "{!$brand.buttonStyleGroup.secondary.lightning:buttonColorGroup}",
+                    "lightning:click": {
+                      "actions": [
+                        {
+                          "attributes": {},
+                          "definition": "sfdc_cms__consentRejectAction"
+                        }
+                      ]
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.secondary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.secondary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.secondary}",
+                    "text": "Reject",
+                    "width": {
+                      "unit": "%",
+                      "value": 100
+                    }
+                  },
+                  "definition": "lightning/actionButton",
+                  "id": "500651b4-bab4-474f-945e-64122d7611d8",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 2,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "1807e095-1f79-42e9-be60-98b6700a1635",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.buttonStyleGroup.primary.lightning:borderRadius}",
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.primary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": "{!$brand.buttonStyleGroup.primary.lightning:buttonColorGroup}",
+                    "lightning:click": {
+                      "actions": [
+                        {
+                          "attributes": {},
+                          "definition": "sfdc_cms__consentAcceptAction"
+                        }
+                      ]
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.primary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.primary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.primary}",
+                    "text": "Allow",
+                    "width": {
+                      "unit": "%",
+                      "value": 100
+                    }
+                  },
+                  "definition": "lightning/actionButton",
+                  "id": "b13d0411-c819-43cf-99b3-7eb4fddb4e47",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:title": "Golden_Consent_Banner"
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__consentBanner--Golden_Consent_Banner",
+  "contentKey": "MCGOLDENXZEROAEAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__consentBanner"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000105AAA",
+  "managedContentVariantId": "9Ps000000000105AAA",
+  "managedContentVersionId": "5OU000000000105AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Consent_Banner",
+  "urlName": "golden-consent-banner"
+}

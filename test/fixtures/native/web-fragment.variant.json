@@ -1,0 +1,111 @@
+{
+  "apiName": "Golden_Web_Fragment",
+  "contentBody": {
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "e6854e9d-54c0-4e06-aa23-55fbf2cd606a",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "stackOnMobile": true,
+            "reverseOrderOnMobile": false,
+            "lightning:backgroundImage": {
+              "repeat": "no-repeat",
+              "position": "center center",
+              "size": "cover"
+            }
+          },
+          "definition": "lightning/section",
+          "id": "66b486d3-df02-4032-8693-bb2d5d50df26",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "ef47575c-6783-4926-b2d9-c9ae30702d7b",
+              "type": "block",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:title": "Golden_Web_Fragment",
+    "sfdc_cms:variants": [],
+    "lightning:backgroundImage": {
+      "repeat": "no-repeat",
+      "position": "center center",
+      "size": "cover"
+    },
+    "lightning:expressions": []
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__webFragment--Golden_Web_Fragment",
+  "contentKey": "MCGOLDENXZEROADAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__webFragment"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": true,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000104AAA",
+  "managedContentVariantId": "9Ps000000000104AAA",
+  "managedContentVersionId": "5OU000000000104AAA",
+  "source": "User",
+  "status": {
+    "label": "Published",
+    "status": "Published"
+  },
+  "title": "Golden_Web_Fragment",
+  "urlName": "golden-web-fragment"
+}

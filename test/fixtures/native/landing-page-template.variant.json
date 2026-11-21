@@ -1,0 +1,1165 @@
+{
+  "apiName": "Golden_Landing_Page_Template",
+  "contentBody": {
+    "lightning:backgroundImage": {
+      "position": "center center",
+      "repeat": "no-repeat",
+      "size": "cover"
+    },
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "lightning:expressions": [],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "e5d56143-6dd4-46c9-a076-f289350699f4",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "bcfc2766-35e5-4308-bebb-fad1170c71d3",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "1e2dfcd7-c382-4c95-ad02-6df3aaf020fb",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 75
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "mimeType": "image/png",
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAQAAAAAAAAAAAAA"
+                        },
+                        "size": 4194,
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAQAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "a7474eec-d2e7-4bb7-87b3-243877a11a60",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": {
+              "contrast": "#FFFFFF",
+              "neutral": "#747474",
+              "primaryAccent": "#0176d3",
+              "primaryAccentContrast": "#ffffff",
+              "primaryAccentContrastDerived": "#ffffff",
+              "primaryAccentDerived": "#004ba1",
+              "root": "#0B5CAB"
+            },
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "49e6ab02-6784-43a9-843f-523b3b7572d8",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "e2a92f26-387d-4c80-8714-5b4dd28c41a6",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "align": "center",
+                    "level": 1,
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "%",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "%",
+                        "value": 5
+                      },
+                      "right": {
+                        "unit": "%",
+                        "value": 5
+                      },
+                      "top": {
+                        "unit": "%",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.heading.heading1}",
+                    "text": "<strong>Golden_ title test</strong>"
+                  },
+                  "definition": "lightning/heading",
+                  "id": "96dc54c7-dd93-4353-a202-32b30d4f5352",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": {
+              "bottom": {
+                "unit": "%",
+                "value": 1
+              },
+              "left": {
+                "unit": "%",
+                "value": 15
+              },
+              "right": {
+                "unit": "%",
+                "value": 15
+              },
+              "top": {
+                "unit": "%",
+                "value": 1
+              }
+            },
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "43d2d0c5-c0e2-413a-995f-018b8758be74",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 6,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "78784617-88d6-4903-9090-dd291f82e232",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 100
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "mimeType": "image/png",
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROARAAAAAAAAAAAAA"
+                        },
+                        "size": 215958,
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROARAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "6887b430-0e54-4abe-a49a-ea1b5be93a11",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 6,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "664f7d98-511b-4627-b27d-1cd258e0357f",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "align": "left",
+                    "level": 2,
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "#393939"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "%",
+                        "value": 2
+                      },
+                      "left": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "right": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "top": {
+                        "unit": "%",
+                        "value": 1
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.heading.heading2}",
+                    "text": "<strong>Appointment Name Goes Here</strong>"
+                  },
+                  "definition": "lightning/heading",
+                  "id": "da867d81-94b2-4c74-9253-48493130f5ef",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "left",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "#393939"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "%",
+                        "value": 1
+                      },
+                      "left": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "right": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "top": {
+                        "unit": "%",
+                        "value": 1
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}",
+                    "text": "Briefly reiterate the value of the meeting and what they can expect to discuss. You can also include a photo and short bio of the person they'll be meeting with.<br /><br />Use a Form to capture appointment information and any other pertinent information you want to know from your audience."
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "95917039-77c6-401f-b3fe-0bac3c42bdbe",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "lightning:borderRadius": {
+                      "unit": "px",
+                      "value": 25
+                    },
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.primary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": {
+                      "backgroundColor": "#2D8650",
+                      "backgroundHoverColor": "#0b6f3b",
+                      "borderColor": "#2D8650",
+                      "borderHoverColor": "#0b6f3b",
+                      "textColor": "{!$brand.buttonStyleGroup.primary.lightning:buttonColorGroup.textColor}",
+                      "textHoverColor": "#FFFFFF"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.small}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.primary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.primary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.primary}",
+                    "text": "Call to Action",
+                    "width": "auto"
+                  },
+                  "definition": "lightning/actionButton",
+                  "id": "3f819667-fa48-4671-81cc-6fef58a1fed1",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "left",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "%",
+                        "value": 1
+                      },
+                      "left": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "right": {
+                        "unit": "%",
+                        "value": 3
+                      },
+                      "top": {
+                        "unit": "%",
+                        "value": 1
+                      }
+                    },
+                    "lightning:typography": {
+                      "fontFamily": "{!$brand.fontFamily.arial}",
+                      "fontSize": {
+                        "unit": "px",
+                        "value": 12
+                      },
+                      "fontWeight": "{!$brand.fontWeight.normal}",
+                      "letterSpacing": "normal",
+                      "lineHeight": 1.5,
+                      "textTransform": "none"
+                    },
+                    "text": "Additional, less important details can go here."
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "7b9c8561-cf61-4433-9212-596f47d75c0b",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": {
+              "contrast": "#FFFFFF",
+              "neutral": "#747474",
+              "primaryAccent": "#0176d3",
+              "primaryAccentContrast": "#ffffff",
+              "primaryAccentContrastDerived": "#ffffff",
+              "primaryAccentDerived": "#004ba1",
+              "root": "#0B5CAB"
+            },
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": true
+          },
+          "definition": "lightning/section",
+          "id": "080b4352-4cf5-414b-9043-09d1edf967b1",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "c6b75ad1-828a-4d79-a062-7f0fc3f3c8ea",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "%",
+                        "value": 65
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROASAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROASAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.none}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "c6ef5d4c-114c-40ec-8843-c52302c5806e",
+                  "type": "block"
+                },
+                {
+                  "attributes": {
+                    "align": "center",
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "#FFFFFF",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.spacing.xSmall}",
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}",
+                    "text": "<strong>[YourBrand]<br /></strong><br />EmailAddress&#64;YourBrand.com"
+                  },
+                  "definition": "lightning/paragraph",
+                  "id": "1d397c6f-8da3-4053-83fc-3659252d0c89",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": {
+              "contrast": "#000000",
+              "neutral": "#747474",
+              "primaryAccent": "#0176d3",
+              "primaryAccentContrast": "#ffffff",
+              "primaryAccentContrastDerived": "#ffffff",
+              "primaryAccentDerived": "#004ba1",
+              "root": "#0B5CAB"
+            },
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": {
+              "bottom": {
+                "unit": "%",
+                "value": 0
+              },
+              "left": {
+                "unit": "%",
+                "value": 20
+              },
+              "right": {
+                "unit": "%",
+                "value": 20
+              },
+              "top": {
+                "unit": "%",
+                "value": 0
+              }
+            },
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": false
+          },
+          "definition": "lightning/section",
+          "id": "01f77c36-1f5b-406e-a8ec-e1f09cf67811",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "10b8c790-6d06-49f7-ac48-390fb05e2f78",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROATAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROATAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "right",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 5
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "ce87f8b8-722e-4414-9de5-f5885a553f51",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "52815016-3911-413c-a7aa-e1ed15afe770",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAUAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAUAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 2.5
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 2.5
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "d6c9facc-da86-4ab7-93df-79ee29f294f5",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "910c9460-5d8e-473c-887b-9addd8ccd577",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAVAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAVAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "left",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 5
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "11109f73-abe6-45ab-8948-af800d714903",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "content": {
+              "attributes": {},
+              "definition": "@cms/MCGOLDENXZEROADAAAAAAAAAAAAA",
+              "type": "block"
+            }
+          },
+          "definition": "sfdc_cms/reusableContentBlock",
+          "id": "54ef8e65-5270-4f75-b911-5239bb6e1c05",
+          "type": "block"
+        },
+        {
+          "attributes": {
+            "lightning:backgroundImage": {
+              "position": "center center",
+              "repeat": "no-repeat",
+              "size": "cover"
+            },
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": {
+              "contrast": "#000000",
+              "neutral": "#747474",
+              "primaryAccent": "#0176d3",
+              "primaryAccentContrast": "#ffffff",
+              "primaryAccentContrastDerived": "#ffffff",
+              "primaryAccentDerived": "#004ba1",
+              "root": "#0B5CAB"
+            },
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": {
+              "bottom": {
+                "unit": "%",
+                "value": 0
+              },
+              "left": {
+                "unit": "%",
+                "value": 20
+              },
+              "right": {
+                "unit": "%",
+                "value": 20
+              },
+              "top": {
+                "unit": "%",
+                "value": 0
+              }
+            },
+            "reverseOrderOnMobile": false,
+            "stackOnMobile": false
+          },
+          "definition": "lightning/section",
+          "id": "9e1c1da5-7197-41e8-90c3-7ffa51bd02d3",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "32af73ec-bb55-48d9-aac0-961a7eef300d",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAWAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAWAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "right",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 5
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "95a20000-5db0-40a1-a689-e6ba58b6992a",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "b5685ac2-92af-45ac-b3d9-60709d75dc6d",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAXAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAXAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 2.5
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 2.5
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "f042ea07-a5f3-40a7-b8d7-21d6783966ce",
+                  "type": "block"
+                }
+              ]
+            },
+            {
+              "attributes": {
+                "columnWidth": 4,
+                "lightning:backgroundImage": {
+                  "position": "center center",
+                  "repeat": "no-repeat",
+                  "size": "cover"
+                },
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top"
+              },
+              "definition": "lightning/column",
+              "id": "ac199559-2b5a-448f-9610-4352198ed0fd",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "imageFitConfig": {
+                      "width": {
+                        "unit": "px",
+                        "value": 24
+                      }
+                    },
+                    "imageInfo": {
+                      "altText": "",
+                      "overrideAltText": false,
+                      "source": {
+                        "ref": {
+                          "contentKey": "MCGOLDENXZEROAYAAAAAAAAAAAAA"
+                        },
+                        "type": "imageReference"
+                      },
+                      "url": "/cms/media/MCGOLDENXZEROAYAAAAAAAAAAAAA?fileName=golden.png&fileHash=00000000000000000000000000000000"
+                    },
+                    "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                    "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                    "lightning:colorGroup": {
+                      "backgroundColor": "{!$brand.colorScheme.root}",
+                      "borderColor": "{!$brand.colorScheme.neutral}",
+                      "linkColor": "{!$brand.colorScheme.primaryAccent}",
+                      "textColor": "{!$brand.colorScheme.contrast}"
+                    },
+                    "lightning:horizontalAlignment": "left",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": {
+                      "bottom": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "left": {
+                        "unit": "px",
+                        "value": 5
+                      },
+                      "right": {
+                        "unit": "px",
+                        "value": 0
+                      },
+                      "top": {
+                        "unit": "px",
+                        "value": 0
+                      }
+                    },
+                    "lightning:typography": "{!$brand.typography.paragraph.paragraph1}"
+                  },
+                  "definition": "lightning/image",
+                  "id": "89d27164-14d0-49fd-a62a-31acd44c6f09",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:description": "This template is for facilitating direct bookings. It allows users to schedule a time slot for a meeting or service and provides confirmation and reminders for the appointment.",
+    "sfdc_cms:seoProperties": {
+      "isIndexed": false,
+      "title": "Appointment Scheduling"
+    },
+    "sfdc_cms:title": "Golden_Landing_Page_Template",
+    "sfdc_cms:urlName": "golden-landing-page-template",
+    "sfdc_cms:variants": []
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__landingPageTemplate--Golden_Landing_Page_Template",
+  "contentKey": "MCGOLDENXZEROAHAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__landingPageTemplate"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": true,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000108AAA",
+  "managedContentVariantId": "9Ps000000000108AAA",
+  "managedContentVersionId": "5OU000000000108AAA",
+  "source": "User",
+  "status": {
+    "label": "Published",
+    "status": "Published"
+  },
+  "title": "Golden_Landing_Page_Template",
+  "urlName": "golden-landing-page-template"
+}

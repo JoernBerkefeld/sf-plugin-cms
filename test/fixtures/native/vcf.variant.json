@@ -1,0 +1,52 @@
+{
+  "apiName": "Golden_Vcf",
+  "contentBody": {
+    "sfdc_cms:media": {
+      "source": {
+        "mimeType": "text/vcard",
+        "ref": "0sN000000000103AAA",
+        "size": 143,
+        "type": "file"
+      },
+      "url": "/cms/media/MCGOLDENXZEROACAAAAAAAAAAAAA?version=1.1&fileHash=00000000000000000000000000000000&fileName=golden.vcf"
+    },
+    "vcfData": "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nFN:John Doe\nTITLE:Imaginary test person\nTEL;TYPE=CELL:+1 781 555 1212\nEMAIL:johnDoe@example.org\nEND:VCARD"
+  },
+  "contentFqn": null,
+  "contentKey": "MCGOLDENXZEROACAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__vcf"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000103AAA",
+  "managedContentVariantId": "9Ps000000000103AAA",
+  "managedContentVersionId": "5OU000000000103AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Vcf",
+  "urlName": "golden-vcf"
+}

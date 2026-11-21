@@ -1,0 +1,75 @@
+{
+  "apiName": "Golden_Rcs",
+  "contentBody": {
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "messagePurpose": "TRANSACTIONAL",
+    "rcsBlock": {
+      "attributes": {
+        "message": "my Golden_ text",
+        "quickReplies": [
+          {
+            "actionUrl": "https://example.com",
+            "id": "60cd80ab-6667-4d5d-a059-6ed59f7042c3",
+            "passbackValue": "guide",
+            "text": "example.com",
+            "type": "OPEN_URL"
+          }
+        ],
+        "type": "Text"
+      },
+      "definition": "sfdc_cms__rcsTypeText",
+      "type": "block",
+      "id": "1168a199-a8db-4a2c-97de-724c651eec30"
+    },
+    "rcsType": "Text",
+    "sfdc_cms:title": "Golden_Rcs",
+    "lightning:expressions": [],
+    "sfdc_cms:variants": []
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__rcs--Golden_Rcs",
+  "contentKey": "MCGOLDENXZEROAMAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__rcs"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000113AAA",
+  "managedContentVariantId": "9Ps000000000113AAA",
+  "managedContentVersionId": "5OU000000000113AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Rcs",
+  "urlName": "golden-rcs"
+}

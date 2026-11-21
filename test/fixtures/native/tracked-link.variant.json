@@ -1,0 +1,45 @@
+{
+  "apiName": "Golden_Tracked_Link",
+  "contentBody": {
+    "campaign": "701000000000101AAA",
+    "destinationUrl": "https://example.com",
+    "utmSource": "golden"
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__trackedLink--Golden_Tracked_Link",
+  "contentKey": "MCGOLDENXZEROAPAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__trackedLink"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000116AAA",
+  "managedContentVariantId": "9Ps000000000116AAA",
+  "managedContentVersionId": "5OU000000000116AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Tracked_Link",
+  "urlName": "golden-tracked-link"
+}

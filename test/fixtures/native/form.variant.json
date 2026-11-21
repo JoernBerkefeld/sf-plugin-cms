@@ -1,0 +1,196 @@
+{
+  "apiName": "Golden_Form",
+  "contentBody": {
+    "lightning:brandSource": {
+      "defaultBrandOption": "sfdcBrand"
+    },
+    "lightning:dataProviders": [
+      {
+        "attributes": {
+          "dataGraphApiName": "Marketing",
+          "dataspace": "default"
+        },
+        "definition": "sfdc_cms__dataGraphDataProvider",
+        "sfdcExpressionKey": "$dataGraph"
+      }
+    ],
+    "sfdc_cms:block": {
+      "definition": "sfdc_cms/rootContentBlock",
+      "id": "b338c459-3a92-4b04-871f-ebcb8f7cf8d2",
+      "type": "block",
+      "children": [
+        {
+          "attributes": {
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "stackOnMobile": true,
+            "reverseOrderOnMobile": false,
+            "lightning:backgroundImage": {
+              "repeat": "no-repeat",
+              "position": "center center",
+              "size": "cover"
+            }
+          },
+          "definition": "lightning/section",
+          "id": "0b77401a-77de-4e24-b230-de7201558ae7",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "a7257805-6783-4e17-ad8b-0c3b3e78b968",
+              "type": "block",
+              "children": []
+            }
+          ]
+        },
+        {
+          "attributes": {
+            "lightning:borderRadius": "{!$brand.borderRadius.square}",
+            "lightning:borderWidth": "{!$brand.borderWeight.none}",
+            "lightning:colorScheme": "{!$brand.colorScheme}",
+            "lightning:margin": "{!$brand.spacing.none}",
+            "lightning:padding": "{!$brand.spacing.xSmall}",
+            "stackOnMobile": true,
+            "reverseOrderOnMobile": false,
+            "lightning:backgroundImage": {
+              "repeat": "no-repeat",
+              "position": "center center",
+              "size": "cover"
+            }
+          },
+          "definition": "lightning/section",
+          "id": "53833e9d-d5d3-4d64-ba7e-994dfe8c56bb",
+          "type": "block",
+          "children": [
+            {
+              "attributes": {
+                "columnWidth": 12,
+                "lightning:borderRadius": "{!$brand.borderRadius.square}",
+                "lightning:borderWidth": "{!$brand.borderWeight.none}",
+                "lightning:colorScheme": "{!$brand.colorScheme}",
+                "lightning:margin": "{!$brand.spacing.none}",
+                "lightning:padding": "{!$brand.spacing.xSmall}",
+                "lightning:verticalAlignment": "top",
+                "lightning:backgroundImage": {
+                  "repeat": "no-repeat",
+                  "position": "center center",
+                  "size": "cover"
+                }
+              },
+              "definition": "lightning/column",
+              "id": "7c1c70aa-8c8c-4800-95eb-fdce12d679cc",
+              "type": "block",
+              "children": [
+                {
+                  "attributes": {
+                    "lightning:borderRadius": "{!$brand.buttonStyleGroup.primary.lightning:borderRadius}",
+                    "lightning:borderWidth": "{!$brand.buttonStyleGroup.primary.lightning:borderWidth}",
+                    "lightning:buttonColorGroup": "{!$brand.buttonStyleGroup.primary.lightning:buttonColorGroup}",
+                    "lightning:horizontalAlignment": "center",
+                    "lightning:margin": "{!$brand.spacing.none}",
+                    "lightning:padding": "{!$brand.buttonStyleGroup.primary.lightning:padding}",
+                    "lightning:typography": "{!$brand.buttonStyleGroup.primary.lightning:typography}",
+                    "sfdc_cms:styleGroup": "{!$brand.buttonStyleGroup.primary}",
+                    "text": "Submit",
+                    "width": "auto",
+                    "lightning:click": {
+                      "actions": [
+                        {
+                          "definition": "sfdc_cms/customEventAction",
+                          "attributes": {
+                            "type": "formsubmit",
+                            "options": {
+                              "bubbles": true
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "definition": "lightning/actionButton",
+                  "id": "399a1447-1466-4235-9d40-6e38cbceafa5",
+                  "type": "block"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "sfdc_cms:title": "Golden_Form",
+    "lightning:expressions": [],
+    "formsubmission": {
+      "actions": [
+        {
+          "definition": "sfdc_cms/umaFormSubmissionAction",
+          "attributes": {
+            "formId": "{!$form.id}",
+            "pageReferenceId": "{!$page.id}",
+            "formData": "{!$form.fields}",
+            "formVersion": "{!$form.version}"
+          }
+        },
+        {
+          "definition": "sfdc_cms/showThankYouAction",
+          "attributes": {
+            "message": "Thank you for your submission."
+          }
+        }
+      ]
+    }
+  },
+  "contentFqn": "marketing--Default_Content_Workspace.sfdc_cms__form--Golden_Form",
+  "contentKey": "MCGOLDENXZEROAGAAAAAAAAAAAAA",
+  "contentSpace": {
+    "id": "0Zu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/spaces/0Zu000000000101"
+  },
+  "contentType": {
+    "fullyQualifiedName": "sfdc_cms__form"
+  },
+  "createdBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "createdDate": "2026-11-21T10:00:00.000Z",
+  "deliveryUrls": [],
+  "externalId": null,
+  "folder": {
+    "id": "9Pu000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/connect/cms/folders/9Pu000000000101"
+  },
+  "isPublished": false,
+  "language": "en_US",
+  "lastModifiedBy": {
+    "id": "005000000000101AAA",
+    "resourceUrl": "/services/data/v68.0/chatter/users/005000000000101AAA"
+  },
+  "lastModifiedDate": "2026-11-21T10:00:00.000Z",
+  "managedContentId": "20Y000000000107AAA",
+  "managedContentVariantId": "9Ps000000000107AAA",
+  "managedContentVersionId": "5OU000000000107AAA",
+  "source": "User",
+  "status": {
+    "label": "Draft",
+    "status": "Draft"
+  },
+  "title": "Golden_Form",
+  "urlName": "golden-form"
+}

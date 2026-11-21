@@ -513,3 +513,92 @@ All [LIVE vdb:content.parity-installed-tarball-api68]. Writes were agent-owned `
 - **Publish and unpublish accepted for every parity type.** `{variantIds, contextContentSpaceId}` (publish also `includeContentReferences: false`) published and unpublished a single-variant Brand, Document and Audio item as well as Image, Email, Email Template and Email Fragment (SOQL `IsPublished` / `ManagedContentVariantStatus` Published, then Draft). Checkpoint C4 did not fire for any parity type.
 - **Brand delete accepted.** `DELETE /contents/variants/{id}` removed a single-variant Brand; readback `VARIANT_NOT_FOUND`. All 7 deletes answered success (no `DELETE_ANSWER_IGNORED`).
 - **Installed tarball:** the packed plugin, installed into an isolated Salesforce CLI state, behaves like the linked build: zero writes on unchanged redeploys, the fragment with a nested folder and an image created in the same run deploys after the image, and re-retrieve equals the edited files byte for byte.
+
+## 21. Remaining Marketing types (X0)
+
+Discovery for the 21 remaining Marketing types of `cms_v1_more_types_20261121.plan.md` (2026-11-21, API 68.0, `isolated-source` read-only plus Chrome on the CMS UI; [LIVE vdb:content.discovery-remaining-marketing-types-api68]). `sf cms retrieve` cannot read these types yet (`UNKNOWN_TYPE`, no handler), so the variants were read with a raw `GET /connect/cms/contents/variants/{id}` and the header `X-Chatter-Entity-Encoding: false`, one existing item per type. Sanitized copies are in `test/fixtures/native/<type>.variant.json` (placeholder IDs; content keys `MCGOLDENXZERO…`; a landing page's template key and the reusable block key point at the template and web fragment fixtures).
+
+### 21.1 Availability
+
+`get_content_types_for_workspace` lists all 21 types in source `Default_Content_Workspace`, source `Cloud_Kicks` and target `Default_Content_Workspace` (34 types each, same list). The type list is no proof that the UI can create a type (see 21.4).
+
+Existing items (SOQL, source / target): every source sample lives in source `Default_Content_Workspace`; the target holds one each of web fragment, consent banner, form handler, form, landing page template and landing page only. Preference Page: 0 / 0, so no native sample exists.
+
+### 21.2 Shapes and transport
+
+- **Media family: Video, Custom Font, Contact Card (VCF).** `contentBody['sfdc_cms:media'] = {source: {type: 'file', ref: <0sN…>, size, fileSize?, mimeType}, url: '/cms/media/<key>?version=&fileHash=&fileName='}` and no `sfdc_cms:title`, exactly like Image/Document/Audio, so `mediaHandler(type, apiName)` fits (multipart, binary companion named after `fileName`). MIME types seen: `video/mp4`, `font/ttf`, `text/vcard`. The Custom Font guide documents the same multipart create (`ManagedContentInputParam` + `contentData`) and an external `source: {type: 'url', url}` form. **VCF also carries `vcfData`** (the vCard text) next to `sfdc_cms:media` (the same vCard as a file); which one wins on create/update is open (X1 checkpoint).
+- **Block family: Web Fragment, Consent Banner, Form Handler, Form, Landing Page Template, Landing Page.** JSON. `sfdc_cms:block` tree like Email Fragment (block IDs, `lightning/*` blocks, brand tokens `{!$brand.…}` as content), `lightning:brandSource`, `lightning:dataProviders`, `sfdc_cms:title`. Extra top-level keys: consent banner `lightning:colorScheme`, `lightning:horizontalAlignment`, `lightning:verticalAlignment`, `lightning:padding`, `maxWidth`, `minWidth` (buttons carry `sfdc_cms__consentAcceptAction` / `…RejectAction`); form `formsubmission.actions[]` (`sfdc_cms/umaFormSubmissionAction` with `{!$form.id}` / `{!$form.fields}` / `{!$page.id}` placeholders, `sfdc_cms/showThankYouAction`) and a submit button with `sfdc_cms/customEventAction`; landing page and template `sfdc_cms:seoProperties` (`isIndexed`, `title`), `sfdc_cms:description`, `sfdc_cms:urlName`, `sfdc_cms:variants`, `lightning:backgroundImage`, `lightning:expressions`. **Form Handler** (UI fixture) has an empty root block only: no field mapping, object, flow or form reference in the body.
+- **Messaging family: SMS and MMS, Push, In-App, RCS, WhatsApp Session.** JSON, no companions needed: SMS `messageContent`, `messagePurpose`, `enableMmsMedia`, `enableUrlShortening`; Push `notificationType`, `notificationBlock` (`sfdc_cms__pushNotificationBasic`, `sfdc_cms__pushNotificationActions` with `actionUrl`), `totalBytes` / `usedBytes` (strings); In-App `inAppType`, `inAppImageLayoutType`, `inAppBlock` (title/message/media/buttons/container style sub-blocks); RCS `rcsType`, `messagePurpose`, `rcsBlock` (`message`, `quickReplies[]`); WhatsApp Session `messageType`, `contentBlock` (`sfdc_cms__whatsappMessageTypeText`). All carry the `Marketing` / `default` data graph provider, `lightning:expressions`, `sfdc_cms:variants`, `sfdc_cms:title`. **No sender, channel, app, keyword or account ID appears in any messaging body.**
+- **Expression:** JSON `{expression: {expressionGroups: [{name, resource: '{!$dataGraph.<field>}'}]}, lightning:dataProviders}`; its data graph provider has `dataGraphApiName` but **no `dataspace`**.
+- **Tracked Link:** JSON `{campaign, destinationUrl, utmSource}`; no `sfdc_cms:title`.
+- `apiName` equals the content key for the UI-created Push, WhatsApp Session and Expression samples (section 14).
+
+### 21.3 References
+
+| Type                  | Field path                                                                     | Value kind                                       | Target                       | contentKey? |
+| --------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------ | ---------------------------- | ----------- |
+| Landing Page          | `sfdc_cms:template.definition`                                                 | bare content key `MC…` under key `definition`    | Landing Page Template        | **no (K4)** |
+| Landing Page, LP Tpl. | block `sfdc_cms/reusableContentBlock` → `attributes.content.definition`        | string `@cms/<content key>`                      | Web Fragment                 | **no (K4)** |
+| LP, LP Tpl., In-App   | `…imageInfo.source.ref.contentKey`, In-App `…media…link.source.ref.contentKey` | `contentKey: "MC…"` (+ derived `url`)            | Image                        | yes         |
+| Tracked Link          | `campaign`                                                                     | Campaign record ID (`701…`)                      | Campaign sObject (not CMS)   | **no (K4)** |
+| all block/messaging   | `lightning:dataProviders[].attributes.dataGraphApiName` / `dataspace`          | API names                                        | Data 360 data graph / space  | n/a (check) |
+| Expression            | same, `dataspace` missing                                                      | API name only                                    | data graph                   | n/a (K4)    |
+| Video, Font, VCF      | `sfdc_cms:media.source.ref`                                                    | `0sN…` file ID, derived                          | own file (dropped, as media) | n/a         |
+| Form                  | `formsubmission.actions[].attributes.*`                                        | `{!$form.id}`, `{!$page.id}` runtime expressions | none                         | n/a         |
+| all                   | `lightning:brandSource`                                                        | `defaultBrandOption: sfdcBrand` in all samples   | (Brand by `contentKey`)      | yes         |
+
+The template's and the landing page's `@cms/…` block is the same item; the page body copies the template's block tree and adds `sfdc_cms:template`. No email in the source workspace embeds a fragment (39 email/template/fragment bodies, zero `@cms/` or `reusableContentBlock`), so whether emails embed Email Fragments / Universal Fragments the same way is unverified. Form ↔ Form Handler and Form/Consent Banner embedded in a landing page: no sample holds such a link.
+
+### 21.4 Universal Fragment, Mobile Inbox, SMS DLT Template, WhatsApp Template (UI create)
+
+Tried in the source `Default_Content_Workspace` UI (Add → Content), Draft only; **no item was created**:
+
+- **Universal Fragment:** offered in the create dialog; the editor (`contentEditor.app?…contentTypeFQN=sfdc_cms__fragment&mode=create`) stays on "Loading…" (over a minute, also after a reload; the Aura `ContentEditorApp.appInit` request stays pending, Save disabled). Blocked.
+- **WhatsApp Template Message:** editor loads; warning "We couldn't find a WhatsApp Business Account. Link a WhatsApp Business Account through Meta's Business Manager and try again."; WhatsApp Business Account and Language are disabled; Save → "WhatsApp Business Account is required. Language is required. Template is required." Blocked (K3, no WABA).
+- **Mobile Inbox Message** and **SMS Message Template (DLT):** **not offered** in the create dialog although the type API lists them; the editor URL with their type answers "Looks like you don't have permission to access that content, or the content was deleted." Blocked (missing mobile app / DLT setup or feature not enabled; the UI does not say which).
+
+### 21.5 Lifecycle as the UI shows it (read-only)
+
+Every sample page has **Edit**, a workflow **Start** ("Basic Approval Request"; not on messaging types) and a menu with **Publish** (Unpublish when published), **Delete**, **Copy to another folder**; **Preview** for landing page, template, video and all messaging types; **Edit Details** for In-App and RCS; **Create Content** for a landing page template. Tabs: URL (landing page), Embed (form), Code Snippet (form handler: "After you publish the form, return here to find the code block to embed it on an external site"), Performance (landing page, SMS, push, in-app, WhatsApp session, tracked link). **No Send, Activate or Schedule action on any type**; publish side effects of messaging types are still to be observed live (K2).
+
+### 21.6 Per-type summary
+
+| Type                  | Transport       | References (contentKey?)                                            | Prerequisites / side effects                                           | Blocked      |
+| --------------------- | --------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ |
+| Video                 | multipart media | none                                                                | none                                                                   | no           |
+| Custom Font           | multipart media | none                                                                | none                                                                   | no           |
+| Contact Card (VCF)    | multipart media | none                                                                | `vcfData` duplicates the file (precedence open)                        | no           |
+| Web Fragment          | JSON            | image (yes), data graph                                             | none                                                                   | no           |
+| Consent Banner        | JSON            | data graph (empty in samples)                                       | none                                                                   | no           |
+| Form Handler          | JSON            | none in body                                                        | mapping/flow configured outside the body (K5); snippet after publish   | no (K5 open) |
+| Form                  | JSON            | data graph                                                          | embed code after publish                                               | no           |
+| Landing Page Template | JSON            | image (yes), web fragment (`@cms/`, **no**)                         | org perms Landing Page Templates + CMS Templates (guide); publish = K1 | no           |
+| Landing Page          | JSON            | template (`definition`, **no**), web fragment (**no**), image (yes) | UI needs a published template (section 8); public URL on publish (K1)  | no           |
+| Preference Page       | JSON (assumed)  | unknown (no sample)                                                 | create publishes (section 3.8, K1)                                     | no sample    |
+| SMS and MMS           | JSON            | data graph                                                          | MMS media off in sample                                                | no           |
+| SMS DLT Template      | —               | —                                                                   | not offered in UI; editor "no permission"                              | **yes**      |
+| Push Notification     | JSON            | data graph                                                          | none in body                                                           | no           |
+| In-App                | JSON            | image (yes), data graph                                             | none in body                                                           | no           |
+| Mobile Inbox          | —               | —                                                                   | not offered in UI; editor "no permission"                              | **yes**      |
+| RCS                   | JSON            | data graph                                                          | none in body                                                           | no           |
+| WhatsApp Session      | JSON            | data graph                                                          | none in body                                                           | no           |
+| WhatsApp Template     | —               | —                                                                   | no WhatsApp Business Account                                           | **yes**      |
+| Expression            | JSON            | data graph without `dataspace` (K4)                                 | none                                                                   | no           |
+| Tracked Link          | JSON            | Campaign record ID (**no**, K4)                                     | a Campaign of the same name must exist in the destination              | no           |
+| Universal Fragment    | —               | —                                                                   | UI editor never finishes loading                                       | **yes**      |
+
+All 21 types are listed for all three designated workspaces.
+
+### 21.7 Proposed registry order (28 handlers)
+
+brand, image, document, audio, video, custom-font, vcf, expression, tracked-link, fragment, email-fragment, email-template, email, web-fragment, consent-banner, form-handler, form, landing-page-template, landing-page, preference-page, sms, sms-dlt-template, push-notification, in-app, inbox, rcs, whatsapp-session, whatsapp-template.
+
+Links behind it: everything may reference Brand and Image (`contentKey`); landing page → template (`sfdc_cms:template`) and → web fragment (`@cms/`), template → web fragment and image; in-app → image; SMS/MMS media may reference image/video/audio; expressions and tracked links can be used by emails, pages and messages (no live sample yet), and a universal fragment by any channel, so those go before the channel types. Deploy order still comes from `dependencyOrder`; the registry is the tie-break.
+
+### 21.8 Pipeline changes needed (K4), proposed, not implemented
+
+1. **Content keys outside `contentKey` (Landing Page, Landing Page Template; likely emails embedding fragments).** Extend the reference walk in `json-projection.ts` / `json-source.ts` with two value forms: a `definition` string `@cms/<key>` and the bare key in `sfdc_cms:template.definition`. On retrieve replace the string by a logical value (for example `{ "type": "web-fragment", "apiName": "…", "format": "@cms/" }`), include it in `references()`, and write it back as `@cms/<destination key>` / `<destination key>` on deploy. Smallest change: one list of `{ key, pattern, format }` entries next to `CONTENT_KEY`.
+2. **Record IDs (Tracked Link `campaign`).** Retrieve stores the Campaign by name, deploy looks the name up in the destination by SOQL and blocks (`REFERENCE_NOT_IN_DESTINATION`) when it is missing or not unique. Smallest change: an optional `RetrieveContext.recordName(id)` and `DeployContext.recordId(sObject, name)` so the handler stays pure; only the tracked-link handler uses them.
+3. **Data graph provider without `dataspace` (Expression).** `data-graph-check.ts` skips such providers today, so a missing graph is not caught. Smallest change: check the graph by name when `dataspace` is absent (or treat it as `default`, after a live check of what Salesforce assumes).
+
+Not K4 (handler-level or checkpoints): VCF `vcfData` versus file (X1); Form Handler mapping outside the body (K5); preference page create publishing (K1); messaging publish side effects (K2); the four blocked types (K3).
