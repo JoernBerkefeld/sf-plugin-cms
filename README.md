@@ -1,14 +1,14 @@
 # CMS Salesforce CLI plugin
 
 `sf-plugin-cms` adds the `sf cms` commands to Salesforce CLI. They copy Marketing Cloud CMS
-content between a CMS workspace and files on your disk: you retrieve emails, email templates,
-email fragments, images, documents, audio files and brands into files, keep them in Git, edit
-them, preview what a deploy would change and deploy them to the same workspace, another
+content between a CMS workspace and files on your disk: you retrieve emails, templates,
+content blocks, landing pages, forms, media files, messages, brands and more into files, keep
+them in Git, edit them, preview what a deploy would change and deploy them to the same workspace, another
 workspace or another org. The plugin can also delete, publish and unpublish components.
 
 What it is not:
 
-- **Not a backup, restore or migration tool.** It handles the seven types in the
+- **Not a backup, restore or migration tool.** It handles the 24 types in the
   [type overview](#type-overview), not everything a CMS workspace holds.
 - **Only the default variant.** Each component is handled in its default variant (usually the
   workspace's default language). Other language variants and custom variants are left alone.
@@ -108,10 +108,14 @@ Salesforce's answer; if Salesforce refuses an operation for a type, you see its 
 | Expression                  | `expression`            | `sfdc_cms__expression`          | Available  | Available             | Available  | Available             |
 | Tracked link                | `tracked-link`          | `sfdc_cms__trackedLink`         | Available  | Available             | Available  | Available             |
 
-Other CMS types (landing pages and more) are not handled yet.
+### Not handled
 
-Universal fragment (`sfdc_cms__fragment`) is not handled: its CMS editor never finishes
-loading, so no item exists to model it on.
+- **Preference page.** The plugin knows the type, but Salesforce refuses to create one through
+  the API (`CONTENT_TYPE_DISABLED_FOR_API`), so it cannot be copied.
+- **Universal fragment** (`sfdc_cms__fragment`). Its CMS editor never finishes loading, so no
+  item exists to model it on.
+- **Mobile inbox message** and **SMS DLT template.** Not available in the org.
+- **WhatsApp template message.** Needs a connected WhatsApp Business Account.
 
 ## How it works
 
@@ -158,14 +162,6 @@ parts of the component in files next to the JSON:
   status.
 - Retrieve replaces an existing file with what the org has.
 
-- A tracked link keeps its Campaign by name, as `{ "sobject": "Campaign", "name": "…" }`. Deploy
-  looks the name up in the destination org and writes that org's Campaign ID; it stops before any
-  write if no Campaign or more than one has that name. It never creates Campaigns. The short link,
-  its ID and its expiry that Salesforce adds when you publish a tracked link are not kept in the
-  file: a create drops them, and Salesforce adds them again on publish.
-- An expression names a data graph without a data space; deploy checks that the graph exists in
-  the `default` data space of the destination.
-
 ### Selecting components
 
 - `-m <type>:<ApiName>` selects one component; repeat `-m` to select several, of any types.
@@ -194,8 +190,8 @@ would be removed. Deploy preview also lists the folders it would create.
   created. One it has gets its default variant updated.
 - **Unchanged components are not written.** Deploying the same file again reports `unchanged`.
 - **Order.** One deploy can hold components of several types. A component that another one
-  references is written first: brands, then images, documents and audio, then email
-  fragments, templates and emails. Components that reference each other in a circle are refused
+  references is written first: for example an image before the email that uses it, and a
+  template and its content blocks before the landing page. Components that reference each other in a circle are refused
   (`DEPENDENCY_CYCLE`).
 - **Nothing is written if anything is blocked.** The plugin plans every component first. If one
   is blocked (for example a reference the destination does not have), no component is written.
@@ -377,6 +373,25 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - File names may contain letters, digits, spaces, dots, parentheses, `+`, `_` and `-`. A file
   name with other characters cannot be retrieved (`INVALID_FILE_NAME`).
 
+### Video, custom font and contact card
+
+- Like images: metadata in the JSON, the file next to it.
+- A custom font without `fallbackFont` gets `"arial"` from Salesforce. Keep
+  `"fallbackFont": "arial"` in the file, or the next deploy reports an update.
+- A contact card keeps the vCard in the `.vcf` file. Salesforce also stores the vCard text in
+  `vcfData`; the JSON leaves it out while it equals the file, and deploy fills it from the file.
+  A `vcfData` in the JSON that differs from the file is sent as it is.
+
+### Expression and tracked link
+
+- An expression names a data graph without a data space; deploy checks that the graph exists in
+  the `default` data space of the destination.
+- A tracked link keeps its Campaign by name (see
+  [References to Salesforce records](#references-to-salesforce-records)). It never creates
+  Campaigns.
+- The short link and its expiry that Salesforce adds when you publish a tracked link are not kept
+  in the file. A create would drop them, and Salesforce adds them again on publish.
+
 ### Brand
 
 - The whole brand (colors, fonts, spacing, buttons) is in the JSON. Values such as
@@ -393,10 +408,11 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   submissions is not part of the component and is not retrieved or deployed.
 - A "Salesforce Record" data source keeps its record type by object and developer name (see
   References to Salesforce records), so the same file deploys into another org.
-- Salesforce publishes a form or a form handler only when it has at least one input field; for
-  an empty one, publish shows Salesforce's error.
+- Salesforce publishes a form or a form handler only when it has at least one input field and a
+  Flow added in the CMS editor. Otherwise publish shows Salesforce's error. The plugin does not
+  create input field mappings or Flows.
 
-### Landing page templates, landing pages and preference pages
+### Landing page templates and landing pages
 
 - The whole page, including its blocks and SEO settings, is in the JSON.
 - References are kept by name: images, embedded content blocks (`@cms/<key>` in Salesforce) and,
@@ -407,9 +423,7 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   only after the content blocks it embeds are published: publish them in the same run. Unpublish
   them in one run too: the plugin unpublishes the page first, then its template and content
   blocks (Salesforce refuses to unpublish a content block that a published page uses).
-- Salesforce does not allow creating preference pages through the API
-  (`CONTENT_TYPE_DISABLED_FOR_API`); deploy shows that error. No preference page could be made
-  in the test orgs, so retrieve, delete and publish are not tested.
+- Preference pages: see [Not handled](#not-handled).
 
 ### SMS, push, in-app, RCS and WhatsApp session messages
 
@@ -419,7 +433,8 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - An in-app message's image is a reference; deploy the image in the same run or before.
 - Publishing changes the content status only; the plugin never sends, schedules or activates
   a message.
-- Mobile inbox messages, SMS DLT templates and WhatsApp template messages are not handled.
+- Mobile inbox messages, SMS DLT templates and WhatsApp template messages are not handled (see
+  [Not handled](#not-handled)).
 
 ## Safety and limits
 
