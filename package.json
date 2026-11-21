@@ -50,6 +50,7 @@
     }
   },
   "scripts": {
+    "clean": "node -e \"import('node:fs').then(({rmSync}) => rmSync('lib', {recursive:true, force:true}))\"",
     "build": "npm run compile",
     "compile": "tsc -p tsconfig.json",
     "lint": "eslint src test scripts bin eslint.config.js --max-warnings 0",
@@ -60,7 +61,7 @@
     "generate:check": "npm run compile && node scripts/generate-openapi.mjs --check",
     "test": "npm run compile && node scripts/run-tests.mjs",
     "prepare": "husky || true",
-    "prepack": "npm run compile"
+    "prepack": "npm run clean && npm run compile"
   },
   "publishConfig": {
     "access": "public",
