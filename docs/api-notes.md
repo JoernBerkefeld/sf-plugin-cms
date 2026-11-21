@@ -504,3 +504,11 @@ All [LIVE vdb:content.deploy-email-fragment-folders-api68]. Writes were agent-ow
 - **Data graph read.** `GET /ssot/data-graphs/{name}` answers the graph with `dataspaceName`, `status` (`ready`) and more. A graph that does not exist answers **HTTP 400 `INTERNAL_ERROR` "Data Graph not found with name <name>"**, not 404; the plugin treats exactly that answer as missing and any other error as a failed check. `Marketing` exists in `default` in both orgs, so nothing had to be recorded as missing. A provider naming a missing graph or data space was refused before any write in preview and in a real deploy (`DATA_GRAPH_NOT_IN_DESTINATION`, `DATA_SPACE_NOT_IN_DESTINATION`), with no folder created.
 - **Lifecycle.** Publish (`#DEPLOYED`, `publishDate`), unpublish and delete of a single-variant fragment worked; readback 404 `VARIANT_NOT_FOUND`; the folder it lived in stays (empty).
 - **UI:** the workspace lists `CMSV1_f1` as a folder; inside `CMSV1_f2` the fragment shows as "Content Block: Email", English (default), Published after publish; its page shows the location `CMSV1_f2`, the referenced image above the edited paragraph, and the status. After delete the folder is empty.
+
+## 20. Parity findings (W7, 2026-11-21, API 68.0, installed tarball, live on both orgs)
+
+All [LIVE vdb:content.parity-installed-tarball-api68]. Writes were agent-owned `CMSV1P_*` components only, deleted afterwards.
+
+- **Publish and unpublish accepted for every parity type.** `{variantIds, contextContentSpaceId}` (publish also `includeContentReferences: false`) published and unpublished a single-variant Brand, Document and Audio item as well as Image, Email, Email Template and Email Fragment (SOQL `IsPublished` / `ManagedContentVariantStatus` Published, then Draft). Checkpoint C4 did not fire for any parity type.
+- **Brand delete accepted.** `DELETE /contents/variants/{id}` removed a single-variant Brand; readback `VARIANT_NOT_FOUND`. All 7 deletes answered success (no `DELETE_ANSWER_IGNORED`).
+- **Installed tarball:** the packed plugin, installed into an isolated Salesforce CLI state, behaves like the linked build: zero writes on unchanged redeploys, the fragment with a nested folder and an image created in the same run deploys after the image, and re-retrieve equals the edited files byte for byte.

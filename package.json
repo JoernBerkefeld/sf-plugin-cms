@@ -43,6 +43,9 @@
     "topics": {
       "cms": {
         "description": "Marketing Cloud CMS content: list workspaces and channels; retrieve, deploy, delete, publish and unpublish components."
+      },
+      "cms:list": {
+        "description": "List CMS workspaces and the channels of a workspace."
       }
     }
   },
