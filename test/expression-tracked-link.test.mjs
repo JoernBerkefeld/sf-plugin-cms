@@ -32,8 +32,8 @@ const context = {
   workspace,
   folderPath: [],
   referenceOf: () => {},
-  recordNameOf: (sobject, id) =>
-    sobject === 'Campaign' && id === SOURCE_CAMPAIGN ? 'Golden Campaign' : undefined,
+  recordOf: (sobject, fields, id) =>
+    sobject === 'Campaign' && id === SOURCE_CAMPAIGN ? { Name: 'Golden Campaign' } : undefined,
   warn: (warning) => assert.fail(`unexpected warning ${warning.code}`),
 };
 

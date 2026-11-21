@@ -59,6 +59,8 @@ export type LifecycleItem = {
   managedContentId?: string;
   variantId?: string;
   contentKey?: string;
+  /** Publish (preview and run): what the publish does beyond the CMS (handler `publishNote`). */
+  note?: string;
   /** Publish state read back after publish/unpublish. */
   isPublished?: boolean;
   /** Salesforce's answer to publish/unpublish (`deploymentId`, `publishDate`, …). */
@@ -236,8 +238,8 @@ export async function runLifecycle(
   options: LifecycleOptions,
 ): Promise<LifecycleItem[]> {
   const { diagnostics } = options;
-  // Delete dependants first; publish what is referenced first.
-  const ordered = action === 'delete' ? targets.toReversed() : targets;
+  // Publish what is referenced first; delete and unpublish dependants first.
+  const ordered = action === 'publish' ? targets : targets.toReversed();
   const inventories = new Map<ContentTypeHandler, Map<string, InventoryItem>>();
   const plans: Planned[] = [];
 
@@ -302,6 +304,7 @@ export async function runLifecycle(
         }
       }
       item.variantId = found.defaultVariant.id;
+      if (action === 'publish' && handler.publishNote) item.note = handler.publishNote;
       item.outcome = action;
     } catch (error) {
       item.outcome = 'blocked';

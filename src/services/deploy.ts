@@ -41,7 +41,7 @@ import { checkDataGraphReferences, dataGraphReferences } from './data-graph-chec
 import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { mediaOf } from './media.js';
-import { recordResolver } from './record-references.js';
+import { recordKey, recordLabel, recordResolver } from './record-references.js';
 import { referenceResolver, type Diagnostics } from './retrieve.js';
 import type { CmsWorkspace } from './workspaces.js';
 
@@ -233,7 +233,7 @@ export async function deployComponents(
   const folders = folderPlanner(connection, workspace);
   const references = referenceResolver(connection, workspace);
   const records = recordResolver(connection);
-  // Destination record ID per `sobject:name`, filled while planning.
+  // Destination record ID per recordKey, filled while planning.
   const recordIds = new Map<string, string>();
   // Destination content key per `type:ApiName` (null = absent); filled by lookups and creates.
   const destinationKeys = new Map<string, string | null>();
@@ -259,7 +259,7 @@ export async function deployComponents(
     await references.load(
       referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
     );
-    await records.loadNames(recordIdsOf(native.contentBody, declarations?.records ?? []));
+    await records.load(recordIdsOf(native.contentBody, declarations?.records ?? []));
     const path = await folderPath(isRecord(native.folder) ? String(native.folder.id) : undefined);
     const media = await mediaOf(connection, handler, native);
     // Keys outside the workspace stay native keys; the comparison shows them as changes.
@@ -268,7 +268,7 @@ export async function deployComponents(
       workspace,
       folderPath: path,
       referenceOf: references.referenceOf,
-      recordNameOf: records.nameOf,
+      recordOf: records.recordOf,
       warn: () => {},
     });
     return { files, folderPath: path };
@@ -369,7 +369,7 @@ export async function deployComponents(
         payload.contentBody,
         handler.referenceDeclarations?.records ?? [],
       )) {
-        const label = `${reference.sobject} "${reference.name}" (contentBody.${reference.path.join('.')})`;
+        const label = `${recordLabel(reference)} (contentBody.${reference.path.join('.')})`;
         const found = await records.idsOf(reference);
         if (found.length === 0)
           throw new CmsError(
@@ -381,7 +381,7 @@ export async function deployComponents(
             'RECORD_REFERENCE_AMBIGUOUS',
             `References ${label}, which matches more than one record in the destination org`,
           );
-        recordIds.set(`${reference.sobject}:${reference.name}`, found[0]);
+        recordIds.set(recordKey(reference), found[0]);
       }
       const graphBlocks = await checkDataGraphReferences(
         connection,
@@ -442,7 +442,7 @@ export async function deployComponents(
           referenceFormsOf(declarations),
         ) as Record<string, unknown>,
         declarations?.records ?? [],
-        (reference) => recordIds.get(`${reference.sobject}:${reference.name}`)!,
+        (reference) => recordIds.get(recordKey(reference))!,
       );
       const envelope = envelopeOf(payload!, contentBody);
       const { file } = payload!;

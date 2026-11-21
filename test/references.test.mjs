@@ -4,7 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { projectJsonVariant, referencedContentKeys } from '../lib/content/json-projection.js';
+import {
+  projectJsonVariant,
+  recordIdsOf,
+  referencedContentKeys,
+} from '../lib/content/json-projection.js';
 import {
   jsonPayloadFromSource,
   logicalReferences,
@@ -13,6 +17,7 @@ import {
 import { readSourceFiles, writeSourceFiles } from '../lib/content/source-files.js';
 import { dataGraphReferences } from '../lib/services/data-graph-check.js';
 import { deployComponents } from '../lib/services/deploy.js';
+import { formHandler } from '../lib/content/handlers/form.js';
 import { recordResolver } from '../lib/services/record-references.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 import { fakeOrg, workspace } from './support/fake-org.mjs';
@@ -253,8 +258,8 @@ test('tracked link retrieve: the Campaign ID becomes { sobject, name }; an unkno
   const resolver = recordResolver(
     fakeConnection(fakeOrg({ campaigns: [{ Id: CAMPAIGN_ID, Name: 'Golden Campaign' }] }).answer),
   );
-  await resolver.loadNames([{ sobject: 'Campaign', id: CAMPAIGN_ID }]);
-  const files = trackedLink.toSource(link, retrieveContext({ recordNameOf: resolver.nameOf }));
+  await resolver.load([{ sobject: 'Campaign', fields: ['Name'], id: CAMPAIGN_ID }]);
+  const files = trackedLink.toSource(link, retrieveContext({ recordOf: resolver.recordOf }));
   assert.deepEqual(files.document.contentBody, {
     campaign: { name: 'Golden Campaign', sobject: 'Campaign' },
     destinationUrl: 'https://example.com',
@@ -263,7 +268,7 @@ test('tracked link retrieve: the Campaign ID becomes { sobject, name }; an unkno
   const warnings = [];
   const kept = trackedLink.toSource(
     link,
-    retrieveContext({ recordNameOf: () => {}, warn: (warning) => warnings.push(warning) }),
+    retrieveContext({ recordOf: () => {}, warn: (warning) => warnings.push(warning) }),
   );
   assert.equal(kept.document.contentBody.campaign, CAMPAIGN_ID);
   assert.deepEqual(
@@ -355,4 +360,110 @@ test('expression: a data graph provider without data space is checked in default
     allowed.items.map((item) => item.outcome),
     ['create'],
   );
+});
+
+const SOURCE_RECORD_TYPE = '012000000000101AAA';
+const TARGET_RECORD_TYPE = '012000000000999AAA';
+const leadRecordType = (Id) => ({ Id, SobjectType: 'Lead', DeveloperName: 'Lead_Default' });
+const RECORD_TYPE_FILE = {
+  developerName: 'Lead_Default',
+  sobject: 'RecordType',
+  sobjectType: 'Lead',
+};
+
+/**
+ * The golden form with a "Salesforce Record" data source after its data graph provider.
+ * @returns {Promise<object>} Native variant.
+ */
+async function formWithRecordSource() {
+  const form = await native('form');
+  form.contentBody['lightning:dataProviders'].push({
+    attributes: { objectApiName: 'Lead', recordTypeId: SOURCE_RECORD_TYPE },
+    definition: 'sfdc_cms__recordDataProvider',
+    sfdcExpressionKey: 'Lead_Source',
+  });
+  return form;
+}
+
+test('form RecordType: retrieve keeps it by SobjectType + DeveloperName, deploy writes the destination ID', async () => {
+  const form = await formWithRecordSource();
+  const source = fakeOrg({ recordTypes: [leadRecordType(SOURCE_RECORD_TYPE)] });
+  const resolver = recordResolver(fakeConnection(source.answer));
+  await resolver.load(recordIdsOf(form.contentBody, formHandler.referenceDeclarations.records));
+  const files = formHandler.toSource(form, retrieveContext({ recordOf: resolver.recordOf }));
+  const providers = files.document.contentBody['lightning:dataProviders'];
+  assert.equal(providers[0].definition, 'sfdc_cms__dataGraphDataProvider');
+  assert.deepEqual(providers[1].attributes, {
+    objectApiName: 'Lead',
+    recordTypeId: RECORD_TYPE_FILE,
+  });
+
+  // Cross-org: the same files in an org whose RecordType has another ID.
+  const target = fakeOrg({ recordTypes: [leadRecordType(TARGET_RECORD_TYPE)] });
+  const created = await deployTo(target, [[formHandler, files]]);
+  assert.deepEqual(created.diagnostics, { warnings: [], errors: [] });
+  assert.deepEqual(
+    created.items.map((item) => item.outcome),
+    ['created'],
+  );
+  const written = JSON.parse(created.writes.at(-1).input.body).contentBody;
+  assert.equal(written['lightning:dataProviders'][1].attributes.recordTypeId, TARGET_RECORD_TYPE);
+  // Round trip: the destination projects back to the same file.
+  const again = await deployTo(target, [[formHandler, files]]);
+  assert.deepEqual(
+    again.items.map((item) => item.outcome),
+    ['unchanged'],
+  );
+  assert.equal(again.writes.length, 0);
+});
+
+test('form RecordType: unknown ID warns on retrieve; missing, ambiguous or malformed blocks deploy', async () => {
+  const form = await formWithRecordSource();
+  const warnings = [];
+  const kept = formHandler.toSource(
+    form,
+    retrieveContext({ recordOf: () => {}, warn: (warning) => warnings.push(warning) }),
+  );
+  assert.equal(
+    kept.document.contentBody['lightning:dataProviders'][1].attributes.recordTypeId,
+    SOURCE_RECORD_TYPE,
+  );
+  assert.deepEqual(
+    warnings.map((warning) => warning.code),
+    ['RECORD_REFERENCE_UNRESOLVED'],
+  );
+  assert.match(warnings[0].message, /lightning:dataProviders\.1\.attributes\.recordTypeId/u);
+
+  const resolved = structuredClone(kept);
+  resolved.document.contentBody['lightning:dataProviders'][1].attributes.recordTypeId =
+    RECORD_TYPE_FILE;
+  const missing = await deployTo(
+    fakeOrg({ recordTypes: [{ ...leadRecordType(TARGET_RECORD_TYPE), SobjectType: 'Contact' }] }),
+    [[formHandler, resolved]],
+  );
+  assert.deepEqual(
+    missing.items.map((item) => [item.outcome, item.reason]),
+    [['blocked', 'RECORD_REFERENCE_NOT_FOUND']],
+  );
+  assert.equal(missing.writes.length, 0);
+  assert.match(missing.diagnostics.errors[0].message, /RecordType "Lead" \/ "Lead_Default"/u);
+  const ambiguous = await deployTo(
+    fakeOrg({
+      recordTypes: [leadRecordType(TARGET_RECORD_TYPE), leadRecordType('012000000000998AAA')],
+    }),
+    [[formHandler, resolved]],
+  );
+  assert.deepEqual(
+    ambiguous.items.map((item) => item.reason),
+    ['RECORD_REFERENCE_AMBIGUOUS'],
+  );
+  const malformed = structuredClone(resolved);
+  delete malformed.document.contentBody['lightning:dataProviders'][1].attributes.recordTypeId
+    .developerName;
+  const refused = await deployTo(fakeOrg(), [[formHandler, malformed]]);
+  assert.deepEqual(
+    refused.items.map((item) => item.reason),
+    ['UNKNOWN_SETTING'],
+  );
+  assert.equal(refused.writes.length, 0);
 });

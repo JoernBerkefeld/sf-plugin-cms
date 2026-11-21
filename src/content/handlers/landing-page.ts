@@ -1,6 +1,7 @@
 import { projectJsonVariant } from '../json-projection.js';
 import { jsonPayloadFromSource, logicalReferences } from '../json-source.js';
 import type { ContentTypeHandler } from '../types.js';
+import { PUBLIC_URL_NOTE } from './landing-page-template.js';
 
 /**
  * Landing Page (`sfdc_cms__landingPage`): JSON. Like its template, plus `sfdc_cms:template.definition`
@@ -10,6 +11,7 @@ export const landingPageHandler: ContentTypeHandler = {
   type: 'landing-page',
   apiName: 'sfdc_cms__landingPage',
   transport: 'json',
+  publishNote: PUBLIC_URL_NOTE,
   toSource: (native, context) => projectJsonVariant('landing-page', native, context, {}),
   fromSource: (files) => jsonPayloadFromSource(files, {}),
   references: (payload) => logicalReferences(payload.contentBody),

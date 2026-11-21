@@ -238,7 +238,9 @@ would be removed. Deploy preview also lists the folders it would create.
 - Only regular files inside `cms/` are removed, one at a time. If a file cannot be removed, the
   component stays deleted and the command reports `LOCAL_FILE_REMOVAL_FAILED`: remove that file
   by hand instead of repeating the delete.
-- Several components are deleted in reverse order: emails first, brands last.
+- Several components are deleted in reverse order: emails first, brands last. Unpublish uses
+  the same order (a landing page before its template and content blocks); publish goes the other
+  way.
 - Folders are never deleted.
 
 ### Publish and unpublish
@@ -246,6 +248,8 @@ would be removed. Deploy preview also lists the folders it would create.
 - `sf cms publish` publishes the default variant of each named component in the workspace.
   Components it references (for example an image in an email) are not published with it.
 - `sf cms unpublish` takes the default variant back to Draft.
+- Publishing a landing page or landing page template makes a public URL live. Publish says so
+  next to the component, in `--preview` and in the normal output (`note` in `--json`).
 - After each request the plugin reads the publish state back and warns `STATE_NOT_CONFIRMED`
   if it does not match yet.
 - No channel needs to be chosen; Salesforce decides where published content is delivered.
@@ -313,6 +317,11 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Some types point to a Salesforce record instead of a CMS component, such as the Campaign of a
   tracked link. The file names the record by name, for example
   `"campaign": { "sobject": "Campaign", "name": "Spring Launch" }`.
+- A record type, as in the data source of a form or form handler, is named by its object and
+  developer name instead:
+  `"recordTypeId": { "sobject": "RecordType", "sobjectType": "Lead", "developerName": "Lead_Default" }`.
+  Record type IDs differ between orgs, and Salesforce fails a create that carries another org's
+  ID.
 - On deploy, the plugin looks the name up in the destination org (read-only). No record of that
   name is refused before any write (`RECORD_REFERENCE_NOT_FOUND`), and so are several
   (`RECORD_REFERENCE_AMBIGUOUS`). The plugin never creates or changes such records.
@@ -380,8 +389,10 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   kept exactly, like an email fragment.
 - An image in a landing page content block is a reference: deploy the image in the same run, or
   make sure the destination workspace has an image with that API name.
-- A form handler's JSON holds only its blocks. The flow that processes submissions is not part
-  of the component and is not retrieved or deployed.
+- A form handler's JSON holds only its blocks and data sources. The flow that processes
+  submissions is not part of the component and is not retrieved or deployed.
+- A "Salesforce Record" data source keeps its record type by object and developer name (see
+  References to Salesforce records), so the same file deploys into another org.
 - Salesforce publishes a form or a form handler only when it has at least one input field; for
   an empty one, publish shows Salesforce's error.
 
@@ -393,9 +404,9 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   sure the destination workspace has them; deploy creates them first.
 - A landing page can be created while its template is still a draft.
 - Publishing a landing page makes its public URL live. Salesforce publishes a page or template
-  only after the content blocks it embeds are published: publish them in the same run. To
-  unpublish, unpublish the page first, then its template and content blocks (Salesforce refuses
-  to unpublish a content block that a published page uses).
+  only after the content blocks it embeds are published: publish them in the same run. Unpublish
+  them in one run too: the plugin unpublishes the page first, then its template and content
+  blocks (Salesforce refuses to unpublish a content block that a published page uses).
 - Salesforce does not allow creating preference pages through the API
   (`CONTENT_TYPE_DISABLED_FOR_API`); deploy shows that error. No preference page could be made
   in the test orgs, so retrieve, delete and publish are not tested.

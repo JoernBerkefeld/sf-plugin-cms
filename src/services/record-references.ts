@@ -14,15 +14,39 @@ import { soqlString } from './inventory.js';
 const IDS_PER_QUERY = 100;
 const SOBJECT_NAME = /^\w+$/u;
 
-/** Record name <-> ID lookups of one org, read-only SOQL, cached per run. */
+/** Record lookup fields <-> ID lookups of one org, read-only SOQL, cached per run. */
 export type RecordResolver = {
-  /** Read the names of these records (`SELECT Id, Name … WHERE Id IN`). */
-  loadNames: (records: Array<{ sobject: string; id: string }>) => Promise<void>;
-  /** Name of a loaded record; undefined = not found. */
-  nameOf: (sobject: string, id: string) => string | undefined;
-  /** IDs of the records with this name (at most two: enough to tell ambiguous). */
+  /** Read the lookup fields of these records (`SELECT Id, <fields> … WHERE Id IN`). */
+  load: (
+    records: Array<{ sobject: string; fields: readonly string[]; id: string }>,
+  ) => Promise<void>;
+  /** Lookup field values (SOQL field -> value) of a loaded record; undefined = not found. */
+  recordOf: (
+    sobject: string,
+    fields: readonly string[],
+    id: string,
+  ) => Readonly<Record<string, string>> | undefined;
+  /** IDs of the records with these field values (at most two: enough to tell ambiguous). */
   idsOf: (reference: RecordReference) => Promise<string[]>;
 };
+
+/**
+ * Key of a record reference, the same for equal sObject and values.
+ * @param {RecordReference} reference - Reference.
+ * @returns {string} Key.
+ */
+export const recordKey = (reference: RecordReference): string =>
+  `${reference.sobject}:${JSON.stringify(Object.keys(reference.fields).map((key) => reference.values[key]))}`;
+
+/**
+ * How a message names a record reference: `Campaign "Spring"`, `RecordType "Lead" / "Std"`.
+ * @param {RecordReference} reference - Reference.
+ * @returns {string} Label.
+ */
+export const recordLabel = (reference: RecordReference): string =>
+  `${reference.sobject} ${Object.keys(reference.fields)
+    .map((key) => `"${reference.values[key]}"`)
+    .join(' / ')}`;
 
 async function query(
   connection: RequestConnection,
@@ -37,11 +61,12 @@ async function query(
   return records as Array<Record<string, unknown>>;
 }
 
-const nameKey = (sobject: string, id: string): string => `${sobject}:${id.slice(0, 15)}`;
+const rowKey = (sobject: string, fields: readonly string[], id: string): string =>
+  `${sobject}:${fields.join(',')}:${id.slice(0, 15)}`;
 
-function assertSobject(sobject: string): void {
-  if (!SOBJECT_NAME.test(sobject))
-    throw new CmsError('UNEXPECTED_RESPONSE', `Not an sObject name: ${sobject}`);
+function assertName(name: string): void {
+  if (!SOBJECT_NAME.test(name))
+    throw new CmsError('UNEXPECTED_RESPONSE', `Not an sObject or field name: ${name}`);
 }
 
 /**
@@ -50,42 +75,54 @@ function assertSobject(sobject: string): void {
  * @returns {RecordResolver} Lookups.
  */
 export function recordResolver(connection: RequestConnection): RecordResolver {
-  const names = new Map<string, string | null>();
+  const rows = new Map<string, Readonly<Record<string, string>> | null>();
   const ids = new Map<string, Promise<string[]>>();
   return {
-    async loadNames(records): Promise<void> {
-      const bySobject = new Map<string, string[]>();
-      for (const { sobject, id } of records)
-        if (RECORD_ID.test(id) && !names.has(nameKey(sobject, id))) {
-          names.set(nameKey(sobject, id), null);
-          bySobject.set(sobject, [...(bySobject.get(sobject) ?? []), id]);
+    async load(records): Promise<void> {
+      const wanted = new Map<
+        string,
+        { sobject: string; fields: readonly string[]; ids: string[] }
+      >();
+      for (const { sobject, fields, id } of records)
+        if (RECORD_ID.test(id) && !rows.has(rowKey(sobject, fields, id))) {
+          rows.set(rowKey(sobject, fields, id), null);
+          const group = `${sobject}:${fields.join(',')}`;
+          const entry = wanted.get(group) ?? { sobject, fields, ids: [] };
+          entry.ids.push(id);
+          wanted.set(group, entry);
         }
-      for (const [sobject, wanted] of bySobject) {
-        assertSobject(sobject);
-        for (let index = 0; index < wanted.length; index += IDS_PER_QUERY) {
-          const list = wanted.slice(index, index + IDS_PER_QUERY).map((id) => soqlString(id));
-          const rows = await query(
+      for (const { sobject, fields, ids: list } of wanted.values()) {
+        for (const name of [sobject, ...fields]) assertName(name);
+        for (let index = 0; index < list.length; index += IDS_PER_QUERY) {
+          const chunk = list.slice(index, index + IDS_PER_QUERY);
+          const found = await query(
             connection,
-            `SELECT Id, Name FROM ${sobject} WHERE Id IN (${list.join(', ')})`,
+            `SELECT Id, ${fields.join(', ')} FROM ${sobject} WHERE Id IN (${chunk.map((id) => soqlString(id)).join(', ')})`,
           );
-          for (const row of rows)
-            if (typeof row.Id === 'string' && typeof row.Name === 'string')
-              for (const id of wanted)
-                if (sameId(id, row.Id)) names.set(nameKey(sobject, id), row.Name);
+          for (const row of found) {
+            if (typeof row.Id !== 'string') continue;
+            const values = Object.fromEntries(fields.map((field) => [field, row[field]]));
+            if (!Object.values(values).every((value) => typeof value === 'string')) continue;
+            for (const id of chunk)
+              if (sameId(id, row.Id))
+                rows.set(rowKey(sobject, fields, id), values as Record<string, string>);
+          }
         }
       }
     },
-    nameOf: (sobject, id) => names.get(nameKey(sobject, id)) ?? undefined,
-    idsOf({ sobject, name }): Promise<string[]> {
-      const key = `${sobject}:${name}`;
+    recordOf: (sobject, fields, id) => rows.get(rowKey(sobject, fields, id)) ?? undefined,
+    idsOf(reference): Promise<string[]> {
+      const key = recordKey(reference);
       let found = ids.get(key);
       if (!found) {
-        assertSobject(sobject);
-        found = query(
-          connection,
-          `SELECT Id FROM ${sobject} WHERE Name = ${soqlString(name)} LIMIT 2`,
-        ).then((rows) =>
-          rows.map((row) => row.Id).filter((id): id is string => typeof id === 'string'),
+        const { sobject, fields, values } = reference;
+        for (const name of [sobject, ...Object.values(fields)]) assertName(name);
+        const where = Object.entries(fields)
+          .map(([fileKey, field]) => `${field} = ${soqlString(values[fileKey])}`)
+          .join(' AND ');
+        found = query(connection, `SELECT Id FROM ${sobject} WHERE ${where} LIMIT 2`).then(
+          (answer) =>
+            answer.map((row) => row.Id).filter((id): id is string => typeof id === 'string'),
         );
         ids.set(key, found);
       }

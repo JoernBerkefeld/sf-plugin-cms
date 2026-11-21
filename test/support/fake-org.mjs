@@ -22,10 +22,10 @@ export const salesforceError = (statusCode, errorCode, message = errorCode) =>
 /**
  * An in-memory org: one workspace with folders, variants, folder create, content create and
  * update, publish/unpublish, delete, the Data 360 data space list and data graph read, and
- * Campaign SOQL by ID and by Name.
- * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object; campaigns?: object[] }} state
+ * Campaign and RecordType SOQL by ID and by lookup fields.
+ * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
  *   Stored variants, child folders by parent ID, data space names, data graph -> data space,
- *   Campaign rows `{ Id, Name }`.
+ *   Campaign rows `{ Id, Name }`, RecordType rows `{ Id, SobjectType, DeveloperName }`.
  * @returns {{ answer: Function; variants: Map; folders: object }} Answer function and stores.
  */
 export function fakeOrg(state = {}) {
@@ -33,7 +33,7 @@ export function fakeOrg(state = {}) {
   const folders = structuredClone(state.folders ?? {});
   const dataSpaces = state.dataSpaces ?? ['default'];
   const graphs = state.graphs ?? { Marketing: 'default' };
-  const campaigns = state.campaigns ?? [];
+  const records = { Campaign: state.campaigns ?? [], RecordType: state.recordTypes ?? [] };
   let counter = 0;
   const store = (native) => {
     variants.set(native.managedContentVariantId, structuredClone(native));
@@ -58,12 +58,17 @@ export function fakeOrg(state = {}) {
       if (graphs[graph]) return { name: graph, dataspaceName: graphs[graph], status: 'ready' };
       throw salesforceError(400, 'INTERNAL_ERROR', `Data Graph not found with name ${graph}`);
     }
-    if (url.startsWith('/query?') && url.includes('FROM Campaign')) {
+    const sobject = /FROM (Campaign|RecordType) /u.exec(url)?.[1];
+    if (url.startsWith('/query?') && sobject) {
       const ids = /Id IN \(([^)]*)\)/u.exec(url)?.[1];
-      const name = /Name = '([^']*)'/u.exec(url)?.[1];
+      const where = [...url.matchAll(/(\w+) = '([^']*)'/gu)];
       return {
-        records: campaigns
-          .filter((row) => (ids ? ids.includes(`'${row.Id}'`) : row.Name === name))
+        records: records[sobject]
+          .filter((row) =>
+            ids
+              ? ids.includes(`'${row.Id}'`)
+              : where.every(([, field, value]) => row[field] === value),
+          )
           .slice(0, ids ? undefined : 2),
       };
     }

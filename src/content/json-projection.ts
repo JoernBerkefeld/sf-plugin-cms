@@ -103,26 +103,72 @@ export function keyInForm(form: ReferenceForm, value: unknown): string | undefin
 export function valueAt(body: unknown, path: readonly string[]): unknown {
   let current = body;
   for (const key of path) {
-    if (!isPlainObject(current)) return undefined;
-    current = current[key];
+    if (Array.isArray(current) && /^\d+$/u.test(key)) current = current[Number(key)];
+    else if (isPlainObject(current)) current = current[key];
+    else return undefined;
   }
   return current;
 }
+
+/** Path step that stands for every element of an array. */
+export const EVERY_ELEMENT = '*';
+
+/**
+ * The concrete paths a declared path names in a body: each `*` step becomes the index of every
+ * element of the array at that point. Paths that do not exist in the body are left out.
+ * @param {unknown} body - Body.
+ * @param {readonly string[]} path - Declared path.
+ * @returns {string[][]} Concrete paths, in body order.
+ */
+export function pathsAt(body: unknown, path: readonly string[]): string[][] {
+  let found: string[][] = [[]];
+  for (const step of path)
+    found = found.flatMap((prefix) => {
+      const current = valueAt(body, prefix);
+      if (step !== EVERY_ELEMENT)
+        return isPlainObject(current) && step in current ? [[...prefix, step]] : [];
+      return Array.isArray(current) ? current.map((_, index) => [...prefix, String(index)]) : [];
+    });
+  return found;
+}
+
+/** Lookup fields of a record path without its own: the record's Name. */
+export const DEFAULT_RECORD_FIELDS: Readonly<Record<string, string>> = { name: 'Name' };
+
+/**
+ * Lookup fields of a record path (file key -> SOQL field).
+ * @param {RecordReferencePath} declaration - Declared path.
+ * @returns {Readonly<Record<string, string>>} Fields.
+ */
+export const recordFieldsOf = (
+  declaration: RecordReferencePath,
+): Readonly<Record<string, string>> => declaration.fields ?? DEFAULT_RECORD_FIELDS;
 
 /**
  * Every record ID at the declared record paths of a native body.
  * @param {unknown} body - Native contentBody.
  * @param {readonly RecordReferencePath[]} paths - Declared paths.
- * @returns {Array<{ sobject: string; id: string }>} IDs, in declaration order.
+ * @returns {Array<{ sobject: string; fields: string[]; id: string }>} IDs with the SOQL fields
+ *   to read, in declaration order.
  */
 export function recordIdsOf(
   body: unknown,
   paths: readonly RecordReferencePath[],
-): Array<{ sobject: string; id: string }> {
-  return paths.flatMap(({ path, sobject }) => {
-    const value = valueAt(body, path);
-    return typeof value === 'string' && RECORD_ID.test(value) ? [{ sobject, id: value }] : [];
-  });
+): Array<{ sobject: string; fields: string[]; id: string }> {
+  return paths.flatMap((declaration) =>
+    pathsAt(body, declaration.path).flatMap((path) => {
+      const value = valueAt(body, path);
+      return typeof value === 'string' && RECORD_ID.test(value)
+        ? [
+            {
+              sobject: declaration.sobject,
+              fields: Object.values(recordFieldsOf(declaration)),
+              id: value,
+            },
+          ]
+        : [];
+    }),
+  );
 }
 
 /** Body keys that hold the envelope's title and urlName; the body value wins on create. */
@@ -241,19 +287,32 @@ function projectRecords(
   paths: readonly RecordReferencePath[],
   context: RetrieveContext,
 ): Record<string, unknown> {
-  for (const { path, sobject } of paths) {
-    const holder = valueAt(body, path.slice(0, -1));
-    const key = path.at(-1);
-    if (!isPlainObject(holder) || key === undefined) continue;
-    const id = holder[key];
-    if (typeof id !== 'string' || id === '') continue;
-    const name = RECORD_ID.test(id) ? context.recordNameOf?.(sobject, id) : undefined;
-    if (name === undefined)
-      context.warn({
-        code: 'RECORD_REFERENCE_UNRESOLVED',
-        message: `${path.join('.')} names ${sobject} ${id}, which was not found; kept as is.`,
-      });
-    else holder[key] = { sobject, name };
+  for (const declaration of paths) {
+    const { sobject } = declaration;
+    const fields = Object.entries(recordFieldsOf(declaration));
+    for (const path of pathsAt(body, declaration.path)) {
+      const holder = valueAt(body, path.slice(0, -1)) as Record<string, unknown>;
+      const key = path.at(-1)!;
+      const id = holder[key];
+      if (typeof id !== 'string' || id === '') continue;
+      const row = RECORD_ID.test(id)
+        ? context.recordOf?.(
+            sobject,
+            fields.map(([, field]) => field),
+            id,
+          )
+        : undefined;
+      if (row === undefined)
+        context.warn({
+          code: 'RECORD_REFERENCE_UNRESOLVED',
+          message: `${path.join('.')} names ${sobject} ${id}, which was not found; kept as is.`,
+        });
+      else
+        holder[key] = {
+          sobject,
+          ...Object.fromEntries(fields.map(([fileKey, field]) => [fileKey, row[field]])),
+        };
+    }
   }
   return body;
 }

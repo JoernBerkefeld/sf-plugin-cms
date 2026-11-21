@@ -10,6 +10,7 @@ import Delete from '../lib/commands/cms/delete.js';
 import Publish from '../lib/commands/cms/publish.js';
 import Unpublish from '../lib/commands/cms/unpublish.js';
 import { parseExactSelection, runLifecycle } from '../lib/services/lifecycle.js';
+import { PUBLIC_URL_NOTE } from '../lib/content/handlers/landing-page-template.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -692,3 +693,96 @@ test(
 function org1() {
   return fakeOrg([email('One', 1)]);
 }
+
+const web = (type, apiName, n, extra = {}) => ({
+  id: `9Ps00000000000${n}AAA`,
+  mc: `20Y00000000000${n}AAA`,
+  apiName,
+  type,
+  ...extra,
+});
+const pageAndFragment = (published) =>
+  fakeOrg([
+    web('sfdc_cms__webFragment', 'Frag', 1, { published }),
+    web('sfdc_cms__landingPage', 'Page', 2, { published }),
+  ]);
+const pageAndFragmentArguments = ['-m', 'web-fragment:Frag', '-m', 'landing-page:Page'];
+
+test('unpublish handles dependants first: the page before its web fragment; publish the reverse', async () => {
+  const directory = await projectWith([]);
+  const unpublished = await run(
+    'unpublish',
+    pageAndFragmentArguments,
+    pageAndFragment(true),
+    directory,
+  );
+  assert.deepEqual(outcomes(unpublished.result), [
+    ['Page', 'unpublished'],
+    ['Frag', 'unpublished'],
+  ]);
+  assert.deepEqual(
+    unpublished.writes.map((write) => JSON.parse(write.input.body).variantIds[0]),
+    ['9Ps000000000002AAA', '9Ps000000000001AAA'],
+  );
+  const published = await run(
+    'publish',
+    pageAndFragmentArguments,
+    pageAndFragment(false),
+    directory,
+  );
+  assert.deepEqual(outcomes(published.result), [
+    ['Frag', 'published'],
+    ['Page', 'published'],
+  ]);
+});
+
+test('publish of a landing page notes the public URL, in preview, run and human output', async () => {
+  const directory = await projectWith([]);
+  const preview = await run(
+    'publish',
+    [...pageAndFragmentArguments, '--preview'],
+    pageAndFragment(false),
+    directory,
+  );
+  assert.equal(preview.writes.length, 0);
+  assert.deepEqual(
+    preview.result.result.items.map((item) => [item.apiName, item.note]),
+    [
+      ['Frag', undefined],
+      ['Page', PUBLIC_URL_NOTE],
+    ],
+  );
+  const unpublish = await run(
+    'unpublish',
+    pageAndFragmentArguments,
+    pageAndFragment(true),
+    directory,
+  );
+  assert.ok(unpublish.result.result.items.every((item) => item.note === undefined));
+
+  const lines = [];
+  class Human extends Publish {
+    resolveOrg = async () => ({
+      connection: fakeConnection(pageAndFragment(false).answer),
+      orgId: '00D000000000001AAA',
+      username: 'u@example.com',
+    });
+    writeOptions = { allowCallerConnection: true };
+    log(message) {
+      lines.push(message);
+    }
+  }
+  const cwd = process.cwd();
+  process.chdir(directory);
+  try {
+    await Human.run([...pageAndFragmentArguments, '--workspace', WS], config);
+  } finally {
+    process.exitCode = undefined;
+    process.chdir(cwd);
+  }
+  assert.deepEqual(lines.slice(0, 3), [
+    'published web-fragment:Frag',
+    'published landing-page:Page',
+    `  note: ${PUBLIC_URL_NOTE}`,
+  ]);
+});

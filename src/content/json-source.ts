@@ -3,6 +3,8 @@ import {
   BODY_ENVELOPE_FIELDS,
   DEFAULT_REFERENCE_FORMS,
   formsAt,
+  pathsAt,
+  recordFieldsOf,
   valueAt,
   type CompanionFields,
 } from './json-projection.js';
@@ -194,7 +196,8 @@ export function resolveReferences(
 export type LocatedRecordReference = RecordReference & { path: readonly string[] };
 
 /**
- * The record references `{ sobject, name }` at the declared paths of a payload body. A path
+ * The record references `{ sobject, <lookup fields> }` at the declared paths of a payload body
+ * (`*` steps expanded to concrete paths). A path
  * holding a plain value (an ID kept as it was) is left to Salesforce. Strict: an object of
  * another shape or sObject is refused (UNKNOWN_SETTING).
  * @param {unknown} body - Payload body.
@@ -206,19 +209,29 @@ export function recordReferences(
   paths: readonly RecordReferencePath[],
 ): LocatedRecordReference[] {
   const found: LocatedRecordReference[] = [];
-  for (const { path, sobject } of paths) {
-    const value = valueAt(body, path);
-    if (!isPlainObject(value)) continue;
-    if (
-      Object.keys(value).length !== 2 ||
-      value.sobject !== sobject ||
-      typeof value.name !== 'string'
-    )
-      throw new CmsError(
-        'UNKNOWN_SETTING',
-        `contentBody.${path.join('.')} must be { "sobject": "${sobject}", "name": "<record name>" } or a record ID`,
-      );
-    found.push({ path, sobject, name: value.name });
+  for (const declaration of paths) {
+    const { sobject } = declaration;
+    const fields = recordFieldsOf(declaration);
+    const keys = Object.keys(fields);
+    for (const path of pathsAt(body, declaration.path)) {
+      const value = valueAt(body, path);
+      if (!isPlainObject(value)) continue;
+      if (
+        Object.keys(value).length !== keys.length + 1 ||
+        value.sobject !== sobject ||
+        !keys.every((key) => typeof value[key] === 'string')
+      )
+        throw new CmsError(
+          'UNKNOWN_SETTING',
+          `contentBody.${path.join('.')} must be { "sobject": "${sobject}", ${keys.map((key) => `"${key}": "<${fields[key]}>"`).join(', ')} } or a record ID`,
+        );
+      found.push({
+        path,
+        sobject,
+        fields,
+        values: Object.fromEntries(keys.map((key) => [key, value[key] as string])),
+      });
+    }
   }
   return found;
 }
@@ -238,9 +251,9 @@ export function resolveRecordReferences(
   const references = recordReferences(body, paths);
   if (references.length === 0) return body;
   const result = structuredClone(body);
-  for (const { path, sobject, name } of references) {
+  for (const { path, ...reference } of references) {
     const holder = valueAt(result, path.slice(0, -1)) as Record<string, unknown>;
-    holder[path.at(-1)!] = idOf({ sobject, name });
+    holder[path.at(-1)!] = idOf(reference);
   }
   return result;
 }

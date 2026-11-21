@@ -223,7 +223,7 @@ export async function retrieveComponents(
           await references.load(
             referencedContentKeys(native.contentBody, referenceFormsOf(declarations)),
           );
-          await records.loadNames(recordIdsOf(native.contentBody, declarations?.records ?? []));
+          await records.load(recordIdsOf(native.contentBody, declarations?.records ?? []));
           const media = await mediaOf(connection, handler, native);
           const files = handler.toSource(native, {
             ...(media ? { media } : {}),
@@ -232,7 +232,7 @@ export async function retrieveComponents(
               isRecord(native.folder) ? String(native.folder.id) : undefined,
             ),
             referenceOf: references.referenceOf,
-            recordNameOf: records.nameOf,
+            recordOf: records.recordOf,
             warn: (warning) =>
               warnings.push({
                 ...toDiagnostic(new CmsError(warning.code, warning.message)),

@@ -18,16 +18,30 @@ export type ReferenceForm = {
   readonly format: string;
 };
 
-/** A body path that holds a record ID, kept in the file as `{ sobject, name }`. */
+/**
+ * A body path that holds a record ID. The file keeps the record by its lookup fields:
+ * `{ sobject, name }` by default, `{ sobject, sobjectType, developerName }` for a RecordType.
+ */
 export type RecordReferencePath = {
-  /** Property names from the body root, such as `['campaign']`. */
+  /** Property names from the body root, such as `['campaign']`; `*` = every array element. */
   readonly path: readonly string[];
   /** sObject the ID belongs to, such as `Campaign`. */
   readonly sobject: string;
+  /**
+   * File key -> SOQL field that together find the record; default `{ name: 'Name' }`
+   * (`DEFAULT_RECORD_FIELDS`).
+   */
+  readonly fields?: Readonly<Record<string, string>>;
 };
 
-/** A record a body points to, by name: resolved by SOQL in the destination org. */
-export type RecordReference = { sobject: string; name: string };
+/** A record a body points to by its lookup fields: resolved by SOQL in the destination org. */
+export type RecordReference = {
+  sobject: string;
+  /** File key -> SOQL field, as declared. */
+  fields: Readonly<Record<string, string>>;
+  /** File key -> value, as the file holds it. */
+  values: Readonly<Record<string, string>>;
+};
 
 /** What a handler adds to the built-in reference forms (see `json-projection.ts`). */
 export type ReferenceDeclarations = {
@@ -82,8 +96,15 @@ export type RetrieveContext = {
   warn: (warning: Omit<Diagnostic, 'component'>) => void;
   /** Media types: the uploaded file, downloaded by the pipeline beforehand. */
   media?: MediaFile;
-  /** Name of a record at a declared record path, read by the pipeline beforehand. */
-  recordNameOf?: (sobject: string, id: string) => string | undefined;
+  /**
+   * Lookup field values (SOQL field -> value) of a record at a declared record path, read by
+   * the pipeline beforehand; undefined = not found.
+   */
+  recordOf?: (
+    sobject: string,
+    fields: readonly string[],
+    id: string,
+  ) => Readonly<Record<string, string>> | undefined;
 };
 
 /** The binary of a media component: its native file name and bytes. */
@@ -122,6 +143,8 @@ export interface ContentTypeHandler {
   readonly transport: 'json' | 'multipart';
   /** Extra reference forms and record paths; the pipeline reads them for lookups and deploy. */
   readonly referenceDeclarations?: ReferenceDeclarations;
+  /** What publishing a component of this type does beyond the CMS, such as a public URL going live. */
+  readonly publishNote?: string;
   /** Retrieve projection: native default variant -> files. Pure; no I/O. */
   toSource(native: NativeVariant, context: RetrieveContext): SourceFiles;
   /**

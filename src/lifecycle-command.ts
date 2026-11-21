@@ -87,6 +87,7 @@ export abstract class LifecycleCommand extends CmsCommand<LifecycleResult> {
       this.log(
         `${item.outcome} ${item.type}:${item.apiName}${item.reason ? ` (${item.reason})` : ''}`,
       );
+      if (item.note) this.log(`  note: ${item.note}`);
       for (const file of item.localFiles ?? [])
         this.log(
           `  would remove ${path.relative(projectDirectory, file.path)}${file.exists ? '' : ' (not present)'}`,
