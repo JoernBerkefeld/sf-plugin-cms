@@ -103,6 +103,7 @@ export abstract class CmsCommand<R> extends SfCommand<CmsResult<R>> {
    * @param {{ 'target-org'?: string; 'api-version': string }} flags - Parsed org flags.
    * @param {R} empty - Result when the body did not finish.
    * @param {(org: OrgContext, result: CmsResult<R>) => Promise<R>} body - Command work.
+   * @param {() => Promise<void>} [beforeOrg] - Local checks that must pass before any org access.
    * @returns {Promise<CmsResult<R>>} Filled envelope.
    */
   protected async withOrg(
@@ -110,6 +111,7 @@ export abstract class CmsCommand<R> extends SfCommand<CmsResult<R>> {
     flags: { 'target-org'?: string; 'api-version': string },
     empty: R,
     body: (org: OrgContext, result: CmsResult<R>) => Promise<R>,
+    beforeOrg?: () => Promise<void>,
   ): Promise<CmsResult<R>> {
     const envelope: CmsResult<R> = {
       status: 'failed',
@@ -123,6 +125,7 @@ export abstract class CmsCommand<R> extends SfCommand<CmsResult<R>> {
           'INVALID_API_VERSION',
           `Not a numeric API version: ${flags['api-version']}`,
         );
+      await beforeOrg?.();
       const org = await this.resolveOrg(flags['target-org'], flags['api-version']);
       envelope.metadata.orgId = org.orgId;
       this.logToStderr(`Org: ${org.username} (${org.orgId})`);

@@ -23,5 +23,5 @@ export const hints: Readonly<Record<string, string>> = {
   NOT_ATTEMPTED:
     'An earlier component failed or its outcome is unknown, so this one was not written. Fix the earlier problem, then rerun.',
   UNKNOWN_OUTCOME:
-    'The write was sent but no answer came back, so the plugin cannot tell whether Salesforce applied it. Check the component in the org (sf cms retrieve) before running the deploy again; the plugin never repeats such a write.',
+    'The request was sent but no answer came back, so the plugin cannot tell whether Salesforce applied it. Check the component in the org (sf cms retrieve) before running the command again; the plugin never repeats such a request.',
 };

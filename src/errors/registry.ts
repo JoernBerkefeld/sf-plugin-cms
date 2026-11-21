@@ -2,11 +2,12 @@ import { hints as general } from './codes/general.js';
 import { hints as workspace } from './codes/workspace.js';
 import { hints as content } from './codes/content.js';
 import { hints as deploy } from './codes/deploy.js';
+import { hints as lifecycle } from './codes/lifecycle.js';
 import { CmsRequestError } from '../transport/json-request.js';
 import { redactSecrets } from '../transport/redact-secrets.js';
 
 /** One entry per family; a new family adds one import and one key. */
-export const errorFamilies = { general, workspace, content, deploy } as const;
+export const errorFamilies = { general, workspace, content, deploy, lifecycle } as const;
 
 export type ErrorFamily = keyof typeof errorFamilies;
 

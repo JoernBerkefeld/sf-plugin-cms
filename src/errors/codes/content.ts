@@ -9,7 +9,7 @@ export const hints: Readonly<Record<string, string>> = {
   NO_DEFAULT_VARIANT:
     'The component has no primary variant and none in the workspace default language, so the plugin cannot tell which one to write. Check the component in the CMS workspace.',
   OTHER_VARIANTS_SKIPPED:
-    'Only the default variant is written or deployed; the other variants named in the message stay as they are in the org.',
+    'Only the default variant is retrieved, deployed, published or unpublished; the other variants named in the message stay as they are in the org.',
   REFERENCE_UNRESOLVED:
     'The body references a content key that is not a component of this workspace; it was kept as the native content key. A deploy into another workspace cannot resolve it.',
   INVALID_FILE_NAME:

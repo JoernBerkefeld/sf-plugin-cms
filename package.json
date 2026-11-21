@@ -42,7 +42,7 @@
     "topicSeparator": " ",
     "topics": {
       "cms": {
-        "description": "Marketing Cloud CMS content: list workspaces and channels, retrieve and deploy components."
+        "description": "Marketing Cloud CMS content: list workspaces and channels; retrieve, deploy, delete, publish and unpublish components."
       }
     }
   },

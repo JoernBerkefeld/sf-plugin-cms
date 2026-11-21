@@ -16,7 +16,13 @@ export type SelectedSource = {
   files: SourceFiles;
 };
 
-type Located = { baseDirectory: string; workspaceFolder: string; type: string; apiName: string };
+/** Where a selected component lives on disk. */
+export type Located = {
+  baseDirectory: string;
+  workspaceFolder: string;
+  type: string;
+  apiName: string;
+};
 
 async function isDirectory(target: string): Promise<boolean> {
   try {
@@ -66,6 +72,46 @@ async function componentsOfTypeFolder(
 }
 
 /**
+ * The component a file path `cms/<workspace>/<type>/<ApiName>.<type>.*` belongs to.
+ * @param {string} target - Path as given (for messages).
+ * @param {string} absolute - Resolved path of an existing file.
+ * @returns {Located} Component.
+ */
+function componentOfFilePath(target: string, absolute: string): Located {
+  const parts = absolute.split(path.sep);
+  const cmsIndex = parts.lastIndexOf(SOURCE_ROOT);
+  if (cmsIndex === -1 || cmsIndex !== parts.length - 4)
+    throw new CmsError('INVALID_SOURCE_PATH', `${target} is not cms/<workspace>/<type>/<file>`);
+  const [workspaceFolder, type, name] = parts.slice(cmsIndex + 1);
+  const apiName = name.split('.')[0];
+  if (!name.startsWith(`${apiName}.${type}.`))
+    throw new CmsError('INVALID_SOURCE_PATH', `${target} is not a file of a ${type} component`);
+  return { baseDirectory: parts.slice(0, cmsIndex).join(path.sep), workspaceFolder, type, apiName };
+}
+
+/**
+ * The component one `--source-dir` file names (the component JSON or a companion). A folder is
+ * refused: commands that change the org's state take exact components only.
+ * @param {string} target - Path as given.
+ * @returns {Promise<Located>} Component.
+ */
+export async function componentOfFile(target: string): Promise<Located> {
+  const absolute = path.resolve(target);
+  let stats;
+  try {
+    stats = await lstat(absolute);
+  } catch {
+    throw new CmsError('SOURCE_NOT_FOUND', `${target} does not exist`);
+  }
+  if (!stats.isFile())
+    throw new CmsError(
+      'INVALID_SELECTOR',
+      `${target} is not a component file; name single components (cms/<workspace>/<type>/<ApiName>.<type>.json)`,
+    );
+  return componentOfFilePath(target, absolute);
+}
+
+/**
  * The components a `--source-dir` path names: a component file (or companion), a type folder,
  * a workspace folder, `cms/` itself, or a directory that holds `cms/`.
  * @param {string} target - Path as given.
@@ -81,20 +127,10 @@ async function componentsOfPath(target: string): Promise<Located[]> {
   }
   const parts = absolute.split(path.sep);
   const cmsIndex = parts.lastIndexOf(SOURCE_ROOT);
-  if (stats.isFile()) {
-    if (cmsIndex === -1 || cmsIndex !== parts.length - 4)
-      throw new CmsError('INVALID_SOURCE_PATH', `${target} is not cms/<workspace>/<type>/<file>`);
-    const [workspaceFolder, type, name] = parts.slice(cmsIndex + 1);
-    const apiName = name.split('.')[0];
-    if (!name.startsWith(`${apiName}.${type}.`))
-      throw new CmsError('INVALID_SOURCE_PATH', `${target} is not a file of a ${type} component`);
-    return [
-      { baseDirectory: parts.slice(0, cmsIndex).join(path.sep), workspaceFolder, type, apiName },
-    ];
-  }
+  if (stats.isFile()) return [componentOfFilePath(target, absolute)];
   if (!stats.isDirectory() || stats.isSymbolicLink())
     throw new CmsError('INVALID_SOURCE_PATH', `${target} is neither a file nor a folder`);
-  const depth = cmsIndex < 0 ? -1 : parts.length - 1 - cmsIndex;
+  const depth = cmsIndex === -1 ? -1 : parts.length - 1 - cmsIndex;
   if (depth < 0 || depth > 2) {
     if (await isDirectory(path.join(absolute, SOURCE_ROOT)))
       return componentsOfPath(path.join(absolute, SOURCE_ROOT));
