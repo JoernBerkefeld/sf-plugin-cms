@@ -10,6 +10,24 @@ export const workspace = {
 };
 
 /**
+ * A small `sourceObject` in the shape of the `Marketing` data graph (v68): root fields and one
+ * related object with its fields.
+ */
+export const MARKETING_GRAPH_ROOT = {
+  name: 'UnifiedssotIndividualMkt__dlm',
+  fields: ['ssot__BirthDate__c', 'ssot__CreatedDate__c', 'ssot__FirstName__c', 'ssot__Id__c'].map(
+    (sourceFieldName) => ({ sourceFieldName }),
+  ),
+  relatedObjects: [
+    {
+      name: 'UnifiedssotContactPointAddressMkt__dlm',
+      fields: [{ sourceFieldName: 'ssot__PartyId__c' }, { sourceFieldName: 'ssot__Id__c' }],
+      relatedObjects: [],
+    },
+  ],
+};
+
+/**
  * A Salesforce error as jsforce throws it.
  * @param {number} statusCode HTTP status.
  * @param {string} errorCode Salesforce error code.
@@ -24,7 +42,8 @@ export const salesforceError = (statusCode, errorCode, message = errorCode) =>
  * update, publish/unpublish, delete, the Data 360 data space list and data graph read, and
  * Campaign and RecordType SOQL by ID and by lookup fields (case-insensitive, as SOQL compares).
  * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
- *   Stored variants, child folders by parent ID, data space names, data graph -> data space,
+ *   Stored variants, child folders by parent ID, data space names, data graph -> data space (its
+ *   root is MARKETING_GRAPH_ROOT) or `{ dataspace, sourceObject }`,
  *   Campaign rows `{ Id, Name }`, RecordType rows `{ Id, SobjectType, DeveloperName }`.
  * @returns {{ answer: Function; variants: Map; folders: object }} Answer function and stores.
  */
@@ -55,7 +74,14 @@ export function fakeOrg(state = {}) {
     }
     const graph = /^\/ssot\/data-graphs\/(\w+)$/u.exec(url)?.[1];
     if (graph) {
-      if (graphs[graph]) return { name: graph, dataspaceName: graphs[graph], status: 'ready' };
+      const stored = graphs[graph];
+      if (stored) {
+        const { dataspace, sourceObject } =
+          typeof stored === 'string'
+            ? { dataspace: stored, sourceObject: MARKETING_GRAPH_ROOT }
+            : stored;
+        return { name: graph, dataspaceName: dataspace, status: 'ready', sourceObject };
+      }
       throw salesforceError(400, 'INTERNAL_ERROR', `Data Graph not found with name ${graph}`);
     }
     const sobject = /FROM (Campaign|RecordType) /u.exec(url)?.[1];

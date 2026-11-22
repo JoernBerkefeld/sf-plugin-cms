@@ -22,6 +22,8 @@ export const hints: Readonly<Record<string, string>> = {
     'A data graph provider of the component names a data space the destination org does not have. Create the data space there (or change the provider), then rerun.',
   DATA_GRAPH_NOT_IN_DESTINATION:
     'A data graph provider of the component names a data graph the destination data space does not have. Deploy the data graph there first (for example with sf-plugin-data), then rerun.',
+  DATA_GRAPH_ATTRIBUTE_MISSING:
+    'A merge field of the component reads attributes (related objects and fields, named in the message) that the destination data graph does not have; Salesforce would accept the component and show those merge fields empty. Add them to the data graph in the destination, for example with sf-plugin-data: sf data360 deploy -m data-graph:<name> --dataspace <space> --allow-processing, then rerun.',
   FOLDER_AMBIGUOUS:
     'Several folders in the destination have that name at the same level, so the plugin cannot tell which one to use. Rename one of them in the workspace, then rerun.',
   FOLDER_NOT_MOVED:

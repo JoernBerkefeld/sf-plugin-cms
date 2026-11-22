@@ -341,6 +341,24 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - This plugin never creates data spaces or data graphs. Deploy data graphs with
   [sf-plugin-data](https://github.com/JoernBerkefeld/sf-plugin-data) first.
 
+### Merge fields across orgs
+
+- Merge fields read attributes of the data graph: fields of its main object, or fields of a
+  related object (such as an address of the person).
+- Salesforce accepts a component whose merge field reads an attribute the data graph does not
+  have. The merge field then just shows nothing. So deploy checks this first.
+- Before writing, deploy reads the data graph in the destination org (read-only) and checks
+  that it has every attribute the merge fields use. If one is missing, the deploy is refused
+  (`DATA_GRAPH_ATTRIBUTE_MISSING`), in preview too. The message names the data graph, the data
+  space and each missing attribute.
+- To fix it, add the attributes to the data graph in the destination org, for example with
+  sf-plugin-data: `sf data360 deploy -m data-graph:<name> --dataspace <space> --allow-processing`.
+  Then deploy the content again.
+- This works for every type with a data graph source: emails, email fragments, landing pages
+  and their templates, web fragments, SMS, push, in-app, RCS, WhatsApp session messages and
+  expressions.
+- Each data graph is read once per deploy, however many components use it.
+
 ## Per-type notes
 
 ### Email

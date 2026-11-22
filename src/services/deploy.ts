@@ -47,7 +47,7 @@ import {
 import type { MultipartBody } from '../transport/multipart.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
 import { dependencyOrder, type SelectedSource } from './deploy-selection.js';
-import { checkDataGraphReferences, dataGraphReferences } from './data-graph-check.js';
+import { checkDataGraphReferences, dataGraphUsages } from './data-graph-check.js';
 import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
 import { mediaOf } from './media.js';
@@ -429,7 +429,7 @@ export async function deployComponents(
         );
       const graphBlocks = await checkDataGraphReferences(
         connection,
-        dataGraphReferences(payload.contentBody),
+        dataGraphUsages(payload.contentBody),
       );
       if (graphBlocks.length > 0)
         throw new CmsError(
