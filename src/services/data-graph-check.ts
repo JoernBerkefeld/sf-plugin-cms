@@ -307,8 +307,13 @@ export async function checkDataGraphReferences(
     cache = { graphs: new Map() };
     caches.set(connection, cache);
   }
-  cache.dataSpaces ??= readDataSpaces(connection);
-  const dataSpaces = await cache.dataSpaces;
+  const current = cache;
+  // A failed read leaves the cache before it is re-thrown, so a later check reads again.
+  current.dataSpaces ??= readDataSpaces(connection).catch((error: unknown) => {
+    current.dataSpaces = undefined;
+    throw error;
+  });
+  const dataSpaces = await current.dataSpaces;
   const blocks: DataGraphBlock[] = [];
   for (const reference of references) {
     const { dataGraphApiName, dataspace } = reference;
@@ -321,7 +326,10 @@ export async function checkDataGraphReferences(
     }
     let pending = cache.graphs.get(dataGraphApiName);
     if (!pending) {
-      pending = readDataGraph(connection, dataGraphApiName);
+      pending = readDataGraph(connection, dataGraphApiName).catch((error: unknown) => {
+        current.graphs.delete(dataGraphApiName);
+        throw error;
+      });
       cache.graphs.set(dataGraphApiName, pending);
     }
     const graph = await pending;
@@ -347,7 +355,7 @@ export async function checkDataGraphReferences(
     if (missing.length > 0)
       blocks.push({
         code: 'DATA_GRAPH_ATTRIBUTE_MISSING',
-        message: `Data graph ${dataGraphApiName} in data space ${dataspace} of the destination org lacks ${missing.map((path) => path.join('.')).join(', ')}`,
+        message: `Data graph ${dataGraphApiName} in data space ${dataspace} of the destination org lacks ${missing.map((path) => path.join('.')).join(', ')}. Add them, e.g.: sf data360 deploy -m data-graph:${dataGraphApiName} --dataspace ${dataspace} --allow-processing`,
       });
   }
   return blocks;

@@ -350,7 +350,7 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Before writing, deploy reads the data graph in the destination org (read-only) and checks
   that it has every attribute the merge fields use. If one is missing, the deploy is refused
   (`DATA_GRAPH_ATTRIBUTE_MISSING`), in preview too. The message names the data graph, the data
-  space and each missing attribute.
+  space, each missing attribute and the sf-plugin-data command that adds them.
 - To fix it, add the attributes to the data graph in the destination org, for example with
   sf-plugin-data: `sf data360 deploy -m data-graph:<name> --dataspace <space> --allow-processing`.
   Then deploy the content again.

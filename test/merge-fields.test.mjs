@@ -11,7 +11,7 @@ import {
 } from '../lib/services/data-graph-check.js';
 import { deployComponents } from '../lib/services/deploy.js';
 import { fakeConnection } from './support/fake-connection.mjs';
-import { MARKETING_GRAPH_ROOT, fakeOrg, workspace } from './support/fake-org.mjs';
+import { MARKETING_GRAPH_ROOT, fakeOrg, salesforceError, workspace } from './support/fake-org.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const native = async (name) =>
@@ -188,12 +188,12 @@ test('check: present paths pass, a missing attribute or graph is refused with na
       {
         code: 'DATA_GRAPH_ATTRIBUTE_MISSING',
         message:
-          'Data graph Marketing in data space default of the destination org lacks ssot__Salutation__c, UnifiedssotContactPointAddressMkt__dlm.ssot__City__c, ssot__BirthDate__c.x',
+          'Data graph Marketing in data space default of the destination org lacks ssot__Salutation__c, UnifiedssotContactPointAddressMkt__dlm.ssot__City__c, ssot__BirthDate__c.x. Add them, e.g.: sf data360 deploy -m data-graph:Marketing --dataspace default --allow-processing',
       },
       {
         code: 'DATA_GRAPH_ATTRIBUTE_MISSING',
         message:
-          'Data graph ds2_CMSM_Graph in data space dataspace2 of the destination org lacks Amount__c',
+          'Data graph ds2_CMSM_Graph in data space dataspace2 of the destination org lacks Amount__c. Add them, e.g.: sf data360 deploy -m data-graph:ds2_CMSM_Graph --dataspace dataspace2 --allow-processing',
       },
       {
         code: 'DATA_GRAPH_NOT_IN_DESTINATION',
@@ -272,15 +272,42 @@ test('deploy: a missing attribute blocks in preview and run before any write', a
       [
         [
           'DATA_GRAPH_ATTRIBUTE_MISSING',
-          'Data graph Marketing in data space default of the destination org lacks ssot__Salutation__c',
+          'Data graph Marketing in data space default of the destination org lacks ssot__Salutation__c. Add them, e.g.: sf data360 deploy -m data-graph:Marketing --dataspace default --allow-processing',
         ],
       ],
     );
     assert.match(
       diagnostics.errors[0].hint,
-      /sf data360 deploy -m data-graph:<name> --dataspace <space> --allow-processing/u,
+      /with sf-plugin-data, using the command in the message/u,
     );
+    assert.doesNotMatch(diagnostics.errors[0].hint, /</u);
   }
+});
+
+test('check: a failed data space or graph read is not cached, the next check reads again', async () => {
+  const org = fakeOrg();
+  const failing = new Set(['/ssot/data-spaces', '/ssot/data-graphs/Marketing']);
+  const connection = fakeConnection((input) => {
+    const key = input.url.split('?')[0];
+    if (failing.has(key)) {
+      failing.delete(key);
+      throw salesforceError(500, 'SERVER_ERROR');
+    }
+    return org.answer(input);
+  });
+  const reference = { dataGraphApiName: 'Marketing', dataspace: 'default', paths: [] };
+  await assert.rejects(checkDataGraphReferences(connection, [reference]));
+  await assert.rejects(checkDataGraphReferences(connection, [reference]));
+  assert.deepEqual(await checkDataGraphReferences(connection, [reference]), []);
+  assert.deepEqual(await checkDataGraphReferences(connection, [reference]), []);
+  assert.equal(
+    connection.calls.filter((call) => call.input.url.startsWith('/ssot/data-spaces')).length,
+    2,
+  );
+  assert.equal(
+    connection.calls.filter((call) => call.input.url === '/ssot/data-graphs/Marketing').length,
+    2,
+  );
 });
 
 test('deploy: several components on one graph read it once, and present paths go ahead', async () => {
