@@ -237,6 +237,9 @@ would be removed. Deploy preview also lists the folders it would create.
   the same order (a landing page before its template and content blocks); publish goes the other
   way.
 - Folders are never deleted.
+- Deleted components stay in Salesforce's recycle bin. Until the bin is emptied, a component
+  with the same API name cannot be created in that workspace again: Salesforce refuses with
+  "You can't create multiple files with the same file name".
 
 ### Publish and unpublish
 
@@ -343,12 +346,15 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 
 ### Merge fields across orgs
 
+- Content deployed into another org keeps its merge fields as they are.
 - Merge fields read attributes of the data graph: fields of its main object, or fields of a
   related object (such as an address of the person).
+- The destination org needs the same data graph: the same name, in the same data space, with
+  every field the merge fields use. Moving content into another data space is not supported yet.
 - Salesforce accepts a component whose merge field reads an attribute the data graph does not
   have. The merge field then just shows nothing. So deploy checks this first.
-- Before writing, deploy reads the data graph in the destination org (read-only) and checks
-  that it has every attribute the merge fields use. If one is missing, the deploy is refused
+- Before writing, deploy reads the data graph in the destination org (read-only). A missing
+  data graph is refused (`DATA_GRAPH_NOT_IN_DESTINATION`), and so is a missing attribute
   (`DATA_GRAPH_ATTRIBUTE_MISSING`), in preview too. The message names the data graph, the data
   space, each missing attribute and the sf-plugin-data command that adds them.
 - To fix it, add the attributes to the data graph in the destination org, for example with
@@ -358,6 +364,9 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   and their templates, web fragments, SMS, push, in-app, RCS, WhatsApp session messages and
   expressions.
 - Each data graph is read once per deploy, however many components use it.
+- Salesforce may refuse to delete a data graph ("Unable to delete Data Graph. Try again
+  later.") while deleted CMS items in the recycle bin still use it. This was observed; the cause
+  is not proven.
 
 ## Per-type notes
 
@@ -445,6 +454,8 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   for a landing page, its template (`sfdc_cms:template`). Deploy them in the same run, or make
   sure the destination workspace has them; deploy creates them first.
 - A landing page can be created while its template is still a draft.
+- In another org, publish the content blocks (web fragments) a page uses before the page. When
+  they are in the same run, the plugin publishes them first. The template can stay Draft.
 - Publishing a landing page makes its public URL live. Salesforce publishes a page or template
   only after the content blocks it embeds are published: publish them in the same run. Unpublish
   them in one run too: the plugin unpublishes the page first, then its template and content
