@@ -61,6 +61,8 @@
     "generate:check": "npm run compile && node scripts/generate-openapi.mjs --check",
     "test": "npm run compile && node scripts/run-tests.mjs",
     "prepare": "husky || true",
+    "verify:own-dependencies-latest": "node scripts/verify-own-dependencies-latest.mjs",
+    "preversion": "npm run verify:own-dependencies-latest",
     "prepack": "npm run clean && npm run compile"
   },
   "publishConfig": {
@@ -72,6 +74,7 @@
     "@oclif/core": "4.13.2",
     "@salesforce/core": "8.31.3",
     "@salesforce/sf-plugins-core": "12.2.0",
+    "salesforce-data360-rules": "0.2.0",
     "winston": "3.19.0"
   },
   "devDependencies": {

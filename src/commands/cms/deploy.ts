@@ -15,7 +15,7 @@ import type { JsonMutationOptions } from '../../transport/json-mutation.js';
 
 export default class Deploy extends CmsCommand<DeployResult> {
   public static readonly summary = 'Deploy local CMS component files into one workspace.';
-  public static readonly description = `Creates each named component in the workspace, or updates its default variant when a component with the same API name exists; an unchanged component is not written. References and folders are resolved by name in the workspace; missing folders of a new component's folderPath are created (preview lists them). Data graph providers must name a data space and data graph the org has. Nothing is written if a component is blocked; the deploy stops at the first failed write. Deploy never publishes. Types: ${HANDLERS.map((handler) => handler.type).join(', ')}.`;
+  public static readonly description = `Creates each named component in the workspace, or updates its default variant when a component with the same API name exists; an unchanged component is not written. References and folders are resolved by name in the workspace; missing folders of a new component's folderPath are created (preview lists them). Data graph providers must name a data space and data graph the org has. With --dataspace and --allow-cross-dataspace, a provider of another data space and its merge fields are renamed into that data space (checked against the data graph there). Nothing is written if a component is blocked; the deploy stops at the first failed write. Deploy never publishes. Types: ${HANDLERS.map((handler) => handler.type).join(', ')}.`;
   public static readonly examples = [
     '<%= config.bin %> <%= command.id %> -m email:Welcome_Email --workspace Default_Content_Workspace -o my-org --preview',
     '<%= config.bin %> <%= command.id %> -d cms/Default_Content_Workspace/email --workspace Cloud_Kicks -o my-org',
@@ -36,6 +36,16 @@ export default class Deploy extends CmsCommand<DeployResult> {
     workspace: Flags.string({
       required: true,
       summary: 'Destination workspace API name or ID (see sf cms list workspace).',
+    }),
+    dataspace: Flags.string({
+      summary:
+        'Data space the data graph providers must use; a provider of another data space is refused unless --allow-cross-dataspace is given. Omitted: providers are deployed as the files say.',
+    }),
+    'allow-cross-dataspace': Flags.boolean({
+      char: 'c',
+      summary:
+        'With --dataspace: rename every data graph provider of another data space, and the objects and fields of its merge fields, into the --dataspace data space.',
+      dependsOn: ['dataspace'],
     }),
     preview: Flags.boolean({
       summary: 'Report what the deploy would do; write nothing to the org or to local files.',
@@ -66,6 +76,9 @@ export default class Deploy extends CmsCommand<DeployResult> {
           preview: flags.preview,
           diagnostics: result.diagnostics,
           writeOptions: withWriteTimeout(this.writeOptions, flags.timeout),
+          ...(flags.dataspace === undefined
+            ? {}
+            : { dataspace: flags.dataspace, allowCrossDataspace: flags['allow-cross-dataspace'] }),
         });
         return outcome;
       },
@@ -74,6 +87,7 @@ export default class Deploy extends CmsCommand<DeployResult> {
       const details = [
         item.reason,
         item.changes?.length ? `changes: ${item.changes.join(', ')}` : undefined,
+        item.renames?.length ? `renamed: ${item.renames.join(', ')}` : undefined,
         item.dependencies?.length
           ? `${item.action ? `${item.action} ` : ''}after: ${item.dependencies.join(', ')}`
           : undefined,

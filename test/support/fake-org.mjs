@@ -41,8 +41,8 @@ export const salesforceError = (statusCode, errorCode, message = errorCode) =>
  * An in-memory org: one workspace with folders, variants, folder create, content create and
  * update, publish/unpublish, delete, the Data 360 data space list and data graph read, and
  * Campaign and RecordType SOQL by ID and by lookup fields (case-insensitive, as SOQL compares).
- * @param {{ variants?: object[]; folders?: object; dataSpaces?: string[]; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
- *   Stored variants, child folders by parent ID, data space names, data graph -> data space (its
+ * @param {{ variants?: object[]; folders?: object; dataSpaces?: Array<string | { name: string; prefix?: string }>; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
+ *   Stored variants, child folders by parent ID, data space names (or `{ name, prefix }`), data graph -> data space (its
  *   root is MARKETING_GRAPH_ROOT) or `{ dataspace, sourceObject }`,
  *   Campaign rows `{ Id, Name }`, RecordType rows `{ Id, SobjectType, DeveloperName }`.
  * @returns {{ answer: Function; variants: Map; folders: object }} Answer function and stores.
@@ -68,7 +68,9 @@ export function fakeOrg(state = {}) {
       const offset = Number(/offset=(\d+)/u.exec(url)[1]);
       // One data space per page, to cover paging.
       return {
-        dataSpaces: dataSpaces.slice(offset, offset + 1).map((name) => ({ name })),
+        dataSpaces: dataSpaces
+          .slice(offset, offset + 1)
+          .map((entry) => (typeof entry === 'string' ? { name: entry } : entry)),
         totalSize: dataSpaces.length,
       };
     }

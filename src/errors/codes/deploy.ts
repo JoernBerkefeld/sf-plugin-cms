@@ -24,6 +24,10 @@ export const hints: Readonly<Record<string, string>> = {
     'A data graph provider of the component names a data graph the destination data space does not have. Deploy the data graph there first (for example with sf-plugin-data), then rerun.',
   DATA_GRAPH_ATTRIBUTE_MISSING:
     'A merge field of the component reads attributes (related objects and fields, named in the message) that the destination data graph does not have; Salesforce would accept the component and show those merge fields empty. Add them to the data graph in the destination with sf-plugin-data, using the command in the message, then rerun.',
+  CROSS_DATASPACE_NOT_ALLOWED:
+    'A data graph provider of the component names another data space than --dataspace. Add --allow-cross-dataspace (-c) to rename the data graph and its merge fields into the --dataspace data space, or deploy without --dataspace, then rerun.',
+  CROSS_DATASPACE_UNRESOLVED:
+    "A data graph, object or field name of the component cannot be placed in the --dataspace data space: the target data graph has none, or several, of the names the data space rules allow, or the name would keep the old data space's spelling. The message names the component, the merge field and the names looked for. Add the object or field to the target data graph (or remove the extra one) with sf-plugin-data, then rerun.",
   FOLDER_AMBIGUOUS:
     'Several folders in the destination have that name at the same level, so the plugin cannot tell which one to use. Rename one of them in the workspace, then rerun.',
   FOLDER_NOT_MOVED:

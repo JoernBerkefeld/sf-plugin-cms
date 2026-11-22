@@ -351,7 +351,8 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
   `DATA_GRAPH_NOT_IN_DESTINATION`).
 - A provider without a data space (as in an expression) is checked in `default`.
 - Names are compared exactly. In data spaces other than `default`, Salesforce gives data graph
-  names a prefix; the file holds that prefixed name, and the plugin does not change it.
+  names a prefix; the file holds that prefixed name. Without `--dataspace` the plugin does not
+  change it (see "Merge fields across data spaces").
 - This plugin never creates data spaces or data graphs. Deploy data graphs with
   [sf-plugin-data](https://github.com/JoernBerkefeld/sf-plugin-data) first.
 
@@ -361,7 +362,7 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Merge fields read attributes of the data graph: fields of its main object, or fields of a
   related object (such as an address of the person).
 - The destination org needs the same data graph: the same name, in the same data space, with
-  every field the merge fields use. Moving content into another data space is not supported yet.
+  every field the merge fields use. To move content into another data space, see below.
 - Salesforce accepts a component whose merge field reads an attribute the data graph does not
   have. The merge field then just shows nothing. So deploy checks this first.
 - Before writing, deploy reads the data graph in the destination org (read-only). A missing
@@ -378,6 +379,44 @@ as `69.0`. Folder listing and folder creation need `68.0` or later.
 - Salesforce may refuse to delete a data graph ("Unable to delete Data Graph. Try again
   later.") while deleted CMS items in the recycle bin still use it. This was observed; the cause
   is not proven.
+
+### Merge fields across data spaces
+
+```bash
+sf cms deploy -o my-org --workspace Cloud_Kicks -m email:Welcome_Email --dataspace dataspace2 --allow-cross-dataspace --preview
+```
+
+- `--dataspace <name>`: the data space the content's data graphs must be in.
+- `--allow-cross-dataspace` (`-c`): rename a data graph of another data space, and its merge
+  fields, into the `--dataspace` data space. Same flag names as sf-plugin-data.
+- Without `--dataspace`, nothing is renamed. Content is deployed as the files say.
+- With `--dataspace` but without `-c`, a component whose data graph is in another data space is
+  refused before anything is written (`CROSS_DATASPACE_NOT_ALLOWED`). The message names the flag.
+- The renaming follows the data space rules of sf-plugin-data (package
+  [salesforce-data360-rules](https://www.npmjs.com/package/salesforce-data360-rules)). Example
+  for `default` → `dataspace2` (prefix `ds2`):
+  - data graph `Person_Graph` → `ds2_Person_Graph`, data space `default` → `dataspace2`
+  - standard object `ssot__Individual__dlm` → `ds2_Individual__dlm`, its field
+    `ssot__FirstName__c` → `FirstName__c`
+  - own object `Pet__dlm` → `ds2_Pet__dlm`, its fields keep their names
+  - and back the same way.
+- The way back to `default` is not always clear from the name: `ds2_Pet__dlm` can be the own
+  object `Pet__dlm` or the copy of a standard object `ssot__Pet__dlm`. So deploy reads the data
+  graph in the target data space (read-only) and checks every merge field against it, object by
+  object. Exactly one of the possible names must be in that data graph.
+- No name or more than one name found: the component is refused before anything is written
+  (`CROSS_DATASPACE_UNRESOLVED`). The message names the component, the merge field and the
+  names it looked for.
+- A data graph that keeps the old data space's spelling (for example a `dataspace2` data graph
+  with `ssot__FirstName__c`) is refused too. Salesforce would accept it, and the merge field
+  would stay empty.
+- Only the names are replaced. All other text of the component stays exactly as it was.
+- Then the usual check runs on the new names (`DATA_GRAPH_NOT_IN_DESTINATION`,
+  `DATA_GRAPH_ATTRIBUTE_MISSING`).
+- `--preview` (and the normal output, `renames` in `--json`) lists every rename per component:
+  `renamed: data graph … -> …, data space … -> …, merge field … -> …`.
+- An expression's data graph source names no data space. It is not moved into another data
+  space; such a component is refused (`CROSS_DATASPACE_UNRESOLVED`).
 
 ## Per-type notes
 

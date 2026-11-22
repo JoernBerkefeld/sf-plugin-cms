@@ -47,6 +47,7 @@ import {
 import type { MultipartBody } from '../transport/multipart.js';
 import type { WriteConnection } from '../transport/one-shot-connection.js';
 import { dependencyOrder, type SelectedSource } from './deploy-selection.js';
+import { renameIntoDataSpace } from './cross-dataspace.js';
 import { checkDataGraphReferences, dataGraphUsages } from './data-graph-check.js';
 import { folderPathCache, folderPlanner, type CreatedFolder } from './folders.js';
 import { inventoryOf, type InventoryItem } from './inventory.js';
@@ -80,6 +81,11 @@ export type DeployedItem = {
   action?: 'create' | 'update';
   /** Fields that differ from the destination (`title`, `contentBody.subjectLine`, `.html`). */
   changes?: string[];
+  /**
+   * With --dataspace: what was renamed into that data space (`data graph A -> B`,
+   * `data space a -> b`, `merge field x.y -> x2.y2`).
+   */
+  renames?: string[];
   /** Components this one references that the same deploy creates first (`type:ApiName`). */
   dependencies?: string[];
   /** Code of the reason for blocked, failed, unknown or not-attempted. */
@@ -109,6 +115,13 @@ export type DeployOptions = {
   diagnostics: Diagnostics;
   /** Write transport options (tests pass `allowCallerConnection`). */
   writeOptions?: JsonMutationOptions;
+  /**
+   * --dataspace: data graph providers of another data space are renamed into it (with
+   * `allowCrossDataspace`) or refused; undefined = nothing is renamed.
+   */
+  dataspace?: string;
+  /** --allow-cross-dataspace. */
+  allowCrossDataspace?: boolean;
 };
 
 type Planned = {
@@ -314,7 +327,8 @@ export async function deployComponents(
   const plans: Planned[] = [];
   const plannedCreates = new Set<string>();
   for (const source of sources) {
-    const { handler, apiName, files } = source;
+    const { handler, apiName } = source;
+    let { files } = source;
     const component = `${handler.type}:${apiName}`;
     const item: DeployedItem = {
       type: handler.type,
@@ -325,6 +339,16 @@ export async function deployComponents(
     const plan: Planned = { source, item };
     plans.push(plan);
     try {
+      if (options.dataspace !== undefined) {
+        const renaming = await renameIntoDataSpace(connection, files, {
+          target: options.dataspace,
+          allowCrossDataspace: options.allowCrossDataspace === true,
+          component,
+        });
+        files = renaming.files;
+        plan.source = { ...source, files };
+        if (renaming.renames.length > 0) item.renames = renaming.renames;
+      }
       const payload = handler.fromSource(files, { workspace });
       plan.payload = payload;
       if (payload.file && !isMediaContentType(handler.apiName))

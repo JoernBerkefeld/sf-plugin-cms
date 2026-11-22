@@ -18,6 +18,7 @@ jobs:
       # Trusted publishing requires npm >=11.5.1, independently of Node's bundled npm.
       - run: npm install --global npm@11.5.1
       - run: npm ci --no-workspaces
+      - run: npm run verify:own-dependencies-latest
       - run: npm run lint
       - run: npm test
       - run: npm pack --dry-run --json

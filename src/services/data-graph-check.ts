@@ -1,3 +1,4 @@
+import type { OrgDataSpace } from 'salesforce-data360-rules';
 import { CmsError } from '../errors/registry.js';
 import {
   CmsRequestError,
@@ -36,10 +37,16 @@ const DEFAULT_EXPRESSION_KEY = '$dataGraph';
 // Data spaces per page of `GET /ssot/data-spaces`; the list ends when `totalSize` names are read.
 const DATA_SPACE_PAGE_SIZE = 50;
 
-type Provider = DataGraphReference & { expressionKey: string };
+/** A data graph provider with the expression key its merge fields use (`$dataGraph`). */
+export type DataGraphProvider = DataGraphReference & { expressionKey: string };
 
-function providersOf(body: unknown): Provider[] {
-  const found = new Map<string, Provider>();
+/**
+ * Every data graph provider in a body with its expression key, distinct, in document order.
+ * @param {unknown} body - Payload body.
+ * @returns {DataGraphProvider[]} Providers.
+ */
+export function dataGraphProviders(body: unknown): DataGraphProvider[] {
+  const found = new Map<string, DataGraphProvider>();
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) {
       for (const item of value) visit(item);
@@ -75,21 +82,25 @@ function providersOf(body: unknown): Provider[] {
  * @returns {DataGraphReference[]} References.
  */
 export function dataGraphReferences(body: unknown): DataGraphReference[] {
-  return providersOf(body).map(({ dataGraphApiName, dataspace }) => ({
+  return dataGraphProviders(body).map(({ dataGraphApiName, dataspace }) => ({
     dataGraphApiName,
     dataspace,
   }));
 }
 
-/** A handlebars term: a string literal, a bare word or number, or a call `(helper args…)`. */
-type Term = { text: string } | { word: string } | Term[];
+/**
+ * A handlebars term: a string literal (with the offset of its text in the scanned string), a bare
+ * word or number, or a call `(helper args…)`.
+ */
+type Term = { text: string; start: number } | { word: string } | Term[];
 
 const TOKEN = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([()])|([^\s()"']+)/gu;
 const MUSTACHE = /\{\{\{?([^}]*)\}?\}\}/gu;
 
-function parseTerms(source: string): Term[] {
+function parseTerms(source: string, offset: number): Term[] {
   const stack: Term[][] = [[]];
-  for (const [, double, single, paren, word] of source.matchAll(TOKEN)) {
+  for (const match of source.matchAll(TOKEN)) {
+    const [, double, single, paren, word] = match;
     const top = stack.at(-1)!;
     if (paren === '(') {
       const call: Term[] = [];
@@ -97,7 +108,8 @@ function parseTerms(source: string): Term[] {
       stack.push(call);
     } else if (paren === ')') {
       if (stack.length > 1) stack.pop();
-    } else if (word === undefined) top.push({ text: double ?? single });
+    } else if (word === undefined)
+      top.push({ text: double ?? single, start: offset + match.index + 1 });
     else top.push({ word });
   }
   return stack[0];
@@ -106,8 +118,10 @@ function parseTerms(source: string): Term[] {
 const isWord = (term: Term | undefined, word: string): boolean =>
   term !== undefined && !Array.isArray(term) && 'word' in term && term.word === word;
 
-const textOf = (term: Term | undefined): string | undefined =>
-  term !== undefined && !Array.isArray(term) && 'text' in term ? term.text : undefined;
+const literalOf = (term: Term | undefined): { text: string; start: number } | undefined =>
+  term !== undefined && !Array.isArray(term) && 'text' in term ? term : undefined;
+
+const textOf = (term: Term | undefined): string | undefined => literalOf(term)?.text;
 
 /**
  * Attribute path read from `(get @root "<key>")`: walk out through the calls that take it as
@@ -115,27 +129,29 @@ const textOf = (term: Term | undefined): string | undefined =>
  * helpers (`sort` with its field, direction and type, `fallback`, …) add nothing.
  * @param {Term[]} start - The `(get @root "<key>")` call.
  * @param {Term[][]} ancestors - Enclosing calls, outermost first.
- * @returns {string[]} Path.
+ * @returns {MergeFieldSite} Path with the offset of each segment.
  */
-function pathFrom(start: Term[], ancestors: Term[][]): string[] {
-  const path: string[] = [];
+function pathFrom(start: Term[], ancestors: Term[][]): MergeFieldSite {
+  const site: MergeFieldSite = { path: [], starts: [] };
   let current = start;
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const parent = ancestors[index];
     if (parent[1] !== current) break;
-    const segment = textOf(parent[2]);
-    if ((isWord(parent[0], 'get') || isWord(parent[0], 'map')) && segment !== undefined)
-      path.push(segment);
+    const segment = literalOf(parent[2]);
+    if ((isWord(parent[0], 'get') || isWord(parent[0], 'map')) && segment !== undefined) {
+      site.path.push(segment.text);
+      site.starts.push(segment.start);
+    }
     current = parent;
   }
-  return path;
+  return site;
 }
 
-function handlebarsPaths(source: string, key: string, paths: string[][]): void {
+function handlebarsSites(source: string, key: string, sites: MergeFieldSite[]): void {
   const ancestors: Term[][] = [];
   const visit = (call: Term[]): void => {
     if (isWord(call[0], 'get') && isWord(call[1], '@root') && textOf(call[2]) === key) {
-      paths.push(pathFrom(call, ancestors));
+      sites.push(pathFrom(call, ancestors));
       return;
     }
     ancestors.push(call);
@@ -143,7 +159,48 @@ function handlebarsPaths(source: string, key: string, paths: string[][]): void {
     ancestors.pop();
   };
   // The mustache itself is a call: `{{fallback (…) ""}}` reads as `(fallback (…) "")`.
-  for (const [, inner] of source.matchAll(MUSTACHE)) visit(parseTerms(inner));
+  for (const match of source.matchAll(MUSTACHE)) {
+    // MUSTACHE takes a third brace when there is one, so the inner text starts after 2 or 3.
+    const open = match[0].startsWith('{{{') ? 3 : 2;
+    visit(parseTerms(match[1], match.index + open));
+  }
+}
+
+/**
+ * One merge field in a string: its attribute path and, per segment, the offset of the name in
+ * the string (inside the quotes of a handlebars literal, or after the dot of `{!$dataGraph.…}`).
+ */
+export type MergeFieldSite = { path: string[]; starts: number[] };
+
+/**
+ * The merge fields of one string read through the data graph expression key `key`, with the
+ * offset of every name (see dataGraphAttributePaths for what counts). In string order of the
+ * handlebars mustaches first, then of the `{!<key>.…}` references; not made distinct.
+ * @param {string} value - A string of the body.
+ * @param {string} [key] - Expression key of the provider.
+ * @returns {MergeFieldSite[]} Sites.
+ */
+export function mergeFieldSites(
+  value: string,
+  key: string = DEFAULT_EXPRESSION_KEY,
+): MergeFieldSite[] {
+  const sites: MergeFieldSite[] = [];
+  if (value.includes('@root')) handlebarsSites(value, key, sites);
+  const prefix = `{!${key}.`;
+  for (let start = value.indexOf(prefix); start !== -1; start = value.indexOf(prefix, start)) {
+    start += prefix.length;
+    const end = value.indexOf('}', start);
+    if (end === -1) break;
+    const site: MergeFieldSite = { path: [], starts: [] };
+    let at = start;
+    for (const segment of value.slice(start, end).split('.')) {
+      site.path.push(segment);
+      site.starts.push(at);
+      at += segment.length + 1;
+    }
+    sites.push(site);
+  }
+  return sites;
 }
 
 /**
@@ -161,17 +218,10 @@ export function dataGraphAttributePaths(
   key: string = DEFAULT_EXPRESSION_KEY,
 ): string[][] {
   const paths: string[][] = [];
-  const prefix = `{!${key}.`;
   const visit = (value: unknown): void => {
-    if (typeof value === 'string') {
-      if (value.includes('@root')) handlebarsPaths(value, key, paths);
-      for (let start = value.indexOf(prefix); start !== -1; start = value.indexOf(prefix, start)) {
-        start += prefix.length;
-        const end = value.indexOf('}', start);
-        if (end === -1) break;
-        paths.push(value.slice(start, end).split('.'));
-      }
-    } else if (Array.isArray(value)) for (const item of value) visit(item);
+    if (typeof value === 'string')
+      for (const site of mergeFieldSites(value, key)) paths.push(site.path);
+    else if (Array.isArray(value)) for (const item of value) visit(item);
     else if (isRecord(value)) for (const child of Object.values(value)) visit(child);
   };
   visit(body);
@@ -188,15 +238,15 @@ export function dataGraphAttributePaths(
  * @returns {DataGraphUsage[]} Usages, in document order.
  */
 export function dataGraphUsages(body: unknown): DataGraphUsage[] {
-  return providersOf(body).map(({ dataGraphApiName, dataspace, expressionKey }) => ({
+  return dataGraphProviders(body).map(({ dataGraphApiName, dataspace, expressionKey }) => ({
     dataGraphApiName,
     dataspace,
     paths: dataGraphAttributePaths(body, expressionKey),
   }));
 }
 
-async function readDataSpaces(connection: RequestConnection): Promise<Set<string>> {
-  const names = new Set<string>();
+async function readDataSpaces(connection: RequestConnection): Promise<OrgDataSpace[]> {
+  const spaces: OrgDataSpace[] = [];
   for (let offset = 0; ;) {
     const { data } = await requestJson<unknown>(
       connection,
@@ -207,14 +257,20 @@ async function readDataSpaces(connection: RequestConnection): Promise<Set<string
     const total = isRecord(data) ? data.totalSize : undefined;
     if (!Array.isArray(entries) || typeof total !== 'number')
       throw new CmsError('UNEXPECTED_RESPONSE', 'The data space list has no dataSpaces/totalSize');
-    for (const entry of entries) if (isRecord(entry)) names.add(String(entry.name));
+    for (const entry of entries)
+      if (isRecord(entry))
+        spaces.push(
+          typeof entry.prefix === 'string' && entry.prefix !== ''
+            ? { name: String(entry.name), prefix: entry.prefix }
+            : { name: String(entry.name) },
+        );
     offset += entries.length;
-    if (offset >= total || entries.length === 0) return names;
+    if (offset >= total || entries.length === 0) return spaces;
   }
 }
 
 /** A data graph as read: its data space (undefined = not named) and its root object, if any. */
-type GraphRead = { dataspace?: string; sourceObject?: Record<string, unknown> };
+export type GraphRead = { dataspace?: string; sourceObject?: Record<string, unknown> };
 
 /**
  * One data graph definition.
@@ -253,7 +309,7 @@ async function readDataGraph(
   }
 }
 
-const recordsOf = (value: unknown): Array<Record<string, unknown>> =>
+export const recordsOf = (value: unknown): Array<Record<string, unknown>> =>
   Array.isArray(value) ? value.filter((item) => isRecord(item)) : [];
 
 /**
@@ -281,10 +337,57 @@ function hasPath(root: Record<string, unknown>, path: string[]): boolean {
 }
 
 type Cache = {
-  dataSpaces?: Promise<Set<string>>;
+  dataSpaces?: Promise<OrgDataSpace[]>;
   graphs: Map<string, Promise<GraphRead | null>>;
 };
 const caches = new WeakMap<object, Cache>();
+
+function cacheOf(connection: RequestConnection): Cache {
+  let cache = caches.get(connection);
+  if (!cache) {
+    cache = { graphs: new Map() };
+    caches.set(connection, cache);
+  }
+  return cache;
+}
+
+/**
+ * The org's data spaces with their prefixes (`GET /ssot/data-spaces`, every page), read once
+ * per connection; a failed read is not cached.
+ * @param {RequestConnection} connection - Org connection.
+ * @returns {Promise<OrgDataSpace[]>} Data spaces.
+ */
+export async function orgDataSpaces(connection: RequestConnection): Promise<OrgDataSpace[]> {
+  const cache = cacheOf(connection);
+  cache.dataSpaces ??= readDataSpaces(connection).catch((error: unknown) => {
+    cache.dataSpaces = undefined;
+    throw error;
+  });
+  return cache.dataSpaces;
+}
+
+/**
+ * One data graph of the org (`GET /ssot/data-graphs/{name}`), read once per connection and name;
+ * a failed read is not cached.
+ * @param {RequestConnection} connection - Org connection.
+ * @param {string} name - Data graph API name.
+ * @returns {Promise<GraphRead | null>} The graph; null = no graph of that name.
+ */
+export async function orgDataGraph(
+  connection: RequestConnection,
+  name: string,
+): Promise<GraphRead | null> {
+  const cache = cacheOf(connection);
+  let pending = cache.graphs.get(name);
+  if (!pending) {
+    pending = readDataGraph(connection, name).catch((error: unknown) => {
+      cache.graphs.delete(name);
+      throw error;
+    });
+    cache.graphs.set(name, pending);
+  }
+  return pending;
+}
 
 /**
  * Check data graph references against the destination org, read-only: the data space must
@@ -302,18 +405,9 @@ export async function checkDataGraphReferences(
   references: Array<DataGraphReference | DataGraphUsage>,
 ): Promise<DataGraphBlock[]> {
   if (references.length === 0) return [];
-  let cache = caches.get(connection);
-  if (!cache) {
-    cache = { graphs: new Map() };
-    caches.set(connection, cache);
-  }
-  const current = cache;
   // A failed read leaves the cache before it is re-thrown, so a later check reads again.
-  current.dataSpaces ??= readDataSpaces(connection).catch((error: unknown) => {
-    current.dataSpaces = undefined;
-    throw error;
-  });
-  const dataSpaces = await current.dataSpaces;
+  const spaces = await orgDataSpaces(connection);
+  const dataSpaces = new Set(spaces.map((space) => space.name));
   const blocks: DataGraphBlock[] = [];
   for (const reference of references) {
     const { dataGraphApiName, dataspace } = reference;
@@ -324,15 +418,7 @@ export async function checkDataGraphReferences(
       });
       continue;
     }
-    let pending = cache.graphs.get(dataGraphApiName);
-    if (!pending) {
-      pending = readDataGraph(connection, dataGraphApiName).catch((error: unknown) => {
-        current.graphs.delete(dataGraphApiName);
-        throw error;
-      });
-      cache.graphs.set(dataGraphApiName, pending);
-    }
-    const graph = await pending;
+    const graph = await orgDataGraph(connection, dataGraphApiName);
     if (graph === null || (graph.dataspace !== undefined && graph.dataspace !== dataspace)) {
       blocks.push({
         code: 'DATA_GRAPH_NOT_IN_DESTINATION',
