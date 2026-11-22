@@ -133,6 +133,7 @@ test('an unknown workspace and a Salesforce error become diagnostics with exit c
       message: 'workspace.list: HTTP 403: INSUFFICIENT_ACCESS: Insufficient access',
       status: 403,
       salesforceErrorCode: 'INSUFFICIENT_ACCESS',
+      salesforceErrors: [{ errorCode: 'INSUFFICIENT_ACCESS', message: 'Insufficient access' }],
       hint: undefined,
     },
   );

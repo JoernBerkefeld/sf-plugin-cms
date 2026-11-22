@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { Flags } from '@salesforce/sf-plugins-core';
-import { CmsCommand, orgFlags, type CmsResult } from './command-base.js';
+import {
+  CmsCommand,
+  orgFlags,
+  withWriteTimeout,
+  writeTimeoutFlags,
+  type CmsResult,
+} from './command-base.js';
 import {
   parseExactSelection,
   runLifecycle,
@@ -14,6 +20,7 @@ import type { JsonMutationOptions } from './transport/json-mutation.js';
 /** Flags shared by delete, publish and unpublish. */
 export const lifecycleFlags = {
   ...orgFlags,
+  ...writeTimeoutFlags,
   metadata: Flags.string({
     char: 'm',
     multiple: true,
@@ -42,6 +49,7 @@ type LifecycleFlags = {
   'keep-local-files'?: boolean;
   'target-org'?: string;
   'api-version': string;
+  timeout?: number;
 };
 
 /** Base of `sf cms delete | publish | unpublish`. */
@@ -72,7 +80,7 @@ export abstract class LifecycleCommand extends CmsCommand<LifecycleResult> {
           diagnostics: result.diagnostics,
           keepLocalFiles: flags['keep-local-files'],
           projectDirectory,
-          writeOptions: this.writeOptions,
+          writeOptions: withWriteTimeout(this.writeOptions, flags.timeout),
           onPlanned: (items) => {
             outcome.items = items;
           },

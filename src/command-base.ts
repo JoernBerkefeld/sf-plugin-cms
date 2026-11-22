@@ -8,6 +8,7 @@ import {
 } from './logging.js';
 import { CmsError, formatDiagnostic, toDiagnostic, type Diagnostic } from './errors/registry.js';
 import { redactArgv, redactSecrets } from './transport/redact-secrets.js';
+import { DEFAULT_WRITE_TIMEOUT_MS } from './transport/json-request.js';
 
 export const DEFAULT_API_VERSION = '68.0';
 
@@ -42,6 +43,28 @@ export const orgFlags = {
     default: DEFAULT_API_VERSION,
   }),
 };
+
+/** Flag of commands that write: how long each write waits for Salesforce's answer. */
+export const writeTimeoutFlags = {
+  timeout: Flags.integer({
+    summary: `Seconds each write waits for Salesforce's answer before its outcome is reported as unknown (default ${DEFAULT_WRITE_TIMEOUT_MS / 1000}).`,
+    min: 1,
+  }),
+};
+
+/**
+ * Write options with the `--timeout` seconds applied, when the flag was given.
+ * @template T
+ * @param {T} options - Write options of the command.
+ * @param {number | undefined} seconds - `--timeout` value.
+ * @returns {T} Options with `timeoutMs` set from the flag.
+ */
+export function withWriteTimeout<T extends { timeoutMs?: number }>(
+  options: T,
+  seconds: number | undefined,
+): T {
+  return seconds === undefined ? options : { ...options, timeoutMs: seconds * 1000 };
+}
 
 /**
  * Base of all `sf cms` commands: one invocation log file per run (`logs/cms/`), the

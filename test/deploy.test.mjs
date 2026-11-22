@@ -322,6 +322,28 @@ test('deploy creates into the root, reads back once, then reports unchanged with
   assert.equal(second.writes.length, 0);
 });
 
+test('deploy waits 120 s for each write by default and --timeout seconds when given', async () => {
+  const files = await goldenFiles('email', 'Golden_Email_Code');
+  for (const [argv, timeout] of [
+    [[], 120_000],
+    [['--timeout', '300'], 300_000],
+  ]) {
+    const directory = await projectWith([files]);
+    const { result, calls, writes } = await deploy(
+      ['-m', 'email:Golden_Email_Code', ...argv],
+      fakeOrg(),
+      directory,
+    );
+    assert.equal(result.status, 'success');
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].options.timeout, timeout);
+    // Reads keep their own 30 s.
+    assert.ok(calls.some((call) => call.input.method === 'GET'));
+    for (const call of calls.filter((entry) => entry.input.method === 'GET'))
+      assert.equal(call.options.timeout, 30_000);
+  }
+});
+
 test('deploy updates the default variant only and warns about the others', async () => {
   const files = await goldenFiles('email', 'Golden_Email_Code');
   const directory = await projectWith([files]);
@@ -431,6 +453,35 @@ test('a write without an answer is unknown, sent once and never retried', async 
   assert.equal(result.result.items[0].reason, 'UNKNOWN_OUTCOME');
   assert.equal(writes.length, 1);
   assert.equal(result.diagnostics.errors[0].code, 'UNKNOWN_OUTCOME');
+});
+
+test('a client timeout says so: seconds, elapsed time and AbortError, not jsforce "10 minutes"', async () => {
+  const directory = await projectWith([await goldenFiles('email', 'Golden_Email_Code')]);
+  const org = fakeOrg({
+    fail: () => {
+      throw Object.assign(
+        new Error('The user aborted a request. Request was aborted due to timeout of 10 minutes.'),
+        { name: 'AbortError', type: 'aborted' },
+      );
+    },
+  });
+  const { result } = await deploy(
+    ['-m', 'email:Golden_Email_Code', '--timeout', '45'],
+    org,
+    directory,
+  );
+  assert.deepEqual(outcomes(result), [['Golden_Email_Code', 'unknown']]);
+  const [error] = result.diagnostics.errors;
+  assert.equal(error.code, 'UNKNOWN_OUTCOME');
+  assert.equal(
+    error.message,
+    'content.create: no answer from Salesforce within 45 s (client timeout); the change may still be applied',
+  );
+  assert.equal(error.timeoutMs, 45_000);
+  assert.equal(typeof error.elapsedMs, 'number');
+  assert.deepEqual(error.transportError, { name: 'AbortError' });
+  assert.ok(error.hint);
+  assert.doesNotMatch(JSON.stringify(result), /10 minutes/u);
 });
 
 test('an unresolved reference blocks the whole deploy before any write', async () => {

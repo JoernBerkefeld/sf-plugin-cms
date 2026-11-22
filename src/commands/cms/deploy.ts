@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { Flags } from '@salesforce/sf-plugins-core';
-import { CmsCommand, orgFlags, type CmsResult } from '../../command-base.js';
+import {
+  CmsCommand,
+  orgFlags,
+  withWriteTimeout,
+  writeTimeoutFlags,
+  type CmsResult,
+} from '../../command-base.js';
 import { HANDLERS } from '../../content/registry.js';
 import { deployComponents, type DeployResult } from '../../services/deploy.js';
 import { selectSources } from '../../services/deploy-selection.js';
@@ -16,6 +22,7 @@ export default class Deploy extends CmsCommand<DeployResult> {
   ];
   public static readonly flags = {
     ...orgFlags,
+    ...writeTimeoutFlags,
     metadata: Flags.string({
       char: 'm',
       multiple: true,
@@ -58,7 +65,7 @@ export default class Deploy extends CmsCommand<DeployResult> {
         outcome.items = await deployComponents(org.connection, workspace, sources, {
           preview: flags.preview,
           diagnostics: result.diagnostics,
-          writeOptions: this.writeOptions,
+          writeOptions: withWriteTimeout(this.writeOptions, flags.timeout),
         });
         return outcome;
       },

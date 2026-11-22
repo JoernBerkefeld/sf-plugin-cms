@@ -373,6 +373,24 @@ test('publish sends the default variant in the workspace context and reads the s
   assert.equal(org.rows.find((row) => row.language === 'de').published, false);
 });
 
+test('publish waits 120 s for each write by default; --timeout sets the seconds', async () => {
+  const directory = await projectWith([]);
+  for (const [argv, timeout] of [
+    [[], 120_000],
+    [['--timeout', '7'], 7000],
+  ]) {
+    const { result, writes } = await run(
+      'publish',
+      ['-m', 'email:One', ...argv],
+      fakeOrg([email('One', 1)]),
+      directory,
+    );
+    assert.equal(result.status, 'success');
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].options.timeout, timeout);
+  }
+});
+
 test('unpublish sends variantIds without includeContentReferences', async () => {
   const directory = await projectWith([]);
   const org = fakeOrg([email('One', 1, { published: true })]);

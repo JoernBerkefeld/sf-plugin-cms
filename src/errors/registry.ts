@@ -23,6 +23,13 @@ export type Diagnostic = {
   status?: number;
   salesforceErrorCode?: string;
   requestId?: string;
+  /** Every error entry Salesforce answered, with all their fields; the message leads with the first. */
+  salesforceErrors?: Record<string, unknown>[];
+  /** No HTTP answer: the client timeout in force and how long the request ran. */
+  timeoutMs?: number;
+  elapsedMs?: number;
+  /** No HTTP answer: what failed below HTTP, such as AbortError or FetchError ECONNRESET. */
+  transportError?: { name: string; code?: string };
 };
 
 const registry = new Map<string, ErrorCodeInfo>();
@@ -77,12 +84,19 @@ export function toDiagnostic(error: unknown, fallbackCode = 'REQUEST_FAILED'): D
       error.errorCode,
       error.responseMessage ?? error.message,
     ].filter(Boolean);
+    const more = (error.salesforceErrors?.length ?? 0) - 1;
     return withHint({
       code: error.status === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
-      message: `${error.operationKey}: ${answer.join(': ')}`,
+      message: `${error.operationKey}: ${answer.join(': ')}${
+        more > 0 ? ` (and ${more} more error${more === 1 ? '' : 's'}, see salesforceErrors)` : ''
+      }`,
       ...(error.status === undefined ? {} : { status: error.status }),
       ...(error.errorCode === undefined ? {} : { salesforceErrorCode: error.errorCode }),
       ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+      ...(error.salesforceErrors === undefined ? {} : { salesforceErrors: error.salesforceErrors }),
+      ...(error.timeoutMs === undefined ? {} : { timeoutMs: error.timeoutMs }),
+      ...(error.elapsedMs === undefined ? {} : { elapsedMs: error.elapsedMs }),
+      ...(error.transportError === undefined ? {} : { transportError: error.transportError }),
     });
   }
   return withHint({

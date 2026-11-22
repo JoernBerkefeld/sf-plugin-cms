@@ -10,6 +10,7 @@ import {
 } from '../lib/transport/json-request.js';
 import { requestEmptyMutation, requestJsonMutation } from '../lib/transport/json-mutation.js';
 import { runWithInvocationLogging } from '../lib/logging.js';
+import { toDiagnostic } from '../lib/errors/registry.js';
 import { fakeConnection } from './support/fake-connection.mjs';
 
 const fakeRequest = (promise, stream = new PassThrough()) =>
@@ -234,4 +235,173 @@ test('a write uses a token-only connection: a 401 is not refreshed or replayed',
   } finally {
     server.close();
   }
+});
+
+/**
+ * Run a local HTTP server for one test and give the write connection that points at it.
+ * @param {import('node:http').RequestListener} handler Request handler.
+ * @param {(connection: object) => Promise<void>} body Test body.
+ * @returns {Promise<void>} Done.
+ */
+async function withServer(handler, body) {
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = server.address();
+    await body({ accessToken: 'token', instanceUrl: `http://127.0.0.1:${port}`, version: '68.0' });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}
+
+test('reads wait 30 s and writes 120 s unless the caller sets a timeout', async () => {
+  const connection = fakeConnection(() => ({}));
+  await requestJson(connection, getSelectedOperation('workspace.list'));
+  await requestJsonMutation(
+    connection,
+    getSelectedOperation('variant.update'),
+    { contentBody: {} },
+    { path: { variantId: 'v' } },
+    { allowCallerConnection: true },
+  );
+  assert.deepEqual(
+    connection.calls.map((call) => call.options.timeout),
+    [30_000, 120_000],
+  );
+});
+
+test('a write without an answer in time is a client timeout, not "10 minutes"', async () => {
+  await withServer(
+    () => {
+      // Never answers.
+    },
+    async (connection) => {
+      const error = await rejection(() =>
+        requestJsonMutation(
+          connection,
+          getSelectedOperation('variant.update'),
+          { contentBody: {} },
+          { path: { variantId: 'v1' } },
+          { timeoutMs: 200 },
+        ),
+      );
+      assert.ok(error instanceof CmsRequestError);
+      assert.equal(
+        error.message,
+        'no answer from Salesforce within 0.2 s (client timeout); the change may still be applied',
+      );
+      assert.equal(error.requestSent, true);
+      assert.equal(error.statusObserved, false);
+      assert.equal(error.timeoutMs, 200);
+      assert.ok(error.elapsedMs >= 150);
+      assert.deepEqual(error.transportError, { name: 'AbortError' });
+      const diagnostic = toDiagnostic(error);
+      assert.equal(
+        diagnostic.message,
+        'variant.update: no answer from Salesforce within 0.2 s (client timeout); the change may still be applied',
+      );
+      assert.equal(diagnostic.timeoutMs, 200);
+      assert.deepEqual(diagnostic.transportError, { name: 'AbortError' });
+    },
+  );
+});
+
+test('a dropped connection keeps its error name and code', async () => {
+  await withServer(
+    (request) => request.socket.destroy(),
+    async (connection) => {
+      const error = await rejection(() =>
+        requestJsonMutation(connection, getSelectedOperation('content.create'), { title: 'T' }),
+      );
+      assert.equal(error.statusObserved, false);
+      assert.equal(error.transportError.name, 'FetchError');
+      assert.equal(error.transportError.code, 'ECONNRESET');
+      assert.equal(error.timeoutMs, 120_000);
+      assert.doesNotMatch(error.message, /client timeout/u);
+    },
+  );
+});
+
+test('every error entry Salesforce answers is kept; the message leads with the first', async () => {
+  const entries = [
+    {
+      errorCode: 'INVALID_API_INPUT',
+      message: 'AMPscript syntax error at line 3',
+      fields: ['contentBody.rawHtml'],
+      detail: { line: 3 },
+    },
+    { errorCode: 'FIELD_INTEGRITY_EXCEPTION', message: 'Subject is required', fields: ['subject'] },
+  ];
+  await withServer(
+    (_request, response) => {
+      response.writeHead(400, { 'content-type': 'application/json', 'sforce-request-id': 'R1' });
+      response.end(JSON.stringify(entries));
+    },
+    async (connection) => {
+      const logged = [];
+      const logger = { filePath: 'unused', log: (...a) => logged.push(a), close: async () => {} };
+      const error = await rejection(() =>
+        runWithInvocationLogging(logger, () =>
+          requestJsonMutation(
+            connection,
+            getSelectedOperation('variant.update'),
+            { contentBody: {} },
+            { path: { variantId: 'v1' } },
+          ),
+        ),
+      );
+      assert.equal(error.status, 400);
+      assert.equal(error.statusObserved, true);
+      assert.equal(error.errorCode, 'INVALID_API_INPUT');
+      assert.equal(error.transportError, undefined);
+      assert.equal(error.timeoutMs, undefined);
+      assert.deepEqual(error.salesforceErrors, entries);
+      assert.deepEqual(
+        { ...toDiagnostic(error), hint: undefined },
+        {
+          code: 'REQUEST_FAILED',
+          message:
+            'variant.update: HTTP 400: INVALID_API_INPUT: AMPscript syntax error at line 3 (and 1 more error, see salesforceErrors)',
+          status: 400,
+          salesforceErrorCode: 'INVALID_API_INPUT',
+          requestId: 'R1',
+          salesforceErrors: entries,
+          hint: undefined,
+        },
+      );
+      // The invocation log has the status and headers seen on the wire; the body only with --api log.
+      const failure = logged.find(([level]) => level === 'error')[2];
+      assert.equal(failure.status, 400);
+      assert.equal(failure.responseHeaders['sforce-request-id'], 'R1');
+      assert.equal(failure.rawBody, 'omitted: pass --api log to include bodies');
+    },
+  );
+});
+
+test('with --api log the raw answer body is logged', async () => {
+  await withServer(
+    (_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"managedContentVariantId":"9Ps1"}');
+    },
+    async (connection) => {
+      const logged = [];
+      const logger = { filePath: 'unused', log: (...a) => logged.push(a), close: async () => {} };
+      await runWithInvocationLogging(
+        logger,
+        () =>
+          requestJsonMutation(
+            connection,
+            getSelectedOperation('variant.update'),
+            { contentBody: {} },
+            { path: { variantId: 'v1' } },
+          ),
+        true,
+      );
+      const answer = logged.at(-1)[2];
+      assert.equal(answer.status, 200);
+      assert.equal(answer.rawBody, '{"managedContentVariantId":"9Ps1"}');
+    },
+  );
 });

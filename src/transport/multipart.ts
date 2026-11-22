@@ -4,6 +4,7 @@ import type { Duplex } from 'node:stream';
 import { logApiEvent } from '../logging.js';
 import {
   checkRequestOptions,
+  DEFAULT_WRITE_TIMEOUT_MS,
   CmsRequestError,
   isRecord,
   sentRequestError,
@@ -181,7 +182,7 @@ export async function sendMultipart(
   multipart: MultipartBody,
   options: JsonRequestOptions = {},
 ): Promise<unknown> {
-  const timeoutMs = checkRequestOptions(operationKey, options);
+  const timeoutMs = checkRequestOptions(operationKey, options, DEFAULT_WRITE_TIMEOUT_MS);
   const receiver = oneShotConnection(connection, operationKey, true);
   const details = {
     requestId: randomUUID(),
@@ -221,15 +222,21 @@ export async function sendMultipart(
   options.signal?.addEventListener('abort', cancel, { once: true });
   try {
     const data = await request;
-    logApiEvent('response', details, data);
+    logApiEvent('response', { ...details, response: recorder.response() }, data);
     return data;
   } catch (error) {
-    logApiEvent('error', details, error);
+    logApiEvent('error', { ...details, response: recorder.response() }, error);
     throw sentRequestError(
       operationKey,
       error,
       options.signal?.aborted === true,
       recorder.status(),
+      {
+        timeoutMs,
+        startedAt: details.startedAt,
+        write: true,
+        responseHeaders: recorder.response()?.headers,
+      },
     );
   } finally {
     options.signal?.removeEventListener('abort', cancel);

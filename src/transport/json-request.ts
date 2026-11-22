@@ -4,7 +4,7 @@ import { StreamPromise } from '@jsforce/jsforce-node/lib/util/promise.js';
 import type { Duplex } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { SELECTED_OPERATIONS, type SelectedOperation } from '../generated/operations.js';
-import { redactSecrets } from './redact-secrets.js';
+import { redactLogValue, redactSecrets } from './redact-secrets.js';
 import { logApiEvent } from '../logging.js';
 
 export type OperationKey = SelectedOperation['localKey'];
@@ -42,7 +42,11 @@ type RuntimeParameter = {
   type: 'boolean' | 'integer' | 'string' | 'string-array';
 };
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** Default wait for the answer to a read. */
+export const DEFAULT_READ_TIMEOUT_MS = 30_000;
+
+/** Default wait for the answer to a write; Salesforce has needed 41-65 s for an email update. */
+export const DEFAULT_WRITE_TIMEOUT_MS = 120_000;
 
 /**
  * Connect REST HTML-encodes `<`, `>`, `&`, `"` and `'` in every string of a response unless this
@@ -52,13 +56,34 @@ export const RAW_TEXT_HEADERS: Readonly<Record<string, string>> = Object.freeze(
   'X-Chatter-Entity-Encoding': 'false',
 });
 
+/** One error entry of a Salesforce error answer, with every field it holds (redacted). */
+export type SalesforceErrorEntry = Record<string, unknown>;
+
+/** What failed below HTTP when no answer came: the error's name and, if any, its code. */
+export type TransportFailure = { name: string; code?: string };
+
 /** What Salesforce answered for a failed request, plus whether the request left the plugin. */
 export type ErrorDetails = {
+  elapsedMs?: number;
   errorCode?: string;
   requestId?: string;
   requestSent?: boolean;
   responseMessage?: string;
+  salesforceErrors?: SalesforceErrorEntry[];
   statusObserved?: boolean;
+  timeoutMs?: number;
+  transportError?: TransportFailure;
+};
+
+/**
+ * The attempt a failure belongs to: its timeout, start time, whether it was a write and the
+ * response headers seen on the wire (jsforce drops them from its errors).
+ */
+export type RequestAttempt = {
+  timeoutMs: number;
+  startedAt: number;
+  write: boolean;
+  responseHeaders?: Record<string, unknown>;
 };
 
 /**
@@ -66,13 +91,17 @@ export type ErrorDetails = {
  * request without an observed status has an unknown outcome.
  */
 export class CmsRequestError extends Error {
+  public readonly elapsedMs?: number;
   public readonly errorCode?: string;
   public readonly operationKey: string;
   public readonly requestId?: string;
   public readonly requestSent: boolean;
   public readonly responseMessage?: string;
+  public readonly salesforceErrors?: SalesforceErrorEntry[];
   public readonly status?: number;
   public readonly statusObserved: boolean;
+  public readonly timeoutMs?: number;
+  public readonly transportError?: TransportFailure;
 
   public constructor(
     operationKey: string,
@@ -88,8 +117,12 @@ export class CmsRequestError extends Error {
     this.requestSent = details.requestSent ?? false;
     this.responseMessage =
       details.responseMessage === undefined ? undefined : redactSecrets(details.responseMessage);
+    this.salesforceErrors = details.salesforceErrors;
     this.status = status;
     this.statusObserved = details.statusObserved ?? status !== undefined;
+    this.timeoutMs = details.timeoutMs;
+    this.elapsedMs = details.elapsedMs;
+    this.transportError = details.transportError;
   }
 }
 
@@ -140,8 +173,8 @@ export function responseErrorDetails(error: unknown): ErrorDetails {
   const data =
     error.data ??
     (isRecord(error.response) && 'data' in error.response ? error.response.data : undefined);
-  const entries = Array.isArray(data) ? data : [data];
-  const entry = entries.length === 1 && isRecord(entries[0]) ? entries[0] : undefined;
+  const records = (Array.isArray(data) ? data : [data]).filter(isRecord);
+  const entry = records.at(0);
   let headers: Record<string, unknown> | undefined;
   if (isRecord(error.response) && isRecord(error.response.headers)) {
     headers = error.response.headers;
@@ -160,15 +193,35 @@ export function responseErrorDetails(error: unknown): ErrorDetails {
     ...(typeof entry?.message === 'string'
       ? { responseMessage: redactSecrets(entry.message) }
       : {}),
+    ...(records.length === 0
+      ? {}
+      : {
+          salesforceErrors: records.map(
+            (record) => structuredClone(redactLogValue(record)) as SalesforceErrorEntry,
+          ),
+        }),
   };
 }
 
+function transportFailure(error: unknown): TransportFailure | undefined {
+  if (!isRecord(error) || typeof error.name !== 'string') return undefined;
+  return {
+    name: error.name,
+    ...(typeof error.code === 'string' && error.code.length > 0 ? { code: error.code } : {}),
+  };
+}
+
+const seconds = (ms: number): string => `${ms / 1000} s`;
+
 /**
- * Wrap a rejection of a request that was sent.
+ * Wrap a rejection of a request that was sent. Without an HTTP answer the error keeps what
+ * failed below HTTP, the timeout and the elapsed time. The client's own timeout (jsforce aborts
+ * the fetch, and its text claims "10 minutes" whatever the timeout was) is said as such.
  * @param {string} operationKey - Operation that failed.
  * @param {unknown} error - Rejection.
  * @param {boolean} cancelled - Whether the caller aborted.
  * @param {number} [observedStatus] - Status seen on the wire, when known.
+ * @param {RequestAttempt} [attempt] - Timeout, start time and write flag of the request.
  * @returns {CmsRequestError} Wrapped error.
  */
 export function sentRequestError(
@@ -176,17 +229,34 @@ export function sentRequestError(
   error: unknown,
   cancelled: boolean,
   observedStatus?: number,
+  attempt?: RequestAttempt,
 ): CmsRequestError {
   if (error instanceof CmsRequestError) return error;
-  const message = cancelled
-    ? 'CMS request cancelled'
-    : redactSecrets(
-        (error instanceof Error ? error.message : String(error)) || 'CMS request failed',
-      );
+  const statusObserved = observedStatus !== undefined || hasNumericStatus(error);
+  const timedOut = !cancelled && !statusObserved && isRecord(error) && error.name === 'AbortError';
+  let message: string;
+  if (cancelled) message = 'CMS request cancelled';
+  else if (timedOut && attempt)
+    message = `no answer from Salesforce within ${seconds(attempt.timeoutMs)} (client timeout)${
+      attempt.write ? '; the change may still be applied' : ''
+    }`;
+  else
+    message = redactSecrets(
+      (error instanceof Error ? error.message : String(error)) || 'CMS request failed',
+    );
+  const transportError = statusObserved ? undefined : transportFailure(error);
+  const details = responseErrorDetails(error);
+  const wireRequestId = attempt?.responseHeaders?.['sforce-request-id'];
+  if (details.requestId === undefined && typeof wireRequestId === 'string' && wireRequestId)
+    details.requestId = redactSecrets(wireRequestId);
   return new CmsRequestError(operationKey, message, observedStatus ?? errorStatus(error), {
-    ...responseErrorDetails(error),
+    ...details,
     requestSent: true,
-    statusObserved: observedStatus !== undefined || hasNumericStatus(error),
+    statusObserved,
+    ...(statusObserved || !attempt
+      ? {}
+      : { timeoutMs: attempt.timeoutMs, elapsedMs: Date.now() - attempt.startedAt }),
+    ...(transportError ? { transportError } : {}),
   });
 }
 
@@ -194,10 +264,15 @@ export function sentRequestError(
  * Reject a bad timeout or an already-aborted signal before anything is sent.
  * @param {string} operationKey - Operation to name in the error.
  * @param {JsonRequestOptions} options - Caller options.
+ * @param {number} defaultTimeoutMs - Timeout when the caller sets none.
  * @returns {number} Effective timeout in ms.
  */
-export function checkRequestOptions(operationKey: string, options: JsonRequestOptions): number {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+export function checkRequestOptions(
+  operationKey: string,
+  options: JsonRequestOptions,
+  defaultTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
+): number {
+  const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new CmsRequestError(operationKey, 'Request timeout must be a positive number');
   }
@@ -302,6 +377,13 @@ export function buildOperationUrl(
   return query.length > 0 ? `${requestPath}?${query}` : requestPath;
 }
 
+/** The final HTTP answer as it came over the wire (without cookies), for the invocation log. */
+export type ObservedResponse = {
+  status?: number;
+  headers: Record<string, unknown>;
+  body?: string;
+};
+
 /**
  * Request options that record the HTTP status of the final attempt, which jsforce's HttpApi
  * otherwise drops from its errors (a 404 tells "absent", a 401 "session"). HttpApi accepts a
@@ -313,11 +395,14 @@ export function buildOperationUrl(
 export function statusRecorder(connection: RequestConnection): {
   options: { transport?: Pick<Transport, 'httpRequest'> };
   status: () => number | undefined;
+  response: () => ObservedResponse | undefined;
 } {
-  let observed: number | undefined;
+  let observed: ObservedResponse | undefined;
+  const status = (): number | undefined => observed?.status;
+  const response = (): ObservedResponse | undefined => observed;
   const transport = (connection as RequestConnection & { _transport?: Transport })._transport;
   if (!transport || typeof transport.httpRequest !== 'function')
-    return { options: {}, status: () => observed };
+    return { options: {}, status, response };
   return {
     options: {
       transport: {
@@ -327,15 +412,24 @@ export function statusRecorder(connection: RequestConnection): {
           const pending = transport.httpRequest(request, transportOptions);
           return StreamPromise.create(() => ({
             stream: pending.stream(),
-            promise: pending.then((response) => {
-              observed = Number.isInteger(response.statusCode) ? response.statusCode : undefined;
-              return response;
+            promise: pending.then((answer) => {
+              const headers: Record<string, unknown> = isRecord(answer.headers)
+                ? { ...answer.headers }
+                : {};
+              delete headers['set-cookie'];
+              observed = {
+                ...(Number.isInteger(answer.statusCode) ? { status: answer.statusCode } : {}),
+                headers,
+                ...(typeof answer.body === 'string' ? { body: answer.body } : {}),
+              };
+              return answer;
             }),
           }));
         },
       },
     },
-    status: () => observed,
+    status,
+    response,
   };
 }
 
@@ -390,15 +484,21 @@ export async function requestJson<T>(
 
   try {
     const data = await request;
-    logApiEvent('response', event, data);
+    logApiEvent('response', { ...event, response: recorder.response() }, data);
     return { data, operationKey: operation.localKey, status: successStatus(operation) };
   } catch (error) {
-    logApiEvent('error', event, error);
+    logApiEvent('error', { ...event, response: recorder.response() }, error);
     throw sentRequestError(
       operation.localKey,
       error,
       options.signal?.aborted === true,
       recorder.status(),
+      {
+        timeoutMs,
+        startedAt: event.startedAt,
+        write: false,
+        responseHeaders: recorder.response()?.headers,
+      },
     );
   } finally {
     options.signal?.removeEventListener('abort', cancel);

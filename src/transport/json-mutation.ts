@@ -5,6 +5,7 @@ import {
   buildOperationUrl,
   checkRequestOptions,
   CmsRequestError,
+  DEFAULT_WRITE_TIMEOUT_MS,
   sentRequestError,
   statusRecorder,
   type JsonRequestOptions,
@@ -62,7 +63,7 @@ async function sendMutation<T>(
   body: JsonMutationBody | undefined,
   options: JsonMutationOptions,
 ): Promise<T> {
-  const timeoutMs = checkRequestOptions(operation.localKey, options);
+  const timeoutMs = checkRequestOptions(operation.localKey, options, DEFAULT_WRITE_TIMEOUT_MS);
   validateMutationOperation(operation, body !== undefined);
   const receiver = oneShotConnection(
     connection,
@@ -103,15 +104,21 @@ async function sendMutation<T>(
 
   try {
     const data = await request;
-    logApiEvent('response', event, data);
+    logApiEvent('response', { ...event, response: recorder.response() }, data);
     return data;
   } catch (error) {
-    logApiEvent('error', event, error);
+    logApiEvent('error', { ...event, response: recorder.response() }, error);
     throw sentRequestError(
       operation.localKey,
       error,
       options.signal?.aborted === true,
       recorder.status(),
+      {
+        timeoutMs,
+        startedAt: event.startedAt,
+        write: true,
+        responseHeaders: recorder.response()?.headers,
+      },
     );
   } finally {
     options.signal?.removeEventListener('abort', cancel);

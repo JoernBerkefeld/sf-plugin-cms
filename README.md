@@ -197,8 +197,12 @@ would be removed. Deploy preview also lists the folders it would create.
 - **Stops on the first failure.** A failed or unknown write stops the deploy; later components
   report `not-attempted`. Components already written stay written: there is no rollback.
 - **Unknown outcome.** When the plugin cannot tell whether a write happened (for example the
-  connection dropped), the result says `unknown`. Check the workspace before you run the deploy
-  again; the plugin never repeats a write by itself.
+  connection dropped, or Salesforce did not answer in time), the result says `unknown`. Check
+  the workspace before you run the deploy again; the plugin never repeats a write by itself.
+- **Time for each write.** Each write waits up to 120 seconds for Salesforce's answer; reads
+  wait 30 seconds. Updating an email can take Salesforce longer than a minute, and a write
+  that runs out of time may still be applied afterwards. `--timeout <seconds>` on deploy,
+  delete, publish and unpublish sets a longer or shorter wait for the writes.
 - **Read back.** After each write the plugin reads the component once and warns
   `READBACK_DIFFERS` if Salesforce stored something different from the file.
 - **Deploy never publishes.** A new component is a Draft. Use `sf cms publish` afterwards.
@@ -268,11 +272,18 @@ Hint: <what went wrong and what to do>
 When Salesforce refuses a request, the message shows its HTTP status, error code and
 explanation, and the request ID. With `--json`, the output has `status` (`success` or
 `failed`), `diagnostics` with `warnings` and `errors` (each with `code`, `message`, `hint` and,
-from Salesforce, `status`, `salesforceErrorCode` and `requestId`) and the per-component
-`result`. All codes and hints are in [docs/errors.md](docs/errors.md).
+from Salesforce, `status`, `salesforceErrorCode`, `requestId` and `salesforceErrors`, every
+error entry Salesforce answered with all its fields) and the per-component `result`. When
+several errors come back, the message shows the first one and says how many more there are.
+When no answer came, an error also has `timeoutMs`, `elapsedMs` and `transportError` (for
+example `{ "name": "AbortError" }` for the plugin's own timeout, or
+`{ "name": "FetchError", "code": "ECONNRESET" }` for a dropped connection). All codes and hints
+are in [docs/errors.md](docs/errors.md).
 
 Every command writes a log file under `logs/cms/` in the current directory and prints its path.
-`--api log` also writes the request and response bodies into it; they can hold your content.
+It holds each request with the HTTP status and response headers Salesforce answered. `--api log`
+also writes the request and response bodies into it, including the raw answer; they can hold
+your content.
 
 ### API version
 

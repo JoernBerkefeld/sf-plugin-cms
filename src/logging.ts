@@ -49,6 +49,8 @@ export function logApiEvent(
     status?: number;
     rawBody?: string;
     responseMetadata?: unknown;
+    /** The final HTTP answer as recorded on the wire, when the transport saw one. */
+    response?: { status?: number; headers: Record<string, unknown>; body?: string };
   },
   value?: unknown,
 ): void {
@@ -75,21 +77,26 @@ export function logApiEvent(
             error?.response?.statusCode,
             error?.response?.status,
           ].find((entry) => typeof entry === 'number' && Number.isInteger(entry));
+    const { response, ...rest } = details;
+    let rawBody = details.rawBody;
+    if (rawBody === undefined && response?.body !== undefined)
+      rawBody = context.apiEnabled ? response.body : 'omitted: pass --api log to include bodies';
     context.logger.log(
       phase === 'error' ? 'error' : 'debug',
       `CMS ${details.transport ?? 'JSON'} ${phase}`,
       redactLogValue({
-        ...details,
+        ...rest,
         elapsedMs: Date.now() - details.startedAt,
         ...(phase === 'request'
           ? {}
           : {
               status:
                 details.status ??
+                response?.status ??
                 status ??
                 'unavailable: parsed SDK boundary did not expose HTTP status',
-              rawBody:
-                details.rawBody ?? 'unavailable: parsed SDK boundary does not expose raw body',
+              rawBody: rawBody ?? 'unavailable: parsed SDK boundary does not expose raw body',
+              ...(response === undefined ? {} : { responseHeaders: response.headers }),
             }),
         ...(phase === 'error' ? { error: value } : {}),
         ...(context.apiEnabled && phase === 'request' ? { requestPayload: value ?? null } : {}),
