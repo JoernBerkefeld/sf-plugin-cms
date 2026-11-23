@@ -52,7 +52,7 @@ async function run(Command, argv, answer) {
   class Fake extends Command {
     resolveOrg = async (targetOrg, apiVersion) => {
       requested.push({ targetOrg, apiVersion });
-      return { connection, orgId: '00Daj000010xkZNEAY', username: 'user@example.com' };
+      return { connection, orgId: '00D000000000001AAA', username: 'user@example.com' };
     };
   }
   process.exitCode = undefined;
@@ -75,7 +75,7 @@ test('list workspace reads all pages and reports each workspace', async () => {
     ['/connect/cms/spaces?page=0', '/connect/cms/spaces?page=1'],
   );
   assert.equal(result.status, 'success');
-  assert.equal(result.metadata.orgId, '00Daj000010xkZNEAY');
+  assert.equal(result.metadata.orgId, '00D000000000001AAA');
   assert.deepEqual(result.result.workspaces[0], {
     id: '0Zuaj000008fDntCAE',
     apiName: 'Cloud_Kicks',

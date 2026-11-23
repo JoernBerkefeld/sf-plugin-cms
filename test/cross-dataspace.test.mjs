@@ -438,7 +438,14 @@ const UNIFIED_GRAPHS = {
     sourceObject: node(
       'UnifiedssotIndividualQx1__dlm',
       ['ssot__Id__c', 'ssot__FirstName__c'],
-      [node('UnifiedssotContactPointEmailQx1__dlm', ['ssot__EmailAddress__c'])],
+      [
+        node('UnifiedssotContactPointEmailQx1__dlm', ['ssot__EmailAddress__c']),
+        node(
+          'UnifiedLinkssotIndividualQx1__dlm',
+          [],
+          [node('ssot__Individual__dlm', ['ssot__Id__c'])],
+        ),
+      ],
     ),
   },
   ds2_Audience: {
@@ -446,7 +453,10 @@ const UNIFIED_GRAPHS = {
     sourceObject: node(
       'ds2_UnifiedIndividualQx2__dlm',
       ['Id__c', 'FirstName__c'],
-      [node('ds2_UnifiedContactPointEmailQx2__dlm', ['EmailAddress__c'])],
+      [
+        node('ds2_UnifiedContactPointEmailQx2__dlm', ['EmailAddress__c']),
+        node('ds2_UnifiedLinkIndividualQx2__dlm', [], [node('ds2_Individual__dlm', ['Id__c'])]),
+      ],
     ),
   },
 };
@@ -569,3 +579,65 @@ test('a failed ruleset read refuses the component and writes nothing', async () 
     /^email:CMSZ_Email: data graph ds2_Audience uses an identity resolution output \(Unified…\), and the identity resolution ruleset list \(GET \/ssot\/identity-resolutions\) that pairs it with its ruleset could not be read: /u,
   );
 });
+
+// A 3-segment path through the link object of the unified Individual to the (non-paired) standard
+// Individual, in a handlebars literal, a {!$dataGraph.…} reference and the HTML companion.
+const linked = (link, object, field) =>
+  `{{{fallback (get (map (map (get (get @root '$dataGraph') "${link}") "${object}") "${field}") 0) "-"}}}`;
+const linkedFiles = (graph, dataspace, [link, object, field]) => {
+  const files = emailFiles(
+    graph,
+    dataspace,
+    [expression('Id', linked(link, object, field))],
+    `Id {!$dataGraph.${link}.${object}.${field}}`,
+  );
+  files.companions = {
+    '.html': `<p>{!$dataGraph.${link}.${object}.${field}}</p>
+`,
+  };
+  return files;
+};
+const DEFAULT_LINK = ['UnifiedLinkssotIndividualQx1__dlm', 'ssot__Individual__dlm', 'ssot__Id__c'];
+const DS2_LINK = ['ds2_UnifiedLinkIndividualQx2__dlm', 'ds2_Individual__dlm', 'Id__c'];
+
+for (const [label, fromGraph, fromSpace, fromPath, toGraph, toSpace, toPath] of [
+  [
+    'default -> dataspace2',
+    'Audience',
+    'default',
+    DEFAULT_LINK,
+    'ds2_Audience',
+    'dataspace2',
+    DS2_LINK,
+  ],
+  [
+    'dataspace2 -> default',
+    'ds2_Audience',
+    'dataspace2',
+    DS2_LINK,
+    'Audience',
+    'default',
+    DEFAULT_LINK,
+  ],
+])
+  test(`${label}, unified link object to the standard Individual: 3-segment path renamed everywhere`, async () => {
+    const { item, body } = await deployEmail(linkedFiles(fromGraph, fromSpace, fromPath), {
+      org: unifiedOrg(),
+      dataspace: toSpace,
+      allowCrossDataspace: true,
+    });
+    assert.equal(item.outcome, 'created');
+    assert.deepEqual(providerOf(body), { dataGraphApiName: toGraph, dataspace: toSpace });
+    assert.deepEqual(valuesOf(body), [linked(...toPath)]);
+    assert.equal(body.text, `Id {!$dataGraph.${toPath.join('.')}}`);
+    assert.equal(
+      body.rawHtml,
+      `<p>{!$dataGraph.${toPath.join('.')}}</p>
+`,
+    );
+    assert.deepEqual(item.renames, [
+      `data graph ${fromGraph} -> ${toGraph}`,
+      `data space ${fromSpace} -> ${toSpace}`,
+      `merge field ${fromPath.join('.')} -> ${toPath.join('.')}`,
+    ]);
+  });
