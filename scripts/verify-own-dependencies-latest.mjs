@@ -41,6 +41,7 @@ export const OWNED_PACKAGES = [
   'sfmc-language-lsp',
   'sfmc-sdk',
   'ssjs-data',
+  'waba-devtools',
 ];
 
 /**
