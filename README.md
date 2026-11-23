@@ -407,6 +407,11 @@ sf cms deploy -o my-org --workspace Cloud_Kicks -m email:Welcome_Email --dataspa
 - No name or more than one name found: the component is refused before anything is written
   (`CROSS_DATASPACE_UNRESOLVED`). The message names the component, the merge field and the
   names it looked for.
+- Identity resolution outputs (`Unified…` objects) are paired through the org's identity
+  resolution rulesets, read only when such a name occurs: the output of the ruleset of the same
+  type in the target data space, its fields renamed like a standard object's. Without such a
+  ruleset, or when the list cannot be read, the component is refused
+  (`CROSS_DATASPACE_UNRESOLVED`) and the message names the missing ruleset.
 - A data graph that keeps the old data space's spelling (for example a `dataspace2` data graph
   with `ssot__FirstName__c`) is refused too. Salesforce would accept it, and the merge field
   would stay empty.

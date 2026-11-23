@@ -2,7 +2,8 @@ import type { OperationDescriptor } from './generate.js';
 
 // Operations the bundled v67 schema does not contain; described by hand (folder items and folder
 // create from the v68 reference, SOQL from the REST API: the only complete content inventory, the
-// Data 360 data space list and data graph read for the data graph provider check).
+// Data 360 data space list, data graph read and identity resolution ruleset list for the data
+// graph provider check and the cross-data-space deploy).
 export const SUPPLEMENTAL_OPERATIONS: readonly OperationDescriptor[] = [
   {
     localKey: 'data-graph.get',
@@ -23,6 +24,16 @@ export const SUPPLEMENTAL_OPERATIONS: readonly OperationDescriptor[] = [
       { location: 'query', name: 'offset', required: false, type: 'integer' },
     ],
     path: '/ssot/data-spaces',
+    requestBodyMediaTypes: [],
+    requestBodyPresent: false,
+    responses: [],
+  },
+  {
+    localKey: 'identity-resolution.list',
+    method: 'GET',
+    operationId: 'local:identity-resolution.list',
+    parameters: [],
+    path: '/ssot/identity-resolutions',
     requestBodyMediaTypes: [],
     requestBodyPresent: false,
     responses: [],

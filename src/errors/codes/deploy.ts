@@ -27,7 +27,7 @@ export const hints: Readonly<Record<string, string>> = {
   CROSS_DATASPACE_NOT_ALLOWED:
     'A data graph provider of the component names another data space than --dataspace. Add --allow-cross-dataspace (-c) to rename the data graph and its merge fields into the --dataspace data space, or deploy without --dataspace, then rerun.',
   CROSS_DATASPACE_UNRESOLVED:
-    "A data graph, object or field name of the component cannot be placed in the --dataspace data space: the target data graph has none, or several, of the names the data space rules allow, or the name would keep the old data space's spelling. The message names the component, the merge field and the names looked for. Add the object or field to the target data graph (or remove the extra one) with sf-plugin-data, then rerun.",
+    "A data graph, object or field name of the component cannot be placed in the --dataspace data space: the target data graph has none, or several, of the names the data space rules allow, the name would keep the old data space's spelling, or an identity resolution output (Unified…) has no ruleset that pairs it in the target data space (or the ruleset list could not be read). The message names the component, the merge field and the names looked for. Add the object or field to the target data graph (or remove the extra one) with sf-plugin-data, then rerun.",
   FOLDER_AMBIGUOUS:
     'Several folders in the destination have that name at the same level, so the plugin cannot tell which one to use. Rename one of them in the workspace, then rerun.',
   FOLDER_NOT_MOVED:

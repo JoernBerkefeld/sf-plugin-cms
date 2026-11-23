@@ -39,11 +39,13 @@ export const salesforceError = (statusCode, errorCode, message = errorCode) =>
 
 /**
  * An in-memory org: one workspace with folders, variants, folder create, content create and
- * update, publish/unpublish, delete, the Data 360 data space list and data graph read, and
+ * update, publish/unpublish, delete, the Data 360 data space list, data graph read and identity
+ * resolution ruleset list (only when `rulesets` is given; otherwise it answers 404), and
  * Campaign and RecordType SOQL by ID and by lookup fields (case-insensitive, as SOQL compares).
- * @param {{ variants?: object[]; folders?: object; dataSpaces?: Array<string | { name: string; prefix?: string }>; graphs?: object; campaigns?: object[]; recordTypes?: object[] }} state
+ * @param {{ variants?: object[]; folders?: object; dataSpaces?: Array<string | { name: string; prefix?: string }>; graphs?: object; rulesets?: object[]; campaigns?: object[]; recordTypes?: object[] }} state
  *   Stored variants, child folders by parent ID, data space names (or `{ name, prefix }`), data graph -> data space (its
- *   root is MARKETING_GRAPH_ROOT) or `{ dataspace, sourceObject }`,
+ *   root is MARKETING_GRAPH_ROOT) or `{ dataspace, sourceObject }`, `identityResolutions` entries
+ *   of the ruleset list,
  *   Campaign rows `{ Id, Name }`, RecordType rows `{ Id, SobjectType, DeveloperName }`.
  * @returns {{ answer: Function; variants: Map; folders: object }} Answer function and stores.
  */
@@ -74,6 +76,8 @@ export function fakeOrg(state = {}) {
         totalSize: dataSpaces.length,
       };
     }
+    if (url === '/ssot/identity-resolutions' && state.rulesets)
+      return { identityResolutions: structuredClone(state.rulesets) };
     const graph = /^\/ssot\/data-graphs\/(\w+)$/u.exec(url)?.[1];
     if (graph) {
       const stored = graphs[graph];

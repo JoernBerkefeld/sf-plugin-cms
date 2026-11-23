@@ -403,3 +403,169 @@ test('a renamed component deployed again compares in the target spelling and is 
   assert.equal(again.item.outcome, 'unchanged');
   assert.equal(again.writes.length, 0);
 });
+
+// Identity resolution outputs (fictional ruleset IDs): the graph Audience in default has the
+// unified Individual of ruleset Individual_QX1 as its root; its copy ds2_Audience in dataspace2
+// has the output of ruleset ds2_Individual_QX2, whose ID differs, so only the ruleset list pairs them.
+const output = (space, id, entity) =>
+  space === 'default'
+    ? {
+        entityName: `ssot__${entity}__dlm`,
+        unifiedDmoName: `Unifiedssot${entity}${id}__dlm`,
+        linkDmoName: `UnifiedLinkssot${entity}${id}__dlm`,
+      }
+    : {
+        entityName: `ds2_${entity}__dlm`,
+        unifiedDmoName: `ds2_Unified${entity}${id}__dlm`,
+        linkDmoName: `ds2_UnifiedLink${entity}${id}__dlm`,
+      };
+const ruleset = (objectApiName, dataSpaceName, id) => ({
+  objectApiName,
+  dataSpaceName,
+  configurationType: 'Individual',
+  reconciliationRules: ['Individual', 'ContactPointEmail'].map((entity) =>
+    output(dataSpaceName, id, entity),
+  ),
+});
+const RULESETS = [
+  ruleset('Individual_QX1', 'default', 'Qx1'),
+  ruleset('ds2_Individual_QX2', 'dataspace2', 'Qx2'),
+];
+const UNIFIED_GRAPHS = {
+  ...GRAPHS,
+  Audience: {
+    dataspace: 'default',
+    sourceObject: node(
+      'UnifiedssotIndividualQx1__dlm',
+      ['ssot__Id__c', 'ssot__FirstName__c'],
+      [node('UnifiedssotContactPointEmailQx1__dlm', ['ssot__EmailAddress__c'])],
+    ),
+  },
+  ds2_Audience: {
+    dataspace: 'dataspace2',
+    sourceObject: node(
+      'ds2_UnifiedIndividualQx2__dlm',
+      ['Id__c', 'FirstName__c'],
+      [node('ds2_UnifiedContactPointEmailQx2__dlm', ['EmailAddress__c'])],
+    ),
+  },
+};
+const unifiedOrg = (rulesets = RULESETS) =>
+  fakeOrg({ dataSpaces: SPACES, graphs: UNIFIED_GRAPHS, rulesets });
+const rulesetReads = (calls) =>
+  calls.filter((call) => call.input.url.startsWith('/ssot/identity-resolutions')).length;
+
+test('default -> dataspace2, unified root and related output: paired from the ruleset list, read once', async () => {
+  const files = emailFiles(
+    'Audience',
+    'default',
+    [
+      expression('First', root('ssot__FirstName__c')),
+      expression('Mail', related('UnifiedssotContactPointEmailQx1__dlm', 'ssot__EmailAddress__c')),
+    ],
+    'Hi {!$dataGraph.ssot__FirstName__c}',
+  );
+  const { item, body, calls } = await deployEmail(files, {
+    org: unifiedOrg(),
+    dataspace: 'dataspace2',
+    allowCrossDataspace: true,
+  });
+  assert.equal(item.outcome, 'created');
+  assert.equal(rulesetReads(calls), 1);
+  assert.deepEqual(providerOf(body), { dataGraphApiName: 'ds2_Audience', dataspace: 'dataspace2' });
+  assert.deepEqual(valuesOf(body), [
+    root('FirstName__c'),
+    related('ds2_UnifiedContactPointEmailQx2__dlm', 'EmailAddress__c'),
+  ]);
+  assert.equal(body.text, 'Hi {!$dataGraph.FirstName__c}');
+  assert.deepEqual(item.renames, [
+    'data graph Audience -> ds2_Audience',
+    'data space default -> dataspace2',
+    'merge field ssot__FirstName__c -> FirstName__c',
+    'merge field UnifiedssotContactPointEmailQx1__dlm.ssot__EmailAddress__c -> ds2_UnifiedContactPointEmailQx2__dlm.EmailAddress__c',
+  ]);
+});
+
+test('dataspace2 -> default, unified root and related output: paired back, fields get ssot__', async () => {
+  const files = emailFiles('ds2_Audience', 'dataspace2', [
+    expression('First', root('FirstName__c')),
+    expression('Mail', related('ds2_UnifiedContactPointEmailQx2__dlm', 'EmailAddress__c')),
+  ]);
+  const { item, body } = await deployEmail(files, {
+    org: unifiedOrg(),
+    dataspace: 'default',
+    allowCrossDataspace: true,
+  });
+  assert.equal(item.outcome, 'created');
+  assert.deepEqual(providerOf(body), { dataGraphApiName: 'Audience', dataspace: 'default' });
+  assert.deepEqual(valuesOf(body), [
+    root('ssot__FirstName__c'),
+    related('UnifiedssotContactPointEmailQx1__dlm', 'ssot__EmailAddress__c'),
+  ]);
+});
+
+test('the ruleset list is read only when a Unified… name occurs', async () => {
+  const files = emailFiles('Person_Graph', 'default', [
+    expression('First', root('ssot__FirstName__c')),
+  ]);
+  const { item, calls } = await deployEmail(files, {
+    org: unifiedOrg(),
+    dataspace: 'dataspace2',
+    allowCrossDataspace: true,
+  });
+  assert.equal(item.outcome, 'created');
+  assert.equal(rulesetReads(calls), 0);
+});
+
+test('unpaired: a unified output whose target data space has no ruleset of its type is refused', async () => {
+  const files = emailFiles('Audience', 'default', [
+    expression('First', root('ssot__FirstName__c')),
+  ]);
+  const result = await deployEmail(files, {
+    org: unifiedOrg([RULESETS[0]]),
+    dataspace: 'dataspace2',
+    allowCrossDataspace: true,
+  });
+  assert.equal(result.item.outcome, 'blocked');
+  assert.equal(result.writes.length, 0);
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => [error.code, error.message]),
+    [
+      [
+        'CROSS_DATASPACE_UNRESOLVED',
+        'email:CMSZ_Email: merge fields of data graph Audience (default) cannot be placed in ds2_Audience (dataspace2): ssot__FirstName__c: ds2_UnifiedIndividualQx2__dlm (the root of the target graph): no identity resolution ruleset of dataspace2 lists it as an output, and no identity resolution ruleset of default has an output that is ds2_UnifiedIndividualQx2__dlm in dataspace2',
+      ],
+    ],
+  );
+  // A related output of a ruleset the source data space does not have.
+  const stray = emailFiles('Audience', 'default', [
+    expression('Mail', related('UnifiedssotContactPointEmailQx9__dlm', 'ssot__EmailAddress__c')),
+  ]);
+  const strayResult = await deployEmail(stray, {
+    org: unifiedOrg(),
+    dataspace: 'dataspace2',
+    allowCrossDataspace: true,
+  });
+  assert.equal(strayResult.item.outcome, 'blocked');
+  assert.match(
+    strayResult.diagnostics.errors[0].message,
+    /UnifiedssotContactPointEmailQx9__dlm \(in ds2_UnifiedIndividualQx2__dlm\): no identity resolution ruleset of default lists it as an output/u,
+  );
+});
+
+test('a failed ruleset read refuses the component and writes nothing', async () => {
+  const files = emailFiles('Audience', 'default', [
+    expression('First', root('ssot__FirstName__c')),
+  ]);
+  const { item, writes, diagnostics } = await deployEmail(files, {
+    org: fakeOrg({ dataSpaces: SPACES, graphs: UNIFIED_GRAPHS }),
+    dataspace: 'dataspace2',
+    allowCrossDataspace: true,
+  });
+  assert.deepEqual([item.outcome, item.reason], ['blocked', 'CROSS_DATASPACE_UNRESOLVED']);
+  assert.equal(writes.length, 0);
+  assert.match(
+    diagnostics.errors[0].message,
+    /^email:CMSZ_Email: data graph ds2_Audience uses an identity resolution output \(Unified…\), and the identity resolution ruleset list \(GET \/ssot\/identity-resolutions\) that pairs it with its ruleset could not be read: /u,
+  );
+});

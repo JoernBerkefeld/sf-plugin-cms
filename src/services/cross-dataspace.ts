@@ -2,12 +2,16 @@ import {
   DataSpaceListError,
   dmoCandidates,
   fieldCandidates,
+  pairedByRulesets,
+  placeDmo,
+  translateFieldName,
   translateUniqueName,
   type OrgDataSpace,
+  type RulesetEntry,
 } from 'salesforce-data360-rules';
 import type { SourceFiles } from '../content/types.js';
 import { CmsError } from '../errors/registry.js';
-import { isRecord, type RequestConnection } from '../transport/json-request.js';
+import { CmsRequestError, isRecord, type RequestConnection } from '../transport/json-request.js';
 import {
   checkDataGraphReferences,
   dataGraphAttributePaths,
@@ -15,6 +19,7 @@ import {
   mergeFieldSites,
   orgDataGraph,
   orgDataSpaces,
+  orgRulesets,
   recordsOf,
 } from './data-graph-check.js';
 
@@ -32,10 +37,25 @@ export type DataSpaceRenaming = {
   renames: string[];
 };
 
-/** The source and target data space of one provider, with the org's prefixes. */
-type Direction = { from: string; to: string; spaces: readonly OrgDataSpace[] };
+/**
+ * The source and target data space of one provider, with the org's prefixes and, when a path
+ * names an identity resolution output, the org's ruleset list.
+ */
+type Direction = {
+  from: string;
+  to: string;
+  spaces: readonly OrgDataSpace[];
+  rulesets?: readonly RulesetEntry[];
+};
 
 type GraphNode = Record<string, unknown>;
+
+/**
+ * A possible source name of an object of the target graph. `unified`: the name was paired with the
+ * target object from the ruleset list, so its fields follow the identity resolution output's
+ * field rule.
+ */
+type Owner = { name: string; unified?: boolean };
 
 const unresolved = (component: string, message: string): CmsError =>
   new CmsError('CROSS_DATASPACE_UNRESOLVED', `${component}: ${message}`);
@@ -58,16 +78,114 @@ function keepsOldSpelling(direction: Direction, name: string): boolean {
 }
 
 /**
- * The names an object of the target graph can have in the source data space (the root object is
- * never named in a path, so its source name comes from the target's).
+ * Whether the ruleset list is needed: the target graph's root or a path segment is an identity
+ * resolution output (`Unified…`), which the package pairs only from the ruleset list.
  * @param {Direction} direction - Source, target and prefixes.
- * @param {string} targetName - DMO name in the target graph.
- * @returns {string[]} Possible source names.
+ * @param {string} rootName - The target graph's root object.
+ * @param {string[][]} paths - Paths in the source spelling.
+ * @returns {boolean} Whether to read the rulesets.
  */
-function sourceNamesOf(direction: Direction, targetName: string): string[] {
-  return dmoCandidates(targetName, direction.to, direction.from, direction.spaces).map(
-    (candidate) => candidate.name,
+function needsRulesets(direction: Direction, rootName: string, paths: string[][]): boolean {
+  const { from, to, spaces } = direction;
+  return (
+    pairedByRulesets({ source: to, target: from, spaces }, rootName) ||
+    paths.some((path) =>
+      path.some((segment) => pairedByRulesets({ source: from, target: to, spaces }, segment)),
+    )
   );
+}
+
+/**
+ * The names an identity resolution output of `from` has in `to`, from the ruleset list: the
+ * package's placement (`placeDmo`), and every output of a ruleset of `to` that the package places
+ * back onto the name. The second way covers the direction whose entity the rules cannot place
+ * (`ds2_Individual__dlm` towards `default`).
+ * @param {Direction} direction - Prefixes and the ruleset list.
+ * @param {string} name - Output name in `from`.
+ * @param {string} from - Data space of the name.
+ * @param {string} to - Data space to name it in.
+ * @returns {{names: string[]} | {reason: string}} The paired names, or why there are none.
+ */
+function pairedNames(
+  direction: Direction,
+  name: string,
+  from: string,
+  to: string,
+): { names: string[] } | { reason: string } {
+  const { spaces } = direction;
+  const rulesets = direction.rulesets ?? [];
+  const names = new Set<string>();
+  const placed = placeDmo({ source: from, target: to, spaces, rulesets }, name);
+  if (!('reason' in placed)) names.add(placed.name);
+  for (const ruleset of rulesets) {
+    if (ruleset.dataSpace !== to) continue;
+    for (const output of ruleset.outputs)
+      for (const candidate of [output.unified, output.link]) {
+        if (candidate === undefined) continue;
+        const back = placeDmo({ source: to, target: from, spaces, rulesets }, candidate);
+        if (!('reason' in back) && back.name === name) names.add(candidate);
+      }
+  }
+  if (names.size > 0) return { names: [...names] };
+  return {
+    reason: `${'reason' in placed ? placed.reason : 'no ruleset pairs it'}, and no identity resolution ruleset of ${to} has an output that is ${name} in ${from}`,
+  };
+}
+
+/**
+ * The names an object of the target graph can have in the source data space (the root object is
+ * never named in a path, so its source name comes from the target's): the rules' candidates and,
+ * for an identity resolution output, the ruleset list's pairing.
+ * @param {Direction} direction - Source, target, prefixes and rulesets.
+ * @param {string} targetName - DMO name in the target graph.
+ * @returns {{owners: Owner[]} | {reason: string}} Possible source names, or why an output is unpaired.
+ */
+function sourceNamesOf(
+  direction: Direction,
+  targetName: string,
+): { owners: Owner[] } | { reason: string } {
+  const { from, to, spaces } = direction;
+  const owners: Owner[] = dmoCandidates(targetName, to, from, spaces).map((candidate) => ({
+    name: candidate.name,
+  }));
+  if (!pairedByRulesets({ source: to, target: from, spaces }, targetName)) return { owners };
+  const paired = pairedNames(direction, targetName, to, from);
+  if ('reason' in paired)
+    return { reason: `${targetName} (the root of the target graph): ${paired.reason}` };
+  for (const name of paired.names) owners.push({ name, unified: true });
+  return { owners };
+}
+
+/**
+ * The names a field can have on an object of the target graph, from one possible source name of
+ * that object. A ruleset-paired owner is an identity resolution output: its fields follow the
+ * package's field rule for outputs (as for a standard object's copy).
+ * @param {Direction} direction - Source, target and prefixes.
+ * @param {string} field - Field name in the source spelling.
+ * @param {Owner} owner - Possible source name of the object.
+ * @param {string} objectName - The object's name in the target graph.
+ * @returns {string[]} Possible field names.
+ */
+function fieldNamesOn(
+  direction: Direction,
+  field: string,
+  owner: Owner,
+  objectName: string,
+): string[] {
+  const { from, to, spaces } = direction;
+  const candidates = fieldCandidates(field, owner.name, from, to, spaces);
+  if (!owner.unified)
+    return candidates
+      .filter((candidate) => candidate.owner.name === objectName)
+      .map((candidate) => candidate.name);
+  const byRule = candidates
+    .filter((candidate) => candidate.owner.kind === 'unified')
+    .map((candidate) => candidate.name);
+  // An output of the oldest default ruleset has no rule shape; from default the field rule does
+  // not depend on the kind.
+  return byRule.length > 0
+    ? byRule
+    : [translateFieldName({ source: from, target: to, spaces }, 'unified', field).name];
 }
 
 /**
@@ -87,27 +205,35 @@ function placePath(
   const { from, to, spaces } = direction;
   const placed: string[] = [];
   let current = root;
-  let owners = sourceNamesOf(direction, String(root.name));
+  const rootOwners = sourceNamesOf(direction, String(root.name));
+  if ('reason' in rootOwners) return rootOwners;
+  let owners = rootOwners.owners;
   for (const [index, segment] of path.entries()) {
     const last = index === path.length - 1;
     const objects = recordsOf(current.relatedObjects);
     const fields = recordsOf(current.fields);
+    const at = `${segment} (in ${[String(root.name), ...placed].join('.')})`;
+    const paired = new Set<string>();
+    if (pairedByRulesets({ source: from, target: to, spaces }, segment)) {
+      const pairing = pairedNames(direction, segment, from, to);
+      if ('reason' in pairing) return { reason: `${at}: ${pairing.reason}` };
+      for (const name of pairing.names) paired.add(name);
+    }
     const considered = new Set<string>();
     const found = new Map<string, GraphNode | undefined>();
-    for (const candidate of dmoCandidates(segment, from, to, spaces)) {
-      considered.add(candidate.name);
-      const object = objects.find((entry) => entry.name === candidate.name);
-      if (object) found.set(candidate.name, object);
+    const objectNames = dmoCandidates(segment, from, to, spaces).map((candidate) => candidate.name);
+    for (const name of [...objectNames, ...paired]) {
+      considered.add(name);
+      const object = objects.find((entry) => entry.name === name);
+      if (object) found.set(name, object);
     }
     if (last)
       for (const owner of owners)
-        for (const candidate of fieldCandidates(segment, owner, from, to, spaces)) {
-          if (candidate.owner.name !== current.name) continue;
-          considered.add(candidate.name);
-          if (fields.some((field) => field.sourceFieldName === candidate.name))
-            found.set(candidate.name, found.get(candidate.name));
+        for (const name of fieldNamesOn(direction, segment, owner, String(current.name))) {
+          considered.add(name);
+          if (fields.some((field) => field.sourceFieldName === name))
+            found.set(name, found.get(name));
         }
-    const at = `${segment} (in ${[String(root.name), ...placed].join('.')})`;
     if (found.size !== 1) {
       const names = [...considered];
       if (found.size > 1)
@@ -129,13 +255,37 @@ function placePath(
     placed.push(name);
     if (object) {
       current = object;
-      owners = [segment];
+      owners = [{ name: segment, unified: paired.has(name) }];
     } else if (!last) return { reason: `${at} is a field, but the path goes on` };
   }
   const left = placed.find((name) => keepsOldSpelling(direction, name));
   if (left !== undefined)
     return { reason: `${left} is still spelled as in ${from} after the renaming` };
   return { path: placed };
+}
+
+/**
+ * The org's ruleset list for a path with an identity resolution output; a failed read refuses the
+ * component, since only the list pairs such a name (an expired session is thrown as it is).
+ * @param {RequestConnection} connection - Destination org connection.
+ * @param {string} component - `type:ApiName`, for messages.
+ * @param {string} graph - Target data graph, for messages.
+ * @returns {Promise<RulesetEntry[]>} Rulesets of every data space.
+ */
+async function rulesetsFor(
+  connection: RequestConnection,
+  component: string,
+  graph: string,
+): Promise<RulesetEntry[]> {
+  try {
+    return await orgRulesets(connection);
+  } catch (error) {
+    if (error instanceof CmsRequestError && error.status === 401) throw error;
+    throw unresolved(
+      component,
+      `data graph ${graph} uses an identity resolution output (Unified…), and the identity resolution ruleset list (GET /ssot/identity-resolutions) that pairs it with its ruleset could not be read: ${error instanceof Error ? error.message : String(error)}; nothing was written, rerun the deploy`,
+    );
+  }
 }
 
 /**
@@ -210,8 +360,10 @@ function renameProviders(
  * space is not `target` is renamed into it, the data graph by the prefix rule and each merge-field
  * path segment by segment against the target graph (the package's candidates; exactly one must
  * exist at each position). The names are replaced in place in the handlebars string literals and
- * `{!<key>.…}` references; nothing else changes. Read-only: the data space list and the target
- * graph are read once per connection (shared with the attribute check).
+ * `{!<key>.…}` references; nothing else changes. An identity resolution output (`Unified…`) is
+ * paired from the org's ruleset list, read only when a path or the target root names one.
+ * Read-only: the data space list, the target graph and the ruleset list are read once per
+ * connection (shared with the attribute check).
  * @param {RequestConnection} connection - Destination org connection.
  * @param {SourceFiles} files - The component's files.
  * @param {object} options - Options.
@@ -255,7 +407,7 @@ export async function renameIntoDataSpace(
   const byKey = new Map<string, Map<string, string[]>>();
   for (const provider of foreign) {
     const { dataGraphApiName, dataspace: from, expressionKey } = provider;
-    const direction: Direction = { from, to: target, spaces };
+    let direction: Direction = { from, to: target, spaces };
     const graph = translateUniqueName({ source: from, target, spaces }, dataGraphApiName);
     if ('reason' in graph)
       throw unresolved(
@@ -274,6 +426,8 @@ export async function renameIntoDataSpace(
         'UNEXPECTED_RESPONSE',
         `Data graph ${graph.name} was read without a sourceObject`,
       );
+    if (root && paths.length > 0 && needsRulesets(direction, String(root.name), paths))
+      direction = { ...direction, rulesets: await rulesetsFor(connection, component, graph.name) };
     graphs.set(`${from}/${dataGraphApiName}`, { dataGraphApiName: graph.name, dataspace: target });
     if (graph.name !== dataGraphApiName)
       renames.push(`data graph ${dataGraphApiName} -> ${graph.name}`);

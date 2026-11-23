@@ -1,4 +1,4 @@
-import type { OrgDataSpace } from 'salesforce-data360-rules';
+import type { OrgDataSpace, RulesetEntry } from 'salesforce-data360-rules';
 import { CmsError } from '../errors/registry.js';
 import {
   CmsRequestError,
@@ -336,8 +336,52 @@ function hasPath(root: Record<string, unknown>, path: string[]): boolean {
   return true;
 }
 
+const text = (value: unknown): string | undefined =>
+  typeof value === 'string' && value !== '' ? value : undefined;
+
+/**
+ * The org's identity resolution rulesets (`GET /ssot/identity-resolutions`, one answer for every
+ * data space, API 68), in the shape sf-plugin-data reads them: name, data space, type and the
+ * unified and link output of each reconciliation entity. An entry without a name, data space or
+ * type is left out.
+ * @param {RequestConnection} connection - Org connection.
+ * @returns {Promise<RulesetEntry[]>} Rulesets.
+ */
+async function readRulesets(connection: RequestConnection): Promise<RulesetEntry[]> {
+  const { data } = await requestJson<unknown>(
+    connection,
+    getSelectedOperation('identity-resolution.list'),
+  );
+  const entries = isRecord(data) ? data.identityResolutions : undefined;
+  if (!Array.isArray(entries))
+    throw new CmsError(
+      'UNEXPECTED_RESPONSE',
+      'The identity resolution ruleset list has no identityResolutions',
+    );
+  const rulesets: RulesetEntry[] = [];
+  for (const entry of recordsOf(entries)) {
+    const apiName = text(entry.objectApiName);
+    const dataSpace = text(entry.dataSpaceName);
+    const configurationType = text(entry.configurationType);
+    if (!apiName || !dataSpace || !configurationType) continue;
+    rulesets.push({
+      apiName,
+      dataSpace,
+      configurationType,
+      outputs: recordsOf(entry.reconciliationRules).flatMap((rule) => {
+        const entity = text(rule.entityName);
+        return entity
+          ? [{ entity, unified: text(rule.unifiedDmoName), link: text(rule.linkDmoName) }]
+          : [];
+      }),
+    });
+  }
+  return rulesets;
+}
+
 type Cache = {
   dataSpaces?: Promise<OrgDataSpace[]>;
+  rulesets?: Promise<RulesetEntry[]>;
   graphs: Map<string, Promise<GraphRead | null>>;
 };
 const caches = new WeakMap<object, Cache>();
@@ -364,6 +408,21 @@ export async function orgDataSpaces(connection: RequestConnection): Promise<OrgD
     throw error;
   });
   return cache.dataSpaces;
+}
+
+/**
+ * The org's identity resolution rulesets (`GET /ssot/identity-resolutions`), read once per
+ * connection; a failed read is not cached.
+ * @param {RequestConnection} connection - Org connection.
+ * @returns {Promise<RulesetEntry[]>} Rulesets of every data space.
+ */
+export async function orgRulesets(connection: RequestConnection): Promise<RulesetEntry[]> {
+  const cache = cacheOf(connection);
+  cache.rulesets ??= readRulesets(connection).catch((error: unknown) => {
+    cache.rulesets = undefined;
+    throw error;
+  });
+  return cache.rulesets;
 }
 
 /**

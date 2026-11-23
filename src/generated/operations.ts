@@ -255,6 +255,16 @@ export const SELECTED_OPERATIONS = [
     "responses": []
   },
   {
+    "localKey": "identity-resolution.list",
+    "method": "GET",
+    "operationId": "local:identity-resolution.list",
+    "parameters": [],
+    "path": "/ssot/identity-resolutions",
+    "requestBodyMediaTypes": [],
+    "requestBodyPresent": false,
+    "responses": []
+  },
+  {
     "localKey": "soql.query",
     "method": "GET",
     "operationId": "local:soql.query",
