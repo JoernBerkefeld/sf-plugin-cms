@@ -25,6 +25,11 @@
   ],
   "type": "module",
   "exports": {
+    "./api": {
+      "types": "./lib/api.d.ts",
+      "import": "./lib/api.js",
+      "default": "./lib/api.js"
+    },
     "./package.json": "./package.json"
   },
   "engines": {

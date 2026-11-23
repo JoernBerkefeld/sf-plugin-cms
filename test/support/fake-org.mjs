@@ -113,7 +113,9 @@ export function fakeOrg(state = {}) {
           .filter((v) =>
             keys
               ? keys.includes(`'${v.contentKey}'`)
-              : v.contentType.fullyQualifiedName === type && names.includes(`'${v.apiName}'`),
+              : // SOQL compares strings without regard to case.
+                v.contentType.fullyQualifiedName === type &&
+                names.toLowerCase().includes(`'${v.apiName.toLowerCase()}'`),
           )
           .map((v) => ({
             Id: v.managedContentVariantId,
@@ -123,6 +125,8 @@ export function fakeOrg(state = {}) {
             Name: v.title,
             ManagedContentKey: v.contentKey,
             ContentTypeFullyQualifiedName: v.contentType.fullyQualifiedName,
+            IsPublished: v.isPublished === true,
+            ManagedContentVariantStatus: v.isPublished === true ? 'Published' : 'Draft',
             ManagedContent: { ApiName: v.apiName, AuthoredManagedContentSpaceId: workspace.id },
           })),
       };

@@ -25,6 +25,10 @@ export type InventoryVariant = {
   apiName: string | null;
   contentType: string | null;
   workspaceId: string | null;
+  /** `IsPublished`; null when the row does not say. */
+  isPublished: boolean | null;
+  /** `ManagedContentVariantStatus`: Draft, Published or Revised. */
+  status: string | null;
 };
 
 /** One component (managed content) with its default variant and the variants left out. */
@@ -66,11 +70,13 @@ function toVariant(record: Record<string, unknown>): InventoryVariant {
     apiName: text(parent, 'ApiName'),
     contentType: text(record, 'ContentTypeFullyQualifiedName'),
     workspaceId: text(parent, 'AuthoredManagedContentSpaceId'),
+    isPublished: typeof record.IsPublished === 'boolean' ? record.IsPublished : null,
+    status: text(record, 'ManagedContentVariantStatus'),
   };
 }
 
 const FIELDS =
-  'Id, ManagedContentId, Language, IsPrimary, Name, ManagedContentKey, ContentTypeFullyQualifiedName, ManagedContent.ApiName, ManagedContent.AuthoredManagedContentSpaceId';
+  'Id, ManagedContentId, Language, IsPrimary, Name, ManagedContentKey, ContentTypeFullyQualifiedName, IsPublished, ManagedContentVariantStatus, ManagedContent.ApiName, ManagedContent.AuthoredManagedContentSpaceId';
 
 /**
  * Every ManagedContentVariant row matching a WHERE clause, by keyset paging on Id.

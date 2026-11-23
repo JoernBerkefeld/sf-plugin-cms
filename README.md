@@ -542,6 +542,67 @@ sf cms deploy -o my-org --workspace Cloud_Kicks -m email:Welcome_Email --dataspa
 - Retrieving every image, document or audio file of a large workspace downloads every file.
   Select components by name where you can.
 
+## Use as a library
+
+Other tools, such as a plugin that deploys a whole Marketing Cloud Next project, can call the
+commands as functions from `sf-plugin-cms/api`. They work on the caller's org connection, so
+several steps share one login.
+
+```js
+import { Org } from '@salesforce/core';
+import { deploy, publish, getItems, flowContentReference } from 'sf-plugin-cms/api';
+
+const connection = (await Org.create({ aliasOrUsername: 'my-org' })).getConnection('68.0');
+const workspace = 'Default_Content_Workspace';
+const projectDirectory = process.cwd(); // the folder that holds cms/
+
+const plan = await deploy(connection, {
+  workspace,
+  metadata: ['email:Welcome_Email'],
+  projectDirectory,
+  preview: true,
+});
+const done = await deploy(connection, {
+  workspace,
+  metadata: ['email:Welcome_Email'],
+  projectDirectory,
+});
+await publish(connection, { workspace, metadata: ['email:Welcome_Email'], projectDirectory });
+
+const [state] = (
+  await getItems(connection, { workspace, refs: [{ type: 'email', apiName: 'Welcome_Email' }] })
+).result.items;
+// { type, apiName, exists, contentKey, managedContentId, variantId, isPublished, status }
+
+flowContentReference(workspace, 'email', 'Welcome_Email');
+// 'marketing--Default_Content_Workspace.sfdc_cms__email--Welcome_Email'
+```
+
+- **Functions:** `deploy`, `publish`, `unpublish`, `remove` (the `delete` command), `retrieve`,
+  `getItems`, `flowContentReference` and `parseFlowContentReference`. The options match the
+  command flags: `metadata` is `-m`, `sourceDirs` is `-d`, plus `preview`, `timeoutMs`,
+  `dataspace`, `allowCrossDataspace` and `keepLocalFiles`.
+- **Paths:** `projectDirectory` is the folder that holds `cms/`. Relative `sourceDirs` are
+  resolved against it, not against the current directory. A changed `.html`, `.txt` or media
+  file selects its component. Pass `retrieve` an absolute `outputDirectory`; a relative one is
+  resolved against the current directory.
+- **Names:** `getItems` matches API names without regard to case, as Salesforce does, and
+  reports the name as the org spells it.
+- **Result:** each function returns what the command returns with `--json` (`status`,
+  `metadata`, `diagnostics`, `result`). It never throws, never sets the exit code and writes
+  nothing to the console. Failures are in `diagnostics.errors`.
+- **Connection:** pass a `@salesforce/core` Connection as `Org.getConnection()` returns it. Its
+  API version is used (68.0 or later recommended). Writes need its access token and instance URL
+  and are sent once, without a token refresh.
+- **Publish:** when `publish` returns `published` with `isPublished: true`, a flow can use the
+  content at once; there is nothing to wait for.
+- **Stable fields:** the functions and options; `status`, `diagnostics`, `result.workspace`,
+  `result.preview`; per item `type`, `apiName`, `outcome`, `reason`, `managedContentId`,
+  `variantId`, `contentKey` and `isPublished`, and for `getItems` also `exists` and `status`;
+  the outcome values and the error codes. A change to these is a breaking change. Other item
+  fields (`changes`, `renames`, `folders`, `dependencies`, `answer`, `note`, local file lists)
+  are informational and may change.
+
 ## Local development
 
 ```sh
