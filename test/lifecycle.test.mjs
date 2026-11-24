@@ -76,6 +76,7 @@ function fakeOrg(rows, hooks = {}) {
         return;
       }
       if (index === -1) throw salesforceError(404, 'VARIANT_NOT_FOUND');
+      hooks.onRead?.(variant);
       const row = store[index];
       return {
         managedContentVariantId: row.id,
@@ -435,6 +436,101 @@ test('publish shows Salesforce refusal, stops, and never repeats a request witho
   assert.deepEqual(codes(second.result.diagnostics.errors), [['email:A', 'UNKNOWN_OUTCOME']]);
 });
 
+const timeout = () =>
+  Object.assign(new Error('The user aborted a request.'), { name: 'AbortError', type: 'aborted' });
+
+test('publish whose readback shows the old state is an error and exits 69', async () => {
+  const directory = await projectWith([]);
+  const org = fakeOrg([email('A', 1), email('B', 2)], {
+    onPublish: () => ({ deploymentId: '0jk000000000001AAA', description: '#DEPLOYED' }),
+  });
+  const { result, exitCode } = await run(
+    'publish',
+    ['-m', 'email:A', '-m', 'email:B'],
+    org,
+    directory,
+  );
+  assert.equal(exitCode, 69);
+  assert.equal(result.status, 'failed');
+  // Not confirmed does not stop the run: B is still published.
+  assert.deepEqual(outcomes(result), [
+    ['A', 'published'],
+    ['B', 'published'],
+  ]);
+  assert.deepEqual(codes(result.diagnostics.errors), [
+    ['email:A', 'STATE_NOT_CONFIRMED'],
+    ['email:B', 'STATE_NOT_CONFIRMED'],
+  ]);
+  assert.deepEqual(result.diagnostics.warnings, []);
+});
+
+test('publish whose readback fails is an error and exits 69', async () => {
+  const directory = await projectWith([]);
+  let published = false;
+  const org = fakeOrg([email('A', 1)], {
+    onRead: () => {
+      if (published) throw salesforceError(500, 'UNKNOWN_EXCEPTION', 'boom');
+    },
+  });
+  const original = org.answer;
+  org.answer = (input) => {
+    const answer = original(input);
+    if (input.url.includes('/publish')) published = true;
+    return answer;
+  };
+  const { result, exitCode } = await run('publish', ['-m', 'email:A'], org, directory);
+  assert.equal(exitCode, 69);
+  assert.deepEqual(outcomes(result), [['A', 'published']]);
+  assert.deepEqual(codes(result.diagnostics.errors), [['email:A', 'STATE_NOT_CONFIRMED']]);
+});
+
+test('publish: partial is 68, a client timeout is 69, a failure wins over an open outcome', async () => {
+  const directory = await projectWith([]);
+  const refuseB = fakeOrg([email('A', 1), email('B', 2)], {
+    onPublish: (body) => {
+      if (body.variantIds.includes('9Ps000000000002AAA'))
+        throw salesforceError(400, 'INVALID_API_INPUT', 'Your content was not published.');
+      return { deploymentId: '0jk000000000001AAA', description: '#DEPLOYED' };
+    },
+  });
+  const partial = await run('publish', ['-m', 'email:A', '-m', 'email:B'], refuseB, directory);
+  // A is published but its state reads old (the hook does not flip it), B is refused.
+  assert.deepEqual(outcomes(partial.result), [
+    ['A', 'published'],
+    ['B', 'failed'],
+  ]);
+  assert.equal(partial.exitCode, 68);
+
+  let calls = 0;
+  const timeoutB = fakeOrg([email('A', 1), email('B', 2), email('C', 3)]);
+  const original = timeoutB.answer;
+  timeoutB.answer = (input) => {
+    if (input.url.endsWith('/publish') && ++calls === 2) throw timeout();
+    return original(input);
+  };
+  const open = await run(
+    'publish',
+    ['-m', 'email:A', '-m', 'email:B', '-m', 'email:C'],
+    timeoutB,
+    directory,
+  );
+  assert.deepEqual(outcomes(open.result), [
+    ['A', 'published'],
+    ['B', 'unknown'],
+    ['C', 'not-attempted'],
+  ]);
+  assert.deepEqual(open.result.diagnostics.errors[0].transportError, { name: 'AbortError' });
+  assert.equal(open.exitCode, 69);
+
+  const dropped = fakeOrg([email('A', 1)], {
+    onPublish: () => {
+      throw new Error('socket hang up');
+    },
+  });
+  const lost = await run('publish', ['-m', 'email:A'], dropped, directory);
+  assert.equal(lost.exitCode, 1);
+});
+
 test('publish of a component the workspace does not have is blocked and sends nothing', async () => {
   const directory = await projectWith([]);
   const { result, writes } = await run(
@@ -509,7 +605,8 @@ test('a local removal failure after a confirmed delete keeps it deleted; later i
     org,
     directory,
   );
-  assert.equal(exitCode, 1);
+  // One is deleted cleanly, Two failed afterwards: partial.
+  assert.equal(exitCode, 68);
   assert.deepEqual(outcomes(result), [
     ['Two', 'deleted'],
     ['One', 'deleted'],
@@ -654,7 +751,8 @@ test('a throw during the command run still reports every item through the comman
     commands.delete = saved;
   }
   const { result, writes, exitCode } = outcome;
-  assert.equal(exitCode, 1);
+  // Two was deleted before the throw: partial.
+  assert.equal(exitCode, 68);
   assert.equal(writes.length, 1);
   assert.deepEqual(
     result.result.items.map((item) => [item.apiName, item.outcome, item.reason]),

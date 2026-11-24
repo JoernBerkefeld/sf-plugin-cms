@@ -6,7 +6,8 @@
  * `result.workspace`, `result.preview` and per item `type`, `apiName`, `outcome`, `reason`,
  * `managedContentId`, `variantId`, `contentKey`, `isPublished`; the outcome values and the
  * error codes. Other item fields (`changes`, `renames`, `folders`, `dependencies`, `answer`,
- * `note`, local file lists) are informational.
+ * `note`, local file lists) are informational. `exitCodeOf(result)` gives the exit code the
+ * command would set (0, 1, 68 or 69).
  */
 import { createApi } from './api/impl.js';
 
@@ -14,6 +15,8 @@ const api = createApi();
 
 export const { deploy, publish, unpublish, remove, retrieve, getItems } = api;
 export { flowContentReference, parseFlowContentReference } from './api/impl.js';
+export { exitCodeOf } from './exit-code.js';
+export type { ExitCode } from './exit-code.js';
 export type {
   ApiConnection,
   DeployOptions,

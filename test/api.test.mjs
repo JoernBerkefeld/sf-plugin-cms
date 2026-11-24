@@ -55,6 +55,7 @@ test('api: the package entry exports the functions and helpers', () => {
     'getItems',
     'flowContentReference',
     'parseFlowContentReference',
+    'exitCodeOf',
   ])
     assert.equal(typeof publicApi[name], 'function', name);
 });

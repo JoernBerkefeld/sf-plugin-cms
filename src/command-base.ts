@@ -9,6 +9,7 @@ import {
 import { CmsError, formatDiagnostic, toDiagnostic, type Diagnostic } from './errors/registry.js';
 import { redactArgv, redactSecrets } from './transport/redact-secrets.js';
 import { DEFAULT_WRITE_TIMEOUT_MS } from './transport/json-request.js';
+import { exitCodeOf } from './exit-code.js';
 
 export const DEFAULT_API_VERSION = '68.0';
 
@@ -158,7 +159,8 @@ export abstract class CmsCommand<R> extends SfCommand<CmsResult<R>> {
     } catch (error) {
       envelope.diagnostics.errors.push(toDiagnostic(error));
     }
-    if (envelope.status !== 'success') process.exitCode = 1;
+    const exitCode = exitCodeOf(envelope);
+    if (exitCode !== 0) process.exitCode = exitCode;
     for (const warning of envelope.diagnostics.warnings)
       this.logToStderr(formatDiagnostic(warning));
     for (const error of envelope.diagnostics.errors) this.logToStderr(formatDiagnostic(error));

@@ -1,6 +1,6 @@
 {
   "name": "sf-plugin-cms",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Salesforce CLI plugin to retrieve and deploy Marketing Cloud CMS content",
   "author": {
     "name": "Jörn Berkefeld",

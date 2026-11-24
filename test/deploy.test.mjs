@@ -436,6 +436,62 @@ test('a write Salesforce refuses stops the deploy; later components are not atte
   );
 });
 
+test('a deploy that wrote one component and failed on the next exits 68', async () => {
+  const one = await goldenFiles('email', 'Golden_Email_Code');
+  const two = { ...one, document: { ...one.document, apiName: 'Second_Email' } };
+  const three = { ...one, document: { ...one.document, apiName: 'Third_Email' } };
+  const directory = await projectWith([one, two, three]);
+  const org = fakeOrg({
+    fail: (input, body) => {
+      if (JSON.stringify(body ?? {}).includes('Second_Email'))
+        throw Object.assign(new Error('bad'), {
+          statusCode: 400,
+          data: [{ errorCode: 'INVALID_API_INPUT', message: 'bad input' }],
+        });
+    },
+  });
+  const { result, exitCode } = await deploy(['-d', path.join(directory, 'cms')], org, directory);
+  assert.deepEqual(outcomes(result), [
+    ['Golden_Email_Code', 'created'],
+    ['Second_Email', 'failed'],
+    ['Third_Email', 'not-attempted'],
+  ]);
+  assert.equal(exitCode, 68);
+});
+
+test('a readback without an answer in time exits 69 and the deploy goes on', async () => {
+  const one = await goldenFiles('email', 'Golden_Email_Code');
+  const two = { ...one, document: { ...one.document, apiName: 'Second_Email' } };
+  const directory = await projectWith([one, two]);
+  const org = fakeOrg();
+  const answer = org.answer;
+  let reads = 0;
+  org.answer = (input) => {
+    if (
+      input.method === 'GET' &&
+      input.url.includes('/connect/cms/contents/variants/') &&
+      ++reads === 1
+    )
+      throw Object.assign(new Error('The user aborted a request.'), {
+        name: 'AbortError',
+        type: 'aborted',
+      });
+    return answer(input);
+  };
+  const { result, exitCode } = await deploy(['-d', path.join(directory, 'cms')], org, directory);
+  assert.deepEqual(outcomes(result), [
+    ['Golden_Email_Code', 'created'],
+    ['Second_Email', 'created'],
+  ]);
+  const [error] = result.diagnostics.errors;
+  assert.deepEqual(
+    [error.component, error.code, error.transportError],
+    ['email:Golden_Email_Code', 'STATE_NOT_CONFIRMED', { name: 'AbortError' }],
+  );
+  assert.equal(result.diagnostics.errors.length, 1);
+  assert.equal(exitCode, 69);
+});
+
 test('a write without an answer is unknown, sent once and never retried', async () => {
   const one = await goldenFiles('email', 'Golden_Email_Code');
   const two = { ...one, document: { ...one.document, apiName: 'Second_Email' } };
@@ -465,11 +521,22 @@ test('a client timeout says so: seconds, elapsed time and AbortError, not jsforc
       );
     },
   });
-  const { result } = await deploy(
-    ['-m', 'email:Golden_Email_Code', '--timeout', '45'],
-    org,
-    directory,
-  );
+  const printed = [];
+  const write = process.stdout.write;
+  process.stdout.write = (chunk, ...rest) => {
+    printed.push(String(chunk));
+    return typeof rest.at(-1) === 'function' ? (rest.at(-1)(), true) : true;
+  };
+  let run;
+  try {
+    run = await deploy(['-m', 'email:Golden_Email_Code', '--timeout', '45'], org, directory);
+  } finally {
+    process.stdout.write = write;
+  }
+  const { result, exitCode } = run;
+  assert.equal(exitCode, 69);
+  // The --json top-level status is the exit code.
+  assert.equal(JSON.parse(printed.join('')).status, 69);
   assert.deepEqual(outcomes(result), [['Golden_Email_Code', 'unknown']]);
   const [error] = result.diagnostics.errors;
   assert.equal(error.code, 'UNKNOWN_OUTCOME');

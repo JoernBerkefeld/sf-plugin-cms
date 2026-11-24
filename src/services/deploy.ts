@@ -245,6 +245,20 @@ function componentError(error: unknown, component: string): Diagnostic {
   return { ...toDiagnostic(error), component };
 }
 
+/**
+ * Whether a request was sent and got no answer within the client timeout.
+ * @param {unknown} error - Error of the request.
+ * @returns {boolean} True for a client timeout.
+ */
+function isClientTimeout(error: unknown): boolean {
+  return (
+    error instanceof CmsRequestError &&
+    error.requestSent &&
+    !error.statusObserved &&
+    error.transportError?.name === 'AbortError'
+  );
+}
+
 function warning(code: string, message: string, component: string): Diagnostic {
   return { ...toDiagnostic(new CmsError(code, message)), component };
 }
@@ -586,7 +600,21 @@ export async function deployComponents(
       });
       if (typeof response.contentKey === 'string')
         destinationKeys.set(component, response.contentKey);
-      const readback = await project(handler, await readVariant(item.variantId!));
+      let native: NativeVariant;
+      try {
+        native = await readVariant(item.variantId!);
+      } catch (error) {
+        if (!isClientTimeout(error)) throw error;
+        // Written, but the readback got no answer in time: the outcome is open (exit 69), and
+        // the run goes on.
+        diagnostics.errors.push({
+          ...componentError(error, component),
+          code: 'STATE_NOT_CONFIRMED',
+          hint: toDiagnostic(new CmsError('STATE_NOT_CONFIRMED', '')).hint,
+        });
+        continue;
+      }
+      const readback = await project(handler, native);
       const differences = sourceDifferences(
         source.files,
         readback.files,

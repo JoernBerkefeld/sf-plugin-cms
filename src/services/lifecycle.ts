@@ -505,11 +505,12 @@ export async function runLifecycle(
         continue;
       }
       item.outcome = action === 'publish' ? 'published' : 'unpublished';
+      // An unconfirmed state is an error (exit 69 when nothing failed) but does not stop the run.
       try {
         const readback = await readVariant(variantId);
         item.isPublished = readback.isPublished === true;
       } catch (error) {
-        diagnostics.warnings.push({
+        diagnostics.errors.push({
           ...toDiagnostic(
             new CmsError('STATE_NOT_CONFIRMED', `Readback failed: ${toDiagnostic(error).message}`),
           ),
@@ -518,7 +519,7 @@ export async function runLifecycle(
         continue;
       }
       if (item.isPublished !== (action === 'publish'))
-        diagnostics.warnings.push({
+        diagnostics.errors.push({
           ...toDiagnostic(
             new CmsError(
               'STATE_NOT_CONFIRMED',

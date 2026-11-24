@@ -273,7 +273,8 @@ test('retrieve is lenient: a failing read and a missing name do not stop the oth
       variants: { '9PsB': code, '9PsX': failure, '9PsT': template },
     }),
   );
-  assert.equal(exitCode, 1);
+  // Some written, some failed: partial.
+  assert.equal(exitCode, 68);
   assert.equal(result.status, 'failed');
   assert.deepEqual(
     result.result.items.map((item) => `${item.type}:${item.apiName}`),

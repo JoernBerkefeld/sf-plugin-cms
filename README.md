@@ -262,16 +262,25 @@ Human output prints one line per component, such as
 `created email:Welcome_Email: cms/Default_Content_Workspace/email/Welcome_Email.email.json`,
 then a summary line.
 
-The exit code is the same with and without `--json`, so a CI/CD pipeline can rely on it:
+The exit codes follow the Salesforce CLI. They are the same with and without `--json`, where the
+top-level `status` is the exit code, so a CI/CD pipeline can rely on them:
 
 - **`0`:** every named component succeeded or was unchanged. Warnings alone do not change it.
-- **`1`:** anything else: a component that failed, is `unknown` or `blocked` (also with
-  `--preview`), a run that stopped part way, or a sign-in, selection or API version error.
-  `status` is `failed`, and the top-level `status` of `--json` is `1`.
+- **`1`:** something failed and no other component was written: a component that failed or is
+  `blocked` (also with `--preview`), `UNKNOWN_OUTCOME` after a dropped connection (not after the
+  client timeout), or a sign-in, selection or API version error.
 - **`2`:** an unknown flag or another usage error, found before the command runs.
+- **`68`:** partial success. At least one component was written (created, updated, deleted,
+  published, unpublished or retrieved) and another one failed. Writes are not rolled back.
+- **`69`:** nothing failed, but an outcome is still open: no answer came within the client
+  timeout (`UNKNOWN_OUTCOME`), so Salesforce may still be applying the change, or the readback
+  does not confirm the result (`STATE_NOT_CONFIRMED`): after a deploy it got no answer in time,
+  after a publish or unpublish it failed or does not show the new state yet. The run goes on with
+  the next components. Check the component before rerunning.
 
-Deleting a component the workspace does not have reports `unchanged` and exits 0; publishing or
-unpublishing one is an error (`COMPONENT_NOT_FOUND`).
+A failure wins over an open outcome: a run with both exits 1 or 68. With every code other than
+0, `status` is `failed`. Deleting a component the workspace does not have reports `unchanged`
+and exits 0; publishing or unpublishing one is an error (`COMPONENT_NOT_FOUND`).
 
 Every problem carries a plugin error code and a short hint:
 
@@ -561,7 +570,7 @@ several steps share one login.
 
 ```js
 import { Org } from '@salesforce/core';
-import { deploy, publish, getItems, flowContentReference } from 'sf-plugin-cms/api';
+import { deploy, publish, getItems, flowContentReference, exitCodeOf } from 'sf-plugin-cms/api';
 
 const connection = (await Org.create({ aliasOrUsername: 'my-org' })).getConnection('68.0');
 const workspace = 'Default_Content_Workspace';
@@ -578,7 +587,12 @@ const done = await deploy(connection, {
   metadata: ['email:Welcome_Email'],
   projectDirectory,
 });
-await publish(connection, { workspace, metadata: ['email:Welcome_Email'], projectDirectory });
+const published = await publish(connection, {
+  workspace,
+  metadata: ['email:Welcome_Email'],
+  projectDirectory,
+});
+process.exitCode = exitCodeOf(published); // 0, 1, 68 or 69, as the command would exit
 
 const [state] = (
   await getItems(connection, { workspace, refs: [{ type: 'email', apiName: 'Welcome_Email' }] })
@@ -590,8 +604,8 @@ flowContentReference(workspace, 'email', 'Welcome_Email');
 ```
 
 - **Functions:** `deploy`, `publish`, `unpublish`, `remove` (the `delete` command), `retrieve`,
-  `getItems`, `flowContentReference` and `parseFlowContentReference`. The options match the
-  command flags: `metadata` is `-m`, `sourceDirs` is `-d`, plus `preview`, `timeoutMs`,
+  `getItems`, `flowContentReference`, `parseFlowContentReference` and `exitCodeOf`. The options
+  match the command flags: `metadata` is `-m`, `sourceDirs` is `-d`, plus `preview`, `timeoutMs`,
   `dataspace`, `allowCrossDataspace` and `keepLocalFiles`.
 - **Paths:** `projectDirectory` is the folder that holds `cms/`. Relative `sourceDirs` are
   resolved against it, not against the current directory. A changed `.html`, `.txt` or media
@@ -602,7 +616,9 @@ flowContentReference(workspace, 'email', 'Welcome_Email');
 - **Result:** each function returns what the command returns with `--json` (`status`,
   `metadata`, `diagnostics`, `result`). It never throws, never sets the exit code and writes
   nothing to the console. Failures are in `diagnostics.errors`. `status` is `success` exactly
-  when the command would exit 0, so a caller that sets its own exit code reads only `status`.
+  when the command would exit 0. `exitCodeOf(result)` returns the exit code the command would
+  set (`0`, `1`, `68` or `69`, see above), so a caller such as a CLI sets
+  `process.exitCode = exitCodeOf(result)`.
   For `getItems`, a missing component is `exists: false` and not an error. The two
   flow-reference helpers are synchronous and throw a plugin error (`INVALID_SELECTOR`,
   `UNKNOWN_TYPE`) for input they cannot use.
