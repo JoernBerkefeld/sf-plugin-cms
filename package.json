@@ -76,7 +76,7 @@
   },
   "dependencies": {
     "@jsforce/jsforce-node": "3.10.16",
-    "@oclif/core": "4.13.2",
+    "@oclif/core": "5.1.12",
     "@salesforce/core": "8.31.3",
     "@salesforce/sf-plugins-core": "12.2.0",
     "salesforce-data360-rules": "0.2.0",
