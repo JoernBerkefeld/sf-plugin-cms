@@ -260,7 +260,18 @@ would be removed. Deploy preview also lists the folders it would create.
 
 Human output prints one line per component, such as
 `created email:Welcome_Email: cms/Default_Content_Workspace/email/Welcome_Email.email.json`,
-then a summary line. The exit code is 0 only when nothing failed.
+then a summary line.
+
+The exit code is the same with and without `--json`, so a CI/CD pipeline can rely on it:
+
+- **`0`:** every named component succeeded or was unchanged. Warnings alone do not change it.
+- **`1`:** anything else: a component that failed, is `unknown` or `blocked` (also with
+  `--preview`), a run that stopped part way, or a sign-in, selection or API version error.
+  `status` is `failed`, and the top-level `status` of `--json` is `1`.
+- **`2`:** an unknown flag or another usage error, found before the command runs.
+
+Deleting a component the workspace does not have reports `unchanged` and exits 0; publishing or
+unpublishing one is an error (`COMPONENT_NOT_FOUND`).
 
 Every problem carries a plugin error code and a short hint:
 
@@ -590,7 +601,11 @@ flowContentReference(workspace, 'email', 'Welcome_Email');
   reports the name as the org spells it.
 - **Result:** each function returns what the command returns with `--json` (`status`,
   `metadata`, `diagnostics`, `result`). It never throws, never sets the exit code and writes
-  nothing to the console. Failures are in `diagnostics.errors`.
+  nothing to the console. Failures are in `diagnostics.errors`. `status` is `success` exactly
+  when the command would exit 0, so a caller that sets its own exit code reads only `status`.
+  For `getItems`, a missing component is `exists: false` and not an error. The two
+  flow-reference helpers are synchronous and throw a plugin error (`INVALID_SELECTOR`,
+  `UNKNOWN_TYPE`) for input they cannot use.
 - **Connection:** pass a `@salesforce/core` Connection as `Org.getConnection()` returns it. Its
   API version is used (68.0 or later recommended). Writes need its access token and instance URL
   and are sent once, without a token refresh.
